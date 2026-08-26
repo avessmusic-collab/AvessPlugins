@@ -10,8 +10,7 @@ TransitionistAudioProcessorEditor::TransitionistAudioProcessorEditor(Transitioni
     delayRelay = std::make_unique<juce::WebSliderRelay>("delay");
     delaySyncRelay = std::make_unique<juce::WebComboBoxRelay>("delaySync");
     dryWetRelay = std::make_unique<juce::WebSliderRelay>("dryWet");
-    inputGainRelay = std::make_unique<juce::WebSliderRelay>("inputGain");
-    outputGainRelay = std::make_unique<juce::WebSliderRelay>("outputGain");
+    volumeRelay = std::make_unique<juce::WebSliderRelay>("volume");
 
     // STEP 2: WebView (with relay options)
     webView = std::make_unique<juce::WebBrowserComponent>(
@@ -24,8 +23,7 @@ TransitionistAudioProcessorEditor::TransitionistAudioProcessorEditor(Transitioni
             .withOptionsFrom(*delayRelay)
             .withOptionsFrom(*delaySyncRelay)
             .withOptionsFrom(*dryWetRelay)
-            .withOptionsFrom(*inputGainRelay)
-            .withOptionsFrom(*outputGainRelay)
+            .withOptionsFrom(*volumeRelay)
     );
 
     // STEP 3: Attachments (after WebView)
@@ -39,46 +37,25 @@ TransitionistAudioProcessorEditor::TransitionistAudioProcessorEditor(Transitioni
         *processorRef.parameters.getParameter("delaySync"), *delaySyncRelay, nullptr);
     dryWetAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.parameters.getParameter("dryWet"), *dryWetRelay, nullptr);
-    inputGainAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.parameters.getParameter("inputGain"), *inputGainRelay, nullptr);
-    outputGainAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.parameters.getParameter("outputGain"), *outputGainRelay, nullptr);
+    volumeAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("volume"), *volumeRelay, nullptr);
 
     // Cache-busting: append a per-instance unique query string so WebKit
     // cannot restore a stale cached/back-forward-cache snapshot of this
-    // exact URL from a previous app launch (observed during development:
-    // some Standalone relaunches were rendering a stale DOM snapshot from
-    // an earlier build instead of re-executing the current index.html,
-    // even though the underlying compiled resource had genuinely changed).
+    // exact URL from a previous app launch (see
+    // troubleshooting/gui-issues/webview-stale-cached-page-across-relaunches-Transitionist-20260827.md).
     // getResource() below strips this query string before matching, so it
     // has no effect on which resource is actually served.
     const juce::String cacheBuster = "?t=" + juce::String(juce::Time::getMillisecondCounterHiRes(), 0);
     webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot() + cacheBuster);
     addAndMakeVisible(*webView);
 
-    setSize(1100, 440);
+    setSize(1010, 440);
     setResizable(false, false);
-
-    // 30Hz meter update loop (juce8-critical-patterns.md Pattern #20) -
-    // pushes the 2 UI-only level meters to the WebView. Not parameter-bound.
-    startTimerHz(30);
 }
 
 TransitionistAudioProcessorEditor::~TransitionistAudioProcessorEditor()
 {
-    stopTimer();
-}
-
-void TransitionistAudioProcessorEditor::timerCallback()
-{
-    if (webView == nullptr)
-        return;
-
-    const float inputDb = processorRef.inputLevelDb.load(std::memory_order_relaxed);
-    const float outputDb = processorRef.outputLevelDb.load(std::memory_order_relaxed);
-
-    webView->emitEventIfBrowserIsVisible("updateInputMeter", inputDb);
-    webView->emitEventIfBrowserIsVisible("updateOutputMeter", outputDb);
 }
 
 void TransitionistAudioProcessorEditor::paint(juce::Graphics& g)

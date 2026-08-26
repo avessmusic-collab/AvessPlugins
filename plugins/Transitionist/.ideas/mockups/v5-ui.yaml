@@ -13,8 +13,8 @@
 # forward unchanged in style, recentered for the new window width.
 
 window:
-  width: 1100   # widened from v4's 980 to fit 6 modules instead of 3 knobs
-  height: 440   # was 420 - panel cards now taller (300px) to fit the 200px hero knob
+  width: 1010   # v3: narrowed from v5.1's 1100 after removing INPUT/OUTPUT sliders+meters (5 modules instead of 6)
+  height: 440
   resizable: false
 
 colors:
@@ -67,17 +67,19 @@ typography:
 layout:
   type: custom
   description: >
-    Six panel cards in a single row, all sharing the same height (300px)
-    for a consistent "rack strip" look, each knob/module vertically
-    centered within its own card regardless of size. Left to right: INPUT
-    (channel-strip slider+meter module), DELAY (120px knob + LCD-styled
-    sync dropdown beneath it), TRANSITION (200px hero knob - visibly the
-    largest control and card on the plugin), REVERB (120px knob), DRY/WET
-    (80px small knob), OUTPUT (channel-strip slider+meter module,
-    mirrors INPUT). Quick preset bar retained at top, unchanged in style
-    from v4, recentered for the new 1100px width. Panel/knob/LCD material,
-    outer frame gradient+texture, and logo/caption typography all carry
-    forward unchanged from v4.
+    CURRENT (v3): Five panel cards in a single row, all sharing the same
+    height (300px) for a consistent "rack strip" look, each knob vertically
+    centered within its own card regardless of size. Left to right: DELAY
+    (120px knob + LCD-styled sync dropdown beneath it), REVERB (120px
+    knob), TRANSITION (200px hero knob - visibly the largest control and
+    card on the plugin), DRY/WET (80px small knob), VOLUME (80px small
+    knob, rightmost, last stage in the signal chain). Quick preset bar
+    retained at top. Window is 1010x440. Panel/knob/LCD material, outer
+    frame gradient+texture, and logo/caption typography all carry forward
+    unchanged from v4. No sliders and no level meters in this revision -
+    v2 had INPUT/OUTPUT vertical sliders+meters at both ends; both were
+    removed per user request and replaced by the single VOLUME knob. See
+    the notes section for the full v5 -> v5.1 -> v3 history.
 
 controls:
   - id: transition
@@ -185,7 +187,7 @@ controls:
     unit: "%"
     default: 50.0
     decimals: 0
-    position: { x: 835, y: 190 }
+    position: { x: 715, y: 190 }   # v3: shifted after INPUT removal + layout compaction
     size: { width: 80, height: 80 }   # NEW - smallest knob, deliberately minor-looking
     indicator:
       style: "thin-arc-plus-pointer-dot"
@@ -202,86 +204,37 @@ controls:
       transition: transition shapes the effect's intensity, this just
       blends how much of the result you hear.
 
-  - id: inputGain
-    type: slider
-    orientation: vertical
-    style: skeuomorphic-channel-strip
-    label: "Input"
-    parameter: "inputGain"
+  - id: volume
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Volume"
+    parameter: "volume"
     parameter_type: float
-    range: [-24.0, 24.0]
+    range: [-60.0, 6.0]
     unit: "dB"
     default: 0.0
     decimals: 1
-    position: { x: 64, y: 148 }
-    size: { width: 30, height: 192 }
+    position: { x: 865, y: 190 }
+    size: { width: 80, height: 80 }   # small tier, same as dryWet, per user request
     indicator:
-      style: "vertical-fill-with-unity-tick"
-      fill_from: "bottom"
-      unity_tick: "thin fixed light line at vertical center (0dB, range midpoint)"
-      thumb: "small rounded-rect handle, same disc_face gradient as knob material"
+      style: "thin-arc-plus-pointer-dot"   # same unipolar-style sweep as other knobs (NOT bipolar - asymmetric range, no center detent)
+      arc_track_width: 2
+      pointer: "small dot near top edge of disc, rotates with knob body"
+      ring_geometry: "viewBox 0 0 100 100, r=44, cx=cy=50 (identical to dryWet's small-tier geometry)"
     readout:
       style: "inset-lcd"
-      position: { x: 55, y: 120 }
-      size: { width: 70, height: 22 }
-      format: "{value} dB"
-      notes: "signed, e.g. -6.0 dB / +3.0 dB / 0.0 dB - sits ABOVE the slider track, not embedded in it"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{sign}{value} dB"
+      notes: "signed, e.g. -12.0 dB / +3.0 dB / 0.0 dB - only knob in this plugin with a dB (not %) readout"
     notes: >
-      Input trim, applied before all processing. Drives the INPUT level
-      meter (adjacent) and the dry tap used for the final Dry/Wet blend.
-      First non-knob, non-0-100% control in this plugin.
-
-  - id: outputGain
-    type: slider
-    orientation: vertical
-    style: skeuomorphic-channel-strip
-    label: "Output"
-    parameter: "outputGain"
-    parameter_type: float
-    range: [-24.0, 24.0]
-    unit: "dB"
-    default: 0.0
-    decimals: 1
-    position: { x: 984, y: 148 }
-    size: { width: 30, height: 192 }
-    indicator:
-      style: "vertical-fill-with-unity-tick"
-      fill_from: "bottom"
-      unity_tick: "thin fixed light line at vertical center (0dB, range midpoint)"
-      thumb: "small rounded-rect handle, same disc_face gradient as knob material"
-    readout:
-      style: "inset-lcd"
-      position: { x: 975, y: 120 }
-      size: { width: 70, height: 22 }
-      format: "{value} dB"
-      notes: "mirrors inputGain's readout treatment"
-    notes: >
-      Output trim, applied after the Dry/Wet blend - the true final gain
-      stage. Drives the OUTPUT level meter (adjacent).
-
-# UI-only live level meters - NOT APVTS parameters, no automation, no state
-# save. Driven by std::atomic<float> + editor Timer (30Hz) +
-# emitEventIfBrowserIsVisible, per juce8-critical-patterns.md Pattern #20.
-# Positioned here (not under display_elements) because they ARE real
-# bounds-relevant visual elements even though not parameter-bound.
-meters:
-  - id: inputMeter
-    label_for: inputGain
-    position: { x: 102, y: 148 }
-    size: { width: 14, height: 192 }
-    style: "vertical bar meter, ballistic motion (attack 0.4 / decay 0.15,
-      requestAnimationFrame loop), color zones: meter_fill_normal below
-      -6dB, meter_fill_hot -6dB to -1dB, meter_fill_clip above -1dB"
-    data_source: "std::atomic<float> inputLevelDb, peak post inputGain, updated every processBlock()"
-    transport: "editor Timer 30Hz -> webView->emitEventIfBrowserIsVisible(\"updateInputMeter\", dB)"
-
-  - id: outputMeter
-    label_for: outputGain
-    position: { x: 1022, y: 148 }
-    size: { width: 14, height: 192 }
-    style: "identical to inputMeter"
-    data_source: "std::atomic<float> outputLevelDb, peak post outputGain (true final output level)"
-    transport: "editor Timer 30Hz -> webView->emitEventIfBrowserIsVisible(\"updateOutputMeter\", dB)"
+      v3 - NEW, replaces v2's inputGain+outputGain sliders and both level
+      meters entirely. Final output gain, LAST stage in the signal chain
+      (after the Dry/Wet blend). Max +6dB boost per user request. Rightmost
+      control on the plugin, small size (same tier as Dry/Wet). No paired
+      meter - this plugin has no level metering in v3.
+      IMPORTANT: 0dB is NOT the normalised midpoint of the -60..+6 range
+      (midpoint would be -27dB) - the JS knob's double-click-reset value
+      must use defaultNormalised = 60/66 ≈ 0.9091, not 0.5.
 
 # Non-interactive visual elements. Not JUCE relay-bound controls; excluded
 # from control-overlap/bounds validation but positioned to avoid collisions.
@@ -290,69 +243,55 @@ display_elements:
     type: label
     text: "TRANSITIONIST"
     position: { x: 0, y: 24 }
-    size: { width: 1100, height: 30 }
+    size: { width: 1010, height: 30 }
     text_align: center
     layer: decorative
-    notes: "UNCHANGED from v4 except container width (now 1100px)."
+    notes: "v3: width matches new 1010px window (was 1100px in v5.1)."
 
   - id: preset_bar_container
     type: group
-    position: { x: 424, y: 58 }
+    position: { x: 379, y: 58 }
     size: { width: 252, height: 24 }
     layer: decorative
-    notes: "UNCHANGED from v4 in every respect except recentered for the new 1100px window width (was x=364 for 980px)."
-
-  - id: panel_input
-    type: panel-card
-    position: { x: 40, y: 90 }
-    size: { width: 100, height: 300 }
-    layer: decorative
+    notes: "v3: recentered for the new 1010px window width (was x=424 for 1100px)."
 
   - id: panel_delay
     type: panel-card
-    position: { x: 160, y: 90 }
+    position: { x: 40, y: 90 }
     size: { width: 170, height: 300 }
     layer: decorative
 
   - id: panel_reverb
     type: panel-card
-    position: { x: 350, y: 90 }   # v5.1: moved 2nd per user-requested reorder (delay, reverb, transition)
+    position: { x: 230, y: 90 }
     size: { width: 170, height: 300 }
     layer: decorative
 
   - id: panel_transition
     type: panel-card
-    position: { x: 540, y: 90 }   # v5.1: moved 3rd per user-requested reorder
+    position: { x: 420, y: 90 }
     size: { width: 250, height: 300 }
     layer: decorative
     notes: "Visibly the largest panel card - reinforces transition's role as the hero control."
 
   - id: panel_drywet
     type: panel-card
-    position: { x: 810, y: 90 }
+    position: { x: 690, y: 90 }
     size: { width: 130, height: 300 }
     layer: decorative
 
-  - id: panel_output
+  - id: panel_volume
     type: panel-card
-    position: { x: 960, y: 90 }
-    size: { width: 100, height: 300 }
+    position: { x: 840, y: 90 }
+    size: { width: 130, height: 300 }
     layer: decorative
-
-  - id: caption_input
-    type: label
-    text: "INPUT"
-    label_for: inputGain
-    position: { x: 40, y: 340 }
-    size: { width: 100, height: 20 }
-    text_align: center
-    layer: decorative
+    notes: "v3: NEW - rightmost panel, replaces panel_output. Same small tier as panel_drywet."
 
   - id: caption_delay
     type: label
     text: "DELAY"
     label_for: delay
-    position: { x: 160, y: 340 }
+    position: { x: 40, y: 340 }
     size: { width: 170, height: 20 }
     text_align: center
     layer: decorative
@@ -361,7 +300,7 @@ display_elements:
     type: label
     text: "REVERB"
     label_for: reverb
-    position: { x: 350, y: 340 }
+    position: { x: 230, y: 340 }
     size: { width: 170, height: 20 }
     text_align: center
     layer: decorative
@@ -370,7 +309,7 @@ display_elements:
     type: label
     text: "TRANSITION"
     label_for: transition
-    position: { x: 540, y: 340 }
+    position: { x: 420, y: 340 }
     size: { width: 250, height: 20 }
     text_align: center
     layer: decorative
@@ -379,21 +318,22 @@ display_elements:
     type: label
     text: "DRY/WET"
     label_for: dryWet
-    position: { x: 810, y: 340 }
+    position: { x: 690, y: 340 }
     size: { width: 130, height: 20 }
     text_align: center
     layer: decorative
 
-  - id: caption_output
+  - id: caption_volume
     type: label
-    text: "OUTPUT"
-    label_for: outputGain
-    position: { x: 960, y: 340 }
-    size: { width: 100, height: 20 }
+    text: "VOLUME"
+    label_for: volume
+    position: { x: 840, y: 340 }
+    size: { width: 130, height: 20 }
     text_align: center
     layer: decorative
 
 notes:
+  - "v3 (2026-08-27, CURRENT STATE, user request: \"remove the sliders completely, add a volume knob with max 6db boost instead, make it last in chain, right side, small in size\"): removed inputGain/outputGain sliders AND both level meters entirely. Added a single 'volume' knob (-60 to +6dB, small tier matching dryWet, rightmost, last stage in the signal chain). Window narrowed 1100x440 -> 1010x440 (5 modules instead of 6). Left-to-right order is now: DELAY, REVERB, TRANSITION, DRY/WET, VOLUME - this is the FINAL, current layout; earlier notes in this file describing v5/v5.1 (with INPUT/OUTPUT sliders+meters, or the DELAY-TRANSITION-REVERB order) are historical and superseded. Confirmed via screenshot of the running Standalone app: loaded correctly on first launch, VOLUME knob renders correctly with a signed dB LCD readout (e.g. \"+0.0 dB\"), rebuilt and pluginval-verified on both VST3 and AU."
   - "v5.1 (post-mockup user request): knob order changed from INPUT-DELAY-TRANSITION-REVERB-DRYWET-OUTPUT to INPUT-DELAY-REVERB-TRANSITION-DRYWET-OUTPUT. Only delay/reverb/transition x-positions changed (window size, all other modules, and every control's own size/style unchanged) - CONFIRMED correct via screenshot of the running Standalone app."
   - "KNOWN OPEN ISSUE (not fully resolved as of v5.1): the preset name dropdown sometimes renders visually blank (no option text shown in its closed state) even though its 8 options are populated by JS on load. Attempted fix: deferred initial population/matching past first paint via requestAnimationFrame, and made it re-run on every relevant parameter change (self-correcting, same pattern knobs already use via valueChangedEvent) rather than only once at load. This did not conclusively resolve it in the one screenshot where it could be checked after the fix. Root cause not confirmed - candidates include a WebKit select-element closed-state repaint quirk specific to JS-populated (vs statically-authored) option lists, or an unrelated intermittent WebView load issue (this WebView has separately shown one-off blank-white full-page loads on cold Standalone launches, unrelated to this specific dropdown, possibly the same underlying JUCE/WebKit flakiness documented in troubleshooting/gui-issues/webview-frame-load-interrupted-TapeAge-20251111.md). Needs live re-verification with real screen access before considering this closed. The prev/next buttons and the dropdown underlying VALUE (not just its displayed text) may well be working correctly regardless - this is possibly a cosmetic display-only issue, not a functional one. The delaySync dropdown (statically authored options in HTML, not JS-populated) has never shown this symptom, which is the strongest clue toward the JS-population-timing theory."
   - "v5 is a full control-surface redesign per user request after real-world DAW testing of v1.0.0 (the throw/space/sweep v4 mockup). 7 parameters now exist: transition, reverb, delay, delaySync (choice), dryWet, inputGain, outputGain. All v1 parameter IDs (throw, space, sweep) are retired entirely - breaking change, no migration path."

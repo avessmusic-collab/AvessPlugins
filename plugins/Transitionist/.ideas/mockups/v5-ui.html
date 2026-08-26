@@ -17,7 +17,7 @@
   }
 
   body {
-    width: 1100px;
+    width: 1010px;
     height: 440px;
     user-select: none;
     -webkit-user-select: none;
@@ -43,7 +43,7 @@
     position: absolute;
     left: 0px;
     top: 24px;
-    width: 1100px;
+    width: 1010px;
     height: 30px;
     text-align: center;
     color: #2c3444;
@@ -57,7 +57,7 @@
   .preset-bar {
     position: absolute;
     top: 58px;
-    left: 424px;
+    left: 379px;
     width: 252px;
     height: 24px;
     display: flex;
@@ -122,12 +122,11 @@
       inset 0 -3px 10px rgba(30,38,54,0.14),
       0 3px 0 rgba(255,255,255,0.04);
   }
-  .panel-input       { left: 40px;  width: 100px; }
-  .panel-delay       { left: 160px; width: 170px; }
-  .panel-reverb      { left: 350px; width: 170px; }
-  .panel-transition  { left: 540px; width: 250px; }
-  .panel-drywet      { left: 810px; width: 130px; }
-  .panel-output      { left: 960px; width: 100px; }
+  .panel-delay       { left: 40px;  width: 170px; }
+  .panel-reverb      { left: 230px; width: 170px; }
+  .panel-transition  { left: 420px; width: 250px; }
+  .panel-drywet      { left: 690px; width: 130px; }
+  .panel-volume      { left: 840px; width: 130px; }
 
   /* ---------------- Captions ---------------- */
   .caption {
@@ -140,19 +139,19 @@
     font-weight: 700;
     letter-spacing: 0.28em;
   }
-  .caption-input      { left: 40px;  width: 100px; }
-  .caption-delay      { left: 160px; width: 170px; }
-  .caption-reverb     { left: 350px; width: 170px; }
-  .caption-transition { left: 540px; width: 250px; }
-  .caption-drywet     { left: 810px; width: 130px; }
-  .caption-output     { left: 960px; width: 100px; }
+  .caption-delay      { left: 40px;  width: 170px; }
+  .caption-reverb     { left: 230px; width: 170px; }
+  .caption-transition { left: 420px; width: 250px; }
+  .caption-drywet     { left: 690px; width: 130px; }
+  .caption-volume     { left: 840px; width: 130px; }
 
   /* ---------------- Knob assembly (shared anatomy, per-size wrap) ---------------- */
   .knob-wrap { position: absolute; }
-  .knob-wrap-transition { top: 130px; left: 565px; width: 200px; height: 200px; }
-  .knob-wrap-reverb     { top: 170px; left: 375px; width: 120px; height: 120px; }
-  .knob-wrap-delay      { top: 170px; left: 185px; width: 120px; height: 120px; }
-  .knob-wrap-drywet     { top: 190px; left: 835px; width: 80px;  height: 80px; }
+  .knob-wrap-delay      { top: 170px; left: 65px;  width: 120px; height: 120px; }
+  .knob-wrap-reverb     { top: 170px; left: 255px; width: 120px; height: 120px; }
+  .knob-wrap-transition { top: 130px; left: 445px; width: 200px; height: 200px; }
+  .knob-wrap-drywet     { top: 190px; left: 715px; width: 80px;  height: 80px; }
+  .knob-wrap-volume     { top: 190px; left: 865px; width: 80px;  height: 80px; }
 
   .knob-glow {
     position: absolute;
@@ -239,7 +238,7 @@
   .delay-sync-select {
     position: absolute;
     top: 303px;
-    left: 203px;
+    left: 83px;
     width: 84px;
     height: 24px;
     font-size: 11px;
@@ -247,124 +246,6 @@
   }
   .delay-sync-select option { background: #182028; color: #7fd8e0; }
 
-  /* ---------------- Channel-strip modules (Input/Output) ---------------- */
-  .gain-readout {
-    position: absolute;
-    top: 120px;
-    width: 70px;
-    height: 22px;
-    background: #182028;
-    border: 2px solid #232a36;
-    border-radius: 4px;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.65);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: 'Courier New', 'Consolas', monospace;
-    font-size: 12px;
-    color: #7fd8e0;
-    text-shadow: 0 0 5px rgba(127,216,224,0.5);
-  }
-  .gain-readout-input  { left: 55px; }
-  .gain-readout-output { left: 975px; }
-
-  .gain-slider-track {
-    position: absolute;
-    top: 148px;
-    width: 30px;
-    height: 192px;
-    border-radius: 8px;
-    background: linear-gradient(90deg, #b9c2d1 0%, #d7dce3 50%, #b9c2d1 100%);
-    border: 1px solid #9aa4b6;
-    box-shadow: inset 0 2px 5px rgba(30,38,54,0.35);
-    cursor: pointer;
-  }
-  .gain-slider-input  { left: 64px; }
-  .gain-slider-output { left: 984px; }
-
-  .gain-slider-fill {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    border-radius: 0 0 7px 7px;
-    background: linear-gradient(180deg, #8aa4d6 0%, #6f8fc9 100%);
-    pointer-events: none;
-  }
-  .gain-slider-unity-tick {
-    position: absolute;
-    left: -3px;
-    width: calc(100% + 6px);
-    height: 2px;
-    background: rgba(44,52,68,0.4);
-    top: 50%;
-    transform: translateY(-50%);
-    pointer-events: none;
-  }
-  .gain-slider-thumb {
-    position: absolute;
-    left: -4px;
-    width: calc(100% + 8px);
-    height: 14px;
-    border-radius: 4px;
-    background: radial-gradient(circle at 35% 30%, #f6f8fa 0%, #d7dce3 55%, #aab2c0 100%);
-    border: 1px solid #98a2b4;
-    box-shadow: 0 2px 4px rgba(10,12,16,0.4);
-    pointer-events: none;
-  }
-
-  /* Native vertical range input - invisible, sits on top of the decorative
-     track/fill/thumb above and handles ALL pointer/keyboard/wheel
-     interaction natively (far more robust than hand-rolled drag math:
-     click-to-jump, drag, and keyboard all work out of the box). WebKit-only
-     appearance is fine since JUCE's macOS WebView is WKWebView/WebKit. */
-  .gain-range-native {
-    position: absolute;
-    top: 148px;
-    width: 30px;
-    height: 192px;
-    margin: 0;
-    padding: 0;
-    -webkit-appearance: slider-vertical;
-    appearance: slider-vertical;
-    background: transparent;
-    cursor: ns-resize;
-    z-index: 10;
-  }
-  .gain-range-native::-webkit-slider-runnable-track {
-    background: transparent;
-  }
-  .gain-range-native::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 30px;
-    height: 14px;
-    background: transparent;
-    border: none;
-  }
-  .gain-range-input  { left: 64px; }
-  .gain-range-output { left: 984px; }
-
-  .meter-track {
-    position: absolute;
-    top: 148px;
-    width: 14px;
-    height: 192px;
-    border-radius: 4px;
-    background: #182028;
-    border: 1px solid #232a36;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.65);
-    overflow: hidden;
-  }
-  .meter-input  { left: 102px; }
-  .meter-output { left: 1022px; }
-  .meter-fill {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 0%;
-    background: #6f8fc9;
-  }
 </style>
 </head>
 <body>
@@ -378,19 +259,6 @@
       <select class="lcd-select preset-select" id="presetSelect" aria-label="Preset"></select>
       <button class="preset-btn" id="presetNextBtn" type="button" aria-label="Next preset">&#9654;</button>
     </div>
-
-    <!-- INPUT -->
-    <div class="panel panel-input"></div>
-    <div class="gain-readout gain-readout-input" id="inputGainReadout">0.0 dB</div>
-    <div class="gain-slider-track gain-slider-input" id="inputGainVisualTrack">
-      <div class="gain-slider-unity-tick"></div>
-      <div class="gain-slider-fill" id="inputGainFill"></div>
-      <div class="gain-slider-thumb" id="inputGainThumb"></div>
-    </div>
-    <input type="range" class="gain-range-native gain-range-input" id="inputGainRange"
-           min="0" max="1" step="0.001" value="0.5" orient="vertical" aria-label="Input Gain">
-    <div class="meter-track meter-input"><div class="meter-fill" id="inputMeterFill"></div></div>
-    <div class="caption caption-input">INPUT</div>
 
     <!-- DELAY -->
     <div class="panel panel-delay"></div>
@@ -467,18 +335,21 @@
     </div>
     <div class="caption caption-drywet">DRY/WET</div>
 
-    <!-- OUTPUT -->
-    <div class="panel panel-output"></div>
-    <div class="gain-readout gain-readout-output" id="outputGainReadout">0.0 dB</div>
-    <div class="gain-slider-track gain-slider-output" id="outputGainVisualTrack">
-      <div class="gain-slider-unity-tick"></div>
-      <div class="gain-slider-fill" id="outputGainFill"></div>
-      <div class="gain-slider-thumb" id="outputGainThumb"></div>
+    <!-- VOLUME (last stage in chain, small, rightmost) -->
+    <div class="panel panel-volume"></div>
+    <div class="knob-wrap knob-wrap-volume">
+      <div class="knob-glow"></div>
+      <svg class="knob-arc" viewBox="0 0 100 100">
+        <circle class="knob-arc-track" cx="50" cy="50" r="44" stroke-width="2" stroke-dasharray="207.35 276.46" stroke-dashoffset="0"></circle>
+        <circle class="knob-arc-fill" id="volumeArc" cx="50" cy="50" r="44" stroke-width="2" stroke-dasharray="207.35 276.46" stroke-dashoffset="207.35"></circle>
+      </svg>
+      <div class="knob" id="volumeKnob" tabindex="0" role="slider" aria-valuemin="-60" aria-valuemax="6" aria-valuenow="0" aria-label="Volume">
+        <div class="knob-body" id="volumeKnobBody"><div class="knob-ridges"></div><div class="knob-pointer"></div></div>
+        <div class="knob-lighting"></div>
+        <div class="knob-lcd"><span class="knob-lcd-text" id="volumeValueText">0.0 dB</span></div>
+      </div>
     </div>
-    <input type="range" class="gain-range-native gain-range-output" id="outputGainRange"
-           min="0" max="1" step="0.001" value="0.5" orient="vertical" aria-label="Output Gain">
-    <div class="meter-track meter-output"><div class="meter-fill" id="outputMeterFill"></div></div>
-    <div class="caption caption-output">OUTPUT</div>
+    <div class="caption caption-volume">VOLUME</div>
 
   </div>
 
@@ -597,6 +468,13 @@
     const delayState      = setupKnob({ knobId: "delayKnob",      bodyId: "delayKnobBody",      arcId: "delayArc",      textId: "delayValueText",      paramId: "delay",      defaultNormalised: 0.0, arcLength: 301.59, format: percentFormat, dragRangePx: 145 });
     const dryWetState     = setupKnob({ knobId: "dryWetKnob",     bodyId: "dryWetKnobBody",     arcId: "dryWetArc",     textId: "dryWetValueText",     paramId: "dryWet",     defaultNormalised: 0.5, arcLength: 207.35, format: percentFormat, dragRangePx: 96 });
 
+    // Volume - last stage in the chain, -60..+6dB (max 6dB boost), small
+    // knob (same tier as Dry/Wet), rightmost. defaultNormalised is the
+    // ACTUAL normalised position of 0dB within the -60..+6 range (NOT the
+    // range midpoint, which would be -27dB): (0 - (-60)) / (6 - (-60)).
+    const dbFormat = (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+    const volumeState = setupKnob({ knobId: "volumeKnob", bodyId: "volumeKnobBody", arcId: "volumeArc", textId: "volumeValueText", paramId: "volume", defaultNormalised: 60 / 66, arcLength: 207.35, format: dbFormat, dragRangePx: 96 });
+
     // ====================================================================
     // Delay Sync combo box (9 choices, index/8 normalised - Scatter's
     // scale/root_note pattern)
@@ -622,118 +500,14 @@
     // same gesture bracketing as knobs. Range is -24..+24dB but the slider
     // only deals in normalised 0-1 (0 = -24dB/bottom, 1 = +24dB/top).
     // ====================================================================
-    function setupGainSlider({ rangeId, fillId, thumbId, readoutId, paramId, defaultNormalised }) {
-      const rangeEl = document.getElementById(rangeId);
-      const fillEl = document.getElementById(fillId);
-      const thumbEl = document.getElementById(thumbId);
-      const readoutEl = document.getElementById(readoutId);
-      const state = getSliderState(paramId);
-      if (!state) { console.error(`No slider state for "${paramId}"`); return; }
 
-      function render() {
-        const normalised = state.getNormalisedValue();
-        const pct = normalised * 100;
-        fillEl.style.height = `${pct}%`;
-        thumbEl.style.top = `${100 - pct}%`;
-        thumbEl.style.transform = "translateY(-50%)";
-        // Keep the native input's own value in sync (host automation/preset
-        // recall moves it without the user touching the control directly).
-        if (document.activeElement !== rangeEl) {
-          rangeEl.value = String(normalised);
-        }
-        const scaled = state.getScaledValue();
-        const sign = scaled > 0 ? "+" : "";
-        readoutEl.textContent = `${sign}${scaled.toFixed(1)} dB`;
-      }
 
-      render();
-      state.valueChangedEvent.addListener(() => render());
 
-      // Native <input type="range"> handles all pointer/keyboard interaction
-      // (click-to-jump, drag, arrow keys) - just bridge its value to the
-      // relay and bracket the drag as a single automation gesture.
-      let dragging = false;
-
-      rangeEl.addEventListener("mousedown", () => {
-        dragging = true;
-        state.sliderDragStarted();
-      });
-      rangeEl.addEventListener("input", () => {
-        state.setNormalisedValue(parseFloat(rangeEl.value));
-      });
-      window.addEventListener("mouseup", () => {
-        if (dragging) {
-          dragging = false;
-          state.sliderDragEnded();
-        }
-      });
-
-      // Keyboard arrow presses on a native range fire "input" per key press
-      // (not a continuous drag), so bracket each one as its own gesture.
-      rangeEl.addEventListener("keydown", (e) => {
-        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"].includes(e.key)) {
-          state.sliderDragStarted();
-          requestAnimationFrame(() => state.sliderDragEnded());
-        }
-      });
-
-      rangeEl.addEventListener("wheel", (e) => {
-        e.preventDefault();
-        const step = e.deltaY < 0 ? 0.01 : -0.01;
-        state.sliderDragStarted();
-        state.setNormalisedValue(Math.max(0, Math.min(1, state.getNormalisedValue() + step)));
-        state.sliderDragEnded();
-      }, { passive: false });
-
-      rangeEl.addEventListener("dblclick", () => {
-        state.sliderDragStarted();
-        state.setNormalisedValue(defaultNormalised);
-        state.sliderDragEnded();
-      });
-
-      return state;
-    }
-
-    const inputGainState = setupGainSlider({ rangeId: "inputGainRange", fillId: "inputGainFill", thumbId: "inputGainThumb", readoutId: "inputGainReadout", paramId: "inputGain", defaultNormalised: 0.5 });
-    const outputGainState = setupGainSlider({ rangeId: "outputGainRange", fillId: "outputGainFill", thumbId: "outputGainThumb", readoutId: "outputGainReadout", paramId: "outputGain", defaultNormalised: 0.5 });
-
-    // ====================================================================
-    // Level meters (ballistic RAF animation, juce8-critical-patterns.md #20)
-    // ====================================================================
-    function makeMeterAnimator(fillElId) {
-      const el = document.getElementById(fillElId);
-      const MIN_DB = -60, MAX_DB = 0;
-      let current = 0, target = 0;
-      const ATTACK = 0.4, DECAY = 0.15;
-
-      function setLevel(dB) {
-        const clamped = Math.max(MIN_DB, Math.min(MAX_DB, dB));
-        target = (clamped - MIN_DB) / (MAX_DB - MIN_DB);
-      }
-      function tick() {
-        const speed = current < target ? ATTACK : DECAY;
-        current += (target - current) * speed;
-        const pct = current * 100;
-        el.style.height = `${pct}%`;
-        if (pct > 90) el.style.background = "#d9636c";
-        else if (pct > 75) el.style.background = "#e0a860";
-        else el.style.background = "#6f8fc9";
-        requestAnimationFrame(tick);
-      }
-      tick();
-      return { setLevel };
-    }
-
-    const inputMeter = makeMeterAnimator("inputMeterFill");
-    const outputMeter = makeMeterAnimator("outputMeterFill");
-
-    window.__JUCE__.backend.addEventListener("updateInputMeter", (dB) => inputMeter.setLevel(dB));
-    window.__JUCE__.backend.addEventListener("updateOutputMeter", (dB) => outputMeter.setLevel(dB));
 
     // ====================================================================
     // Quick preset bar - UI-only, drives transition/reverb/delay/delaySync/
-    // dryWet relay states (NOT inputGain/outputGain - gain staging is left
-    // untouched by presets, it's session/signal-specific, not a "sound").
+    // dryWet relay states (NOT volume - gain staging is left untouched by
+    // presets, it's session/signal-specific, not a "sound").
     // ====================================================================
     const PRESETS = [
       { name: "Init",           transition: 0,   reverb: 0,  delay: 0,  delaySync: 4, dryWet: 50 },

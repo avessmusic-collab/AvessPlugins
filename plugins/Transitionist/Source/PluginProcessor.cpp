@@ -75,20 +75,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout TransitionistAudioProcessor:
         "%"
     ));
 
-    // inputGain - dB, -24 to +24, default 0
+    // volume - dB, -60 to +6 (max 6dB boost), default 0, LAST stage in the chain
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "inputGain", 1 },
-        "Input Gain",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f, 1.0f),
-        0.0f,
-        "dB"
-    ));
-
-    // outputGain - dB, -24 to +24, default 0
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "outputGain", 1 },
-        "Output Gain",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f, 1.0f),
+        juce::ParameterID { "volume", 1 },
+        "Volume",
+        juce::NormalisableRange<float>(-60.0f, 6.0f, 0.1f, 1.0f),
         0.0f,
         "dB"
     ));
@@ -200,8 +191,7 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const float delayValue      = parameters.getRawParameterValue("delay")->load();
     const int   delaySyncIndex  = static_cast<int>(parameters.getRawParameterValue("delaySync")->load());
     const float dryWetValue     = parameters.getRawParameterValue("dryWet")->load();
-    const float inputGainDb     = parameters.getRawParameterValue("inputGain")->load();
-    const float outputGainDb    = parameters.getRawParameterValue("outputGain")->load();
+    const float volumeDb        = parameters.getRawParameterValue("volume")->load();
 
     const float transitionNorm = transitionValue / 100.0f;
     const float reverbNorm = reverbValue / 100.0f;
@@ -209,21 +199,8 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const float dryWetNorm = dryWetValue / 100.0f;
 
     // ------------------------------------------------------------------
-    // Input Gain (applied first) + INPUT level meter (peak, post gain).
-    // ------------------------------------------------------------------
-    buffer.applyGain(juce::Decibels::decibelsToGain(inputGainDb));
-
-    {
-        float peakLevel = 0.0f;
-        for (int ch = 0; ch < numChannels; ++ch)
-            peakLevel = std::max(peakLevel, buffer.getMagnitude(ch, 0, numSamples));
-        const float peakDb = peakLevel > 0.00001f ? juce::Decibels::gainToDecibels(peakLevel) : -100.0f;
-        inputLevelDb.store(peakDb, std::memory_order_relaxed);
-    }
-
-    // ------------------------------------------------------------------
-    // True dry tap for the FINAL dry/wet blend - captured after Input Gain,
-    // before any effects stage.
+    // True dry tap for the FINAL dry/wet blend - captured before any
+    // effects stage (no input gain stage in this revision).
     // ------------------------------------------------------------------
     for (int ch = 0; ch < numChannels; ++ch)
         dryBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
@@ -340,18 +317,10 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         buffer.addFrom(ch, 0, dryBuffer, ch, 0, numSamples, dryGain);
 
     // ------------------------------------------------------------------
-    // Output Gain (applied last) + OUTPUT level meter (peak, post gain,
-    // the true final output level).
+    // Volume - LAST stage in the chain, -60 to +6dB (max 6dB boost).
+    // Replaces the old separate input/output gain sliders.
     // ------------------------------------------------------------------
-    buffer.applyGain(juce::Decibels::decibelsToGain(outputGainDb));
-
-    {
-        float peakLevel = 0.0f;
-        for (int ch = 0; ch < numChannels; ++ch)
-            peakLevel = std::max(peakLevel, buffer.getMagnitude(ch, 0, numSamples));
-        const float peakDb = peakLevel > 0.00001f ? juce::Decibels::gainToDecibels(peakLevel) : -100.0f;
-        outputLevelDb.store(peakDb, std::memory_order_relaxed);
-    }
+    buffer.applyGain(juce::Decibels::decibelsToGain(volumeDb));
 }
 
 juce::AudioProcessorEditor* TransitionistAudioProcessor::createEditor()

@@ -2,22 +2,21 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 #include <array>
-#include <atomic>
 
 /**
- * Transitionist - v2 DSP (full redesign, 2026-08-26)
+ * Transitionist - v3 DSP (2026-08-27: removed input/output gain sliders +
+ * meters entirely, replaced with a single small VOLUME knob, last in chain)
  *
  * Pure audio effect (stereo in -> stereo out), no MIDI, no file I/O.
- * Signal chain: Input Gain -> [dry tap] -> Ping-Pong Delay (tempo-synced,
- * transition+delay driven) -> Reverb (transition+reverb driven, with
- * freeze/hold) -> Output Glue (fixed soft-clip+limiter) -> Dry/Wet Mix
- * (against the pre-effects dry tap) -> Output Gain -> [level meter].
+ * Signal chain: [dry tap] -> Ping-Pong Delay (tempo-synced, transition+delay
+ * driven) -> Reverb (transition+reverb driven, with freeze/hold) -> Output
+ * Glue (fixed soft-clip+limiter) -> Dry/Wet Mix (against the pre-effects dry
+ * tap) -> Volume (-60 to +6 dB, last stage).
  *
- * Replaces v1's 3-macro/bipolar-filter design (throw/space/sweep) with 7
- * explicit parameters (transition, reverb, delay, delaySync, dryWet,
- * inputGain, outputGain) plus 2 UI-only level meters. See
- * .ideas/creative-brief.md and .ideas/parameter-spec.md (v2) for full
- * rationale.
+ * 6 parameters: transition, reverb, delay, delaySync, dryWet, volume. No
+ * UI-only level meters in this revision (removed along with the input/
+ * output gain sliders they were paired with). See .ideas/creative-brief.md
+ * and .ideas/parameter-spec.md (v3) for full rationale.
  */
 class TransitionistAudioProcessor : public juce::AudioProcessor
 {
@@ -49,12 +48,6 @@ public:
 
     // Public access to parameters for editor.
     juce::AudioProcessorValueTreeState parameters;
-
-    // Live level meters (UI-only, NOT parameters - no automation, no state
-    // save). Peak dB, updated every processBlock(), read by the editor's
-    // Timer at 30Hz. See parameter-spec.md's "UI-Only Level Meters" section.
-    std::atomic<float> inputLevelDb { -100.0f };
-    std::atomic<float> outputLevelDb { -100.0f };
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -91,7 +84,7 @@ private:
 
     // Preallocated scratch buffers (real-time safety - no allocation in
     // processBlock()).
-    juce::AudioBuffer<float> dryBuffer;       // true dry tap (post input gain, pre-effects) - for the final dryWet blend
+    juce::AudioBuffer<float> dryBuffer;       // true dry tap (pre-effects) - for the final dryWet blend
     juce::AudioBuffer<float> reverbWetBuffer; // reverb's own processing copy (real-time safe - no allocation in processBlock())
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TransitionistAudioProcessor)
