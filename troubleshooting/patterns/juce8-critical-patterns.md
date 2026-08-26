@@ -1249,6 +1249,65 @@ or whenever adding a new WebSliderRelay-bound control.
 
 ---
 
+## 24. WebView Cache-Busting - Force Fresh Page Load on Every Launch (RECOMMENDED)
+
+### Problem (no clean WRONG/CORRECT pair - this is a subtle caching behavior, not a syntax mistake)
+
+```cpp
+// Standard pattern (Pattern #8/#21) - a CONSTANT URL on every launch:
+webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
+```
+
+**Result:** Usually fine, but during active development (rebuilding the
+same plugin many times with changing HTML/JS/CSS), WKWebView can restore a
+cached/back-forward-cache-style snapshot of a PREVIOUS load of this exact
+URL instead of re-executing the current resource-provider content - even
+though the underlying binary genuinely changed. Symptoms: intermittent
+blank-white-screen launches, or new code silently appearing not to run
+while other DOM state looks "correct" (because it's a stale snapshot, not
+a live re-render).
+
+### ✅ RECOMMENDED
+
+```cpp
+// In the editor constructor:
+const juce::String cacheBuster = "?t=" + juce::String(juce::Time::getMillisecondCounterHiRes(), 0);
+webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot() + cacheBuster);
+```
+
+```cpp
+// In getResource() - strip the query string before matching, or the
+// resource provider won't recognize "/?t=12345" as "/":
+std::optional<juce::WebBrowserComponent::Resource> getResource(const juce::String& url)
+{
+    const juce::String path = url.upToFirstOccurrenceOf("?", false, false);
+
+    if (path == "/" || path == "/index.html") { /* ... */ }
+    // ... match on `path`, not `url`, for every other case too
+}
+```
+
+**Why:** A unique query string makes every launch a genuinely distinct URL
+from WebKit's perspective, so it cannot serve a cached snapshot from a
+previous launch. This is invisible to the resource provider once `path` is
+stripped of the query string before matching.
+
+**When:** Any WebView plugin under active development where HTML/JS/CSS
+changes frequently between test launches - proactively during Stage 5 GUI
+implementation, not just reactively after hitting confusing "my changes
+aren't showing up" symptoms. Lower priority for a finished, rarely-rebuilt
+plugin, but harmless to include always.
+
+**Detection pattern:** If a WebView plugin shows inconsistent behavior
+between launches of the SAME compiled binary (confirmed via `strings` on
+the binary that your latest changes ARE present) - some launches stale,
+some blank, some correct - suspect this before assuming a logic bug in the
+HTML/JS itself.
+
+**Documented in:** `troubleshooting/gui-issues/webview-stale-cached-page-across-relaunches-Transitionist-20260827.md`
+
+---
+
 All patterns documented with full context in:
 - `troubleshooting/build-failures/`
 - `troubleshooting/runtime-issues/`

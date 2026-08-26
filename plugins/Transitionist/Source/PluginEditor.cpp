@@ -44,7 +44,16 @@ TransitionistAudioProcessorEditor::TransitionistAudioProcessorEditor(Transitioni
     outputGainAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.parameters.getParameter("outputGain"), *outputGainRelay, nullptr);
 
-    webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
+    // Cache-busting: append a per-instance unique query string so WebKit
+    // cannot restore a stale cached/back-forward-cache snapshot of this
+    // exact URL from a previous app launch (observed during development:
+    // some Standalone relaunches were rendering a stale DOM snapshot from
+    // an earlier build instead of re-executing the current index.html,
+    // even though the underlying compiled resource had genuinely changed).
+    // getResource() below strips this query string before matching, so it
+    // has no effect on which resource is actually served.
+    const juce::String cacheBuster = "?t=" + juce::String(juce::Time::getMillisecondCounterHiRes(), 0);
+    webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot() + cacheBuster);
     addAndMakeVisible(*webView);
 
     setSize(1100, 440);
@@ -94,21 +103,26 @@ std::optional<juce::WebBrowserComponent::Resource> TransitionistAudioProcessorEd
         );
     };
 
-    if (url == "/" || url == "/index.html") {
+    // Strip any query string (e.g. the cache-busting "?t=..." appended in
+    // the constructor's goToURL call) before matching - it exists purely to
+    // give WebKit a unique URL per launch, not to select a different resource.
+    const juce::String path = url.upToFirstOccurrenceOf("?", false, false);
+
+    if (path == "/" || path == "/index.html") {
         return juce::WebBrowserComponent::Resource {
             makeVector(BinaryData::index_html, BinaryData::index_htmlSize),
             juce::String("text/html")
         };
     }
 
-    if (url == "/js/juce/index.js") {
+    if (path == "/js/juce/index.js") {
         return juce::WebBrowserComponent::Resource {
             makeVector(BinaryData::index_js, BinaryData::index_jsSize),
             juce::String("application/javascript")
         };
     }
 
-    if (url == "/js/juce/check_native_interop.js") {
+    if (path == "/js/juce/check_native_interop.js") {
         return juce::WebBrowserComponent::Resource {
             makeVector(BinaryData::check_native_interop_js, BinaryData::check_native_interop_jsSize),
             juce::String("application/javascript")

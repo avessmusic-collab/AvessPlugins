@@ -178,7 +178,7 @@
     inset: 0;
     border-radius: 50%;
     transform-origin: center center;
-    transition: transform 40ms linear;
+    transition: transform 80ms cubic-bezier(0.22, 0.61, 0.36, 1);
     background: radial-gradient(circle at 35% 30%, #f6f8fa 0%, #d7dce3 55%, #aab2c0 100%);
     box-shadow: 0 6px 14px rgba(10,12,16,0.45);
   }
@@ -313,6 +313,37 @@
     pointer-events: none;
   }
 
+  /* Native vertical range input - invisible, sits on top of the decorative
+     track/fill/thumb above and handles ALL pointer/keyboard/wheel
+     interaction natively (far more robust than hand-rolled drag math:
+     click-to-jump, drag, and keyboard all work out of the box). WebKit-only
+     appearance is fine since JUCE's macOS WebView is WKWebView/WebKit. */
+  .gain-range-native {
+    position: absolute;
+    top: 148px;
+    width: 30px;
+    height: 192px;
+    margin: 0;
+    padding: 0;
+    -webkit-appearance: slider-vertical;
+    appearance: slider-vertical;
+    background: transparent;
+    cursor: ns-resize;
+    z-index: 10;
+  }
+  .gain-range-native::-webkit-slider-runnable-track {
+    background: transparent;
+  }
+  .gain-range-native::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 30px;
+    height: 14px;
+    background: transparent;
+    border: none;
+  }
+  .gain-range-input  { left: 64px; }
+  .gain-range-output { left: 984px; }
+
   .meter-track {
     position: absolute;
     top: 148px;
@@ -351,11 +382,13 @@
     <!-- INPUT -->
     <div class="panel panel-input"></div>
     <div class="gain-readout gain-readout-input" id="inputGainReadout">0.0 dB</div>
-    <div class="gain-slider-track gain-slider-input" id="inputGainTrack">
+    <div class="gain-slider-track gain-slider-input" id="inputGainVisualTrack">
       <div class="gain-slider-unity-tick"></div>
       <div class="gain-slider-fill" id="inputGainFill"></div>
       <div class="gain-slider-thumb" id="inputGainThumb"></div>
     </div>
+    <input type="range" class="gain-range-native gain-range-input" id="inputGainRange"
+           min="0" max="1" step="0.001" value="0.5" orient="vertical" aria-label="Input Gain">
     <div class="meter-track meter-input"><div class="meter-fill" id="inputMeterFill"></div></div>
     <div class="caption caption-input">INPUT</div>
 
@@ -437,11 +470,13 @@
     <!-- OUTPUT -->
     <div class="panel panel-output"></div>
     <div class="gain-readout gain-readout-output" id="outputGainReadout">0.0 dB</div>
-    <div class="gain-slider-track gain-slider-output" id="outputGainTrack">
+    <div class="gain-slider-track gain-slider-output" id="outputGainVisualTrack">
       <div class="gain-slider-unity-tick"></div>
       <div class="gain-slider-fill" id="outputGainFill"></div>
       <div class="gain-slider-thumb" id="outputGainThumb"></div>
     </div>
+    <input type="range" class="gain-range-native gain-range-output" id="outputGainRange"
+           min="0" max="1" step="0.001" value="0.5" orient="vertical" aria-label="Output Gain">
     <div class="meter-track meter-output"><div class="meter-fill" id="outputMeterFill"></div></div>
     <div class="caption caption-output">OUTPUT</div>
 
@@ -460,7 +495,7 @@
     // - all interactions bracket sliderDragStarted()/sliderDragEnded() for
     // correct DAW automation recording (juce8-critical-patterns.md #23).
     // ====================================================================
-    function setupKnob({ knobId, bodyId, arcId, textId, paramId, defaultNormalised, arcLength, format }) {
+    function setupKnob({ knobId, bodyId, arcId, textId, paramId, defaultNormalised, arcLength, format, dragRangePx }) {
       const knobEl = document.getElementById(knobId);
       const bodyEl = document.getElementById(bodyId);
       const arcEl = document.getElementById(arcId);
@@ -483,7 +518,7 @@
 
       let dragging = false;
       let lastY = 0;
-      const DRAG_SENSITIVITY = 1 / 160;
+      const DRAG_SENSITIVITY = 1 / (dragRangePx || 160);
 
       function onPointerDown(e) {
         dragging = true;
@@ -541,10 +576,26 @@
 
     const percentFormat = (v) => `${Math.round(v)}%`;
 
-    const transitionState = setupKnob({ knobId: "transitionKnob", bodyId: "transitionKnobBody", arcId: "transitionArc", textId: "transitionValueText", paramId: "transition", defaultNormalised: 0.0, arcLength: 490.09, format: percentFormat });
-    const reverbState     = setupKnob({ knobId: "reverbKnob",     bodyId: "reverbKnobBody",     arcId: "reverbArc",     textId: "reverbValueText",     paramId: "reverb",     defaultNormalised: 0.0, arcLength: 301.59, format: percentFormat });
-    const delayState      = setupKnob({ knobId: "delayKnob",      bodyId: "delayKnobBody",      arcId: "delayArc",      textId: "delayValueText",      paramId: "delay",      defaultNormalised: 0.0, arcLength: 301.59, format: percentFormat });
-    const dryWetState     = setupKnob({ knobId: "dryWetKnob",     bodyId: "dryWetKnobBody",     arcId: "dryWetArc",     textId: "dryWetValueText",     paramId: "dryWet",     defaultNormalised: 0.5, arcLength: 207.35, format: percentFormat });
+    // WebKit sometimes doesn't repaint a custom-styled (appearance:none)
+    // <select>'s closed-state label after its .value is set purely from
+    // JS (as opposed to a real user interaction) - force a reflow
+    // immediately after any such assignment to guarantee the visible text
+    // matches the new selection.
+    function forceSelectRepaint(selectEl) {
+      const prevDisplay = selectEl.style.display;
+      selectEl.style.display = "none";
+      void selectEl.offsetHeight; // force synchronous reflow
+      selectEl.style.display = prevDisplay;
+    }
+
+    // dragRangePx scales with each knob's own diameter (~1.2x) so drag feel
+    // is proportional to visual size - the 200px hero knob needs more travel
+    // for the same value change than the 80px Dry/Wet knob, matching what
+    // your hand expects when looking at a control that size.
+    const transitionState = setupKnob({ knobId: "transitionKnob", bodyId: "transitionKnobBody", arcId: "transitionArc", textId: "transitionValueText", paramId: "transition", defaultNormalised: 0.0, arcLength: 490.09, format: percentFormat, dragRangePx: 240 });
+    const reverbState     = setupKnob({ knobId: "reverbKnob",     bodyId: "reverbKnobBody",     arcId: "reverbArc",     textId: "reverbValueText",     paramId: "reverb",     defaultNormalised: 0.0, arcLength: 301.59, format: percentFormat, dragRangePx: 145 });
+    const delayState      = setupKnob({ knobId: "delayKnob",      bodyId: "delayKnobBody",      arcId: "delayArc",      textId: "delayValueText",      paramId: "delay",      defaultNormalised: 0.0, arcLength: 301.59, format: percentFormat, dragRangePx: 145 });
+    const dryWetState     = setupKnob({ knobId: "dryWetKnob",     bodyId: "dryWetKnobBody",     arcId: "dryWetArc",     textId: "dryWetValueText",     paramId: "dryWet",     defaultNormalised: 0.5, arcLength: 207.35, format: percentFormat, dragRangePx: 96 });
 
     // ====================================================================
     // Delay Sync combo box (9 choices, index/8 normalised - Scatter's
@@ -560,8 +611,10 @@
       delaySyncState.valueChangedEvent.addListener(() => {
         const index = Math.round(delaySyncState.getNormalisedValue() * DELAY_SYNC_MAX_INDEX);
         delaySyncSelect.value = String(index);
+        forceSelectRepaint(delaySyncSelect);
       });
       delaySyncSelect.value = String(Math.round(delaySyncState.getNormalisedValue() * DELAY_SYNC_MAX_INDEX));
+      forceSelectRepaint(delaySyncSelect);
     }
 
     // ====================================================================
@@ -569,8 +622,8 @@
     // same gesture bracketing as knobs. Range is -24..+24dB but the slider
     // only deals in normalised 0-1 (0 = -24dB/bottom, 1 = +24dB/top).
     // ====================================================================
-    function setupGainSlider({ trackId, fillId, thumbId, readoutId, paramId, defaultNormalised }) {
-      const trackEl = document.getElementById(trackId);
+    function setupGainSlider({ rangeId, fillId, thumbId, readoutId, paramId, defaultNormalised }) {
+      const rangeEl = document.getElementById(rangeId);
       const fillEl = document.getElementById(fillId);
       const thumbEl = document.getElementById(thumbId);
       const readoutEl = document.getElementById(readoutId);
@@ -583,6 +636,11 @@
         fillEl.style.height = `${pct}%`;
         thumbEl.style.top = `${100 - pct}%`;
         thumbEl.style.transform = "translateY(-50%)";
+        // Keep the native input's own value in sync (host automation/preset
+        // recall moves it without the user touching the control directly).
+        if (document.activeElement !== rangeEl) {
+          rangeEl.value = String(normalised);
+        }
         const scaled = state.getScaledValue();
         const sign = scaled > 0 ? "+" : "";
         readoutEl.textContent = `${sign}${scaled.toFixed(1)} dB`;
@@ -591,36 +649,35 @@
       render();
       state.valueChangedEvent.addListener(() => render());
 
+      // Native <input type="range"> handles all pointer/keyboard interaction
+      // (click-to-jump, drag, arrow keys) - just bridge its value to the
+      // relay and bracket the drag as a single automation gesture.
       let dragging = false;
 
-      function normalisedFromEvent(e) {
-        const rect = trackEl.getBoundingClientRect();
-        const raw = 1 - (e.clientY - rect.top) / rect.height;
-        return Math.max(0, Math.min(1, raw));
-      }
-
-      function onPointerDown(e) {
+      rangeEl.addEventListener("mousedown", () => {
         dragging = true;
         state.sliderDragStarted();
-        state.setNormalisedValue(normalisedFromEvent(e));
-        window.addEventListener("mousemove", onPointerMove);
-        window.addEventListener("mouseup", onPointerUp);
-        e.preventDefault();
-      }
-      function onPointerMove(e) {
-        if (!dragging) return;
-        state.setNormalisedValue(normalisedFromEvent(e));
-      }
-      function onPointerUp() {
-        if (!dragging) return;
-        dragging = false;
-        state.sliderDragEnded();
-        window.removeEventListener("mousemove", onPointerMove);
-        window.removeEventListener("mouseup", onPointerUp);
-      }
-      trackEl.addEventListener("mousedown", onPointerDown);
+      });
+      rangeEl.addEventListener("input", () => {
+        state.setNormalisedValue(parseFloat(rangeEl.value));
+      });
+      window.addEventListener("mouseup", () => {
+        if (dragging) {
+          dragging = false;
+          state.sliderDragEnded();
+        }
+      });
 
-      trackEl.addEventListener("wheel", (e) => {
+      // Keyboard arrow presses on a native range fire "input" per key press
+      // (not a continuous drag), so bracket each one as its own gesture.
+      rangeEl.addEventListener("keydown", (e) => {
+        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End"].includes(e.key)) {
+          state.sliderDragStarted();
+          requestAnimationFrame(() => state.sliderDragEnded());
+        }
+      });
+
+      rangeEl.addEventListener("wheel", (e) => {
         e.preventDefault();
         const step = e.deltaY < 0 ? 0.01 : -0.01;
         state.sliderDragStarted();
@@ -628,7 +685,7 @@
         state.sliderDragEnded();
       }, { passive: false });
 
-      trackEl.addEventListener("dblclick", () => {
+      rangeEl.addEventListener("dblclick", () => {
         state.sliderDragStarted();
         state.setNormalisedValue(defaultNormalised);
         state.sliderDragEnded();
@@ -637,8 +694,8 @@
       return state;
     }
 
-    const inputGainState = setupGainSlider({ trackId: "inputGainTrack", fillId: "inputGainFill", thumbId: "inputGainThumb", readoutId: "inputGainReadout", paramId: "inputGain", defaultNormalised: 0.5 });
-    const outputGainState = setupGainSlider({ trackId: "outputGainTrack", fillId: "outputGainFill", thumbId: "outputGainThumb", readoutId: "outputGainReadout", paramId: "outputGain", defaultNormalised: 0.5 });
+    const inputGainState = setupGainSlider({ rangeId: "inputGainRange", fillId: "inputGainFill", thumbId: "inputGainThumb", readoutId: "inputGainReadout", paramId: "inputGain", defaultNormalised: 0.5 });
+    const outputGainState = setupGainSlider({ rangeId: "outputGainRange", fillId: "outputGainFill", thumbId: "outputGainThumb", readoutId: "outputGainReadout", paramId: "outputGain", defaultNormalised: 0.5 });
 
     // ====================================================================
     // Level meters (ballistic RAF animation, juce8-critical-patterns.md #20)
@@ -721,6 +778,7 @@
         if (customOpt) customOpt.remove();
         currentIndex = index;
         selectEl.value = String(index);
+        forceSelectRepaint(selectEl);
       }
 
       function findMatchingPresetIndex() {
@@ -766,6 +824,7 @@
           selectEl.value = "-1";
           currentIndex = -1;
         }
+        forceSelectRepaint(selectEl);
       }
 
       // Defer the FIRST call past the current paint (requestAnimationFrame)
