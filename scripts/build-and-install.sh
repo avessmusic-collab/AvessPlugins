@@ -323,9 +323,16 @@ phase_5_install_new_versions() {
     # Install VST3
     info "  - Installing VST3 to $vst3_dir/"
     if [ "$DRY_RUN" = true ]; then
+        echo "[DRY-RUN] mkdir -p \"$vst3_dir\""
         echo "[DRY-RUN] cp -R \"$vst3_build\" \"$vst3_dir/\""
         echo "[DRY-RUN] chmod -R 755 \"$vst3_dir/$PRODUCT_NAME.vst3\""
     else
+        # Ensure destination directory exists BEFORE copying. If it doesn't
+        # exist yet (e.g. first-ever plugin install on this machine), `cp -R
+        # src dst/` creates `dst` itself as a copy of the bundle instead of
+        # nesting it inside - silently corrupting the target path and making
+        # the subsequent chmod fail (chmod: ... No such file or directory).
+        mkdir -p "$vst3_dir"
         cp -R "$vst3_build" "$vst3_dir/"
         chmod -R 755 "$vst3_dir/$PRODUCT_NAME.vst3"
         echo "Installed VST3: $vst3_dir/$PRODUCT_NAME.vst3" >> "$LOG_FILE"
@@ -334,9 +341,12 @@ phase_5_install_new_versions() {
     # Install AU
     info "  - Installing AU to $au_dir/"
     if [ "$DRY_RUN" = true ]; then
+        echo "[DRY-RUN] mkdir -p \"$au_dir\""
         echo "[DRY-RUN] cp -R \"$au_build\" \"$au_dir/\""
         echo "[DRY-RUN] chmod -R 755 \"$au_dir/$PRODUCT_NAME.component\""
     else
+        # Same fix as VST3 above - ensure destination directory exists first.
+        mkdir -p "$au_dir"
         cp -R "$au_build" "$au_dir/"
         chmod -R 755 "$au_dir/$PRODUCT_NAME.component"
         echo "Installed AU: $au_dir/$PRODUCT_NAME.component" >> "$LOG_FILE"
