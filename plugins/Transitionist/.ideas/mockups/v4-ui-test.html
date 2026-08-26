@@ -521,6 +521,14 @@
         value = Math.max(0, Math.min(1, v));
         listeners.forEach((fn) => fn(value));
       },
+      // Mocks of the real JUCE SliderState methods (see js/juce/index.js in
+      // the production build) - these bracket a value change as a single
+      // automation "gesture" (parameter.beginChangeGesture()/
+      // endChangeGesture() on the C++ side), which is what lets DAWs like
+      // Ableton reliably record automation from a knob drag. No-ops here
+      // beyond logging since there's no real host to notify in the browser.
+      sliderDragStarted: () => console.log(`[mock] sliderDragStarted`),
+      sliderDragEnded: () => console.log(`[mock] sliderDragEnded`),
       valueChangedEvent: {
         addListener: (fn) => listeners.push(fn)
       }
@@ -601,6 +609,9 @@
       startValue = state.getNormalisedValue();
       detentHoldUntil = 0;
       detentArmed = true;
+      // REQUIRED for DAW automation recording - see js/juce/index.js
+      // SliderState.sliderDragStarted() in the production build.
+      state.sliderDragStarted();
       knobEl.setPointerCapture && e.pointerId !== undefined && knobEl.setPointerCapture(e.pointerId);
       window.addEventListener("mousemove", onPointerMove);
       window.addEventListener("mouseup", onPointerUp);
@@ -635,33 +646,44 @@
 
     function onPointerUp() {
       dragging = false;
+      state.sliderDragEnded(); // closes the automation gesture
       window.removeEventListener("mousemove", onPointerMove);
       window.removeEventListener("mouseup", onPointerUp);
     }
 
     knobEl.addEventListener("mousedown", onPointerDown);
 
-    // Scroll wheel nudges value by 1% of range per tick
+    // Scroll wheel nudges value by 1% of range per tick. Each tick is its
+    // own discrete automation gesture.
     knobEl.addEventListener("wheel", (e) => {
       e.preventDefault();
       const step = e.deltaY < 0 ? 0.01 : -0.01;
+      state.sliderDragStarted();
       state.setNormalisedValue(state.getNormalisedValue() + step);
+      state.sliderDragEnded();
     }, { passive: false });
 
-    // Keyboard accessibility: arrow up/down adjust by 1% of range
+    // Keyboard accessibility: arrow up/down adjust by 1% of range. Each key
+    // press is its own discrete automation gesture.
     knobEl.addEventListener("keydown", (e) => {
       if (e.key === "ArrowUp" || e.key === "ArrowRight") {
         e.preventDefault();
+        state.sliderDragStarted();
         state.setNormalisedValue(state.getNormalisedValue() + 0.01);
+        state.sliderDragEnded();
       } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
         e.preventDefault();
+        state.sliderDragStarted();
         state.setNormalisedValue(state.getNormalisedValue() - 0.01);
+        state.sliderDragEnded();
       }
     });
 
-    // Double-click resets to default
+    // Double-click resets to default - also its own discrete gesture.
     knobEl.addEventListener("dblclick", () => {
+      state.sliderDragStarted();
       state.setNormalisedValue(defaultNormalised);
+      state.sliderDragEnded();
     });
   }
 
@@ -780,9 +802,15 @@
       function applyPreset(rawIndex) {
         const index = ((rawIndex % PRESETS.length) + PRESETS.length) % PRESETS.length;
         const p = PRESETS[index];
+        throwState.sliderDragStarted();
         throwState.setNormalisedValue(unipolarToNormalised(p.throw));
+        throwState.sliderDragEnded();
+        spaceState.sliderDragStarted();
         spaceState.setNormalisedValue(unipolarToNormalised(p.space));
+        spaceState.sliderDragEnded();
+        sweepState.sliderDragStarted();
         sweepState.setNormalisedValue(bipolarToNormalised(p.sweep));
+        sweepState.sliderDragEnded();
         const customOpt = selectEl.querySelector('option[value="-1"]');
         if (customOpt) customOpt.remove();
         currentIndex = index;

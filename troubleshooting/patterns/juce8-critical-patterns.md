@@ -1145,6 +1145,110 @@ AudioProcessor(BusesProperties()
 
 ---
 
+## 23. WebView Knob Interaction - Automation Gesture Bracketing (ALWAYS REQUIRED)
+
+### ❌ WRONG (Automation won't record reliably in Ableton/most DAWs)
+```javascript
+function onPointerDown(e) {
+  dragging = true;
+  lastY = e.clientY;
+  window.addEventListener("mousemove", onPointerMove);
+  window.addEventListener("mouseup", onPointerUp);
+}
+
+function onPointerMove(e) {
+  if (!dragging) return;
+  const deltaY = lastY - e.clientY;
+  const newValue = state.getNormalisedValue() + deltaY * SENSITIVITY;
+  state.setNormalisedValue(newValue);  // value changes, sound is correct...
+  lastY = e.clientY;
+}
+
+function onPointerUp() {
+  dragging = false;
+}
+```
+
+**Result:** Dragging the knob changes the parameter and the plugin sounds
+correct, but the host has no reliable signal for when a "touch" of the
+control begins/ends. Ableton's Touch/Latch automation record modes (and
+many other hosts' VST3 `beginEdit`/`endEdit` bookkeeping) depend on this
+signal - without it, automation may not get written reliably while
+dragging, undo history doesn't group the drag as one action, and hosts
+have no way to show a "being automated" touch indicator.
+
+### ✅ CORRECT
+```javascript
+function onPointerDown(e) {
+  dragging = true;
+  lastY = e.clientY;
+  state.sliderDragStarted();   // -> parameter.beginChangeGesture() in C++
+  window.addEventListener("mousemove", onPointerMove);
+  window.addEventListener("mouseup", onPointerUp);
+}
+
+function onPointerMove(e) {
+  if (!dragging) return;
+  const deltaY = lastY - e.clientY;
+  const newValue = state.getNormalisedValue() + deltaY * SENSITIVITY;
+  state.setNormalisedValue(newValue);
+  lastY = e.clientY;
+}
+
+function onPointerUp() {
+  dragging = false;
+  state.sliderDragEnded();     // -> parameter.endChangeGesture() in C++
+}
+
+// Discrete interactions (wheel tick, keyboard nudge, double-click reset)
+// are NOT part of a multi-frame drag, so bracket each one individually -
+// this matches native juce::Slider's own per-wheel-event
+// ScopedDragNotification behavior exactly:
+knobEl.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  state.sliderDragStarted();
+  state.setNormalisedValue(state.getNormalisedValue() + step);
+  state.sliderDragEnded();
+});
+```
+
+**Why:** `SliderState.sliderDragStarted()`/`sliderDragEnded()` (defined in
+the JUCE-provided `js/juce/index.js` bridge, copied verbatim into every
+WebView plugin) emit events that `WebSliderRelay::Listener` on the C++ side
+turns directly into `WebSliderParameterAttachment::beginGesture()`/
+`endGesture()`, which call `parameter.beginChangeGesture()`/
+`endChangeGesture()` - see
+`juce_audio_processors/utilities/juce_ParameterAttachments.h`. This is the
+exact same mechanism a native `juce::Slider` uses internally
+(`mouseDown`/`mouseUp` and even each individual `mouseWheelMove` via
+`ScopedDragNotification`). **A JUCE WebView knob that never calls these two
+methods is simply never bracketing gestures at all** - it's easy to miss
+entirely because playback of pre-recorded automation still works fine
+(hosts apply automation via plain `setValue`, independent of gesture
+bracketing) and the plugin sounds correct during manual testing. The gap
+only shows up when a user actually tries to **record** new automation by
+touching the control.
+
+**Detection pattern:** If a user reports "I can't record knob automation in
+[DAW]" (especially Ableton, which is strict about touch/latch semantics)
+but automation playback and manual parameter changes both work fine,
+`grep -c "sliderDragStarted\|sliderDragEnded" Source/ui/public/index.html`
+- if it returns 0, this is almost certainly the cause.
+
+**Scope:** Apply to every JS-side interaction that changes a WebSliderRelay-
+backed parameter: pointer drag (one gesture spanning mousedown->mouseup),
+plus wheel/keyboard/double-click (each as its own individual begin+set+end
+gesture). Also apply when driving relay state from something other than a
+knob - e.g. a preset-browser button that sets multiple parameters at once
+should bracket each parameter's write individually.
+
+**When:** ALL WebView-based knobs/sliders, at Stage 5 (GUI) implementation
+or whenever adding a new WebSliderRelay-bound control.
+
+**Documented in:** `troubleshooting/gui-issues/webview-knob-missing-automation-gesture-bracketing-Transitionist-20260826.md`
+
+---
+
 All patterns documented with full context in:
 - `troubleshooting/build-failures/`
 - `troubleshooting/runtime-issues/`

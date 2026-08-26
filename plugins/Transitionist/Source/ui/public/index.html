@@ -537,6 +537,13 @@
         lastY = e.clientY;
         detentHoldUntil = 0;
         detentArmed = true;
+        // REQUIRED for DAW automation recording (e.g. Ableton "touch"/"latch"
+        // modes, VST3 beginEdit/endEdit): tells the host a gesture has
+        // started. WebSliderParameterAttachment maps this straight to
+        // parameter.beginChangeGesture() - without it, dragging still
+        // changes the sound correctly, but hosts have no reliable signal to
+        // know when to start writing an automation envelope.
+        state.sliderDragStarted();
         window.addEventListener("mousemove", onPointerMove);
         window.addEventListener("mouseup", onPointerUp);
         e.preventDefault();
@@ -575,33 +582,47 @@
 
       function onPointerUp() {
         dragging = false;
+        state.sliderDragEnded(); // matches parameter.endChangeGesture() - closes the automation gesture
         window.removeEventListener("mousemove", onPointerMove);
         window.removeEventListener("mouseup", onPointerUp);
       }
 
       knobEl.addEventListener("mousedown", onPointerDown);
 
-      // Scroll wheel nudges value by 1% of range per tick
+      // Scroll wheel nudges value by 1% of range per tick. Each tick is its
+      // own discrete automation gesture (matches native juce::Slider's own
+      // ScopedDragNotification-per-wheel-event behavior) - begin/end wrap
+      // the single value change so it registers as a recordable edit.
       knobEl.addEventListener("wheel", (e) => {
         e.preventDefault();
         const step = e.deltaY < 0 ? 0.01 : -0.01;
+        state.sliderDragStarted();
         state.setNormalisedValue(Math.max(0, Math.min(1, state.getNormalisedValue() + step)));
+        state.sliderDragEnded();
       }, { passive: false });
 
-      // Keyboard accessibility: arrow up/down adjust by 1% of range
+      // Keyboard accessibility: arrow up/down adjust by 1% of range. Each
+      // key press is its own discrete automation gesture, same rationale
+      // as the wheel handler above.
       knobEl.addEventListener("keydown", (e) => {
         if (e.key === "ArrowUp" || e.key === "ArrowRight") {
           e.preventDefault();
+          state.sliderDragStarted();
           state.setNormalisedValue(Math.max(0, Math.min(1, state.getNormalisedValue() + 0.01)));
+          state.sliderDragEnded();
         } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
           e.preventDefault();
+          state.sliderDragStarted();
           state.setNormalisedValue(Math.max(0, Math.min(1, state.getNormalisedValue() - 0.01)));
+          state.sliderDragEnded();
         }
       });
 
-      // Double-click resets to default
+      // Double-click resets to default - also its own discrete gesture.
       knobEl.addEventListener("dblclick", () => {
+        state.sliderDragStarted();
         state.setNormalisedValue(defaultNormalised);
+        state.sliderDragEnded();
       });
     }
 
@@ -718,9 +739,15 @@
       function applyPreset(rawIndex) {
         const index = ((rawIndex % PRESETS.length) + PRESETS.length) % PRESETS.length;
         const p = PRESETS[index];
+        throwState.sliderDragStarted();
         throwState.setNormalisedValue(unipolarToNormalised(p.throw));
+        throwState.sliderDragEnded();
+        spaceState.sliderDragStarted();
         spaceState.setNormalisedValue(unipolarToNormalised(p.space));
+        spaceState.sliderDragEnded();
+        sweepState.sliderDragStarted();
         sweepState.setNormalisedValue(bipolarToNormalised(p.sweep));
+        sweepState.sliderDragEnded();
         const customOpt = selectEl.querySelector('option[value="-1"]');
         if (customOpt) customOpt.remove();
         currentIndex = index;

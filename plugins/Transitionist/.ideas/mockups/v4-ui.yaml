@@ -396,6 +396,7 @@ display_elements:
       present on THROW/SPACE (they have no center-referenced behavior).
 
 notes:
+  - "Post-implementation fix (user request: \"make sure I can record knob automation in DAWs like ableton\"): all 3 knobs and the preset bar now call sliderDragStarted()/sliderDragEnded() around every value-changing interaction (pointer drag as one gesture, wheel/keyboard/dblclick/preset-recall as individual discrete gestures). These map directly to parameter.beginChangeGesture()/endChangeGesture() in C++ - required for hosts (especially Ableton's Touch/Latch modes) to reliably record automation from live UI interaction. This was missing from the original Phase 5.1/5.2 implementation and is a codebase-wide gap now documented as Pattern #23 in troubleshooting/patterns/juce8-critical-patterns.md."
   - "v4 is a parameter-set change, not a restyle. Three user-facing parameters now exist - throw, space, sweep (per creative-brief.md revision 2026-08-26). Old parameter IDs mix/duration are retired entirely - no backward-compatible aliasing, this is a breaking parameter-set redesign matching the plugin's DSP redesign."
   - "Panel order left-to-right: THROW, SPACE, SWEEP - matches signal-flow order (Delay -> Reverb macros first, Bipolar DJ Filter last), same left-to-right-matches-signal-chain convention v3 established for its two panels."
   - "throw and space map to continuous floats 0-100%, implemented as WebSliderRelay (JS: Juce.getSliderState('throw') / Juce.getSliderState('space')) - same binding pattern as v3's mix/duration."
