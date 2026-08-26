@@ -416,7 +416,7 @@
     // listeners read the current value via getNormalisedValue() rather
     // than trusting a passed callback argument (Pattern #15).
     // ============================================================
-    function setupKnob({ knobId, bodyId, textId, paramId, label, defaultNormalised, render }) {
+    function setupKnob({ knobId, bodyId, textId, paramId, label, defaultNormalised, render, centerDetent }) {
       const knobEl = document.getElementById(knobId);
       const bodyEl = document.getElementById(bodyId);
       const textEl = document.getElementById(textId);
@@ -446,9 +446,24 @@
       let lastY = 0;
       const DRAG_SENSITIVITY = 1 / 160; // ~160px of drag covers full range
 
+      // Center-detent (SWEEP only): briefly snaps and holds at the exact
+      // center value (0.5 normalised = 0%) when a drag passes through it, so
+      // the physical center reads as a distinct, findable stop instead of a
+      // point you can blow straight through - mimics a hardware pot's center
+      // detent. Purely a pointer-drag interaction nicety: automation/preset
+      // recall still pass through 0.5 continuously and are unaffected; wheel/
+      // keyboard nudging is also unaffected (each step is already a discrete
+      // 1% increment, so it can already land exactly on 0% without help).
+      const CENTER_DETENT_THRESHOLD = 0.015;  // +/-1.5% normalised (~+/-3 of the -100..100 display range)
+      const CENTER_DETENT_HOLD_MS = 150;      // how long the knob "sticks" at center before resuming tracking
+      let detentHoldUntil = 0;
+      let detentArmed = true; // re-armed once the drag leaves the deadzone, so it only snaps once per pass-through
+
       function onPointerDown(e) {
         dragging = true;
         lastY = e.clientY;
+        detentHoldUntil = 0;
+        detentArmed = true;
         window.addEventListener("mousemove", onPointerMove);
         window.addEventListener("mouseup", onPointerUp);
         e.preventDefault();
@@ -456,9 +471,31 @@
 
       function onPointerMove(e) {
         if (!dragging) return;
+
+        // Still within an active center hold - ignore pointer movement
+        // entirely (knob stays pinned at 0%), but keep tracking the raw
+        // pointer position so per-frame delta tracking resumes smoothly
+        // (no jump) once the hold window elapses.
+        if (centerDetent && performance.now() < detentHoldUntil) {
+          lastY = e.clientY;
+          return;
+        }
+
         const deltaY = lastY - e.clientY; // distance since LAST FRAME
         const current = state.getNormalisedValue();
-        const newValue = Math.max(0, Math.min(1, current + deltaY * DRAG_SENSITIVITY));
+        let newValue = Math.max(0, Math.min(1, current + deltaY * DRAG_SENSITIVITY));
+
+        if (centerDetent) {
+          const inDeadzone = Math.abs(newValue - 0.5) <= CENTER_DETENT_THRESHOLD;
+          if (inDeadzone && detentArmed) {
+            newValue = 0.5;
+            detentHoldUntil = performance.now() + CENTER_DETENT_HOLD_MS;
+            detentArmed = false; // don't re-trigger again until the drag leaves the deadzone
+          } else if (!inDeadzone) {
+            detentArmed = true;
+          }
+        }
+
         state.setNormalisedValue(newValue);
         lastY = e.clientY; // update for next frame
       }
@@ -589,6 +626,7 @@
         paramId: "sweep",
         label: "SWEEP",
         defaultNormalised: 0.5,   // 0.5 normalised = 0% = center detent
+        centerDetent: true,       // snap-and-hold at center while dragging (SWEEP only)
         render: makeBipolarRenderer({ pathId: "sweepArcPath" })
       });
     });

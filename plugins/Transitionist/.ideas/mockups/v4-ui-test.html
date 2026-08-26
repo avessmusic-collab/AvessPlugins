@@ -485,7 +485,7 @@
   // identical for unipolar and bipolar knobs. Only the arc-fill rendering
   // and LCD text formatting differ per knob "mode".
   // ============================================================
-  function setupKnob({ knobId, bodyId, textId, paramId, label, defaultNormalised, render }) {
+  function setupKnob({ knobId, bodyId, textId, paramId, label, defaultNormalised, render, centerDetent }) {
     const knobEl = document.getElementById(knobId);
     const bodyEl = document.getElementById(bodyId);
     const textEl = document.getElementById(textId);
@@ -509,10 +509,25 @@
     let startValue = 0;
     const DRAG_RANGE_PX = 160; // px of drag to cover full range
 
+    // Center-detent (SWEEP only): briefly snaps and holds at the exact
+    // center value (0.5 normalised = 0%) when a drag passes through it, so
+    // the physical center reads as a distinct, findable stop instead of a
+    // point you can blow straight through - mimics a hardware pot's center
+    // detent. Purely a pointer-drag interaction nicety: automation/preset
+    // recall still pass through 0.5 continuously and are unaffected; wheel/
+    // keyboard nudging is also unaffected (each step is already a discrete
+    // 1% increment, so it can already land exactly on 0% without help).
+    const CENTER_DETENT_THRESHOLD = 0.015;  // +/-1.5% normalised (~+/-3 of the -100..100 display range)
+    const CENTER_DETENT_HOLD_MS = 150;      // how long the knob "sticks" at center before resuming tracking
+    let detentHoldUntil = 0;
+    let detentArmed = true; // re-armed once the drag leaves the deadzone, so it only snaps once per pass-through
+
     function onPointerDown(e) {
       dragging = true;
       startY = e.clientY;
       startValue = state.getNormalisedValue();
+      detentHoldUntil = 0;
+      detentArmed = true;
       knobEl.setPointerCapture && e.pointerId !== undefined && knobEl.setPointerCapture(e.pointerId);
       window.addEventListener("mousemove", onPointerMove);
       window.addEventListener("mouseup", onPointerUp);
@@ -521,9 +536,28 @@
 
     function onPointerMove(e) {
       if (!dragging) return;
+
+      // Still within an active center hold - ignore pointer movement
+      // entirely until the hold window elapses (knob stays pinned at 0%).
+      if (centerDetent && performance.now() < detentHoldUntil) return;
+
       const deltaY = startY - e.clientY;
       const deltaNormalised = deltaY / DRAG_RANGE_PX;
-      state.setNormalisedValue(startValue + deltaNormalised);
+      let target = startValue + deltaNormalised;
+
+      if (centerDetent) {
+        const clamped = Math.max(0, Math.min(1, target));
+        const inDeadzone = Math.abs(clamped - 0.5) <= CENTER_DETENT_THRESHOLD;
+        if (inDeadzone && detentArmed) {
+          target = 0.5;
+          detentHoldUntil = performance.now() + CENTER_DETENT_HOLD_MS;
+          detentArmed = false; // don't re-trigger again until the drag leaves the deadzone
+        } else if (!inDeadzone) {
+          detentArmed = true;
+        }
+      }
+
+      state.setNormalisedValue(target);
     }
 
     function onPointerUp() {
@@ -654,6 +688,7 @@
       paramId: "sweep",
       label: "SWEEP",
       defaultNormalised: 0.5,   // 0.5 normalised = 0% = center detent
+      centerDetent: true,       // snap-and-hold at center while dragging (SWEEP only)
       render: makeBipolarRenderer({ pathId: "sweepArcPath", label: "SWEEP", paramId: "sweep" })
     });
   });

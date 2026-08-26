@@ -224,6 +224,21 @@ controls:
         rotate with the knob body - it marks a fixed physical reference
         point on the dial face, same convention as center-detent markings
         on physical hardware pots.
+      center_detent_snap: >
+        Added post-implementation (user request, during Stage 3 GUI Phase
+        5.2 live testing): while pointer-dragging SWEEP, the value briefly
+        snaps to and holds at exactly 0% for ~150ms when the drag passes
+        through a small deadzone around center (+/-1.5% normalised, ~+/-3%
+        of the -100..100 display range), then resumes tracking smoothly
+        from wherever the pointer currently is - mimicking a physical pot's
+        center detent so 0% is a findable stop, not a point you can blow
+        straight through. Re-arms only after the drag leaves the deadzone,
+        so it snaps once per pass-through rather than repeatedly stuttering
+        near center. Pointer-drag only - wheel/keyboard nudging (already
+        discrete 1% steps) and host automation/preset recall (which must
+        pass through 0.5 normalised continuously and immediately) are both
+        unaffected. Implemented per-knob via a `centerDetent` flag on the
+        shared `setupKnob()` interaction wiring, not a global behavior.
     readout:
       style: "inset-lcd"
       position: "embedded in knob center, does not rotate with knob body"
