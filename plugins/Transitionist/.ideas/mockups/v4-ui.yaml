@@ -258,6 +258,59 @@ controls:
       knob disc's own material, glow, ridged edge, and LCD housing are
       otherwise pixel-identical to THROW and SPACE.
 
+# Quick preset bar - added post-implementation (user request, during live
+# Standalone testing). NOT a JUCE/DAW "program" (no getStateInformation /
+# AudioProcessor::setCurrentProgram involvement, does not appear in the
+# host's own preset menu) - purely a fast, UI-side way to jump between a
+# few useful starting points. It drives the SAME 3 WebSliderRelay states
+# the knobs themselves use (calling .setNormalisedValue() on each), so
+# preset recall is fully host-automatable and is captured correctly by the
+# host's own session/state save, which persists the resulting parameter
+# values rather than "which preset was selected". On load, the bar checks
+# current parameter values against its preset list and shows the matching
+# name if found, otherwise shows "Custom" - it never overwrites
+# host-restored values on startup.
+preset_bar:
+  position: { x: 364, y: 58 }
+  size: { width: 252, height: 24 }
+  layout: >
+    Sits in the previously-unused 36px gap between the logo (bottom edge
+    54px) and the panel row (top edge 90px) - no window resize needed.
+    Centered horizontally in the 980px window.
+  elements:
+    - id: preset_prev_btn
+      type: button
+      glyph: "◀"
+      size: { width: 28, height: 24 }
+      style: "small chrome pill button - reuses the same brushed-metal
+        gradient family as the panel cards (disc_face_start/mid/end tones),
+        not a new visual language"
+      action: "steps to the previous preset in PRESETS (wraps around)"
+    - id: preset_select
+      type: dropdown
+      size: { width: 180, height: 24 }
+      style: "styled as an LCD readout (lcd_bezel/lcd_screen/lcd_digits
+        colors, monospace font, cyan glow text-shadow) - matches the
+        knobs' own LCD treatment rather than a default browser dropdown"
+      action: "native <select> - lists all preset names, jump directly to
+        any preset by choosing it; shows 'Custom' if current parameter
+        values don't match a known preset"
+    - id: preset_next_btn
+      type: button
+      glyph: "▶"
+      size: { width: 28, height: 24 }
+      style: "same as preset_prev_btn"
+      action: "steps to the next preset in PRESETS (wraps around)"
+  presets:
+    - { name: "Init",              throw: 0,   space: 0,   sweep: 0   }
+    - { name: "Gentle Wash",       throw: 35,  space: 45,  sweep: 0   }
+    - { name: "Tight Slap",        throw: 20,  space: 10,  sweep: 0   }
+    - { name: "Big Riser",         throw: 85,  space: 70,  sweep: 35  }
+    - { name: "Infinite Freeze",   throw: 100, space: 55,  sweep: 0   }
+    - { name: "Filter Down Sweep", throw: 55,  space: 40,  sweep: -80 }
+    - { name: "Filter Up Open",    throw: 45,  space: 35,  sweep: 70  }
+    - { name: "Cavernous Hold",    throw: 95,  space: 100, sweep: -15 }
+
 # Non-interactive visual elements. Not JUCE relay-bound controls; excluded
 # from control-overlap/bounds validation but positioned to avoid collisions.
 display_elements:
@@ -350,6 +403,7 @@ notes:
   - "Window widened from v3's 700x420 to 980x420 (height unchanged) specifically to fit a third panel at the same generous per-panel size/margin conventions v3 used, rather than shrinking knobs below v3's 140px to cram three panels into 700px. Panel width recalculated 260px -> 250px; all other panel/knob/caption proportions and vertical positions are unchanged from v3."
   - "Typography, knob material/texture (ridged metal edge, radial gradient face), ambient glow, LCD readout treatment, panel card styling, logo font/weight/color/placement, and caption label style are ALL UNCHANGED from v3. The one exception is the OUTER FRAME background: originally carried forward unchanged from v3 (white/off-white) per the initial brief, then changed mid-iteration at the user's explicit request to a gray, textured gradient matching the panel-card/knob material family (see outer_frame_top/mid/bottom/edge/texture_light/texture_dark colors above). Panel cards themselves, which sit on top of the frame, are unaffected."
   - "SWEEP introduces the only genuinely new visual pattern in v4: a bipolar arc-fill (grows outward from a fixed 12-o'clock center point in both directions, rather than v3's single CW sweep from a start angle) plus a fixed center-detent tick mark and a signed LCD readout format. THROW and SPACE are visually and behaviorally identical to v3's two knobs in every respect other than id/label/position."
+  - "Post-implementation addition: a quick preset bar (prev/next + LCD-styled dropdown) sits between the logo and the panel row, driving the same 3 relay states the knobs use. It is a UI-only convenience feature, not a JUCE program/host-preset-menu integration - see the preset_bar section above for full details and the 8-entry starter preset list."
 
 # Finalization metadata
 finalized: true

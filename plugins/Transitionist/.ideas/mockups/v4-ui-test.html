@@ -96,6 +96,69 @@
     text-shadow: 0 1px 0 rgba(255,255,255,0.75), 0 1px 3px rgba(20,24,34,0.30), 0 0 14px rgba(154,182,232,0.25);
   }
 
+  /* ---------------- Quick preset bar ---------------- */
+  .preset-bar {
+    position: absolute;
+    top: 58px;
+    left: 364px;
+    width: 252px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    z-index: 5;
+  }
+  .preset-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 28px;
+    height: 24px;
+    border-radius: 6px;
+    background: linear-gradient(170deg, #f6f8fa 0%, #d7dce3 55%, #aab2c0 100%);
+    border: 1px solid #b9c2d1;
+    box-shadow: 0 1px 2px rgba(30,38,54,0.25), inset 0 1px 0 rgba(255,255,255,0.5);
+    color: #2c3444;
+    font-family: inherit;
+    font-size: 10px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    padding: 0;
+    margin: 0;
+  }
+  .preset-btn:active {
+    box-shadow: inset 0 1px 3px rgba(20,24,32,0.4);
+  }
+  .preset-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    width: 180px;
+    height: 24px;
+    background: #182028;
+    border: 2px solid #232a36;
+    border-radius: 4px;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.65), inset 0 -1px 1px rgba(255,255,255,0.05);
+    font-family: 'Courier New', 'Consolas', monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: #7fd8e0;
+    text-shadow: 0 0 6px rgba(127,216,224,0.55);
+    text-align: center;
+    text-align-last: center;
+    padding: 0 4px;
+    margin: 0;
+    cursor: pointer;
+  }
+  .preset-select option {
+    background: #182028;
+    color: #7fd8e0;
+  }
+
   /* ---------------- Panel cards ---------------- */
   .panel {
     position: absolute;
@@ -336,6 +399,16 @@
     <div class="container">
 
       <div class="logo">TRANSITIONIST</div>
+
+      <!-- Quick preset bar - UI-only convenience browser, drives the same
+           throw/space/sweep relays the knobs use (see script). Not a
+           JUCE/DAW "program" - purely a fast way to jump between a few
+           useful starting points. -->
+      <div class="preset-bar">
+        <button class="preset-btn" id="presetPrevBtn" type="button" aria-label="Previous preset">&#9664;</button>
+        <select class="preset-select" id="presetSelect" aria-label="Preset"></select>
+        <button class="preset-btn" id="presetNextBtn" type="button" aria-label="Next preset">&#9654;</button>
+      </div>
 
       <!-- THROW (parameter id: throw) - leftmost, first in signal-flow order -->
       <div class="panel panel-throw"></div>
@@ -660,7 +733,101 @@
     };
   }
 
+
+    // ====================================================================
+    // QUICK PRESET BAR (top of window, above the panels)
+    // ====================================================================
+    // A lightweight, UI-only preset browser - NOT a JUCE/DAW "program" (no
+    // getStateInformation/AudioProcessor::setCurrentProgram involvement).
+    // It simply drives the same 3 parameter relays the knobs themselves use
+    // (Juce.getSliderState(id).setNormalisedValue(...)), so preset recall goes
+    // through the exact same path as manually dragging a knob - fully
+    // host-automatable, and correctly captured by the host's own
+    // session/state save (which persists the resulting parameter values,
+    // not "which preset name was selected").
+    const PRESETS = [
+      { name: "Init",              throw: 0,   space: 0,   sweep: 0   },
+      { name: "Gentle Wash",       throw: 35,  space: 45,  sweep: 0   },
+      { name: "Tight Slap",        throw: 20,  space: 10,  sweep: 0   },
+      { name: "Big Riser",         throw: 85,  space: 70,  sweep: 35  },
+      { name: "Infinite Freeze",   throw: 100, space: 55,  sweep: 0   },
+      { name: "Filter Down Sweep", throw: 55,  space: 40,  sweep: -80 },
+      { name: "Filter Up Open",    throw: 45,  space: 35,  sweep: 70  },
+      { name: "Cavernous Hold",    throw: 95,  space: 100, sweep: -15 }
+    ];
+
+    function unipolarToNormalised(v) { return v / 100; }         // 0..100 -> 0..1
+    function bipolarToNormalised(v) { return (v + 100) / 200; }  // -100..100 -> 0..1
+
+    function setupPresetBar() {
+      const selectEl = document.getElementById("presetSelect");
+      const prevBtn = document.getElementById("presetPrevBtn");
+      const nextBtn = document.getElementById("presetNextBtn");
+
+      const throwState = Juce.getSliderState("throw");
+      const spaceState = Juce.getSliderState("space");
+      const sweepState = Juce.getSliderState("sweep");
+
+      PRESETS.forEach((p, i) => {
+        const opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = p.name;
+        selectEl.appendChild(opt);
+      });
+
+      let currentIndex = -1; // -1 = "Custom" (current values don't match a listed preset)
+
+      function applyPreset(rawIndex) {
+        const index = ((rawIndex % PRESETS.length) + PRESETS.length) % PRESETS.length;
+        const p = PRESETS[index];
+        throwState.setNormalisedValue(unipolarToNormalised(p.throw));
+        spaceState.setNormalisedValue(unipolarToNormalised(p.space));
+        sweepState.setNormalisedValue(bipolarToNormalised(p.sweep));
+        const customOpt = selectEl.querySelector('option[value="-1"]');
+        if (customOpt) customOpt.remove();
+        currentIndex = index;
+        selectEl.value = String(index);
+      }
+
+      function findMatchingPresetIndex() {
+        const t = Math.round(throwState.getNormalisedValue() * 100);
+        const s = Math.round(spaceState.getNormalisedValue() * 100);
+        const sw = Math.round(sweepState.getNormalisedValue() * 200 - 100);
+        for (let i = 0; i < PRESETS.length; i++) {
+          const p = PRESETS[i];
+          if (Math.abs(p.throw - t) <= 1 && Math.abs(p.space - s) <= 1 && Math.abs(p.sweep - sw) <= 1) {
+            return i;
+          }
+        }
+        return -1;
+      }
+
+      // On load, reflect whatever the host actually restored (preset
+      // recall, automation, or a fresh default instance) WITHOUT
+      // overwriting it - only select a matching preset name if one
+      // matches; otherwise show "Custom" rather than falsely implying a
+      // preset is active.
+      const initialMatch = findMatchingPresetIndex();
+      if (initialMatch >= 0) {
+        currentIndex = initialMatch;
+        selectEl.value = String(initialMatch);
+      } else {
+        const customOpt = document.createElement("option");
+        customOpt.value = "-1";
+        customOpt.textContent = "Custom";
+        selectEl.insertBefore(customOpt, selectEl.firstChild);
+        selectEl.value = "-1";
+        currentIndex = -1;
+      }
+
+      selectEl.addEventListener("change", (e) => applyPreset(parseInt(e.target.value, 10)));
+      prevBtn.addEventListener("click", () => applyPreset((currentIndex === -1 ? 0 : currentIndex) - 1));
+      nextBtn.addEventListener("click", () => applyPreset((currentIndex === -1 ? -1 : currentIndex) + 1));
+    }
+
   document.addEventListener("DOMContentLoaded", () => {
+    setupPresetBar();
+
     setupKnob({
       knobId: "throwKnob",
       bodyId: "throwKnobBody",
