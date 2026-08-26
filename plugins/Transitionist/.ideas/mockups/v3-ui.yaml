@@ -1,0 +1,223 @@
+# v3 UI Design Specification
+# Generated: 2026-08-26
+# Plugin: Transitionist
+#
+# Concept: a two-knob "transition" FX chain (Delay -> Shimmer Reverb ->
+# Saturation -> DJ-style Filter). Only two user-facing parameters exist,
+# so the UI is deliberately minimal: two knobs, nothing else.
+#
+# v3 is a targeted two-change iteration on v2's light skeuomorphic hardware
+# look. Everything else (panel card styling, knob disc texture, ridged
+# metal edge, ambient glow, arc/pointer indicator, LCD readout treatment,
+# window size, fonts) carries forward from v2 unchanged. The two changes:
+#
+#   1. Outer bezel/frame recolored from black to white/off-white. The logo
+#      text color (and its shadow treatment) is adjusted from a light color
+#      tuned for the old dark bezel to a dark blue-gray so it stays legible
+#      on the new white bezel.
+#   2. Panel order swapped left-to-right: Tail (duration) now sits on the
+#      LEFT, Filter (mix) now sits on the RIGHT - matching the plugin's
+#      actual signal-chain order (delay/reverb tail stages happen first,
+#      the filter stage is last). Only x-position changed; each knob's own
+#      id, parameter binding, and internal styling are untouched.
+
+window:
+  width: 700
+  height: 420
+  resizable: false   # simple 2-parameter plugin - fixed size per ui-design-rules.md Rule 4
+
+colors:
+  # Light skeuomorphic hardware palette - pale cool silvers + glassy blue-lavender
+  # accent. v3: outer bezel changed from v2's solid black to white/off-white per
+  # user request; panel card colors and knob disc colors are unchanged from v2.
+  outer_frame: "#f8f9fb"          # v3: white/off-white outer bezel (was #141417 near-black in v2)
+  outer_frame_edge: "#e4e7ec"     # v3: light neutral hairline edge (was #000000 pure black in v2)
+  panel_top: "#eef1f5"            # panel card gradient - top (cool off-white) - UNCHANGED from v2
+  panel_bottom: "#dde2e9"         # panel card gradient - bottom (cool silver) - UNCHANGED from v2
+  panel_inset_shadow: "rgba(30,38,54,0.28)"   # soft interior shadow on panel cards - UNCHANGED
+  panel_edge: "#c7ceda"           # panel card border hairline - UNCHANGED
+  disc_face_start: "#f6f8fa"      # knob disc radial gradient - center highlight - UNCHANGED
+  disc_face_mid: "#d7dce3"        # knob disc radial gradient - mid - UNCHANGED
+  disc_face_end: "#aab2c0"        # knob disc radial gradient - outer edge - UNCHANGED
+  ridge_light: "rgba(255,255,255,0.55)"   # ridged edge texture - light striations - UNCHANGED
+  ridge_dark: "rgba(70,80,100,0.35)"      # ridged edge texture - dark striations - UNCHANGED
+  track: "rgba(90,104,130,0.22)"  # thin unfilled arc track - UNCHANGED
+  accent_glow: "#9ab6e8"          # cool blue-lavender ambient glow behind knob - UNCHANGED
+  accent_arc: "#6f8fc9"           # filled arc-progress color - muted cool blue - UNCHANGED
+  pointer_dot: "#3d4a63"          # small position-indicator dot, dark blue-gray - UNCHANGED
+  lcd_bezel: "#232a36"            # recessed LCD window frame - dark blue-charcoal - UNCHANGED
+  lcd_screen: "#182028"           # LCD screen background - UNCHANGED
+  lcd_digits: "#7fd8e0"           # cool cyan-blue LCD digit color - UNCHANGED
+  text_primary: "#2c3444"         # dark blue-gray - v3: now ALSO used for the logo
+                                   # (previously logo used a separate light color tuned
+                                   # for the black bezel; on the white bezel the logo
+                                   # reuses this same dark blue-gray as the panel labels)
+  text_secondary: "#5b6478"       # muted blue-gray captions - UNCHANGED
+
+typography:
+  primary: "'Futura', 'Century Gothic', 'Trebuchet MS', -apple-system, 'Helvetica Neue', Arial, sans-serif"
+  logo:
+    size: "24px"
+    weight: 800
+    letter_spacing: "0.34em"
+  label:
+    size: "12px"
+    weight: 700
+    letter_spacing: "0.28em"
+  lcd_value:
+    size: "18px"
+    weight: 600
+    letter_spacing: "0.04em"
+    font_family: "'Courier New', 'Consolas', monospace"   # digital-readout feel, distinct from logo/label font
+
+layout:
+  type: custom
+  description: >
+    v3: A white/off-white outer frame with generously rounded corners
+    (changed from v2's thick black frame) contains two separate pale
+    off-white/cool-silver panel cards side by side, each gently rounded
+    with a soft interior shadow - panel card styling itself is unchanged
+    from v2. Panel order is now Tail (left) then Filter (right), matching
+    the signal chain order (delay/reverb tail stages happen before the
+    filter stage), reversed from v2's Filter-left/Tail-right arrangement.
+    Each panel holds one large brushed-metal knob disc with a fine ridged
+    outer edge, a soft cool blue-lavender ambient glow bleeding from behind
+    part of the disc, a thin understated arc track + small pointer dot for
+    position, and a recessed LCD-style digital readout embedded in the
+    knob's own center showing the live percentage - all unchanged from v2.
+    Logotype sits top-center above both panels, now in dark blue-gray text
+    for legibility against the white frame. An uppercase, wide-letter-spaced
+    caption sits below each panel card. No bottom vent-hole strip, no
+    meters, no preset browser, no additional chrome - deliberately minimal
+    per creative brief.
+
+controls:
+  - id: duration
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Tail"
+    parameter: "duration"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 120, y: 126 }   # v3: moved to LEFT slot (was x: 440 in v2) - Tail now first in signal-chain order
+    size: { width: 140, height: 140 }
+    indicator:
+      style: "thin-arc-plus-pointer-dot"
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      One "throw length" macro - jointly scales delay repeat time and
+      shimmer reverb decay/size, internally mapped to tempo-synced note
+      values (per creative-brief.md). Per the 2026-08-26 creative-brief
+      revision, the UI shows this as a 0-100% engagement readout in the
+      knob's LCD center rather than v1's raw note-value pill (e.g. "1/4").
+      Modeled here as a continuous float 0-100 for the mockup; Stage 0 DSP
+      research determines the exact internal tempo-sync mapping curve.
+      Parameter ID unchanged from v1/v2 ("duration"). v3: position moved
+      from the right slot (v2) to the left slot - Tail is first in the
+      signal chain (delay/reverb happen before the filter), so it now
+      reads left-to-right in signal-chain order. Knob styling itself is
+      identical to v2 - only x-position changed.
+
+  - id: mix
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Filter"
+    parameter: "mix"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 440, y: 126 }   # v3: moved to RIGHT slot (was x: 120 in v2) - Filter is last in signal-chain order
+    size: { width: 140, height: 140 }
+    indicator:
+      style: "thin-arc-plus-pointer-dot"
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Dry/wet crossfade of the fully-processed chain. Also drives the DJ
+      filter cutoff internally (800Hz at 0% -> 15kHz at 100%) - no separate
+      Hz readout in the UI; this is a single macro control by design (per
+      creative-brief.md and user's explicit decision). Parameter ID
+      unchanged from v1/v2 ("mix") - display label is "Filter". v3:
+      position moved from the left slot (v2) to the right slot - Filter is
+      last in the signal chain (DJ-style filter is the final stage), so it
+      now reads left-to-right in signal-chain order. Knob styling itself
+      is identical to v2 - only x-position changed.
+
+# Non-interactive visual elements. Not JUCE relay-bound controls; excluded
+# from control-overlap/bounds validation but positioned to avoid collisions.
+display_elements:
+  - id: logo
+    type: label
+    text: "TRANSITIONIST"
+    position: { x: 0, y: 24 }
+    size: { width: 700, height: 30 }
+    text_align: center
+    layer: decorative
+    notes: >
+      v3: Set in the same geometric/humanist sans (Futura/Century Gothic
+      stack), bold weight, wide letter-spacing as v2, but recolored from
+      v2's light off-white (tuned for the black bezel) to text_primary
+      (dark blue-gray, #2c3444) so it reads correctly against the new
+      white/off-white bezel. Text-shadow also adjusted from a dark
+      drop-shadow (meant to lift light text off a black background) to a
+      subtle light highlight + soft cool glow suited to a light background.
+
+  - id: panel_tail
+    type: panel-card
+    position: { x: 60, y: 90 }   # v3: moved to LEFT slot (was x: 380 in v2)
+    size: { width: 260, height: 250 }
+    layer: decorative
+    notes: >
+      Pale off-white/cool-silver panel card, rounded corners, soft interior
+      shadow, thin edge hairline - styling identical to v2. v3: repositioned
+      to the left slot so Tail reads first (signal-chain order).
+
+  - id: panel_filter
+    type: panel-card
+    position: { x: 380, y: 90 }   # v3: moved to RIGHT slot (was x: 60 in v2)
+    size: { width: 260, height: 250 }
+    layer: decorative
+    notes: >
+      Pale off-white/cool-silver panel card, rounded corners, soft interior
+      shadow, thin edge hairline - styling identical to v2. v3: repositioned
+      to the right slot so Filter reads last (signal-chain order).
+
+  - id: tail_label
+    type: label
+    text: "TAIL"
+    label_for: duration
+    position: { x: 60, y: 284 }   # v3: moved to LEFT slot (was x: 380 in v2)
+    size: { width: 260, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: filter_label
+    type: label
+    text: "FILTER"
+    label_for: mix
+    position: { x: 380, y: 284 }   # v3: moved to RIGHT slot (was x: 60 in v2)
+    size: { width: 260, height: 20 }
+    text_align: center
+    layer: decorative
+
+notes:
+  - "Only two user-facing parameters exist - mix, duration (per creative-brief.md). No resonance, no separate delay/reverb knobs, no saturation knob, no meters, no preset browser, no bypass button - those are fixed internally or deliberately omitted."
+  - "Parameter IDs (mix, duration) are UNCHANGED from v1/v2 and match APVTS parameter IDs exactly. Display labels remain FILTER/TAIL, unchanged from v2."
+  - "Both mix and duration map to continuous floats 0-100%, implemented as WebSliderRelay (JS: Juce.getSliderState('mix') / Juce.getSliderState('duration'))."
+  - "v3 change 1: outer bezel/frame recolored from v2's thick black frame to white/off-white (colors.outer_frame, colors.outer_frame_edge). Panel card colors, knob disc colors, arc/glow colors, and LCD readout colors are all UNCHANGED from v2. Logo text color and shadow adjusted (colors.text_primary) so it stays legible on the new white bezel."
+  - "v3 change 2: panel order swapped left-to-right - Tail (duration) now on the LEFT (x=60/120), Filter (mix) now on the RIGHT (x=380/440), reversed from v2's Filter-left/Tail-right arrangement. This matches the plugin's actual signal-chain order (Delay -> Shimmer Reverb form the 'Tail' stage and happen first; the DJ-style Filter is the final stage). Only x-position values changed; each control's id, parameter binding, label, and internal styling are identical to v2."
+  - "No other v2 design decisions changed: panel card styling, ridged-metal knob texture, ambient glow colors, LCD readout treatment, window dimensions (700x420), fonts, and layout proportions all carry forward unchanged from v2."
