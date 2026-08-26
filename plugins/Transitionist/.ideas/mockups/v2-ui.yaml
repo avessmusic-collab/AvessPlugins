@@ -1,0 +1,193 @@
+# v2 UI Design Specification
+# Generated: 2026-08-26
+# Plugin: Transitionist
+#
+# Concept: a two-knob "transition" FX chain (Delay -> Shimmer Reverb ->
+# Saturation -> DJ-style Filter). Only two user-facing parameters exist,
+# so the UI is deliberately minimal: two knobs, nothing else.
+#
+# v2 replaces v1's dark neon-gradient arc-ring aesthetic with a light
+# skeuomorphic hardware look, inspired by a "Virtual Tape Processor"
+# style reference unit the user provided: pale off-white/cool-silver
+# panel cards inset into a thick black outer frame, photorealistic
+# brushed-metal knob discs with fine ridged edges, a subtle understated
+# arc + pointer-dot position indicator, and a soft cool blue-lavender
+# ambient glow (replacing v1's warm violet->magenta->orange identity).
+# Each knob's live percentage readout is now an inset LCD-style digital
+# display embedded in the knob's own center, not a value pill beneath it.
+
+window:
+  width: 700
+  height: 420
+  resizable: false   # simple 2-parameter plugin - fixed size per ui-design-rules.md Rule 4
+
+colors:
+  # Light skeuomorphic hardware palette - pale cool silvers + glassy blue-lavender
+  # accent, replacing v1's dark near-black background and warm neon gradient.
+  outer_frame: "#141417"          # thick solid black/near-black outer bezel
+  outer_frame_edge: "#000000"     # outermost 1px hairline of the bezel
+  panel_top: "#eef1f5"            # panel card gradient - top (cool off-white)
+  panel_bottom: "#dde2e9"         # panel card gradient - bottom (cool silver)
+  panel_inset_shadow: "rgba(30,38,54,0.28)"   # soft interior shadow on panel cards
+  panel_edge: "#c7ceda"           # panel card border hairline
+  disc_face_start: "#f6f8fa"      # knob disc radial gradient - center highlight
+  disc_face_mid: "#d7dce3"        # knob disc radial gradient - mid
+  disc_face_end: "#aab2c0"        # knob disc radial gradient - outer edge
+  ridge_light: "rgba(255,255,255,0.55)"   # ridged edge texture - light striations
+  ridge_dark: "rgba(70,80,100,0.35)"      # ridged edge texture - dark striations
+  track: "rgba(90,104,130,0.22)"  # thin unfilled arc track - understated, not bold
+  accent_glow: "#9ab6e8"          # cool blue-lavender ambient glow behind knob
+  accent_arc: "#6f8fc9"           # filled arc-progress color - muted cool blue
+  pointer_dot: "#3d4a63"          # small position-indicator dot, dark blue-gray
+  lcd_bezel: "#232a36"            # recessed LCD window frame - dark blue-charcoal
+  lcd_screen: "#182028"           # LCD screen background
+  lcd_digits: "#7fd8e0"           # cool cyan-blue LCD digit color
+  text_primary: "#2c3444"         # dark blue-gray - logo + primary text on light panels
+  text_secondary: "#5b6478"       # muted blue-gray captions
+
+typography:
+  primary: "'Futura', 'Century Gothic', 'Trebuchet MS', -apple-system, 'Helvetica Neue', Arial, sans-serif"
+  logo:
+    size: "24px"
+    weight: 800
+    letter_spacing: "0.34em"
+  label:
+    size: "12px"
+    weight: 700
+    letter_spacing: "0.28em"
+  lcd_value:
+    size: "18px"
+    weight: 600
+    letter_spacing: "0.04em"
+    font_family: "'Courier New', 'Consolas', monospace"   # digital-readout feel, distinct from logo/label font
+
+layout:
+  type: custom
+  description: >
+    Thick solid black outer frame with generously rounded corners contains
+    two separate pale off-white/cool-silver panel cards side by side (not
+    one unified panel), each gently rounded with a soft interior shadow.
+    Each panel holds one large brushed-metal knob disc with a fine ridged
+    outer edge, a soft cool blue-lavender ambient glow bleeding from behind
+    part of the disc, a thin understated arc track + small pointer dot for
+    position, and a recessed LCD-style digital readout embedded in the
+    knob's own center showing the live percentage. Logotype sits top-center
+    above both panels. An uppercase, wide-letter-spaced caption sits below
+    each panel card. No bottom vent-hole strip, no meters, no preset
+    browser, no additional chrome - deliberately minimal per creative brief.
+
+controls:
+  - id: mix
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Filter"
+    parameter: "mix"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 120, y: 126 }
+    size: { width: 140, height: 140 }
+    indicator:
+      style: "thin-arc-plus-pointer-dot"
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Dry/wet crossfade of the fully-processed chain. Also drives the DJ
+      filter cutoff internally (800Hz at 0% -> 15kHz at 100%) - no separate
+      Hz readout in the UI; this is a single macro control by design (per
+      creative-brief.md and user's explicit decision). Parameter ID
+      unchanged from v1 ("mix") - only the display label changed to
+      "FILTER" per the 2026-08-26 creative-brief revision.
+
+  - id: duration
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Tail"
+    parameter: "duration"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 440, y: 126 }
+    size: { width: 140, height: 140 }
+    indicator:
+      style: "thin-arc-plus-pointer-dot"
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      One "throw length" macro - jointly scales delay repeat time and
+      shimmer reverb decay/size, internally mapped to tempo-synced note
+      values (per creative-brief.md). Per the 2026-08-26 creative-brief
+      revision, the UI now shows this as a 0-100% engagement readout in
+      the knob's LCD center rather than v1's raw note-value pill (e.g.
+      "1/4"). Modeled here as a continuous float 0-100 for the mockup;
+      Stage 0 DSP research determines the exact internal tempo-sync
+      mapping curve. Parameter ID unchanged from v1 ("duration") - only
+      the display label changed to "TAIL".
+
+# Non-interactive visual elements. Not JUCE relay-bound controls; excluded
+# from control-overlap/bounds validation but positioned to avoid collisions.
+display_elements:
+  - id: logo
+    type: label
+    text: "TRANSITIONIST"
+    position: { x: 0, y: 24 }
+    size: { width: 700, height: 30 }
+    text_align: center
+    layer: decorative
+    notes: >
+      Set in a geometric/humanist sans (Futura/Century Gothic stack),
+      bold weight (heavier than v1), wide letter-spacing, dark blue-gray
+      color (text_primary) - reads correctly against the light panel
+      background, replacing v1's white/lavender logotype color.
+
+  - id: panel_filter
+    type: panel-card
+    position: { x: 60, y: 90 }
+    size: { width: 260, height: 250 }
+    layer: decorative
+    notes: "Pale off-white/cool-silver panel card, rounded corners, soft interior shadow, thin edge hairline."
+
+  - id: panel_tail
+    type: panel-card
+    position: { x: 380, y: 90 }
+    size: { width: 260, height: 250 }
+    layer: decorative
+    notes: "Pale off-white/cool-silver panel card, rounded corners, soft interior shadow, thin edge hairline."
+
+  - id: filter_label
+    type: label
+    text: "FILTER"
+    label_for: mix
+    position: { x: 60, y: 284 }
+    size: { width: 260, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: tail_label
+    type: label
+    text: "TAIL"
+    label_for: duration
+    position: { x: 380, y: 284 }
+    size: { width: 260, height: 20 }
+    text_align: center
+    layer: decorative
+
+notes:
+  - "Only two user-facing parameters exist - mix, duration (per creative-brief.md). No resonance, no separate delay/reverb knobs, no saturation knob, no meters, no preset browser, no bypass button - those are fixed internally or deliberately omitted."
+  - "Parameter IDs (mix, duration) are UNCHANGED from v1 and match APVTS parameter IDs exactly - only display labels changed to FILTER/TAIL per the 2026-08-26 creative-brief revision. This preserves the parameter contract established in v1."
+  - "Both mix and duration map to continuous floats 0-100%, implemented as WebSliderRelay (JS: Juce.getSliderState('mix') / Juce.getSliderState('duration'))."
+  - "v2 is a deliberate, complete visual-direction change from v1: light skeuomorphic hardware (pale silver panels, black outer frame, brushed-metal knobs, cool blue-lavender glow) replacing v1's dark neon-gradient arc-ring look, per explicit user request and reference photo."
+  - "No bottom vent-hole/branding strip (present in the user's reference photo) - intentionally omitted per user's explicit instruction; UI is just the two knob panels plus the top logo."
+  - "Each knob's percentage readout is an inset LCD-style digital display embedded in the knob's own center (recessed dark screen, cyan-blue digit color), not a separate value pill beneath the knob as in v1."
