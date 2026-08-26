@@ -209,8 +209,17 @@ phase_2_build() {
     fi
 
     # Build specific plugin using --target flags
-    info "  - Building ${PLUGIN_NAME} (VST3 + AU) in parallel..."
-    if ! execute cmake --build "$build_dir" --config Release --target "${PLUGIN_NAME}_VST3" --target "${PLUGIN_NAME}_AU" --parallel; then
+    #
+    # NOTE: Standalone is included alongside VST3/AU (previously this only
+    # built VST3+AU). Every plugin in this codebase declares
+    # `FORMATS VST3 AU Standalone` in CMakeLists.txt, and the Standalone
+    # .app is the fastest way to manually test WebView UI changes without
+    # a DAW. Omitting it here silently leaves a stale Standalone binary on
+    # disk after GUI-only changes - discovered 2026-08-26 (Transitionist):
+    # several rounds of "rebuild + reopen the Standalone app" showed a UI
+    # frozen at its FIRST build because only VST3/AU were being relinked.
+    info "  - Building ${PLUGIN_NAME} (VST3 + AU + Standalone) in parallel..."
+    if ! execute cmake --build "$build_dir" --config Release --target "${PLUGIN_NAME}_VST3" --target "${PLUGIN_NAME}_AU" --target "${PLUGIN_NAME}_Standalone" --parallel; then
         error "Build failed"
         echo "ERROR: Build failed" >> "$LOG_FILE"
         exit 1
