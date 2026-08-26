@@ -1,175 +1,92 @@
 #include "PluginEditor.h"
 #include "BinaryData.h"
 
-//==============================================================================
-// Constructor - CRITICAL: Initialize in correct order
-//==============================================================================
-
 TransitionistAudioProcessorEditor::TransitionistAudioProcessorEditor(TransitionistAudioProcessor& p)
     : AudioProcessorEditor(&p), processorRef(p)
 {
-    // ========================================================================
-    // INITIALIZATION SEQUENCE (CRITICAL ORDER)
-    // ========================================================================
-    //
-    // 1. Create relays FIRST (before WebView construction)
-    // 2. Create WebView with relay options
-    // 3. Create parameter attachments LAST (after WebView construction)
-    //
-    // This matches the member declaration order and ensures safe destruction.
-    // ========================================================================
+    // STEP 1: Relays (before WebView)
+    transitionRelay = std::make_unique<juce::WebSliderRelay>("transition");
+    reverbRelay = std::make_unique<juce::WebSliderRelay>("reverb");
+    delayRelay = std::make_unique<juce::WebSliderRelay>("delay");
+    delaySyncRelay = std::make_unique<juce::WebComboBoxRelay>("delaySync");
+    dryWetRelay = std::make_unique<juce::WebSliderRelay>("dryWet");
+    inputGainRelay = std::make_unique<juce::WebSliderRelay>("inputGain");
+    outputGainRelay = std::make_unique<juce::WebSliderRelay>("outputGain");
 
-    // ------------------------------------------------------------------------
-    // STEP 1: CREATE RELAYS (before WebView!)
-    // ------------------------------------------------------------------------
-    //
-    // Each relay bridges a C++ parameter to JavaScript state.
-    // Relay constructor takes the parameter ID (must match APVTS).
-    //
-    // NOTE: "sweep" uses the exact same WebSliderRelay type as "throw" and
-    // "space" - the relay/attachment layer has no concept of unipolar vs.
-    // bipolar. The -100..+100 bipolar range lives entirely in the APVTS
-    // parameter's NormalisableRange (declared in PluginProcessor.cpp - see
-    // parameter-spec.md) and in the HTML/JS bipolar arc-fill renderer.
-    //
-    throwRelay = std::make_unique<juce::WebSliderRelay>("throw");
-    spaceRelay = std::make_unique<juce::WebSliderRelay>("space");
-    sweepRelay = std::make_unique<juce::WebSliderRelay>("sweep");
-
-    // ------------------------------------------------------------------------
-    // STEP 2: CREATE WEBVIEW (with relay options)
-    // ------------------------------------------------------------------------
-    //
-    // WebView creation with all necessary options:
-    // - withNativeIntegrationEnabled() - REQUIRED for JUCE parameter binding
-    // - withResourceProvider() - REQUIRED for JUCE 8 (serves embedded files)
-    // - withOptionsFrom(*relay) - REQUIRED for each parameter relay
-    // - withKeepPageLoadedWhenBrowserIsHidden() - OPTIONAL (FL Studio fix)
-    //
+    // STEP 2: WebView (with relay options)
     webView = std::make_unique<juce::WebBrowserComponent>(
         juce::WebBrowserComponent::Options{}
-            // REQUIRED: Enable JUCE frontend library
             .withNativeIntegrationEnabled()
-
-            // REQUIRED: Resource provider for embedded files
-            .withResourceProvider([this](const auto& url) {
-                return getResource(url);
-            })
-
-            // OPTIONAL: FL Studio fix (prevents blank screen on focus loss)
+            .withResourceProvider([this](const auto& url) { return getResource(url); })
             .withKeepPageLoadedWhenBrowserIsHidden()
-
-            // REQUIRED: Register each relay with WebView
-            .withOptionsFrom(*throwRelay)
-            .withOptionsFrom(*spaceRelay)
-            .withOptionsFrom(*sweepRelay)
+            .withOptionsFrom(*transitionRelay)
+            .withOptionsFrom(*reverbRelay)
+            .withOptionsFrom(*delayRelay)
+            .withOptionsFrom(*delaySyncRelay)
+            .withOptionsFrom(*dryWetRelay)
+            .withOptionsFrom(*inputGainRelay)
+            .withOptionsFrom(*outputGainRelay)
     );
 
-    // ------------------------------------------------------------------------
-    // STEP 3: CREATE PARAMETER ATTACHMENTS (after WebView!)
-    // ------------------------------------------------------------------------
-    //
-    // Attachments synchronize APVTS parameters with relay state.
-    // Constructor: (parameter, relay, undoManager) - JUCE 8 3-arg form
-    // (juce8-critical-patterns.md Pattern #12).
-    //
-    // NOTE: this codebase's PluginProcessor exposes its APVTS as
-    // `processorRef.parameters` (NOT `.apvts`, which was the generic
-    // template's assumption) - see PluginProcessor.h.
-    //
-    throwAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.parameters.getParameter("throw"),
-        *throwRelay,
-        nullptr  // No undo manager
-    );
+    // STEP 3: Attachments (after WebView)
+    transitionAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("transition"), *transitionRelay, nullptr);
+    reverbAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("reverb"), *reverbRelay, nullptr);
+    delayAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("delay"), *delayRelay, nullptr);
+    delaySyncAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.parameters.getParameter("delaySync"), *delaySyncRelay, nullptr);
+    dryWetAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("dryWet"), *dryWetRelay, nullptr);
+    inputGainAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("inputGain"), *inputGainRelay, nullptr);
+    outputGainAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("outputGain"), *outputGainRelay, nullptr);
 
-    spaceAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.parameters.getParameter("space"),
-        *spaceRelay,
-        nullptr
-    );
-
-    // "sweep" attachment is created identically to the unipolar knobs above -
-    // the attachment reads/writes the parameter's NORMALISED (0-1) value
-    // regardless of the underlying NormalisableRange's min/max, so the
-    // -100..+100 bipolar range requires no special handling here. See
-    // parameter-spec.md for the APVTS NormalisableRange declaration that
-    // makes normalised 0.5 correspond to 0% (center detent).
-    sweepAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.parameters.getParameter("sweep"),
-        *sweepRelay,
-        nullptr
-    );
-
-    // ------------------------------------------------------------------------
-    // WEBVIEW SETUP
-    // ------------------------------------------------------------------------
-
-    // Navigate to root (loads index.html via resource provider)
     webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
-
-    // Make WebView visible
     addAndMakeVisible(*webView);
 
-    // ------------------------------------------------------------------------
-    // WINDOW SIZE (from v4-ui.yaml: 980x420, non-resizable)
-    // ------------------------------------------------------------------------
-
-    setSize(980, 420);
+    setSize(1100, 440);
     setResizable(false, false);
-}
 
-//==============================================================================
-// Destructor
-//==============================================================================
+    // 30Hz meter update loop (juce8-critical-patterns.md Pattern #20) -
+    // pushes the 2 UI-only level meters to the WebView. Not parameter-bound.
+    startTimerHz(30);
+}
 
 TransitionistAudioProcessorEditor::~TransitionistAudioProcessorEditor()
 {
-    // Members are automatically destroyed in reverse order of declaration:
-    // 1. Attachments destroyed first (stop calling evaluateJavascript)
-    // 2. WebView destroyed second (safe, attachments are gone)
-    // 3. Relays destroyed last (safe, nothing using them)
-    //
-    // No manual cleanup needed if member order is correct!
+    stopTimer();
 }
 
-//==============================================================================
-// AudioProcessorEditor Overrides
-//==============================================================================
+void TransitionistAudioProcessorEditor::timerCallback()
+{
+    if (webView == nullptr)
+        return;
+
+    const float inputDb = processorRef.inputLevelDb.load(std::memory_order_relaxed);
+    const float outputDb = processorRef.outputLevelDb.load(std::memory_order_relaxed);
+
+    webView->emitEventIfBrowserIsVisible("updateInputMeter", inputDb);
+    webView->emitEventIfBrowserIsVisible("updateOutputMeter", outputDb);
+}
 
 void TransitionistAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    // WebView fills the entire editor, so no custom painting needed
     g.fillAll(juce::Colours::black);
 }
 
 void TransitionistAudioProcessorEditor::resized()
 {
-    // Make WebView fill the entire editor bounds
     if (webView)
         webView->setBounds(getLocalBounds());
 }
-
-//==============================================================================
-// Resource Provider (JUCE 8 Required Pattern)
-//==============================================================================
 
 std::optional<juce::WebBrowserComponent::Resource> TransitionistAudioProcessorEditor::getResource(
     const juce::String& url
 )
 {
-    // ========================================================================
-    // RESOURCE PROVIDER IMPLEMENTATION
-    // ========================================================================
-    //
-    // Maps URLs to embedded binary data (from juce_add_binary_data).
-    //
-    // CRITICAL: Use explicit URL mapping (Pattern #8 from
-    // juce8-critical-patterns.md). Generic loops break because BinaryData
-    // flattens paths (e.g. "js/juce/index.js" -> "index_js").
-    // ========================================================================
-
-    // Helper to convert raw binary to std::vector<std::byte>
     auto makeVector = [](const char* data, int size) {
         return std::vector<std::byte>(
             reinterpret_cast<const std::byte*>(data),
@@ -177,7 +94,6 @@ std::optional<juce::WebBrowserComponent::Resource> TransitionistAudioProcessorEd
         );
     };
 
-    // Handle root URL (redirect to index.html)
     if (url == "/" || url == "/index.html") {
         return juce::WebBrowserComponent::Resource {
             makeVector(BinaryData::index_html, BinaryData::index_htmlSize),
@@ -185,15 +101,13 @@ std::optional<juce::WebBrowserComponent::Resource> TransitionistAudioProcessorEd
         };
     }
 
-    // JUCE frontend library
     if (url == "/js/juce/index.js") {
         return juce::WebBrowserComponent::Resource {
             makeVector(BinaryData::index_js, BinaryData::index_jsSize),
-            juce::String("application/javascript")  // CRITICAL: Correct MIME type
+            juce::String("application/javascript")
         };
     }
 
-    // JUCE interop checker (required - see juce8-critical-patterns.md Pattern #13)
     if (url == "/js/juce/check_native_interop.js") {
         return juce::WebBrowserComponent::Resource {
             makeVector(BinaryData::check_native_interop_js, BinaryData::check_native_interop_jsSize),
@@ -201,6 +115,5 @@ std::optional<juce::WebBrowserComponent::Resource> TransitionistAudioProcessorEd
         };
     }
 
-    // 404 - Resource not found
     return std::nullopt;
 }

@@ -4,30 +4,26 @@
 
 namespace
 {
-    // Cubic Hermite smoothstep - used for both the bipolar filter's
-    // dead-zone crossfade (Component 6) and the reverb freeze/hold ramp
-    // (Component 4, Phase 4.2).
     float smoothstep(float x, float edge0, float edge1)
     {
         const float t = juce::jlimit(0.0f, 1.0f, (x - edge0) / (edge1 - edge0));
         return t * t * (3.0f - 2.0f * t);
     }
 
-    // Tempo-sync division table (architecture.md "Tempo Sync / Host Playhead"
-    // section), expressed in quarter-note beats. Index 0 = shortest (1/32
-    // note), index 9 = longest (whole note).
-    constexpr float kDivisionBeatFractions[10] =
+    // Delay Sync division table (parameter-spec.md v2), expressed in
+    // quarter-note beats. Index matches delaySync's AudioParameterChoice
+    // order exactly: 1/16, 1/8T, 1/8, 1/8D, 1/4, 1/4D, 1/2, 1/2D, 1/1.
+    constexpr float kDivisionBeatFractions[9] =
     {
-        0.125f, // 0: 1/32 note
-        0.25f,  // 1: 1/16 note
-        0.375f, // 2: 1/16 dotted
-        0.5f,   // 3: 1/8 note
-        0.75f,  // 4: 1/8 dotted
-        1.0f,   // 5: 1/4 note
-        1.5f,   // 6: 1/4 dotted
-        2.0f,   // 7: 1/2 note
-        3.0f,   // 8: 1/2 dotted
-        4.0f    // 9: 1/1 (whole) note
+        0.25f,      // 0: 1/16
+        1.0f / 3.0f,// 1: 1/8 triplet
+        0.5f,       // 2: 1/8
+        0.75f,      // 3: 1/8 dotted
+        1.0f,       // 4: 1/4
+        1.5f,       // 5: 1/4 dotted
+        2.0f,       // 6: 1/2
+        3.0f,       // 7: 1/2 dotted
+        4.0f        // 8: 1/1 (whole)
     };
 }
 
@@ -35,37 +31,66 @@ juce::AudioProcessorValueTreeState::ParameterLayout TransitionistAudioProcessor:
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // throw - Float, unipolar (0-100%, default 0.0)
-    // Triple-role macro: dry/wet blend, delay feedback amount, reverb decay/size.
-    // (DSP mapping implemented in Stage 2 - not used in Stage 1's pass-through.)
+    // transition - big hero macro, unipolar 0-100%
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "throw", 1 },
-        "Throw",
+        juce::ParameterID { "transition", 1 },
+        "Transition",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
         0.0f,
         "%"
     ));
 
-    // space - Float, unipolar (0-100%, default 0.0)
-    // Links tempo-synced delay division and reverb size into one "room" macro.
+    // reverb - stage send/mix, unipolar 0-100%
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "space", 1 },
-        "Space",
+        juce::ParameterID { "reverb", 1 },
+        "Reverb",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
         0.0f,
         "%"
     ));
 
-    // sweep - Float, BIPOLAR (-100 to +100%, default 0.0 at the range MIDPOINT).
-    // This codebase's first bipolar parameter - see parameter-spec.md's dedicated
-    // implementation note. Normalised 0.5 MUST correspond to the raw value 0.0
-    // (center detent = fully open filter, per creative-brief.md/architecture.md).
+    // delay - stage send/mix, unipolar 0-100%
     layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "sweep", 1 },
-        "Sweep",
-        juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f, 1.0f),
+        juce::ParameterID { "delay", 1 },
+        "Delay",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
         0.0f,
         "%"
+    ));
+
+    // delaySync - choice, 9 tempo divisions, default index 4 ("1/4")
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "delaySync", 1 },
+        "Delay Sync",
+        juce::StringArray { "1/16", "1/8T", "1/8", "1/8D", "1/4", "1/4D", "1/2", "1/2D", "1/1" },
+        4
+    ));
+
+    // dryWet - final blend, unipolar 0-100%, default 50%
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "dryWet", 1 },
+        "Dry/Wet",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
+        50.0f,
+        "%"
+    ));
+
+    // inputGain - dB, -24 to +24, default 0
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "inputGain", 1 },
+        "Input Gain",
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f, 1.0f),
+        0.0f,
+        "dB"
+    ));
+
+    // outputGain - dB, -24 to +24, default 0
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "outputGain", 1 },
+        "Output Gain",
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f, 1.0f),
+        0.0f,
+        "dB"
     ));
 
     return layout;
@@ -77,9 +102,6 @@ TransitionistAudioProcessor::TransitionistAudioProcessor()
                         .withOutput("Output", juce::AudioChannelSet::stereo(), true))
     , parameters(*this, nullptr, "Parameters", createParameterLayout())
 {
-    // Verify the bipolar "sweep" parameter's range midpoint is correctly
-    // centered, per parameter-spec.md's mandated verification step.
-    jassert(parameters.getParameter("sweep")->convertTo0to1(0.0f) == 0.5f);
 }
 
 TransitionistAudioProcessor::~TransitionistAudioProcessor()
@@ -97,31 +119,31 @@ void TransitionistAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
     spec.numChannels = static_cast<juce::uint32>(numChannels);
 
-    // --- Component 1: Tempo-Synced Delay Line ---
+    // --- Ping-Pong Delay lines (mono each - A/B, not per-channel) ---
     // Practical floor of 30 BPM for the longest division (whole note = 4
-    // beats) bounds the maximum delay to ~8 seconds at the current sample
-    // rate (per architecture.md Component 1 Configuration).
+    // beats) bounds max delay to ~8 seconds at the current sample rate.
     maxDelaySamples = static_cast<int>(std::ceil(sampleRate * 8.0));
-    delayLine.setMaximumDelayInSamples(maxDelaySamples);
-    delayLine.prepare(spec);
-    delayLine.reset();
 
-    smoothedDelaySamples.reset(sampleRate, 0.05); // ~50ms ramp, per architecture.md
-    {
-        // Initial delay time: 120 BPM fallback, space = 0% (division index 0,
-        // 1/32 note) - avoids an initial ramp-from-zero click before the
-        // first block's real target is computed.
-        const double samplesPerBeat = (60.0 / 120.0) * sampleRate;
-        const float initialDelaySamples = static_cast<float>(samplesPerBeat * kDivisionBeatFractions[0]);
-        smoothedDelaySamples.setCurrentAndTargetValue(initialDelaySamples);
-        lastTargetDelaySamples = initialDelaySamples;
-    }
-
-    // --- Components 2-3: Feedback Damping Filter (one instance per channel) ---
     juce::dsp::ProcessSpec monoSpec;
     monoSpec.sampleRate = sampleRate;
     monoSpec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
     monoSpec.numChannels = 1;
+
+    delayLineA.setMaximumDelayInSamples(maxDelaySamples);
+    delayLineA.prepare(monoSpec);
+    delayLineA.reset();
+    delayLineB.setMaximumDelayInSamples(maxDelaySamples);
+    delayLineB.prepare(monoSpec);
+    delayLineB.reset();
+
+    smoothedDelaySamples.reset(sampleRate, 0.05); // ~50ms ramp
+    {
+        // Initial delay time: 120 BPM fallback, division index 4 (1/4 note).
+        const double samplesPerBeat = (60.0 / 120.0) * sampleRate;
+        const float initialDelaySamples = static_cast<float>(samplesPerBeat * kDivisionBeatFractions[4]);
+        smoothedDelaySamples.setCurrentAndTargetValue(initialDelaySamples);
+        lastTargetDelaySamples = initialDelaySamples;
+    }
 
     for (auto& f : feedbackFilter)
     {
@@ -131,33 +153,11 @@ void TransitionistAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
         f.reset();
     }
 
-    // --- Component 4: Reverb Engine (freeze/hold added in Phase 4.2) ---
+    // --- Reverb ---
     reverb.prepare(spec);
     reverb.reset();
 
-    // --- Component 5 (Phase 4.3): Reverb Modulation - small, dedicated
-    // DelayLine sized only for its own +/-3ms-around-5ms modulation range
-    // (2-8ms), NOT tied to the main tempo-synced delay's much larger
-    // buffer. A few ms of margin (15ms max) keeps this a small, fixed,
-    // one-time allocation here in prepareToPlay only. ---
-    constexpr double kReverbModMaxDelayMs = 15.0;
-    const int reverbModMaxDelaySamples = static_cast<int>(std::ceil(sampleRate * (kReverbModMaxDelayMs / 1000.0)));
-    reverbModDelayLine.setMaximumDelayInSamples(reverbModMaxDelaySamples);
-    reverbModDelayLine.prepare(spec);
-    reverbModDelayLine.reset();
-    reverbModPhase = 0.0f;
-    reverbModPhaseIncrement = static_cast<float>(0.15 / sampleRate); // fixed 0.15Hz LFO rate
-
-    // --- Component 6: Bipolar DJ Filter (dual always-running LadderFilter instances) ---
-    lpfFilter.setMode(juce::dsp::LadderFilter<float>::Mode::LPF24);
-    hpfFilter.setMode(juce::dsp::LadderFilter<float>::Mode::HPF24);
-    lpfFilter.prepare(spec);
-    hpfFilter.prepare(spec);
-    lpfFilter.reset();
-    hpfFilter.reset();
-
-    // --- Component 7 (Phase 4.3): Output Glue (soft-clip + limiter, fixed
-    // internal constants, wet-only) ---
+    // --- Output Glue (fixed, wet-path safety net) ---
     softClip.functionToUse = [](float x) { return std::tanh(1.15f * x); };
     softClip.prepare(spec);
     softClip.reset();
@@ -167,28 +167,22 @@ void TransitionistAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     limiter.prepare(spec);
     limiter.reset();
 
-    // --- Preallocated scratch buffers (real-time safety: ALL allocation
-    // happens here, never in processBlock()) ---
+    // --- Preallocated scratch buffers (ALL allocation happens here, never
+    // in processBlock()) ---
     dryBuffer.setSize(numChannels, samplesPerBlock, false, false, true);
-    lpfBuffer.setSize(numChannels, samplesPerBlock, false, false, true);
-    hpfBuffer.setSize(numChannels, samplesPerBlock, false, false, true);
+    reverbWetBuffer.setSize(numChannels, samplesPerBlock, false, false, true);
     dryBuffer.clear();
-    lpfBuffer.clear();
-    hpfBuffer.clear();
+    reverbWetBuffer.clear();
 }
 
 void TransitionistAudioProcessor::releaseResources()
 {
-    // Release large preallocated buffers when the plugin is not in use.
     dryBuffer.setSize(0, 0);
-    lpfBuffer.setSize(0, 0);
-    hpfBuffer.setSize(0, 0);
+    reverbWetBuffer.setSize(0, 0);
 }
 
 void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
-    // Required: multiple stateful/feedback components in this chain (delay
-    // feedback loop, TPT damping filter, reverb, both ladder filters).
     juce::ScopedNoDenormals noDenormals;
     juce::ignoreUnused(midiMessages);
 
@@ -199,254 +193,133 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
         return;
 
     // ------------------------------------------------------------------
-    // Read all 3 parameters ONCE per block into local floats (atomic reads),
-    // per architecture.md's Thread Boundaries section - critical for the
-    // delay's per-sample feedback loop below.
+    // Read all parameters ONCE per block (atomic reads).
     // ------------------------------------------------------------------
-    const float throwValue = parameters.getRawParameterValue("throw")->load();  // 0-100
-    const float spaceValue = parameters.getRawParameterValue("space")->load();  // 0-100
-    const float sweepValue = parameters.getRawParameterValue("sweep")->load();  // -100 to +100
+    const float transitionValue = parameters.getRawParameterValue("transition")->load();
+    const float reverbValue     = parameters.getRawParameterValue("reverb")->load();
+    const float delayValue      = parameters.getRawParameterValue("delay")->load();
+    const int   delaySyncIndex  = static_cast<int>(parameters.getRawParameterValue("delaySync")->load());
+    const float dryWetValue     = parameters.getRawParameterValue("dryWet")->load();
+    const float inputGainDb     = parameters.getRawParameterValue("inputGain")->load();
+    const float outputGainDb    = parameters.getRawParameterValue("outputGain")->load();
 
-    const float throwNorm = throwValue / 100.0f;
-    const float spaceNorm = spaceValue / 100.0f;
-    const float sweepNorm = sweepValue / 100.0f;
-    const float absSweep = std::abs(sweepNorm);
+    const float transitionNorm = transitionValue / 100.0f;
+    const float reverbNorm = reverbValue / 100.0f;
+    const float delayNorm = delayValue / 100.0f;
+    const float dryWetNorm = dryWetValue / 100.0f;
 
     // ------------------------------------------------------------------
-    // Capture dry tap BEFORE any wet-path processing (Component 9 requirement).
+    // Input Gain (applied first) + INPUT level meter (peak, post gain).
+    // ------------------------------------------------------------------
+    buffer.applyGain(juce::Decibels::decibelsToGain(inputGainDb));
+
+    {
+        float peakLevel = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
+            peakLevel = std::max(peakLevel, buffer.getMagnitude(ch, 0, numSamples));
+        const float peakDb = peakLevel > 0.00001f ? juce::Decibels::gainToDecibels(peakLevel) : -100.0f;
+        inputLevelDb.store(peakDb, std::memory_order_relaxed);
+    }
+
+    // ------------------------------------------------------------------
+    // True dry tap for the FINAL dry/wet blend - captured after Input Gain,
+    // before any effects stage.
     // ------------------------------------------------------------------
     for (int ch = 0; ch < numChannels; ++ch)
         dryBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
 
     // ------------------------------------------------------------------
-    // Component 1 (tempo sync): compute target delay time in samples from
-    // host BPM (JUCE 8 non-deprecated API, 120 BPM fallback) and `space`'s
-    // division index.
+    // Ping-Pong Delay stage. The stage's own wet/dry blend (below) reads
+    // the live buffer values directly (fully evaluated on the right-hand
+    // side before reassignment) - no separate pre-stage tap buffer needed.
     // ------------------------------------------------------------------
     double bpm = 120.0;
     if (auto* playHead = getPlayHead())
-    {
         if (auto position = playHead->getPosition())
-        {
             if (auto hostBpm = position->getBpm())
                 if (*hostBpm > 0.0)
                     bpm = *hostBpm;
-        }
-    }
 
-    const int divisionIndex = juce::jlimit(0, 9, static_cast<int>(std::round(spaceNorm * 9.0f)));
+    const int divIndex = juce::jlimit(0, 8, delaySyncIndex);
     const double samplesPerBeat = (60.0 / bpm) * currentSampleRate;
-    const double targetDelaySamplesD = samplesPerBeat * static_cast<double>(kDivisionBeatFractions[divisionIndex]);
+    const double targetDelaySamplesD = samplesPerBeat * static_cast<double>(kDivisionBeatFractions[divIndex]);
     const float targetDelaySamples = static_cast<float>(
         juce::jlimit(1.0, static_cast<double>(maxDelaySamples - 1), targetDelaySamplesD));
 
-    // SmoothedValue::setTargetValue() internally no-ops (no ramp restart) if
-    // the new target equals the current target, so calling it unconditionally
-    // here still satisfies "retargeted whenever the computed target changes"
-    // (architecture.md Component 1) without a separate manual epsilon check.
     if (std::abs(targetDelaySamples - lastTargetDelaySamples) > 0.0001f)
     {
         smoothedDelaySamples.setTargetValue(targetDelaySamples);
         lastTargetDelaySamples = targetDelaySamples;
     }
 
-    // ------------------------------------------------------------------
-    // Components 1-3: hand-built per-sample delay feedback loop.
-    // NOTE: the smoothed delay time is advanced ONCE per sample (not once
-    // per channel-sample as a literal reading of architecture.md's
-    // channel-outer/sample-inner pseudocode would do) so that all channels
-    // share exactly the same delay time within a given sample and the ramp
-    // completes in the documented ~50ms regardless of channel count - a
-    // deliberate correctness refinement of the pseudocode, not a deviation
-    // from its intent (drive = 1.0 fixed for this phase; feedbackGain =
-    // 0.85 * throwNorm per architecture.md Component 1-3 Algorithm Details).
-    // ------------------------------------------------------------------
-    // Phase 4.2: drive now scales with throw (1.0 at throw=0% to 1.6 at
-    // throw=100%), per architecture.md Component 2 - deliberately minimal,
-    // no output re-normalization (the slight level compression at higher
-    // drive is intentional "thickening" character).
-    const float drive = 1.0f + 0.6f * throwNorm;
-    const float feedbackGain = 0.85f * throwNorm;
+    // Feedback amount: base from `delay`, extra buildup from `transition`,
+    // clamped safely below runaway. Stage wet/dry mix is driven purely by
+    // `delayNorm` (0% = fully bypassed regardless of feedback amount).
+    const float pingPongDrive = 1.0f + 0.5f * transitionNorm;
+    const float pingPongFeedback = juce::jlimit(0.0f, 0.92f, 0.35f + 0.55f * delayNorm + 0.10f * transitionNorm);
+
+    // numChannels is guaranteed >= 2 by this plugin's stereo-only bus config.
+    auto* left = buffer.getWritePointer(0);
+    auto* right = numChannels > 1 ? buffer.getWritePointer(1) : buffer.getWritePointer(0);
 
     for (int n = 0; n < numSamples; ++n)
     {
         const float delaySamples = smoothedDelaySamples.getNextValue();
 
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            auto* channelData = buffer.getWritePointer(ch);
-            const float inputSample = channelData[n];
+        const float delayedA = delayLineA.popSample(0, delaySamples, true);
+        const float delayedB = delayLineB.popSample(0, delaySamples, true);
 
-            const float delayed = delayLine.popSample(ch, delaySamples, true);
-            const float saturated = std::tanh(drive * delayed);
-            const float damped = feedbackFilter[static_cast<size_t>(juce::jmin(ch, 1))].processSample(0, saturated);
-            const float toWrite = inputSample + damped * feedbackGain;
-            delayLine.pushSample(ch, toWrite);
+        // Feedback path saturation + damping per repeat (analog-thickening
+        // character, carried forward from v1's delay).
+        const float fbAtoB = feedbackFilter[0].processSample(0, std::tanh(pingPongDrive * delayedA)) * pingPongFeedback;
+        const float fbBtoA = feedbackFilter[1].processSample(0, std::tanh(pingPongDrive * delayedB)) * pingPongFeedback;
 
-            channelData[n] = delayed; // tap BEFORE re-injecting feedback for this sample
-        }
+        const float monoIn = 0.5f * (left[n] + right[n]);
+        delayLineA.pushSample(0, monoIn + fbBtoA); // fresh input ONLY into A
+        delayLineB.pushSample(0, fbAtoB);          // B never receives fresh input directly
+
+        // Stage wet/dry blend, driven purely by delayNorm.
+        left[n] = left[n] * (1.0f - delayNorm) + delayedA * delayNorm;
+        right[n] = right[n] * (1.0f - delayNorm) + delayedB * delayNorm;
     }
 
     // ------------------------------------------------------------------
-    // Component 4: Reverb Engine, with Phase 4.2's freeze/hold behavior.
-    // Processes the delay's wet output (buffer now holds delay output).
-    // Freeze ramps smoothly (smoothstep, not a hard toggle) across the top
-    // 10% of throw's range, per architecture.md's "Reverb Freeze/Hold Curve".
+    // Reverb stage. Uses the preallocated reverbWetBuffer member (real-time
+    // safe - NEVER allocate an AudioBuffer inside processBlock()).
     // ------------------------------------------------------------------
-    const float freeze = smoothstep(throwNorm, 0.90f, 1.00f);
-    const float reverbInputGain = 1.0f - freeze; // explicit input mute, applied BEFORE reverb.process()
+    const float freeze = smoothstep(transitionNorm, 0.90f, 1.00f);
+    const float reverbInputGain = 1.0f - freeze;
 
     juce::dsp::Reverb::Parameters reverbParams;
-    reverbParams.roomSize = juce::jlimit(0.0f, 1.0f, 0.30f + 0.40f * spaceNorm + 0.30f * throwNorm);
-    reverbParams.damping = juce::jmap(throwNorm, 0.0f, 1.0f, 0.60f, 0.05f);
+    reverbParams.roomSize = juce::jlimit(0.0f, 1.0f, 0.30f + 0.40f * reverbNorm + 0.30f * transitionNorm);
+    reverbParams.damping = juce::jmap(transitionNorm, 0.0f, 1.0f, 0.60f, 0.05f);
     reverbParams.wetLevel = 1.0f;
     reverbParams.dryLevel = 0.0f;
     reverbParams.width = 1.0f;
     reverbParams.freezeMode = freeze;
     reverb.setParameters(reverbParams);
 
-    // Mute the NEW input feeding the reverb as freeze engages - this does
-    // NOT mute the reverb's output/tail, only what's about to be written
-    // into its internal feedback network, so an already-frozen tail keeps
-    // sustaining even when reverbInputGain reaches 0.0 at full freeze.
-    buffer.applyGain(reverbInputGain);
+    // Mute the NEW input feeding the reverb as freeze engages - does not
+    // mute the reverb's own sustaining output.
+    for (int ch = 0; ch < numChannels; ++ch)
+        reverbWetBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
+    reverbWetBuffer.applyGain(reverbInputGain);
 
     {
-        juce::dsp::AudioBlock<float> reverbBlock(buffer);
-        juce::dsp::ProcessContextReplacing<float> reverbContext(reverbBlock);
+        auto reverbSubBlock = juce::dsp::AudioBlock<float>(reverbWetBuffer).getSubBlock(0, static_cast<size_t>(numSamples));
+        juce::dsp::ProcessContextReplacing<float> reverbContext(reverbSubBlock);
         reverb.process(reverbContext);
     }
 
-    // ------------------------------------------------------------------
-    // Component 5 (Phase 4.3): Reverb Modulation - hand-rolled sine LFO
-    // (~0.15Hz phase accumulator) modulating a short DelayLine in series,
-    // processing the reverb's fully-wet output ("buffer" now holds the
-    // post-reverb signal). Center delay ~5ms, depth +/-3ms (2-8ms total
-    // range), per architecture.md Component 5. Applied UNCONDITIONALLY
-    // (not gated by throw/freeze) so a frozen tail keeps a subtle "alive"
-    // drift rather than reading as a static drone - this is a fixed,
-    // non-parameter internal constant per the locked 3-parameter contract.
-    // ------------------------------------------------------------------
-    for (int n = 0; n < numSamples; ++n)
-    {
-        const float lfoValue = std::sin(reverbModPhase * juce::MathConstants<float>::twoPi);
-        const float modDelayMs = 5.0f + 3.0f * lfoValue;
-        const float modDelaySamples = static_cast<float>(modDelayMs * 0.001 * currentSampleRate);
-
-        for (int ch = 0; ch < numChannels; ++ch)
-        {
-            auto* channelData = buffer.getWritePointer(ch);
-            reverbModDelayLine.pushSample(ch, channelData[n]);
-            channelData[n] = reverbModDelayLine.popSample(ch, modDelaySamples, true);
-        }
-
-        reverbModPhase += reverbModPhaseIncrement;
-        if (reverbModPhase >= 1.0f)
-            reverbModPhase -= 1.0f;
-    }
-
-    // ------------------------------------------------------------------
-    // Component 6: Bipolar DJ Filter - dead-zone + smoothstep crossfade
-    // between a true dry-bypass tap (the post-reverb signal currently in
-    // `buffer`) and whichever always-running LadderFilter instance matches
-    // sweep's sign. BOTH LadderFilter instances process every sample
-    // regardless of which is audible (deliberate CPU-for-click-avoidance
-    // tradeoff, per architecture.md).
-    // ------------------------------------------------------------------
-    constexpr float deadzone = 0.01f;
-    constexpr float transitionWidth = 0.04f;
-
-    float filterGain;
-    float bypassGain;
-
-    if (absSweep < deadzone)
-    {
-        filterGain = 0.0f;
-        bypassGain = 1.0f;
-    }
-    else if (absSweep < deadzone + transitionWidth)
-    {
-        filterGain = smoothstep(absSweep, deadzone, deadzone + transitionWidth);
-        bypassGain = 1.0f - filterGain;
-    }
-    else
-    {
-        filterGain = 1.0f;
-        bypassGain = 0.0f;
-    }
-
-    const bool useHPF = sweepValue > 0.0f;
-    const float resonanceActive = juce::jlimit(0.0f, 1.0f, 0.10f + 0.65f * absSweep);
-    constexpr float resonanceMin = 0.10f;
-
-    float lpfCutoffHz;
-    float hpfCutoffHz;
-    float lpfResonance;
-    float hpfResonance;
-
-    if (sweepValue < 0.0f)
-    {
-        lpfCutoffHz = juce::jmap(sweepValue, -100.0f, 0.0f, 200.0f, 20000.0f);
-        lpfResonance = resonanceActive;
-        hpfCutoffHz = 20.0f;   // parked fully open (HPF passes everything)
-        hpfResonance = resonanceMin;
-    }
-    else if (sweepValue > 0.0f)
-    {
-        hpfCutoffHz = juce::jmap(sweepValue, 0.0f, 100.0f, 20.0f, 10000.0f);
-        hpfResonance = resonanceActive;
-        lpfCutoffHz = 20000.0f; // parked fully open (LPF passes everything)
-        lpfResonance = resonanceMin;
-    }
-    else
-    {
-        lpfCutoffHz = 20000.0f;
-        hpfCutoffHz = 20.0f;
-        lpfResonance = resonanceMin;
-        hpfResonance = resonanceMin;
-    }
-
-    lpfFilter.setCutoffFrequencyHz(lpfCutoffHz);
-    lpfFilter.setResonance(lpfResonance);
-    hpfFilter.setCutoffFrequencyHz(hpfCutoffHz);
-    hpfFilter.setResonance(hpfResonance);
-
+    // Stage wet/dry blend, driven purely by reverbNorm.
     for (int ch = 0; ch < numChannels; ++ch)
     {
-        lpfBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
-        hpfBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
+        buffer.applyGain(ch, 0, numSamples, 1.0f - reverbNorm);
+        buffer.addFrom(ch, 0, reverbWetBuffer, ch, 0, numSamples, reverbNorm);
     }
-
-    {
-        juce::dsp::AudioBlock<float> lpfBlock(lpfBuffer);
-        lpfBlock = lpfBlock.getSubBlock(0, static_cast<size_t>(numSamples));
-        juce::dsp::ProcessContextReplacing<float> lpfContext(lpfBlock);
-        lpfFilter.process(lpfContext);
-
-        juce::dsp::AudioBlock<float> hpfBlock(hpfBuffer);
-        hpfBlock = hpfBlock.getSubBlock(0, static_cast<size_t>(numSamples));
-        juce::dsp::ProcessContextReplacing<float> hpfContext(hpfBlock);
-        hpfFilter.process(hpfContext);
-    }
-
-    const juce::AudioBuffer<float>& selectedFilterBuffer = useHPF ? hpfBuffer : lpfBuffer;
-
-    // buffer currently holds the bypass (unfiltered, post-reverb) signal.
-    buffer.applyGain(bypassGain);
-    for (int ch = 0; ch < numChannels; ++ch)
-        buffer.addFrom(ch, 0, selectedFilterBuffer, ch, 0, numSamples, filterGain);
 
     // ------------------------------------------------------------------
-    // Component 7 (Phase 4.3): Output Glue - tanh soft-clip (WaveShaper)
-    // followed by a fast safety Limiter. Fixed internal constants, always
-    // active but self-transparent at low signal levels (tanh(1.15*x) is
-    // near-identity for |x|<<1; the Limiter only engages near its -1dB
-    // threshold). Placed AFTER the Bipolar DJ Filter so it also catches
-    // filter-resonance peaks, not just delay-feedback/reverb-freeze
-    // buildup - this is the plugin's designed safety net for its
-    // highest-energy combined state (throw=100% frozen + space=100% +
-    // sweep extremes). Wet-only: `buffer` at this point holds only the
-    // fully-processed wet signal, the dry tap is untouched in `dryBuffer`.
+    // Output Glue (fixed safety net: soft-clip + limiter).
     // ------------------------------------------------------------------
     {
         juce::dsp::AudioBlock<float> glueBlock(buffer);
@@ -456,40 +329,29 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     // ------------------------------------------------------------------
-    // Component 8 (Phase 4.3): Stereo Width - manual M/S encode/decode,
-    // wet-only, fixed 1.35x side gain (no dedicated juce::dsp:: class for
-    // this per architecture.md). Runs AFTER Output Glue (so the widened
-    // side channel content is already peak-controlled) and is the LAST
-    // wet-path stage before the dry/wet mix. Defensive channel-count guard:
-    // skip (no-op) if fewer than 2 channels are present at runtime, even
-    // though this plugin's bus config is stereo-only.
+    // Final Dry/Wet Mix (equal-power) against the TRUE dry tap (pre-effects,
+    // post input gain).
     // ------------------------------------------------------------------
-    if (numChannels >= 2)
-    {
-        constexpr float widthAmount = 1.35f;
-        auto* left = buffer.getWritePointer(0);
-        auto* right = buffer.getWritePointer(1);
-
-        for (int n = 0; n < numSamples; ++n)
-        {
-            const float mid = 0.5f * (left[n] + right[n]);
-            const float side = 0.5f * (left[n] - right[n]) * widthAmount;
-            left[n] = mid + side;
-            right[n] = mid - side;
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Component 9: Dry/Wet Mixer (equal-power crossfade, throw-driven).
-    // `buffer` now holds the fully-processed wet signal; `dryBuffer` holds
-    // the untouched dry tap captured at the top of this function.
-    // ------------------------------------------------------------------
-    const float wetGain = std::sin(throwNorm * juce::MathConstants<float>::halfPi);
-    const float dryGain = std::cos(throwNorm * juce::MathConstants<float>::halfPi);
+    const float wetGain = std::sin(dryWetNorm * juce::MathConstants<float>::halfPi);
+    const float dryGain = std::cos(dryWetNorm * juce::MathConstants<float>::halfPi);
 
     buffer.applyGain(wetGain);
     for (int ch = 0; ch < numChannels; ++ch)
         buffer.addFrom(ch, 0, dryBuffer, ch, 0, numSamples, dryGain);
+
+    // ------------------------------------------------------------------
+    // Output Gain (applied last) + OUTPUT level meter (peak, post gain,
+    // the true final output level).
+    // ------------------------------------------------------------------
+    buffer.applyGain(juce::Decibels::decibelsToGain(outputGainDb));
+
+    {
+        float peakLevel = 0.0f;
+        for (int ch = 0; ch < numChannels; ++ch)
+            peakLevel = std::max(peakLevel, buffer.getMagnitude(ch, 0, numSamples));
+        const float peakDb = peakLevel > 0.00001f ? juce::Decibels::gainToDecibels(peakLevel) : -100.0f;
+        outputLevelDb.store(peakDb, std::memory_order_relaxed);
+    }
 }
 
 juce::AudioProcessorEditor* TransitionistAudioProcessor::createEditor()
@@ -512,7 +374,6 @@ void TransitionistAudioProcessor::setStateInformation(const void* data, int size
         parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
-// Factory function
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new TransitionistAudioProcessor();

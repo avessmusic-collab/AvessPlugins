@@ -1,0 +1,406 @@
+# v5 UI Design Specification
+# Generated: 2026-08-26
+# Plugin: Transitionist
+#
+# Full control-surface redesign (user request after real-world DAW testing
+# of v1.0.0/v4-mockup's 3-macro design). Replaces THROW/SPACE/SWEEP with 6
+# UI modules, left to right: INPUT (slider+meter) - DELAY (knob+sync) -
+# TRANSITION (big hero knob) - REVERB (knob) - DRY/WET (small knob) -
+# OUTPUT (slider+meter). Visual style (light skeuomorphic hardware: gray
+# textured outer frame, pale cool-silver panel cards, brushed-metal knob
+# discs, LCD readouts, blue-lavender glow) carries forward UNCHANGED from
+# v3/v4 - only the control set and layout are new. Preset bar also carries
+# forward unchanged in style, recentered for the new window width.
+
+window:
+  width: 1100   # widened from v4's 980 to fit 6 modules instead of 3 knobs
+  height: 440   # was 420 - panel cards now taller (300px) to fit the 200px hero knob
+  resizable: false
+
+colors:
+  # IDENTICAL to v4 - no palette changes in v5 (control-surface redesign, not a restyle).
+  outer_frame_top: "#d7dce3"
+  outer_frame_mid: "#c3cad6"
+  outer_frame_bottom: "#aab2c0"
+  outer_frame_edge: "#98a2b4"
+  outer_frame_texture_light: "rgba(255,255,255,0.10)"
+  outer_frame_texture_dark: "rgba(70,80,100,0.06)"
+  panel_top: "#eef1f5"
+  panel_bottom: "#dde2e9"
+  panel_inset_shadow: "rgba(30,38,54,0.28)"
+  panel_edge: "#c7ceda"
+  disc_face_start: "#f6f8fa"
+  disc_face_mid: "#d7dce3"
+  disc_face_end: "#aab2c0"
+  ridge_light: "rgba(255,255,255,0.55)"
+  ridge_dark: "rgba(70,80,100,0.35)"
+  track: "rgba(90,104,130,0.22)"
+  accent_glow: "#9ab6e8"
+  accent_arc: "#6f8fc9"          # also used for meter fill and slider fill/thumb accent
+  pointer_dot: "#3d4a63"
+  lcd_bezel: "#232a36"
+  lcd_screen: "#182028"
+  lcd_digits: "#7fd8e0"
+  text_primary: "#2c3444"
+  text_secondary: "#5b6478"
+  meter_fill_normal: "#6f8fc9"    # NEW - reuses accent_arc, meter bar color below -6dB
+  meter_fill_hot: "#e0a860"       # NEW - meter bar color -6dB to -1dB
+  meter_fill_clip: "#d9636c"      # NEW - meter bar color above -1dB (near/at clipping)
+
+typography:
+  # IDENTICAL to v4.
+  primary: "'Futura', 'Century Gothic', 'Trebuchet MS', -apple-system, 'Helvetica Neue', Arial, sans-serif"
+  logo:
+    size: "24px"
+    weight: 800
+    letter_spacing: "0.34em"
+  label:
+    size: "12px"
+    weight: 700
+    letter_spacing: "0.28em"
+  lcd_value:
+    size: "18px"
+    weight: 600
+    letter_spacing: "0.04em"
+    font_family: "'Courier New', 'Consolas', monospace"
+
+layout:
+  type: custom
+  description: >
+    Six panel cards in a single row, all sharing the same height (300px)
+    for a consistent "rack strip" look, each knob/module vertically
+    centered within its own card regardless of size. Left to right: INPUT
+    (channel-strip slider+meter module), DELAY (120px knob + LCD-styled
+    sync dropdown beneath it), TRANSITION (200px hero knob - visibly the
+    largest control and card on the plugin), REVERB (120px knob), DRY/WET
+    (80px small knob), OUTPUT (channel-strip slider+meter module,
+    mirrors INPUT). Quick preset bar retained at top, unchanged in style
+    from v4, recentered for the new 1100px width. Panel/knob/LCD material,
+    outer frame gradient+texture, and logo/caption typography all carry
+    forward unchanged from v4.
+
+controls:
+  - id: transition
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Transition"
+    parameter: "transition"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 565, y: 130 }   # v5.1: moved 3rd (after delay, reverb) per user request
+    size: { width: 200, height: 200 }   # NEW - largest control, "hero" knob
+    indicator:
+      style: "thin-arc-plus-pointer-dot"   # same style as v4's unipolar knobs, scaled up
+      arc_track_width: 4                    # slightly thicker to suit the larger size
+      pointer: "small dot near top edge of disc, rotates with knob body"
+      ring_geometry: "viewBox 0 0 220 220, r=104, cx=cy=110 (ringSize = knobSize+20, r = ringSize/2-6, matches v4's formula)"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Escalation/intensity macro (carries forward v1 THROW's spirit under a
+      new name). Scales reverb decay/size and delay feedback intensity
+      upward together; engages reverb freeze/hold near 100%. Does NOT
+      control whether reverb/delay are audible - REVERB/DELAY do that
+      independently via their own 0%-bypass gating.
+
+  - id: reverb
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Reverb"
+    parameter: "reverb"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 375, y: 170 }   # v5.1: moved 2nd (after delay, before transition) per user request
+    size: { width: 120, height: 120 }
+    indicator:
+      style: "thin-arc-plus-pointer-dot"
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+      ring_geometry: "viewBox 0 0 140 140, r=64, cx=cy=70"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Reverb stage send/mix amount. 0% = stage fully bypassed. Reverb
+      decay/size itself is jointly driven by this AND transition.
+
+  - id: delay
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Delay"
+    parameter: "delay"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 185, y: 170 }
+    size: { width: 120, height: 120 }
+    indicator:
+      style: "thin-arc-plus-pointer-dot"
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+      ring_geometry: "viewBox 0 0 140 140, r=64, cx=cy=70"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Ping-pong delay stage send/mix amount. 0% = stage fully bypassed
+      regardless of feedback amount. Paired with the delaySync dropdown
+      directly below it.
+
+  - id: delaySync
+    type: combo
+    style: lcd-dropdown
+    label: "Delay Sync"
+    parameter: "delaySync"
+    parameter_type: choice
+    choices: ["1/16", "1/8T", "1/8", "1/8D", "1/4", "1/4D", "1/2", "1/2D", "1/1"]
+    default: "1/4"
+    position: { x: 203, y: 303 }
+    size: { width: 84, height: 24 }
+    style_notes: >
+      Native <select> styled as an LCD readout (dark screen, cyan glow
+      monospace text) matching the knob LCD treatment - same trick used by
+      v4's preset-name dropdown. Sits between the DELAY knob and its
+      "DELAY" caption.
+
+  - id: dryWet
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Dry/Wet"
+    parameter: "dryWet"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    position: { x: 835, y: 190 }
+    size: { width: 80, height: 80 }   # NEW - smallest knob, deliberately minor-looking
+    indicator:
+      style: "thin-arc-plus-pointer-dot"
+      arc_track_width: 2
+      pointer: "small dot near top edge of disc, rotates with knob body"
+      ring_geometry: "viewBox 0 0 100 100, r=44, cx=cy=50"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Final equal-power blend between the fully dry input (tapped after
+      Input Gain) and the fully processed wet chain. Distinct from
+      transition: transition shapes the effect's intensity, this just
+      blends how much of the result you hear.
+
+  - id: inputGain
+    type: slider
+    orientation: vertical
+    style: skeuomorphic-channel-strip
+    label: "Input"
+    parameter: "inputGain"
+    parameter_type: float
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    position: { x: 64, y: 148 }
+    size: { width: 30, height: 192 }
+    indicator:
+      style: "vertical-fill-with-unity-tick"
+      fill_from: "bottom"
+      unity_tick: "thin fixed light line at vertical center (0dB, range midpoint)"
+      thumb: "small rounded-rect handle, same disc_face gradient as knob material"
+    readout:
+      style: "inset-lcd"
+      position: { x: 55, y: 120 }
+      size: { width: 70, height: 22 }
+      format: "{value} dB"
+      notes: "signed, e.g. -6.0 dB / +3.0 dB / 0.0 dB - sits ABOVE the slider track, not embedded in it"
+    notes: >
+      Input trim, applied before all processing. Drives the INPUT level
+      meter (adjacent) and the dry tap used for the final Dry/Wet blend.
+      First non-knob, non-0-100% control in this plugin.
+
+  - id: outputGain
+    type: slider
+    orientation: vertical
+    style: skeuomorphic-channel-strip
+    label: "Output"
+    parameter: "outputGain"
+    parameter_type: float
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    position: { x: 984, y: 148 }
+    size: { width: 30, height: 192 }
+    indicator:
+      style: "vertical-fill-with-unity-tick"
+      fill_from: "bottom"
+      unity_tick: "thin fixed light line at vertical center (0dB, range midpoint)"
+      thumb: "small rounded-rect handle, same disc_face gradient as knob material"
+    readout:
+      style: "inset-lcd"
+      position: { x: 975, y: 120 }
+      size: { width: 70, height: 22 }
+      format: "{value} dB"
+      notes: "mirrors inputGain's readout treatment"
+    notes: >
+      Output trim, applied after the Dry/Wet blend - the true final gain
+      stage. Drives the OUTPUT level meter (adjacent).
+
+# UI-only live level meters - NOT APVTS parameters, no automation, no state
+# save. Driven by std::atomic<float> + editor Timer (30Hz) +
+# emitEventIfBrowserIsVisible, per juce8-critical-patterns.md Pattern #20.
+# Positioned here (not under display_elements) because they ARE real
+# bounds-relevant visual elements even though not parameter-bound.
+meters:
+  - id: inputMeter
+    label_for: inputGain
+    position: { x: 102, y: 148 }
+    size: { width: 14, height: 192 }
+    style: "vertical bar meter, ballistic motion (attack 0.4 / decay 0.15,
+      requestAnimationFrame loop), color zones: meter_fill_normal below
+      -6dB, meter_fill_hot -6dB to -1dB, meter_fill_clip above -1dB"
+    data_source: "std::atomic<float> inputLevelDb, peak post inputGain, updated every processBlock()"
+    transport: "editor Timer 30Hz -> webView->emitEventIfBrowserIsVisible(\"updateInputMeter\", dB)"
+
+  - id: outputMeter
+    label_for: outputGain
+    position: { x: 1022, y: 148 }
+    size: { width: 14, height: 192 }
+    style: "identical to inputMeter"
+    data_source: "std::atomic<float> outputLevelDb, peak post outputGain (true final output level)"
+    transport: "editor Timer 30Hz -> webView->emitEventIfBrowserIsVisible(\"updateOutputMeter\", dB)"
+
+# Non-interactive visual elements. Not JUCE relay-bound controls; excluded
+# from control-overlap/bounds validation but positioned to avoid collisions.
+display_elements:
+  - id: logo
+    type: label
+    text: "TRANSITIONIST"
+    position: { x: 0, y: 24 }
+    size: { width: 1100, height: 30 }
+    text_align: center
+    layer: decorative
+    notes: "UNCHANGED from v4 except container width (now 1100px)."
+
+  - id: preset_bar_container
+    type: group
+    position: { x: 424, y: 58 }
+    size: { width: 252, height: 24 }
+    layer: decorative
+    notes: "UNCHANGED from v4 in every respect except recentered for the new 1100px window width (was x=364 for 980px)."
+
+  - id: panel_input
+    type: panel-card
+    position: { x: 40, y: 90 }
+    size: { width: 100, height: 300 }
+    layer: decorative
+
+  - id: panel_delay
+    type: panel-card
+    position: { x: 160, y: 90 }
+    size: { width: 170, height: 300 }
+    layer: decorative
+
+  - id: panel_reverb
+    type: panel-card
+    position: { x: 350, y: 90 }   # v5.1: moved 2nd per user-requested reorder (delay, reverb, transition)
+    size: { width: 170, height: 300 }
+    layer: decorative
+
+  - id: panel_transition
+    type: panel-card
+    position: { x: 540, y: 90 }   # v5.1: moved 3rd per user-requested reorder
+    size: { width: 250, height: 300 }
+    layer: decorative
+    notes: "Visibly the largest panel card - reinforces transition's role as the hero control."
+
+  - id: panel_drywet
+    type: panel-card
+    position: { x: 810, y: 90 }
+    size: { width: 130, height: 300 }
+    layer: decorative
+
+  - id: panel_output
+    type: panel-card
+    position: { x: 960, y: 90 }
+    size: { width: 100, height: 300 }
+    layer: decorative
+
+  - id: caption_input
+    type: label
+    text: "INPUT"
+    label_for: inputGain
+    position: { x: 40, y: 340 }
+    size: { width: 100, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: caption_delay
+    type: label
+    text: "DELAY"
+    label_for: delay
+    position: { x: 160, y: 340 }
+    size: { width: 170, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: caption_reverb
+    type: label
+    text: "REVERB"
+    label_for: reverb
+    position: { x: 350, y: 340 }
+    size: { width: 170, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: caption_transition
+    type: label
+    text: "TRANSITION"
+    label_for: transition
+    position: { x: 540, y: 340 }
+    size: { width: 250, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: caption_drywet
+    type: label
+    text: "DRY/WET"
+    label_for: dryWet
+    position: { x: 810, y: 340 }
+    size: { width: 130, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: caption_output
+    type: label
+    text: "OUTPUT"
+    label_for: outputGain
+    position: { x: 960, y: 340 }
+    size: { width: 100, height: 20 }
+    text_align: center
+    layer: decorative
+
+notes:
+  - "v5.1 (post-mockup user request): knob order changed from INPUT-DELAY-TRANSITION-REVERB-DRYWET-OUTPUT to INPUT-DELAY-REVERB-TRANSITION-DRYWET-OUTPUT. Only delay/reverb/transition x-positions changed (window size, all other modules, and every control's own size/style unchanged) - CONFIRMED correct via screenshot of the running Standalone app."
+  - "KNOWN OPEN ISSUE (not fully resolved as of v5.1): the preset name dropdown sometimes renders visually blank (no option text shown in its closed state) even though its 8 options are populated by JS on load. Attempted fix: deferred initial population/matching past first paint via requestAnimationFrame, and made it re-run on every relevant parameter change (self-correcting, same pattern knobs already use via valueChangedEvent) rather than only once at load. This did not conclusively resolve it in the one screenshot where it could be checked after the fix. Root cause not confirmed - candidates include a WebKit select-element closed-state repaint quirk specific to JS-populated (vs statically-authored) option lists, or an unrelated intermittent WebView load issue (this WebView has separately shown one-off blank-white full-page loads on cold Standalone launches, unrelated to this specific dropdown, possibly the same underlying JUCE/WebKit flakiness documented in troubleshooting/gui-issues/webview-frame-load-interrupted-TapeAge-20251111.md). Needs live re-verification with real screen access before considering this closed. The prev/next buttons and the dropdown underlying VALUE (not just its displayed text) may well be working correctly regardless - this is possibly a cosmetic display-only issue, not a functional one. The delaySync dropdown (statically authored options in HTML, not JS-populated) has never shown this symptom, which is the strongest clue toward the JS-population-timing theory."
+  - "v5 is a full control-surface redesign per user request after real-world DAW testing of v1.0.0 (the throw/space/sweep v4 mockup). 7 parameters now exist: transition, reverb, delay, delaySync (choice), dryWet, inputGain, outputGain. All v1 parameter IDs (throw, space, sweep) are retired entirely - breaking change, no migration path."
+  - "TRANSITION is the plugin's hero control - 200px diameter (vs 120px for REVERB/DELAY, 80px for DRY/WET) and the widest panel card (250px vs 170px/130px/100px) - deliberately visually dominant, matching its role as 'the big knob that does all the transition' per the user's request."
+  - "All 6 panel cards share the same height (300px) and top position (y=90) for a consistent rack-strip look; each knob is vertically centered within a shared 220px-tall 'slot' zone (y=120 to y=340 relative to window) regardless of its own diameter, so caption labels all align on the same baseline row (y=340) across every module."
+  - "INPUT/OUTPUT are the plugin's first non-knob controls: vertical sliders (30x192px, meets layout-validation.md's 30px-width/100px-height vertical slider minimums) paired with live peak meters (14x192px) and a dB-value LCD readout above each. First-ever level meters in this plugin - UI-only, not APVTS parameters."
+  - "delaySync is this plugin's first choice/combo parameter (WebComboBoxRelay) - styled as an LCD dropdown matching v4's preset-name dropdown treatment, sitting between the DELAY knob and its caption."
+  - "Color palette, knob material/texture, LCD readout treatment, panel card styling, outer frame gradient+texture, logo, and caption style are ALL UNCHANGED from v4 - only 3 new color entries added (meter_fill_normal/hot/clip) for the level meters, which reuse existing hues (meter_fill_normal = accent_arc) plus two new amber/red tones for the meter's hot/clip zones, a standard convention not previously needed in this plugin."
+  - "Window widened 980x420 -> 1100x440 to fit 6 modules (vs 3 knobs in v4) while keeping every control comfortably sized - validated bounds/overlap/minimum-size/edge-padding on all 7 controls plus both meters with zero errors and zero warnings."
+  - "SWEEP's bipolar arc-fill/center-detent-tick pattern (v4's only bipolar knob) is retired along with the parameter itself - none of v5's 4 knobs are bipolar (inputGain/outputGain's -24..+24dB range uses the vertical-slider-with-unity-tick pattern instead, a different UI paradigm from a bipolar rotary arc)."
