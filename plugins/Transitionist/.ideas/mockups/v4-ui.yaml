@@ -1,0 +1,322 @@
+# v4 UI Design Specification
+# Generated: 2026-08-26
+# Plugin: Transitionist
+#
+# Concept: a three-macro "transition" FX chain (Delay -> Reverb -> Bipolar
+# DJ Filter -> Output Glue -> Width). This is a PARAMETER-SET change, not a
+# restyle: the plugin's DSP concept was redesigned from 2 knobs (mix,
+# duration) to 3 knobs (throw, space, sweep) per the 2026-08-26
+# creative-brief.md revision. The v3 visual style (light skeuomorphic
+# hardware look - white/off-white outer frame, pale cool-silver inset panel
+# cards, photorealistic brushed-metal ridged knob discs, arc-track +
+# pointer-dot indicator, cool blue-lavender ambient glow, inset LCD-style
+# digital readout, geometric-sans logotype, uppercase spaced-out captions)
+# carries forward UNCHANGED. Only these things changed from v3:
+#
+#   1. A third panel added. Window widened from 700px to 980px (height
+#      unchanged at 420px) to fit three panels with the same generous
+#      per-panel proportions and edge margins used in v3, rather than
+#      cramming three panels into the old 700px width. Panel width reduced
+#      slightly (260px -> 250px) as part of this recalculation, but panel
+#      height (250px), knob size (140x140px), and all vertical positioning
+#      (panel top, knob top, caption top) are IDENTICAL to v3.
+#   2. Old parameter IDs (mix, duration) retired. New parameter IDs (throw,
+#      space, sweep) bound left-to-right, matching the plugin's actual
+#      signal-flow order: delay/reverb macros (THROW, SPACE) first, filter
+#      macro (SWEEP) last.
+#   3. SWEEP is a new bipolar control type (-100% to +100%, center detent
+#      at 0%). This required a new indicator style
+#      ("bipolar-arc-plus-pointer-dot") and readout format (signed value)
+#      not present in v3, where both knobs were unipolar 0-100%. The knob
+#      disc's own rotation behavior (drag-to-rotate, -135deg to +135deg
+#      physical range, ridged-metal/glow/LCD visual treatment) is otherwise
+#      identical to THROW and SPACE - only the arc-fill visualization and
+#      LCD sign formatting differ.
+
+window:
+  width: 980   # v4: widened from v3's 700px to fit a third panel with the
+               # same generous per-panel proportions/margins as v3, rather
+               # than shrinking knobs to cram 3 panels into 700px.
+  height: 420  # UNCHANGED from v3
+  resizable: false   # simple 3-parameter plugin - fixed size per ui-design-rules.md Rule 4
+
+colors:
+  # Light skeuomorphic hardware palette - pale cool silvers + glassy blue-lavender
+  # accent. IDENTICAL to v3 - no palette changes in v4 (parameter-set change only).
+  outer_frame: "#f8f9fb"
+  outer_frame_edge: "#e4e7ec"
+  panel_top: "#eef1f5"
+  panel_bottom: "#dde2e9"
+  panel_inset_shadow: "rgba(30,38,54,0.28)"
+  panel_edge: "#c7ceda"
+  disc_face_start: "#f6f8fa"
+  disc_face_mid: "#d7dce3"
+  disc_face_end: "#aab2c0"
+  ridge_light: "rgba(255,255,255,0.55)"
+  ridge_dark: "rgba(70,80,100,0.35)"
+  track: "rgba(90,104,130,0.22)"
+  accent_glow: "#9ab6e8"
+  accent_arc: "#6f8fc9"           # UNCHANGED - v4 reuses this exact color for
+                                   # SWEEP's bipolar fill (both directions) rather
+                                   # than introducing a second accent hue, keeping
+                                   # the palette closed/unchanged from v3.
+  pointer_dot: "#3d4a63"
+  lcd_bezel: "#232a36"
+  lcd_screen: "#182028"
+  lcd_digits: "#7fd8e0"
+  text_primary: "#2c3444"
+  text_secondary: "#5b6478"
+
+typography:
+  # IDENTICAL to v3 - no font/weight/spacing changes in v4.
+  primary: "'Futura', 'Century Gothic', 'Trebuchet MS', -apple-system, 'Helvetica Neue', Arial, sans-serif"
+  logo:
+    size: "24px"
+    weight: 800
+    letter_spacing: "0.34em"
+  label:
+    size: "12px"
+    weight: 700
+    letter_spacing: "0.28em"
+  lcd_value:
+    size: "18px"
+    weight: 600
+    letter_spacing: "0.04em"
+    font_family: "'Courier New', 'Consolas', monospace"
+
+layout:
+  type: custom
+  description: >
+    v4: The same white/off-white outer frame with generously rounded
+    corners as v3 now contains THREE separate pale off-white/cool-silver
+    panel cards side by side (was two in v3), each gently rounded with a
+    soft interior shadow - panel card styling itself is unchanged from v3,
+    only panel width was recalculated slightly (260px -> 250px) to fit
+    three panels comfortably in a widened 980px window. Panel order,
+    left-to-right: THROW, SPACE, SWEEP - matching the plugin's actual
+    signal-flow order (delay/reverb macros happen first, the bipolar DJ
+    filter macro is last). Each panel holds one large brushed-metal knob
+    disc with a fine ridged outer edge, a soft cool blue-lavender ambient
+    glow bleeding from behind part of the disc, a recessed LCD-style
+    digital readout embedded in the knob's own center - all unchanged from
+    v3. THROW and SPACE use the same thin arc-track + pointer-dot position
+    indicator as v3 (single-direction sweep from a start angle). SWEEP
+    introduces a new bipolar indicator: the fill arc grows outward from the
+    fixed 12-o'clock/center position in both directions (left/CCW for
+    negative values, right/CW for positive values) against the same static
+    270-degree track used by the other two knobs, with a small fixed tick
+    mark at 12 o'clock marking the center detent. Logotype sits top-center
+    above all three panels, spanning the new window width, unchanged in
+    font/weight/color/placement-convention from v3. An uppercase,
+    wide-letter-spaced caption sits below each panel card, unchanged in
+    style from v3. No bottom vent-hole strip, no meters, no preset browser,
+    no additional chrome - deliberately minimal per creative brief.
+
+controls:
+  - id: throw
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Throw"
+    parameter: "throw"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 115, y: 126 }   # v4: leftmost slot - first in signal-flow order
+    size: { width: 140, height: 140 }   # UNCHANGED from v3 knob size
+    indicator:
+      style: "thin-arc-plus-pointer-dot"   # UNCHANGED from v3 - unipolar sweep
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Primary macro: simultaneously dry/wet, delay feedback amount, and
+      reverb decay/size. Turning it up makes the wash itself bigger and
+      more self-sustaining; near the top of its range the reverb engages a
+      freeze/hold mode (feedback -> 1.0, damping -> 0, input muted) for an
+      infinite, automatable tail - the "throw and hold" gesture (per
+      creative-brief.md). Also lightly scales feedback-loop saturation
+      drive. Modeled as a continuous float 0-100% for the mockup; exact
+      internal mapping curve and freeze-engagement threshold are Stage 0
+      DSP research items. New parameter ID (v1/v2's "duration" and "mix"
+      are both retired). Knob styling/interaction is identical to v3's
+      knobs - only position, id, label, and range meaning changed.
+
+  - id: space
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Space"
+    parameter: "space"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 420, y: 126 }   # v4: middle slot - second in signal-flow order
+    size: { width: 140, height: 140 }   # UNCHANGED from v3 knob size
+    indicator:
+      style: "thin-arc-plus-pointer-dot"   # UNCHANGED from v3 - unipolar sweep
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body"
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{value}%"
+    notes: >
+      Links delay time (tempo-synced division) and reverb size together
+      into one "room" macro, independent of THROW's decay/feedback role -
+      short settings give a tight slapback with a small room; long settings
+      give a cavernous wash with long echo spacing (per creative-brief.md).
+      Exact shared 0-100% mapping to tempo-synced division + reverb size is
+      a Stage 0 DSP research item. New parameter ID, new panel. Knob
+      styling/interaction is identical to v3's knobs.
+
+  - id: sweep
+    type: knob
+    style: skeuomorphic-metal-disc
+    label: "Sweep"
+    parameter: "sweep"
+    parameter_type: float
+    range: [-100.0, 100.0]   # v4: NEW - bipolar range, center detent at 0.0
+    unit: "%"
+    default: 0.0             # center = fully open / no filtering
+    decimals: 0
+    bipolar: true
+    center_value: 0.0
+    position: { x: 725, y: 126 }   # v4: rightmost slot - last in signal-flow order (filter stage)
+    size: { width: 140, height: 140 }   # UNCHANGED size/proportions from THROW/SPACE and from v3 knobs
+    indicator:
+      style: "bipolar-arc-plus-pointer-dot"   # v4: NEW indicator style, not present in v3
+      arc_track_width: 3
+      pointer: "small dot near top edge of disc, rotates with knob body - SAME rotation behavior/range as THROW and SPACE (-135deg to +135deg), just centered at 0% instead of ranging from a 0% floor"
+      fill_behavior: >
+        Unlike THROW/SPACE's single CW sweep from a start angle, the arc
+        fill originates at the fixed 12-o'clock/center point and grows
+        outward toward whichever side is active: leftward/counter-clockwise
+        as the value goes negative, rightward/clockwise as the value goes
+        positive. At exactly 0% no fill is visible (arc has zero length).
+        The underlying grey track ring is the same static 270-degree track
+        used by THROW/SPACE (visually unchanged) so all three knobs read as
+        one consistent family at a glance.
+      center_detent_mark: >
+        A small fixed tick mark sits at the 12-o'clock point on the track
+        ring, distinguishing SWEEP's center-referenced interaction pattern
+        from THROW/SPACE's start-angle sweep at a glance. The tick does not
+        rotate with the knob body - it marks a fixed physical reference
+        point on the dial face, same convention as center-detent markings
+        on physical hardware pots.
+    readout:
+      style: "inset-lcd"
+      position: "embedded in knob center, does not rotate with knob body"
+      format: "{signed_value}%"
+      notes: >
+        Signed readout, distinct from THROW/SPACE's always-positive format:
+        shows "-NN%" for negative (lowpass closing in), "+NN%" for positive
+        (highpass opening up), and "0%" (no sign) exactly at center.
+    notes: >
+      Bipolar control over the ladder filter (the "shwoosh"). Center =
+      fully open/transparent. Negative/CCW closes a 24dB lowpass; positive/CW
+      opens a 24dB highpass; resonance rises toward both extremes for an
+      aggressive sweep character in either direction (per creative-brief.md).
+      Exact LadderFilter mode-switching approach and resonance-rise curve
+      are Stage 0 DSP research items. New parameter ID, new panel, and the
+      only knob in v4 using the new bipolar indicator/readout pattern - the
+      knob disc's own material, glow, ridged edge, and LCD housing are
+      otherwise pixel-identical to THROW and SPACE.
+
+# Non-interactive visual elements. Not JUCE relay-bound controls; excluded
+# from control-overlap/bounds validation but positioned to avoid collisions.
+display_elements:
+  - id: logo
+    type: label
+    text: "TRANSITIONIST"
+    position: { x: 0, y: 24 }
+    size: { width: 980, height: 30 }   # v4: width matches new window width (was 700 in v3)
+    text_align: center
+    layer: decorative
+    notes: >
+      UNCHANGED from v3 in every respect except container width (now spans
+      the full 980px window instead of 700px) - same font, weight, letter
+      spacing, dark blue-gray color (text_primary), and text-shadow
+      treatment, still centered top-of-window above all panels.
+
+  - id: panel_throw
+    type: panel-card
+    position: { x: 60, y: 90 }
+    size: { width: 250, height: 250 }
+    layer: decorative
+    notes: >
+      Pale off-white/cool-silver panel card, rounded corners, soft interior
+      shadow, thin edge hairline - styling identical to v3. Leftmost slot
+      (THROW is first in signal-flow order). Panel width recalculated from
+      v3's 260px to 250px to fit a third panel in the widened window; panel
+      height (250px) and all other styling unchanged.
+
+  - id: panel_space
+    type: panel-card
+    position: { x: 365, y: 90 }
+    size: { width: 250, height: 250 }
+    layer: decorative
+    notes: >
+      New third panel (v3 only had two). Same styling as panel_throw and
+      panel_sweep. Middle slot (SPACE is second in signal-flow order).
+
+  - id: panel_sweep
+    type: panel-card
+    position: { x: 670, y: 90 }
+    size: { width: 250, height: 250 }
+    layer: decorative
+    notes: >
+      Pale off-white/cool-silver panel card, rounded corners, soft interior
+      shadow, thin edge hairline - styling identical to v3. Rightmost slot
+      (SWEEP/filter is last in signal-flow order).
+
+  - id: throw_label
+    type: label
+    text: "THROW"
+    label_for: throw
+    position: { x: 60, y: 284 }
+    size: { width: 250, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: space_label
+    type: label
+    text: "SPACE"
+    label_for: space
+    position: { x: 365, y: 284 }
+    size: { width: 250, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: sweep_label
+    type: label
+    text: "SWEEP"
+    label_for: sweep
+    position: { x: 670, y: 284 }
+    size: { width: 250, height: 20 }
+    text_align: center
+    layer: decorative
+
+  - id: sweep_center_tick
+    type: decoration
+    position: { x: 790, y: 112 }
+    size: { width: 10, height: 10 }
+    layer: decorative
+    notes: >
+      Small fixed tick mark at the 12-o'clock point of SWEEP's arc ring,
+      marking the center detent (0% = fully open). Does not rotate. Not
+      present on THROW/SPACE (they have no center-referenced behavior).
+
+notes:
+  - "v4 is a parameter-set change, not a restyle. Three user-facing parameters now exist - throw, space, sweep (per creative-brief.md revision 2026-08-26). Old parameter IDs mix/duration are retired entirely - no backward-compatible aliasing, this is a breaking parameter-set redesign matching the plugin's DSP redesign."
+  - "Panel order left-to-right: THROW, SPACE, SWEEP - matches signal-flow order (Delay -> Reverb macros first, Bipolar DJ Filter last), same left-to-right-matches-signal-chain convention v3 established for its two panels."
+  - "throw and space map to continuous floats 0-100%, implemented as WebSliderRelay (JS: Juce.getSliderState('throw') / Juce.getSliderState('space')) - same binding pattern as v3's mix/duration."
+  - "sweep maps to a continuous float -100 to +100% (bipolar, center detent at 0.0), also implemented as WebSliderRelay - JUCE's normalised 0-1 range maps linearly to the -100..+100 display range (normalised 0.5 = 0% = center). This is a NEW pattern not present in v3/v2/v1."
+  - "Window widened from v3's 700x420 to 980x420 (height unchanged) specifically to fit a third panel at the same generous per-panel size/margin conventions v3 used, rather than shrinking knobs below v3's 140px to cram three panels into 700px. Panel width recalculated 260px -> 250px; all other panel/knob/caption proportions and vertical positions are unchanged from v3."
+  - "Color palette, typography, knob material/texture (ridged metal edge, radial gradient face), ambient glow, LCD readout treatment, panel card styling, logo font/weight/color/placement, and caption label style are ALL UNCHANGED from v3 - this iteration deliberately does not touch any of those decisions per the user's explicit instruction to carry the v3 visual style forward unchanged."
+  - "SWEEP introduces the only genuinely new visual pattern in v4: a bipolar arc-fill (grows outward from a fixed 12-o'clock center point in both directions, rather than v3's single CW sweep from a start angle) plus a fixed center-detent tick mark and a signed LCD readout format. THROW and SPACE are visually and behaviorally identical to v3's two knobs in every respect other than id/label/position."
