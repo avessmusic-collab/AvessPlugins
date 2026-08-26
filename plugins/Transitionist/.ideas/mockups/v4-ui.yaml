@@ -42,9 +42,17 @@ window:
 
 colors:
   # Light skeuomorphic hardware palette - pale cool silvers + glassy blue-lavender
-  # accent. IDENTICAL to v3 - no palette changes in v4 (parameter-set change only).
-  outer_frame: "#f8f9fb"
-  outer_frame_edge: "#e4e7ec"
+  # accent. Panel/knob/glow/LCD colors are IDENTICAL to v3. The outer frame
+  # background is a v4 mid-iteration change (user request): recolored from
+  # v3's flat white/off-white to a gray, textured gradient that reads as the
+  # same brushed-metal-chassis material family as the knobs and panel cards,
+  # rather than a plain light bezel.
+  outer_frame_top: "#d7dce3"       # v4: NEW - reuses disc_face_mid (same gray as knob disc) for gradient top stop
+  outer_frame_mid: "#c3cad6"       # v4: NEW - gradient midpoint, blends toward disc_face_end
+  outer_frame_bottom: "#aab2c0"    # v4: NEW - reuses disc_face_end (same gray as knob disc outer edge)
+  outer_frame_edge: "#98a2b4"      # v4: NEW - darker cool gray-blue hairline border (was pale "#e4e7ec" in v3)
+  outer_frame_texture_light: "rgba(255,255,255,0.10)"   # v4: NEW - fine diagonal brushed-texture hairline (light stripe)
+  outer_frame_texture_dark: "rgba(70,80,100,0.06)"      # v4: NEW - fine diagonal brushed-texture hairline (dark stripe)
   panel_top: "#eef1f5"
   panel_bottom: "#dde2e9"
   panel_inset_shadow: "rgba(30,38,54,0.28)"
@@ -87,10 +95,17 @@ typography:
 layout:
   type: custom
   description: >
-    v4: The same white/off-white outer frame with generously rounded
-    corners as v3 now contains THREE separate pale off-white/cool-silver
-    panel cards side by side (was two in v3), each gently rounded with a
-    soft interior shadow - panel card styling itself is unchanged from v3,
+    v4: An outer frame with the same generously rounded corners as v3 now
+    contains THREE separate pale off-white/cool-silver panel cards side by
+    side (was two in v3), each gently rounded with a soft interior shadow -
+    panel card styling itself is unchanged from v3. Mid-iteration change
+    (user request): the outer frame background itself was recolored from
+    v3's flat white/off-white to a gray, subtly textured gradient (fine
+    diagonal brushed-metal hairline pattern over a cool-silver gradient
+    reusing the knob disc's own gray tones), so the frame now reads as the
+    same material family as the panel cards and knobs rather than a plain
+    light bezel behind them. Panel card gradient/shadow/border values
+    themselves are unchanged - only the frame behind them changed,
     only panel width was recalculated slightly (260px -> 250px) to fit
     three panels comfortably in a widened 980px window. Panel order,
     left-to-right: THROW, SPACE, SWEEP - matching the plugin's actual
@@ -318,5 +333,5 @@ notes:
   - "throw and space map to continuous floats 0-100%, implemented as WebSliderRelay (JS: Juce.getSliderState('throw') / Juce.getSliderState('space')) - same binding pattern as v3's mix/duration."
   - "sweep maps to a continuous float -100 to +100% (bipolar, center detent at 0.0), also implemented as WebSliderRelay - JUCE's normalised 0-1 range maps linearly to the -100..+100 display range (normalised 0.5 = 0% = center). This is a NEW pattern not present in v3/v2/v1."
   - "Window widened from v3's 700x420 to 980x420 (height unchanged) specifically to fit a third panel at the same generous per-panel size/margin conventions v3 used, rather than shrinking knobs below v3's 140px to cram three panels into 700px. Panel width recalculated 260px -> 250px; all other panel/knob/caption proportions and vertical positions are unchanged from v3."
-  - "Color palette, typography, knob material/texture (ridged metal edge, radial gradient face), ambient glow, LCD readout treatment, panel card styling, logo font/weight/color/placement, and caption label style are ALL UNCHANGED from v3 - this iteration deliberately does not touch any of those decisions per the user's explicit instruction to carry the v3 visual style forward unchanged."
+  - "Typography, knob material/texture (ridged metal edge, radial gradient face), ambient glow, LCD readout treatment, panel card styling, logo font/weight/color/placement, and caption label style are ALL UNCHANGED from v3. The one exception is the OUTER FRAME background: originally carried forward unchanged from v3 (white/off-white) per the initial brief, then changed mid-iteration at the user's explicit request to a gray, textured gradient matching the panel-card/knob material family (see outer_frame_top/mid/bottom/edge/texture_light/texture_dark colors above). Panel cards themselves, which sit on top of the frame, are unaffected."
   - "SWEEP introduces the only genuinely new visual pattern in v4: a bipolar arc-fill (grows outward from a fixed 12-o'clock center point in both directions, rather than v3's single CW sweep from a start angle) plus a fixed center-detent tick mark and a signed LCD readout format. THROW and SPACE are visually and behaviorally identical to v3's two knobs in every respect other than id/label/position."

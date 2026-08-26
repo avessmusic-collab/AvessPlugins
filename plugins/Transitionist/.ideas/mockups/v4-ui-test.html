@@ -62,9 +62,20 @@
     position: relative;
     overflow: hidden;
 
-    /* UNCHANGED from v3 - white/off-white outer bezel */
-    background: linear-gradient(155deg, #fbfcfd 0%, #f8f9fb 55%, #f3f5f7 100%);
-    border: 1px solid #e4e7ec;
+    /* v4 mid-iteration change (user request): outer frame recolored from
+       v3's flat white/off-white bezel to a gray, textured surface that
+       reads as the same brushed-metal-chassis material family as the knobs
+       and panel cards. Two stacked layers:
+         1. A fine diagonal hairline stripe pattern (subtle brushed-metal
+            grain) - repeating-linear-gradient, very low opacity.
+         2. A cool-silver gray gradient reusing the knob disc's own tones
+            (disc_face_mid -> disc_face_end), so the frame reads as the
+            same material as the knobs, just a shade darker than the pale
+            panel cards that sit on top of it. */
+    background:
+      repeating-linear-gradient(125deg, rgba(255,255,255,0.10) 0px, rgba(255,255,255,0.10) 1px, rgba(70,80,100,0.06) 1px, rgba(70,80,100,0.06) 2px),
+      linear-gradient(155deg, #d7dce3 0%, #c3cad6 45%, #aab2c0 100%);
+    border: 1px solid #98a2b4;
     border-radius: 26px;
   }
 
@@ -80,7 +91,9 @@
     font-size: 24px;
     font-weight: 800;
     letter-spacing: 0.34em;
-    text-shadow: 0 1px 0 rgba(255,255,255,0.65), 0 1px 2px rgba(44,52,68,0.16), 0 0 14px rgba(154,182,232,0.20);
+    /* v4: text-shadow slightly boosted (was tuned for a paler bezel) so the
+       logo stays crisp against the new gray, textured frame background */
+    text-shadow: 0 1px 0 rgba(255,255,255,0.75), 0 1px 3px rgba(20,24,34,0.30), 0 0 14px rgba(154,182,232,0.25);
   }
 
   /* ---------------- Panel cards ---------------- */
