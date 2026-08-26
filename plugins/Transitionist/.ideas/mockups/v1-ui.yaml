@@ -1,0 +1,153 @@
+# v1 UI Design Specification
+# Generated: 2026-08-25
+# Plugin: Transitionist
+#
+# Concept: a two-knob "transition" FX chain (Delay -> Shimmer Reverb ->
+# Saturation -> DJ-style Filter). Only two user-facing parameters exist,
+# so the UI is deliberately minimal: two large arc-ring knobs, nothing else.
+
+window:
+  width: 600
+  height: 400
+  resizable: false   # simple 2-parameter plugin - fixed size per ui-design-rules.md Rule 4
+
+colors:
+  # Near-black, slightly cool/purple undertone - not a generic flat gray.
+  background: "#08070c"
+  panel_glow: "#120f1c"       # radial vignette center behind knobs
+  track: "#1c1a26"            # unfilled arc track
+  disc_face_start: "#17151f"  # knob disc radial gradient - center
+  disc_face_end: "#0a0910"    # knob disc radial gradient - edge
+  hairline: "rgba(255,255,255,0.08)"
+  text_primary: "#f3f1fa"
+  text_secondary: "#6f6c85"   # muted lavender-gray captions
+  # Accent gradient reads as "building energy": violet -> magenta -> orange.
+  accent_violet: "#7c3aff"
+  accent_magenta: "#ff2f78"
+  accent_orange: "#ff7a1a"
+  glow_shadow: "rgba(255,47,120,0.45)"
+
+typography:
+  primary: "-apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+  logo:
+    size: "20px"
+    weight: 800
+    letter_spacing: "0.38em"
+  label:
+    size: "11px"
+    weight: 700
+    letter_spacing: "0.22em"
+  value:
+    size: "22px"
+    weight: 700
+
+layout:
+  type: custom
+  description: >
+    Two large arc-ring knobs (Mix, Duration) centered as a symmetric pair
+    with generous breathing room - the only two parameters this plugin has,
+    so they get significant visual weight rather than being crammed into a
+    corner. Plugin logotype sits top-center. Each knob has an uppercase
+    caption label and a glowing value-pill readout beneath it: Mix shows a
+    percentage, Duration shows the live tempo-synced note value (e.g. "1/4").
+    No meters, no preset browser, no additional chrome.
+
+controls:
+  - id: mix
+    type: knob
+    style: arc-ring
+    label: "Mix"
+    parameter: "mix"
+    parameter_type: float
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 85, y: 93 }
+    size: { width: 180, height: 180 }
+    notes: >
+      Dry/wet crossfade of the fully-processed chain. Also drives the DJ
+      filter cutoff internally (800Hz at 0% wet -> 15kHz at 100% wet) -
+      no separate Hz readout in the UI; this is a single macro control
+      by design (per creative-brief.md and user's explicit decision).
+
+  - id: duration
+    type: knob
+    style: arc-ring
+    label: "Duration"
+    parameter: "duration"
+    parameter_type: choice
+    values: ["1/32", "1/16 T", "1/16", "1/8 T", "1/16 D", "1/8", "1/4 T",
+             "1/8 D", "1/4", "1/2 T", "1/4 D", "1/2", "1 T", "1/2 D", "1"]
+    default: "1/4"
+    default_index: 8
+    tempo_synced: true
+    position: { x: 335, y: 93 }
+    size: { width: 180, height: 180 }
+    notes: >
+      One "throw length" macro - jointly scales delay repeat time and
+      shimmer reverb decay/size. Discrete tempo-synced note values
+      (including dotted/triplet), snapped to nearest step on drag -
+      not a continuous float. The value pill beneath this knob is the
+      live note-value readout requested in design requirements.
+
+# Non-interactive visual elements. Not JUCE relay-bound controls; excluded
+# from control-overlap/bounds validation but positioned to avoid collisions.
+display_elements:
+  - id: logo
+    type: label
+    text: "TRANSITIONIST"
+    position: { x: 0, y: 47 }
+    size: { width: 600, height: 26 }
+    text_align: center
+    layer: decorative
+
+  - id: logo_underline
+    type: decorative
+    position: { x: 280, y: 78 }
+    size: { width: 40, height: 2 }
+    layer: decorative
+
+  - id: mix_label
+    type: label
+    text: "MIX"
+    label_for: mix
+    position: { x: 85, y: 289 }
+    size: { width: 180, height: 16 }
+    text_align: center
+    layer: decorative
+
+  - id: mix_value
+    type: value-readout
+    label_for: mix
+    format: "{value}%"
+    position: { x: 115, y: 313 }
+    size: { width: 120, height: 36 }
+    text_align: center
+    layer: decorative
+
+  - id: duration_label
+    type: label
+    text: "DURATION"
+    label_for: duration
+    position: { x: 335, y: 289 }
+    size: { width: 180, height: 16 }
+    text_align: center
+    layer: decorative
+
+  - id: duration_value
+    type: value-readout
+    label_for: duration
+    format: "{note}"
+    position: { x: 365, y: 313 }
+    size: { width: 120, height: 36 }
+    text_align: center
+    layer: decorative
+    notes: "Live tempo-synced note-value readout, e.g. 1/4, 1/8, 1/2 D, 1/4 T"
+
+notes:
+  - "Only two user-facing parameters exist - mix, duration (per creative-brief.md). No resonance, no separate delay/reverb knobs, no saturation knob - those are fixed internally."
+  - "Parameter IDs (mix, duration) match APVTS parameter IDs exactly - lowercase, snake_case, valid C++ identifiers, well under 32 chars."
+  - "mix maps to a continuous float, implemented as WebSliderRelay (JS: Juce.getSliderState('mix'))."
+  - "duration is a discrete tempo-synced choice (15 steps incl. dotted/triplet), modeled here as a stepped WebSliderRelay for the arc-knob drag gesture. Stage 2 DSP research should confirm whether WebComboBoxRelay or a skewed/stepped WebSliderRelay is the better JUCE-side implementation."
+  - "No meters, no preset browser, no bypass button in this mockup - deliberately minimal per creative brief and user's explicit design requirements."

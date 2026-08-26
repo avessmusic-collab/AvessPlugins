@@ -335,3 +335,8 @@ notes:
   - "Window widened from v3's 700x420 to 980x420 (height unchanged) specifically to fit a third panel at the same generous per-panel size/margin conventions v3 used, rather than shrinking knobs below v3's 140px to cram three panels into 700px. Panel width recalculated 260px -> 250px; all other panel/knob/caption proportions and vertical positions are unchanged from v3."
   - "Typography, knob material/texture (ridged metal edge, radial gradient face), ambient glow, LCD readout treatment, panel card styling, logo font/weight/color/placement, and caption label style are ALL UNCHANGED from v3. The one exception is the OUTER FRAME background: originally carried forward unchanged from v3 (white/off-white) per the initial brief, then changed mid-iteration at the user's explicit request to a gray, textured gradient matching the panel-card/knob material family (see outer_frame_top/mid/bottom/edge/texture_light/texture_dark colors above). Panel cards themselves, which sit on top of the frame, are unaffected."
   - "SWEEP introduces the only genuinely new visual pattern in v4: a bipolar arc-fill (grows outward from a fixed 12-o'clock center point in both directions, rather than v3's single CW sweep from a start angle) plus a fixed center-detent tick mark and a signed LCD readout format. THROW and SPACE are visually and behaviorally identical to v3's two knobs in every respect other than id/label/position."
+
+# Finalization metadata
+finalized: true
+finalized_at: 2026-08-26T00:00:00Z
+finalized_by_phase: 5.5

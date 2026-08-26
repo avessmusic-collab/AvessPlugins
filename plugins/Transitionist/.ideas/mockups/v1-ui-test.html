@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Transitionist UI Mockup v1</title>
+
+<style>
+  /* ==========================================================
+     WEBVIEW-SAFE FOUNDATION
+     Viewport-relative height units are forbidden here - they cause a
+     blank screen on first load in JUCE WebView. html/body use a
+     percentage height instead.
+     ========================================================== */
+  html, body { height: 100%; margin: 0; padding: 0; }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    /* Native application feel - not a web document */
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: default;
+    overflow: hidden;
+
+    background: #000;
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+
+    /* Test-harness only: center the fixed-size plugin frame in the browser
+       tab so actual plugin dimensions are visible (Rule 10, test HTML only).
+       No viewport units used - html/body height:100% is enough here. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ==========================================================
+     TEST-ONLY PREVIEW FRAME (removed in production build)
+     ========================================================== */
+  .plugin-frame {
+    position: relative;
+    width: 600px;
+    height: 400px;
+    overflow: hidden;
+    border: 2px solid #333;
+    border-radius: 6px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+  }
+
+  /* ==========================================================
+     PLUGIN UI (this is what ships inside the WebView)
+     ========================================================== */
+  .container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+
+    background:
+      radial-gradient(ellipse 520px 340px at 50% 46%, #150f22 0%, #0a0810 55%, #08070c 100%);
+    color: #f3f1fa;
+    overflow: hidden;
+  }
+
+  /* faint hairline border to give the panel edge definition */
+  .container::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    pointer-events: none;
+  }
+
+  /* ---------- Logotype ---------- */
+  .logo {
+    position: absolute;
+    left: 0;
+    top: 47px;
+    width: 600px;
+    height: 26px;
+    text-align: center;
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0.38em;
+    color: #f3f1fa;
+    /* nudge for the letter-spacing pushing visual center right */
+    padding-left: 0.38em;
+  }
+
+  .logo-underline {
+    position: absolute;
+    left: 280px;
+    top: 78px;
+    width: 40px;
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #7c3aff, #ff2f78, #ff7a1a);
+    box-shadow: 0 0 8px rgba(255, 47, 120, 0.55);
+  }
+
+  /* ---------- Knob columns ---------- */
+  .knob-column {
+    position: absolute;
+    top: 93px;
+    width: 180px;
+    height: 180px;
+    text-align: center;
+  }
+
+  #col-mix { left: 85px; }
+  #col-duration { left: 335px; }
+
+  .knob {
+    position: relative;
+    width: 180px;
+    height: 180px;
+    cursor: ns-resize;
+    filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.55));
+    touch-action: none;
+    outline: none;
+  }
+
+  .knob svg { overflow: visible; display: block; }
+
+  .knob-disc {
+    fill: url(#discGradient);
+    stroke: rgba(255, 255, 255, 0.06);
+    stroke-width: 1;
+  }
+
+  .knob-track {
+    fill: none;
+    stroke: #1c1a26;
+    stroke-width: 8;
+    stroke-linecap: round;
+  }
+
+  .knob-progress {
+    fill: none;
+    stroke-width: 8;
+    stroke-linecap: round;
+    transition: d 40ms linear;
+  }
+
+  .knob-dot {
+    fill: #ffffff;
+    filter: drop-shadow(0 0 5px rgba(255, 47, 120, 0.9));
+    transition: cx 40ms linear, cy 40ms linear;
+  }
+
+  .knob.dragging {
+    filter: drop-shadow(0 12px 26px rgba(0, 0, 0, 0.65))
+            drop-shadow(0 0 14px rgba(255, 47, 120, 0.35));
+  }
+
+  .knob:focus-visible .knob-disc {
+    stroke: rgba(255, 47, 120, 0.6);
+    stroke-width: 1.5;
+  }
+
+  .knob-label {
+    position: absolute;
+    top: 289px;
+    left: 0;
+    width: 180px;
+    height: 16px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    color: #6f6c85;
+  }
+
+  .knob-value-pill {
+    position: absolute;
+    top: 313px;
+    left: 30px;
+    width: 120px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    background: #100e18;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 4px 14px rgba(0, 0, 0, 0.35);
+    font-size: 20px;
+    font-weight: 700;
+    color: #f3f1fa;
+    letter-spacing: 0.01em;
+    transition: box-shadow 120ms ease;
+  }
+
+  .knob-value-pill.live {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 4px 14px rgba(0, 0, 0, 0.35),
+                0 0 0 1px rgba(255, 47, 120, 0.35), 0 0 18px rgba(255, 47, 120, 0.25);
+  }
+
+  /* ==========================================================
+     DEBUG PARAMETER MONITOR (test HTML only - never in production)
+     ========================================================== */
+  .debug-monitor {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.85);
+    color: #0f0;
+    font-family: "Courier New", monospace;
+    font-size: 11px;
+    padding: 8px 12px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    min-width: 150px;
+    pointer-events: none;
+    z-index: 10000;
+  }
+
+  .debug-label {
+    color: #666;
+    font-size: 9px;
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+  }
+
+  .debug-param { font-weight: bold; color: #0f0; }
+  .debug-value { color: #fff; margin-top: 2px; }
+  .debug-normalized { color: #888; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<div class="plugin-frame">
+  <div class="container">
+
+    <div class="logo">TRANSITIONIST</div>
+    <div class="logo-underline"></div>
+
+    <!-- MIX knob -->
+    <div class="knob-column" id="col-mix">
+      <div class="knob" id="knob-mix" tabindex="0" role="slider"
+           aria-label="Mix" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <svg width="180" height="180" viewBox="0 0 180 180">
+          <defs>
+            <radialGradient id="discGradient" cx="50%" cy="42%" r="65%">
+              <stop offset="0%" stop-color="#17151f" />
+              <stop offset="100%" stop-color="#0a0910" />
+            </radialGradient>
+            <linearGradient id="arcGradient-mix" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#7c3aff" />
+              <stop offset="50%" stop-color="#ff2f78" />
+              <stop offset="100%" stop-color="#ff7a1a" />
+            </linearGradient>
+            <filter id="glow-mix" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="3.2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <circle class="knob-disc" cx="90" cy="90" r="54"></circle>
+          <path class="knob-track" id="track-mix" d=""></path>
+          <path class="knob-progress" id="arc-mix" d="" stroke="url(#arcGradient-mix)" filter="url(#glow-mix)"></path>
+          <circle class="knob-dot" id="dot-mix" cx="90" cy="16" r="4.5"></circle>
+        </svg>
+      </div>
+      <div class="knob-label">MIX</div>
+      <div class="knob-value-pill" id="mix-value">0%</div>
+    </div>
+
+    <!-- DURATION knob -->
+    <div class="knob-column" id="col-duration">
+      <div class="knob" id="knob-duration" tabindex="0" role="slider"
+           aria-label="Duration" aria-valuemin="0" aria-valuemax="14" aria-valuenow="8">
+        <svg width="180" height="180" viewBox="0 0 180 180">
+          <defs>
+            <linearGradient id="arcGradient-duration" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#7c3aff" />
+              <stop offset="50%" stop-color="#ff2f78" />
+              <stop offset="100%" stop-color="#ff7a1a" />
+            </linearGradient>
+            <filter id="glow-duration" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="3.2" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <circle class="knob-disc" cx="90" cy="90" r="54"></circle>
+          <path class="knob-track" id="track-duration" d=""></path>
+          <path class="knob-progress" id="arc-duration" d="" stroke="url(#arcGradient-duration)" filter="url(#glow-duration)"></path>
+          <circle class="knob-dot" id="dot-duration" cx="90" cy="16" r="4.5"></circle>
+        </svg>
+      </div>
+      <div class="knob-label">DURATION</div>
+      <div class="knob-value-pill" id="duration-value">1/4</div>
+    </div>
+
+    <!-- Debug parameter monitor (test HTML only) -->
+    <div class="debug-monitor">
+      <div class="debug-label">PARAMETER MONITOR</div>
+      <div class="debug-param" id="debugParam">&mdash;</div>
+      <div class="debug-value" id="debugValue">&mdash;</div>
+      <div class="debug-normalized" id="debugNormalized">&mdash;</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // ============================================================
+  // NATIVE APPLICATION FEEL (JavaScript)
+  // ============================================================
+  document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+  document.addEventListener("dragstart", (e) => { e.preventDefault(); });
+
+  // ============================================================
+  // ERROR HANDLING
+  // ============================================================
+  window.addEventListener("error", (e) => {
+    console.error("JavaScript error:", e.message, e.filename, e.lineno);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    console.error("Unhandled promise rejection:", e.reason);
+  });
+
+  // ============================================================
+  // MOCK JUCE BACKEND (browser-testing only - simulates the C++
+  // WebSliderRelay / WebSliderState side of the real plugin)
+  // ============================================================
+  function makeRelayState(paramId, initialNormalised) {
+    const listeners = [];
+    const state = {
+      _value: initialNormalised,
+      getNormalisedValue() { return state._value; },
+      setNormalisedValue(v) {
+        v = Math.max(0, Math.min(1, v));
+        state._value = v;
+        listeners.forEach((fn) => fn(v));
+      },
+      valueChangedEvent: {
+        addListener(fn) { listeners.push(fn); }
+      }
+    };
+    return state;
+  }
+
+  window.Juce = {
+    _relays: {},
+    getSliderState(id) {
+      if (!window.Juce._relays[id]) {
+        window.Juce._relays[id] = makeRelayState(id, 0);
+      }
+      return window.Juce._relays[id];
+    }
+  };
+
+  console.log("Mock JUCE backend ready (browser test mode - not connected to real plugin host).");
+
+  // ============================================================
+  // ARC-KNOB GEOMETRY HELPERS
+  // Rule 8 (ui-design-rules.md): rotate/redraw the whole control's
+  // indicator arc as a single unit, standard -135deg..+135deg range.
+  // ============================================================
+  const CX = 90, CY = 90, R = 74;
+  const START_ANGLE = -135;
+  const END_ANGLE = 135;
+  const SWEEP = END_ANGLE - START_ANGLE; // 270 degrees
+
+  function polarToCartesian(cx, cy, r, angleDeg) {
+    const rad = ((angleDeg - 90) * Math.PI) / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function describeArc(cx, cy, r, startAngle, endAngle) {
+    if (endAngle <= startAngle) {
+      // zero-length arc - render nothing (valid at 0%)
+      const p = polarToCartesian(cx, cy, r, startAngle);
+      return `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+    }
+    const start = polarToCartesian(cx, cy, r, startAngle);
+    const end = polarToCartesian(cx, cy, r, endAngle);
+    const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+    return [
+      "M", start.x.toFixed(2), start.y.toFixed(2),
+      "A", r, r, 0, largeArcFlag, 1, end.x.toFixed(2), end.y.toFixed(2)
+    ].join(" ");
+  }
+
+  // Static full-range track (270deg), drawn once per knob.
+  const fullTrackPath = describeArc(CX, CY, R, START_ANGLE, END_ANGLE);
+  document.getElementById("track-mix").setAttribute("d", fullTrackPath);
+  document.getElementById("track-duration").setAttribute("d", fullTrackPath);
+
+  function updateKnobVisual(prefix, normalised) {
+    const endAngle = START_ANGLE + normalised * SWEEP;
+    const arcPath = describeArc(CX, CY, R, START_ANGLE, endAngle);
+    document.getElementById(`arc-${prefix}`).setAttribute("d", arcPath);
+
+    const dotPos = polarToCartesian(CX, CY, R, endAngle);
+    const dot = document.getElementById(`dot-${prefix}`);
+    dot.setAttribute("cx", dotPos.x.toFixed(2));
+    dot.setAttribute("cy", dotPos.y.toFixed(2));
+  }
+
+  // ============================================================
+  // DEBUG MONITOR (test HTML only)
+  // ============================================================
+  function updateDebugMonitor(paramId, formattedValue, normalised) {
+    document.getElementById("debugParam").textContent = paramId;
+    document.getElementById("debugValue").textContent = formattedValue;
+    document.getElementById("debugNormalized").textContent = `${(normalised * 100).toFixed(1)}%`;
+  }
+
+  // ============================================================
+  // DURATION NOTE-VALUE TABLE (tempo-synced, incl. dotted/triplet)
+  // ============================================================
+  const DURATION_VALUES = [
+    "1/32", "1/16 T", "1/16", "1/8 T", "1/16 D",
+    "1/8", "1/4 T", "1/8 D", "1/4", "1/2 T",
+    "1/4 D", "1/2", "1 T", "1/2 D", "1"
+  ];
+  const DURATION_DEFAULT_INDEX = 8; // "1/4"
+
+  // ============================================================
+  // GENERIC DRAG / SCROLL / KEYBOARD INTERACTION FOR ARC KNOBS
+  // ============================================================
+  function attachKnobInteraction(knobEl, onNormalisedChange, stepCount) {
+    let dragging = false;
+    let startY = 0;
+    let startNormalised = 0;
+    const DRAG_RANGE_PX = 160; // pixels of vertical drag for full 0..1 sweep
+
+    function setFromDrag(clientY) {
+      const deltaY = startY - clientY; // up = increase
+      let normalised = startNormalised + deltaY / DRAG_RANGE_PX;
+      normalised = Math.max(0, Math.min(1, normalised));
+      onNormalisedChange(normalised);
+    }
+
+    knobEl.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      startY = e.clientY;
+      startNormalised = knobEl._currentNormalised || 0;
+      knobEl.classList.add("dragging");
+      knobEl.setPointerCapture(e.pointerId);
+      knobEl.focus();
+    });
+
+    knobEl.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      setFromDrag(e.clientY);
+    });
+
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      knobEl.classList.remove("dragging");
+    }
+    knobEl.addEventListener("pointerup", endDrag);
+    knobEl.addEventListener("pointercancel", endDrag);
+
+    knobEl.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const current = knobEl._currentNormalised || 0;
+      const step = stepCount ? 1 / (stepCount - 1) : 0.01;
+      const direction = e.deltaY < 0 ? 1 : -1;
+      const normalised = Math.max(0, Math.min(1, current + direction * step));
+      onNormalisedChange(normalised);
+    }, { passive: false });
+
+    knobEl.addEventListener("keydown", (e) => {
+      const current = knobEl._currentNormalised || 0;
+      const step = stepCount ? 1 / (stepCount - 1) : 0.02;
+      if (e.key === "ArrowUp" || e.key === "ArrowRight") {
+        e.preventDefault();
+        onNormalisedChange(Math.min(1, current + step));
+      } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        onNormalisedChange(Math.max(0, current - step));
+      }
+    });
+  }
+
+  // ============================================================
+  // MIX PARAMETER BINDING (continuous float, 0-100%)
+  // ============================================================
+  const mixState = Juce.getSliderState("mix");
+  const mixKnob = document.getElementById("knob-mix");
+  const mixValuePill = document.getElementById("mix-value");
+
+  function formatMix(normalised) {
+    return `${Math.round(normalised * 100)}%`;
+  }
+
+  mixState.valueChangedEvent.addListener((normalised) => {
+    mixKnob._currentNormalised = normalised;
+    updateKnobVisual("mix", normalised);
+    mixValuePill.textContent = formatMix(normalised);
+    mixValuePill.classList.toggle("live", normalised > 0);
+    mixKnob.setAttribute("aria-valuenow", Math.round(normalised * 100));
+    updateDebugMonitor("mix", formatMix(normalised), normalised);
+    console.log(`[Transitionist] mix changed -> ${formatMix(normalised)} (normalised ${normalised.toFixed(3)})`);
+  });
+
+  attachKnobInteraction(mixKnob, (n) => mixState.setNormalisedValue(n), null);
+
+  // Initialize from default (0%)
+  mixState.setNormalisedValue(0);
+
+  // ============================================================
+  // DURATION PARAMETER BINDING (discrete tempo-synced choice)
+  // ============================================================
+  const durationState = Juce.getSliderState("duration");
+  const durationKnob = document.getElementById("knob-duration");
+  const durationValuePill = document.getElementById("duration-value");
+
+  function formatDuration(normalised) {
+    const index = Math.round(normalised * (DURATION_VALUES.length - 1));
+    return DURATION_VALUES[index];
+  }
+
+  durationState.valueChangedEvent.addListener((normalised) => {
+    // snap to nearest discrete step for the "detented" tempo-sync feel
+    const index = Math.round(normalised * (DURATION_VALUES.length - 1));
+    const snapped = index / (DURATION_VALUES.length - 1);
+
+    durationKnob._currentNormalised = snapped;
+    updateKnobVisual("duration", snapped);
+    durationValuePill.textContent = DURATION_VALUES[index];
+    durationValuePill.classList.add("live");
+    durationKnob.setAttribute("aria-valuenow", index);
+    updateDebugMonitor("duration", DURATION_VALUES[index], snapped);
+    console.log(`[Transitionist] duration changed -> ${DURATION_VALUES[index]} (step ${index}/${DURATION_VALUES.length - 1})`);
+  });
+
+  attachKnobInteraction(durationKnob, (n) => durationState.setNormalisedValue(n), DURATION_VALUES.length);
+
+  // Initialize from default ("1/4")
+  durationState.setNormalisedValue(DURATION_DEFAULT_INDEX / (DURATION_VALUES.length - 1));
+
+  console.log("Transitionist UI mockup v1 initialized.");
+</script>
+</body>
+</html>

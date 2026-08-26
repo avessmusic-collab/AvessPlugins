@@ -1,0 +1,89 @@
+# ============================================================================
+# WebView CMake Configuration Snippet - Transitionist v4
+# ============================================================================
+# IMPORTANT: This is a SNIPPET to ADD to Transitionist's CMakeLists.txt
+#
+# Add this AFTER juce_add_plugin() and BEFORE target_compile_definitions()
+# ============================================================================
+
+# WebView UI Resources
+# Embed all UI files into plugin binary
+juce_add_binary_data(Transitionist_UIResources
+    SOURCES
+        Source/ui/public/index.html
+        Source/ui/public/js/juce/index.js
+        Source/ui/public/js/juce/check_native_interop.js
+)
+
+# Link UI resources to plugin
+target_link_libraries(Transitionist
+    PRIVATE
+        Transitionist_UIResources
+        juce::juce_gui_extra  # Required for WebBrowserComponent
+)
+
+# Enable WebView on supported platforms
+target_compile_definitions(Transitionist
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_CURL=0
+)
+
+# ============================================================================
+# juce_add_plugin() REQUIREMENT (Pattern #9, juce8-critical-patterns.md)
+# ============================================================================
+# Ensure the plugin's juce_add_plugin() call includes:
+#
+#   NEEDS_WEB_BROWSER TRUE
+#
+# Without this flag, VST3 builds successfully but does NOT appear in the
+# DAW's VST3 scanner (only AU/Standalone will be visible).
+# ============================================================================
+
+# ============================================================================
+# BinaryData Symbol Mapping (for PluginEditor.cpp resource provider)
+# ============================================================================
+# File paths are converted to BinaryData identifiers:
+#   Source/ui/public/index.html                      -> BinaryData::index_html
+#   Source/ui/public/js/juce/index.js                -> BinaryData::index_js
+#   Source/ui/public/js/juce/check_native_interop.js -> BinaryData::check_native_interop_js
+#
+# Rules:
+#   - Directory prefix "Source/ui/public/" is stripped
+#   - Path separators flatten to the base filename
+#   - Dot (.) becomes underscore (_), extension kept after the underscore
+# ============================================================================
+
+# ============================================================================
+# PLATFORM-SPECIFIC NOTES
+# ============================================================================
+# macOS:   Uses built-in WebKit (no additional dependencies).
+# Windows: Requires Microsoft Edge WebView2 Runtime (auto-downloads by
+#          default). Pre-install: https://developer.microsoft.com/microsoft-edge/webview2/
+# Linux:   Requires webkit2gtk (e.g. `sudo apt install libwebkit2gtk-4.0-dev`).
+# ============================================================================
+
+# ============================================================================
+# TROUBLESHOOTING
+# ============================================================================
+# 1. "BinaryData::index_html not found":
+#    -> Verify juce_add_binary_data ran, check paths are relative to
+#       CMakeLists.txt, clean and rebuild.
+#
+# 2. Blank WebView on load:
+#    -> Confirm JUCE_WEB_BROWSER=1 defined, resource provider returns
+#       files correctly, check console (right-click -> Inspect in Debug).
+#
+# 3. Knobs frozen (don't respond to drag):
+#    -> Confirm check_native_interop.js is embedded AND served by the
+#       resource provider (Pattern #13). Confirm index.js served with
+#       "application/javascript" MIME type, not "text/javascript".
+#
+# 4. VST3 doesn't appear in DAW:
+#    -> Add NEEDS_WEB_BROWSER TRUE to juce_add_plugin() (Pattern #9).
+#
+# 5. Release build crashes on plugin close/reload:
+#    -> Verify member declaration order in PluginEditor.h.
+#       Order must be: Relays -> WebView -> Attachments.
+#       See v4-PluginEditor.h for the correct example.
+# ============================================================================
