@@ -56,25 +56,24 @@ target_compile_definitions(Transitionist
 )
 
 # ----------------------------------------------------------------------------
-# WebView UI Resources and compile flags - uncommented by gui-agent in Stage 3
-# once Source/ui/public/index.html (and js/juce/*.js) exist. See
-# plugins/Transitionist/.ideas/mockups/v4-CMakeLists.txt for the exact
-# snippet to apply at that point.
+# WebView UI Resources and compile flags (Stage 3, Phase 5.1 - GUI integration)
+# See plugins/Transitionist/.ideas/mockups/v4-CMakeLists.txt for the source
+# snippet this was applied from. juce::juce_gui_extra is already linked above.
 # ----------------------------------------------------------------------------
-# juce_add_binary_data(Transitionist_UIResources
-#     SOURCES
-#         Source/ui/public/index.html
-#         Source/ui/public/js/juce/index.js
-#         Source/ui/public/js/juce/check_native_interop.js
-# )
-#
-# target_link_libraries(Transitionist
-#     PRIVATE
-#         Transitionist_UIResources
-# )
-#
-# target_compile_definitions(Transitionist
-#     PUBLIC
-#         JUCE_WEB_BROWSER=1
-#         JUCE_USE_CURL=0
-# )
+juce_add_binary_data(Transitionist_UIResources
+    SOURCES
+        Source/ui/public/index.html
+        Source/ui/public/js/juce/index.js
+        Source/ui/public/js/juce/check_native_interop.js
+)
+
+target_link_libraries(Transitionist
+    PRIVATE
+        Transitionist_UIResources
+)
+
+target_compile_definitions(Transitionist
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_CURL=0
+)
