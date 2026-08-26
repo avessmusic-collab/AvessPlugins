@@ -4,16 +4,19 @@
 #include <array>
 
 /**
- * Transitionist - Stage 2 DSP, Phase 4.2 (Parameter Modulation)
+ * Transitionist - Stage 2 DSP, Phase 4.3 (Advanced Features) - FINAL DSP PHASE
  *
  * Pure audio effect (stereo in -> stereo out), no MIDI, no file I/O.
- * Implements architecture.md's Components 1, 2, 3, 4 (with freeze/hold), 6,
- * and 9: Tempo-Synced Delay Line (hand-built feedback loop w/ throw-scaled
+ * Implements all 9 of architecture.md's Core Components in strict serial
+ * order: Tempo-Synced Delay Line (hand-built feedback loop w/ throw-scaled
  * tanh saturator + FirstOrderTPTFilter damping) -> juce::dsp::Reverb with
- * smoothstep-ramped freezeMode + explicit input-mute gate -> Bipolar DJ
- * Filter (dual juce::dsp::LadderFilter crossfade) -> equal-power Dry/Wet
- * Mixer. Reverb modulation, output glue, and stereo width are deferred to
- * Phase 4.3.
+ * smoothstep-ramped freezeMode + explicit input-mute gate -> Reverb
+ * Modulation (hand-rolled ~0.15Hz sine LFO modulating a short
+ * juce::dsp::DelayLine, +/-3ms around a 5ms center) -> Bipolar DJ Filter
+ * (dual juce::dsp::LadderFilter crossfade) -> Output Glue
+ * (juce::dsp::WaveShaper tanh soft-clip + juce::dsp::Limiter) -> Stereo
+ * Width (manual M/S, wet-only, fixed 1.35x side gain) -> equal-power
+ * Dry/Wet Mixer.
  */
 class TransitionistAudioProcessor : public juce::AudioProcessor
 {
@@ -53,7 +56,7 @@ private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     // ------------------------------------------------------------------
-    // DSP Components (Stage 2, Phase 4.1 - Core Processing)
+    // DSP Components (Stage 2, Phases 4.1-4.3 - full 9-component chain)
     // ------------------------------------------------------------------
 
     double currentSampleRate = 44100.0;
@@ -75,11 +78,28 @@ private:
     // processBlock(), no additional member state needed here).
     juce::dsp::Reverb reverb;
 
+    // Component 5 (Phase 4.3): Reverb Modulation - hand-rolled phase
+    // accumulator (sine LFO, fixed ~0.15Hz) modulating a short, dedicated
+    // juce::dsp::DelayLine (NOT the main tempo-synced delay line - this is
+    // a small, independently-sized buffer per architecture.md Component 5).
+    // Applies unconditionally (including during reverb freeze) so a frozen
+    // tail stays "alive" rather than reading as a static drone.
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> reverbModDelayLine;
+    float reverbModPhase = 0.0f;
+    float reverbModPhaseIncrement = 0.0f; // set in prepareToPlay from the fixed 0.15Hz rate
+
     // Component 6: Bipolar DJ Filter - two persistent, always-running
     // LadderFilter instances (never mode-switched at runtime) + a
     // dead-zone/smoothstep crossfade against a true dry-bypass tap.
     juce::dsp::LadderFilter<float> lpfFilter; // pinned Mode::LPF24
     juce::dsp::LadderFilter<float> hpfFilter; // pinned Mode::HPF24
+
+    // Component 7 (Phase 4.3): Output Glue - tanh soft-clip (WaveShaper)
+    // followed by a fast safety Limiter. Wet-only, fixed internal constants
+    // (no automatable parameters), applied after the Bipolar DJ Filter so
+    // it also catches filter-resonance peaks, not just feedback/reverb ones.
+    juce::dsp::WaveShaper<float> softClip;
+    juce::dsp::Limiter<float> limiter;
 
     // Preallocated scratch buffers (real-time safety - no allocation in
     // processBlock()): dry tap for Component 9's final mix, and per-filter

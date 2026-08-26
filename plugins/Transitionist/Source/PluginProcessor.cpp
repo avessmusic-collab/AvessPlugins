@@ -131,9 +131,22 @@ void TransitionistAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
         f.reset();
     }
 
-    // --- Component 4: Reverb Engine (basic, no freeze until Phase 4.2) ---
+    // --- Component 4: Reverb Engine (freeze/hold added in Phase 4.2) ---
     reverb.prepare(spec);
     reverb.reset();
+
+    // --- Component 5 (Phase 4.3): Reverb Modulation - small, dedicated
+    // DelayLine sized only for its own +/-3ms-around-5ms modulation range
+    // (2-8ms), NOT tied to the main tempo-synced delay's much larger
+    // buffer. A few ms of margin (15ms max) keeps this a small, fixed,
+    // one-time allocation here in prepareToPlay only. ---
+    constexpr double kReverbModMaxDelayMs = 15.0;
+    const int reverbModMaxDelaySamples = static_cast<int>(std::ceil(sampleRate * (kReverbModMaxDelayMs / 1000.0)));
+    reverbModDelayLine.setMaximumDelayInSamples(reverbModMaxDelaySamples);
+    reverbModDelayLine.prepare(spec);
+    reverbModDelayLine.reset();
+    reverbModPhase = 0.0f;
+    reverbModPhaseIncrement = static_cast<float>(0.15 / sampleRate); // fixed 0.15Hz LFO rate
 
     // --- Component 6: Bipolar DJ Filter (dual always-running LadderFilter instances) ---
     lpfFilter.setMode(juce::dsp::LadderFilter<float>::Mode::LPF24);
@@ -142,6 +155,17 @@ void TransitionistAudioProcessor::prepareToPlay(double sampleRate, int samplesPe
     hpfFilter.prepare(spec);
     lpfFilter.reset();
     hpfFilter.reset();
+
+    // --- Component 7 (Phase 4.3): Output Glue (soft-clip + limiter, fixed
+    // internal constants, wet-only) ---
+    softClip.functionToUse = [](float x) { return std::tanh(1.15f * x); };
+    softClip.prepare(spec);
+    softClip.reset();
+
+    limiter.setThreshold(-1.0f);
+    limiter.setRelease(50.0f);
+    limiter.prepare(spec);
+    limiter.reset();
 
     // --- Preallocated scratch buffers (real-time safety: ALL allocation
     // happens here, never in processBlock()) ---
@@ -294,6 +318,34 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     // ------------------------------------------------------------------
+    // Component 5 (Phase 4.3): Reverb Modulation - hand-rolled sine LFO
+    // (~0.15Hz phase accumulator) modulating a short DelayLine in series,
+    // processing the reverb's fully-wet output ("buffer" now holds the
+    // post-reverb signal). Center delay ~5ms, depth +/-3ms (2-8ms total
+    // range), per architecture.md Component 5. Applied UNCONDITIONALLY
+    // (not gated by throw/freeze) so a frozen tail keeps a subtle "alive"
+    // drift rather than reading as a static drone - this is a fixed,
+    // non-parameter internal constant per the locked 3-parameter contract.
+    // ------------------------------------------------------------------
+    for (int n = 0; n < numSamples; ++n)
+    {
+        const float lfoValue = std::sin(reverbModPhase * juce::MathConstants<float>::twoPi);
+        const float modDelayMs = 5.0f + 3.0f * lfoValue;
+        const float modDelaySamples = static_cast<float>(modDelayMs * 0.001 * currentSampleRate);
+
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            auto* channelData = buffer.getWritePointer(ch);
+            reverbModDelayLine.pushSample(ch, channelData[n]);
+            channelData[n] = reverbModDelayLine.popSample(ch, modDelaySamples, true);
+        }
+
+        reverbModPhase += reverbModPhaseIncrement;
+        if (reverbModPhase >= 1.0f)
+            reverbModPhase -= 1.0f;
+    }
+
+    // ------------------------------------------------------------------
     // Component 6: Bipolar DJ Filter - dead-zone + smoothstep crossfade
     // between a true dry-bypass tap (the post-reverb signal currently in
     // `buffer`) and whichever always-running LadderFilter instance matches
@@ -383,6 +435,49 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     buffer.applyGain(bypassGain);
     for (int ch = 0; ch < numChannels; ++ch)
         buffer.addFrom(ch, 0, selectedFilterBuffer, ch, 0, numSamples, filterGain);
+
+    // ------------------------------------------------------------------
+    // Component 7 (Phase 4.3): Output Glue - tanh soft-clip (WaveShaper)
+    // followed by a fast safety Limiter. Fixed internal constants, always
+    // active but self-transparent at low signal levels (tanh(1.15*x) is
+    // near-identity for |x|<<1; the Limiter only engages near its -1dB
+    // threshold). Placed AFTER the Bipolar DJ Filter so it also catches
+    // filter-resonance peaks, not just delay-feedback/reverb-freeze
+    // buildup - this is the plugin's designed safety net for its
+    // highest-energy combined state (throw=100% frozen + space=100% +
+    // sweep extremes). Wet-only: `buffer` at this point holds only the
+    // fully-processed wet signal, the dry tap is untouched in `dryBuffer`.
+    // ------------------------------------------------------------------
+    {
+        juce::dsp::AudioBlock<float> glueBlock(buffer);
+        juce::dsp::ProcessContextReplacing<float> glueContext(glueBlock);
+        softClip.process(glueContext);
+        limiter.process(glueContext);
+    }
+
+    // ------------------------------------------------------------------
+    // Component 8 (Phase 4.3): Stereo Width - manual M/S encode/decode,
+    // wet-only, fixed 1.35x side gain (no dedicated juce::dsp:: class for
+    // this per architecture.md). Runs AFTER Output Glue (so the widened
+    // side channel content is already peak-controlled) and is the LAST
+    // wet-path stage before the dry/wet mix. Defensive channel-count guard:
+    // skip (no-op) if fewer than 2 channels are present at runtime, even
+    // though this plugin's bus config is stereo-only.
+    // ------------------------------------------------------------------
+    if (numChannels >= 2)
+    {
+        constexpr float widthAmount = 1.35f;
+        auto* left = buffer.getWritePointer(0);
+        auto* right = buffer.getWritePointer(1);
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float mid = 0.5f * (left[n] + right[n]);
+            const float side = 0.5f * (left[n] - right[n]) * widthAmount;
+            left[n] = mid + side;
+            right[n] = mid - side;
+        }
+    }
 
     // ------------------------------------------------------------------
     // Component 9: Dry/Wet Mixer (equal-power crossfade, throw-driven).
