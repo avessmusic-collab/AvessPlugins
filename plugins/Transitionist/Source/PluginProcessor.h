@@ -4,15 +4,16 @@
 #include <array>
 
 /**
- * Transitionist - Stage 2 DSP, Phase 4.1 (Core Processing)
+ * Transitionist - Stage 2 DSP, Phase 4.2 (Parameter Modulation)
  *
  * Pure audio effect (stereo in -> stereo out), no MIDI, no file I/O.
- * Implements architecture.md's Components 1, 2, 3, 4 (basic), 6, and 9:
- * Tempo-Synced Delay Line (hand-built feedback loop w/ tanh saturator +
- * FirstOrderTPTFilter damping) -> basic juce::dsp::Reverb (no freeze yet) ->
- * Bipolar DJ Filter (dual juce::dsp::LadderFilter crossfade) -> equal-power
- * Dry/Wet Mixer. Reverb freeze/hold, throw-scaled saturation drive, reverb
- * modulation, output glue, and stereo width are deferred to Phases 4.2/4.3.
+ * Implements architecture.md's Components 1, 2, 3, 4 (with freeze/hold), 6,
+ * and 9: Tempo-Synced Delay Line (hand-built feedback loop w/ throw-scaled
+ * tanh saturator + FirstOrderTPTFilter damping) -> juce::dsp::Reverb with
+ * smoothstep-ramped freezeMode + explicit input-mute gate -> Bipolar DJ
+ * Filter (dual juce::dsp::LadderFilter crossfade) -> equal-power Dry/Wet
+ * Mixer. Reverb modulation, output glue, and stereo width are deferred to
+ * Phase 4.3.
  */
 class TransitionistAudioProcessor : public juce::AudioProcessor
 {
@@ -69,7 +70,9 @@ private:
     // Feedback Damping Filter (one instance per channel, fixed 8kHz lowpass).
     std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> feedbackFilter;
 
-    // Component 4 (basic, no freeze yet - Phase 4.2 adds freezeMode ramp):
+    // Component 4: Reverb Engine, with Phase 4.2's smoothstep-ramped
+    // freezeMode + explicit input-mute gate (computed per-block in
+    // processBlock(), no additional member state needed here).
     juce::dsp::Reverb reverb;
 
     // Component 6: Bipolar DJ Filter - two persistent, always-running

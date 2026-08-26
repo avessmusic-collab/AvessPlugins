@@ -4,9 +4,9 @@
 
 namespace
 {
-    // Cubic Hermite smoothstep - used for the bipolar filter's dead-zone
-    // crossfade (Component 6). (Reverb freeze's smoothstep is added in
-    // Phase 4.2 and will reuse this same helper.)
+    // Cubic Hermite smoothstep - used for both the bipolar filter's
+    // dead-zone crossfade (Component 6) and the reverb freeze/hold ramp
+    // (Component 4, Phase 4.2).
     float smoothstep(float x, float edge0, float edge1)
     {
         const float t = juce::jlimit(0.0f, 1.0f, (x - edge0) / (edge1 - edge0));
@@ -237,7 +237,11 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // from its intent (drive = 1.0 fixed for this phase; feedbackGain =
     // 0.85 * throwNorm per architecture.md Component 1-3 Algorithm Details).
     // ------------------------------------------------------------------
-    constexpr float drive = 1.0f; // FIXED for Phase 4.1 (Phase 4.2 makes this throw-dependent)
+    // Phase 4.2: drive now scales with throw (1.0 at throw=0% to 1.6 at
+    // throw=100%), per architecture.md Component 2 - deliberately minimal,
+    // no output re-normalization (the slight level compression at higher
+    // drive is intentional "thickening" character).
+    const float drive = 1.0f + 0.6f * throwNorm;
     const float feedbackGain = 0.85f * throwNorm;
 
     for (int n = 0; n < numSamples; ++n)
@@ -260,17 +264,28 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 
     // ------------------------------------------------------------------
-    // Component 4: Reverb Engine (basic - no freezeMode ramp until Phase 4.2).
+    // Component 4: Reverb Engine, with Phase 4.2's freeze/hold behavior.
     // Processes the delay's wet output (buffer now holds delay output).
+    // Freeze ramps smoothly (smoothstep, not a hard toggle) across the top
+    // 10% of throw's range, per architecture.md's "Reverb Freeze/Hold Curve".
     // ------------------------------------------------------------------
+    const float freeze = smoothstep(throwNorm, 0.90f, 1.00f);
+    const float reverbInputGain = 1.0f - freeze; // explicit input mute, applied BEFORE reverb.process()
+
     juce::dsp::Reverb::Parameters reverbParams;
     reverbParams.roomSize = juce::jlimit(0.0f, 1.0f, 0.30f + 0.40f * spaceNorm + 0.30f * throwNorm);
     reverbParams.damping = juce::jmap(throwNorm, 0.0f, 1.0f, 0.60f, 0.05f);
     reverbParams.wetLevel = 1.0f;
     reverbParams.dryLevel = 0.0f;
     reverbParams.width = 1.0f;
-    reverbParams.freezeMode = 0.0f; // Phase 4.2 adds the smoothstep freeze ramp
+    reverbParams.freezeMode = freeze;
     reverb.setParameters(reverbParams);
+
+    // Mute the NEW input feeding the reverb as freeze engages - this does
+    // NOT mute the reverb's output/tail, only what's about to be written
+    // into its internal feedback network, so an already-frozen tail keeps
+    // sustaining even when reverbInputGain reaches 0.0 at full freeze.
+    buffer.applyGain(reverbInputGain);
 
     {
         juce::dsp::AudioBlock<float> reverbBlock(buffer);
