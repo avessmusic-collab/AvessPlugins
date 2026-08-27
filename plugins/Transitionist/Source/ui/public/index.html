@@ -472,7 +472,7 @@
     // knob (same tier as Dry/Wet), rightmost. defaultNormalised is the
     // ACTUAL normalised position of 0dB within the -60..+6 range (NOT the
     // range midpoint, which would be -27dB): (0 - (-60)) / (6 - (-60)).
-    const dbFormat = (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+    const dbFormat = (v) => `${v > 0 ? "+" : ""}${Math.round(v)} dB`;
     const volumeState = setupKnob({ knobId: "volumeKnob", bodyId: "volumeKnobBody", arcId: "volumeArc", textId: "volumeValueText", paramId: "volume", defaultNormalised: 60 / 66, arcLength: 207.35, format: dbFormat, dragRangePx: 96 });
 
     // ====================================================================
@@ -525,6 +525,11 @@
       const prevBtn = document.getElementById("presetPrevBtn");
       const nextBtn = document.getElementById("presetNextBtn");
 
+      if (!selectEl || !prevBtn || !nextBtn) {
+        console.error("Preset bar elements missing from DOM - aborting setup", { selectEl, prevBtn, nextBtn });
+        return;
+      }
+
       PRESETS.forEach((p, i) => {
         const opt = document.createElement("option");
         opt.value = String(i);
@@ -532,28 +537,17 @@
         selectEl.appendChild(opt);
       });
 
-      let currentIndex; // intentionally undefined (not -1) so the first
-                         // refreshSelectionDisplay() call always runs fully,
-                         // even if the initial match also happens to be -1
+      // currentIndex is intentionally undefined (not -1) so the first
+      // refreshSelectionDisplay() call always runs to completion, even if
+      // the initial match also happens to resolve to -1 ("Custom").
+      let currentIndex;
+      let applyingPreset = false; // true while applyPreset() is mid-flight,
+                                   // so the per-parameter valueChangedEvent
+                                   // callbacks it triggers don't flicker the
+                                   // dropdown through "Custom" between each
+                                   // individual setNormalisedValue() call.
 
       function pct(v) { return v / 100; }
-
-      function applyPreset(rawIndex) {
-        const index = ((rawIndex % PRESETS.length) + PRESETS.length) % PRESETS.length;
-        const p = PRESETS[index];
-
-        transitionState.sliderDragStarted(); transitionState.setNormalisedValue(pct(p.transition)); transitionState.sliderDragEnded();
-        reverbState.sliderDragStarted(); reverbState.setNormalisedValue(pct(p.reverb)); reverbState.sliderDragEnded();
-        delayState.sliderDragStarted(); delayState.setNormalisedValue(pct(p.delay)); delayState.sliderDragEnded();
-        dryWetState.sliderDragStarted(); dryWetState.setNormalisedValue(pct(p.dryWet)); dryWetState.sliderDragEnded();
-        if (delaySyncState) delaySyncState.setNormalisedValue(p.delaySync / DELAY_SYNC_MAX_INDEX);
-
-        const customOpt = selectEl.querySelector('option[value="-1"]');
-        if (customOpt) customOpt.remove();
-        currentIndex = index;
-        selectEl.value = String(index);
-        forceSelectRepaint(selectEl);
-      }
 
       function findMatchingPresetIndex() {
         const t = Math.round(transitionState.getNormalisedValue() * 100);
@@ -571,15 +565,16 @@
         return -1;
       }
 
-      // Reflect current parameter values in the dropdown (matching preset
-      // name, or "Custom"). Re-run any time a relevant parameter changes -
-      // NOT just once at load - so automation/preset-recall from the host
-      // keep the dropdown in sync, and so this self-corrects if it runs
-      // before the WebSliderRelay's initial async property round-trip from
-      // C++ has landed (same reasoning as why knobs re-render on
-      // valueChangedEvent instead of trusting only their first synchronous
-      // render() call).
+      // Reflect the ACTUAL current parameter values in the dropdown
+      // (matching preset name, or "Custom") - re-run any time a relevant
+      // parameter changes (host automation, undo/redo, project reload), not
+      // just once at load, so the label never lies about what's really
+      // loaded. Skipped while applyPreset() itself is mid-flight (see
+      // `applyingPreset` above) to avoid a "Custom" flicker between its
+      // individual per-parameter writes.
       function refreshSelectionDisplay() {
+        if (applyingPreset) return;
+
         const match = findMatchingPresetIndex();
         if (match === currentIndex) return; // no-op if nothing changed (avoid DOM churn during drags)
 
@@ -601,23 +596,45 @@
         forceSelectRepaint(selectEl);
       }
 
-      // Defer the FIRST call past the current paint (requestAnimationFrame)
-      // as a defensive fix for a WebKit timing quirk where a <select>'s
-      // closed-state label doesn't reliably reflect .value immediately
-      // after synchronously appendChild-ing its <option>s in the same tick.
-      requestAnimationFrame(refreshSelectionDisplay);
+      function applyPreset(rawIndex) {
+        applyingPreset = true;
+        currentIndex = ((rawIndex % PRESETS.length) + PRESETS.length) % PRESETS.length;
+        const p = PRESETS[currentIndex];
 
-      [transitionState, reverbState, delayState, dryWetState].forEach((s) => {
-        s.valueChangedEvent.addListener(refreshSelectionDisplay);
-      });
-      if (delaySyncState) delaySyncState.valueChangedEvent.addListener(refreshSelectionDisplay);
+        transitionState.sliderDragStarted(); transitionState.setNormalisedValue(pct(p.transition)); transitionState.sliderDragEnded();
+        reverbState.sliderDragStarted(); reverbState.setNormalisedValue(pct(p.reverb)); reverbState.sliderDragEnded();
+        delayState.sliderDragStarted(); delayState.setNormalisedValue(pct(p.delay)); delayState.sliderDragEnded();
+        dryWetState.sliderDragStarted(); dryWetState.setNormalisedValue(pct(p.dryWet)); dryWetState.sliderDragEnded();
+        if (delaySyncState) delaySyncState.setNormalisedValue(p.delaySync / DELAY_SYNC_MAX_INDEX);
+
+        const customOpt = selectEl.querySelector('option[value="-1"]');
+        if (customOpt) customOpt.remove();
+        selectEl.value = String(currentIndex);
+        forceSelectRepaint(selectEl);
+        applyingPreset = false;
+      }
 
       selectEl.addEventListener("change", (e) => applyPreset(parseInt(e.target.value, 10)));
-      prevBtn.addEventListener("click", () => applyPreset((currentIndex === -1 ? 0 : currentIndex) - 1));
-      nextBtn.addEventListener("click", () => applyPreset((currentIndex === -1 ? -1 : currentIndex) + 1));
+      prevBtn.addEventListener("click", () => applyPreset((currentIndex < 0 ? 0 : currentIndex) - 1));
+      nextBtn.addEventListener("click", () => applyPreset((currentIndex < 0 ? 0 : currentIndex) + 1));
+
+      // Keep the dropdown honest for every relevant parameter, from every
+      // source (host automation, undo/redo, project/session reload) - not
+      // just this bar's own prev/next/select interactions.
+      transitionState.valueChangedEvent.addListener(refreshSelectionDisplay);
+      reverbState.valueChangedEvent.addListener(refreshSelectionDisplay);
+      delayState.valueChangedEvent.addListener(refreshSelectionDisplay);
+      dryWetState.valueChangedEvent.addListener(refreshSelectionDisplay);
+      if (delaySyncState) delaySyncState.valueChangedEvent.addListener(refreshSelectionDisplay);
+
+      refreshSelectionDisplay();
     }
 
-    setupPresetBar();
+    try {
+      setupPresetBar();
+    } catch (err) {
+      console.error("setupPresetBar() failed:", err);
+    }
 
     console.log("Transitionist v5 UI initialized");
   </script>

@@ -172,6 +172,20 @@ void TransitionistAudioProcessor::releaseResources()
     reverbWetBuffer.setSize(0, 0);
 }
 
+bool TransitionistAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+{
+    // Pure stereo-in/stereo-out effect (see class doc comment / architecture.md).
+    // Explicitly enforced here (rather than relying on JUCE's permissive
+    // default of accepting any host-proposed layout) because processBlock()'s
+    // per-sample ping-pong delay loop aliases its "left"/"right" write
+    // pointers to the SAME buffer when numChannels == 1, silently discarding
+    // half of the ping-pong computation every sample in a mono bus - see
+    // troubleshooting/dsp-issues/ for the writeup. Restricting the supported
+    // layout to stereo/stereo makes that impossible instead of just assumed.
+    return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
+        && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+}
+
 void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -235,7 +249,7 @@ void TransitionistAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     const float pingPongDrive = 1.0f + 0.5f * transitionNorm;
     const float pingPongFeedback = juce::jlimit(0.0f, 0.92f, 0.35f + 0.55f * delayNorm + 0.10f * transitionNorm);
 
-    // numChannels is guaranteed >= 2 by this plugin's stereo-only bus config.
+    // numChannels is guaranteed >= 2 - isBusesLayoutSupported() only accepts stereo/stereo.
     auto* left = buffer.getWritePointer(0);
     auto* right = numChannels > 1 ? buffer.getWritePointer(1) : buffer.getWritePointer(0);
 
