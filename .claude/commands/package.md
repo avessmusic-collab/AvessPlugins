@@ -44,7 +44,7 @@ argument-hint: <PluginName>
     Source AU binary for packaging
   </reads>
   <writes target="plugins/{{PLUGIN_NAME}}/dist/">
-    {{PLUGIN_NAME}}-by-TACHES.pkg and install-readme.txt
+    {{PLUGIN_NAME}}.pkg and install-readme.txt
   </writes>
 </state_contracts>
 
@@ -58,10 +58,10 @@ argument-hint: <PluginName>
 
 <invocation_examples>
   User input: "/package TapeAge"
-  → Creates: plugins/TapeAge/dist/TapeAge-by-TACHES.pkg
+  → Creates: plugins/TapeAge/dist/TapeAge.pkg
 
   User input: "/package GainKnob"
-  → Creates: plugins/GainKnob/dist/GainKnob-by-TACHES.pkg
+  → Creates: plugins/GainKnob/dist/GainKnob.pkg
 
   User input: "Create installer for DriveVerb"
   → Natural language routing to plugin-packaging skill

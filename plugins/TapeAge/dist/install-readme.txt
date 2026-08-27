@@ -6,14 +6,14 @@ Version 1.0.3
 WHAT'S INCLUDED
 
 This distribution package contains:
-• TapeAge-by-TACHES.pkg (3.2 MB) - Branded installer with setup wizard
+• TapeAge.pkg (3.2 MB) - Branded installer with setup wizard
 • install-readme.txt (this file) - Installation instructions
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 INSTALLATION STEPS
 
-1. Double-click "TapeAge-by-TACHES.pkg" to launch the installer
+1. Double-click "TapeAge.pkg" to launch the installer
 2. Read the Welcome screen and click Continue
 3. Read the ReadMe and click Continue
 4. Click Install (may require administrator password)

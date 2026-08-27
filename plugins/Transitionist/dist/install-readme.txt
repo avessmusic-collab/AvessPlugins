@@ -2,7 +2,7 @@ Transitionist v1.0.0 - Installation Instructions
 ===========================================
 
 INSTALLATION:
-1. Double-click "Transitionist-by-TACHES.pkg"
+1. Double-click "Transitionist.pkg"
 2. Follow the installation prompts
 3. The installer will copy Transitionist to your system folders:
    - VST3: ~/Library/Audio/Plug-Ins/VST3/Transitionist.vst3

@@ -108,17 +108,17 @@ git commit -m "feat([PluginName]): create v[X.Y.Z] distribution package"
 **6e. Update PLUGINS.md** with packaging metadata:
 ```markdown
 **Last Packaged:** YYYY-MM-DD
-**Distribution:** plugins/[PluginName]/dist/[PluginName]-by-TACHES.pkg (X.X MB)
+**Distribution:** plugins/[PluginName]/dist/[PluginName].pkg (X.X MB)
 ```
 
 **6f. Display summary:**
 ```
 ✓ [PluginName] packaged successfully
 
-Created: plugins/[PluginName]/dist/[PluginName]-by-TACHES.pkg (X.X MB)
+Created: plugins/[PluginName]/dist/[PluginName].pkg (X.X MB)
 
 Distribution package includes:
-- [PluginName]-by-TACHES.pkg (branded installer)
+- [PluginName].pkg (branded installer)
 - install-readme.txt (installation guide)
 
 Send both files to your friend.
@@ -144,7 +144,7 @@ Send both files to your friend.
 - `~/Library/Audio/Plug-Ins/Components/[Product].component` → Source binary
 
 **Creates:**
-- `plugins/[PluginName]/dist/[PluginName]-by-TACHES.pkg` → Branded installer
+- `plugins/[PluginName]/dist/[PluginName].pkg` → Branded installer
 - `plugins/[PluginName]/dist/install-readme.txt` → Installation guide
 
 **Updates:**
@@ -162,7 +162,7 @@ After successful packaging, present this menu and WAIT for user response:
 ```
 ✓ [PluginName] packaged successfully
 
-Created: plugins/[PluginName]/dist/[PluginName]-by-TACHES.pkg (X.X MB)
+Created: plugins/[PluginName]/dist/[PluginName].pkg (X.X MB)
 
 What's next?
 1. Test installer (recommended) → Verify PKG works correctly
