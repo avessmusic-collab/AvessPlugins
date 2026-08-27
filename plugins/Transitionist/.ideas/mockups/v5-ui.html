@@ -232,7 +232,14 @@
     letter-spacing: 0.04em;
     color: #7fd8e0;
     text-shadow: 0 0 6px rgba(127,216,224,0.55);
+    white-space: nowrap;
   }
+
+  /* Volume's LCD shows signed dB values ("-60 dB", "+6 dB") which are wider
+     than the percent knobs' "0%"-"100%" text - widen the box and shrink the
+     font slightly so it always fits on one line instead of wrapping. */
+  #volumeKnob .knob-lcd { width: 68px; }
+  #volumeValueText { font-size: 12px; letter-spacing: 0.02em; }
 
   /* ---------------- Delay Sync dropdown ---------------- */
   .delay-sync-select {
@@ -517,7 +524,9 @@
       { name: "Ping Pong Groove",transition: 30, reverb: 15, delay: 75, delaySync: 3, dryWet: 45 },
       { name: "Cavernous Hall", transition: 70,  reverb: 90, delay: 20, delaySync: 7, dryWet: 65 },
       { name: "Subtle Glue",    transition: 15,  reverb: 20, delay: 15, delaySync: 4, dryWet: 25 },
-      { name: "Triplet Bounce", transition: 45,  reverb: 35, delay: 65, delaySync: 1, dryWet: 55 }
+      { name: "Triplet Bounce", transition: 45,  reverb: 35, delay: 65, delaySync: 1, dryWet: 55 },
+      { name: "Vocal Doubler",  transition: 10,  reverb: 5,  delay: 25, delaySync: 2, dryWet: 20 },
+      { name: "Ambient Wash",   transition: 60,  reverb: 100,delay: 40, delaySync: 8, dryWet: 90 }
     ];
 
     function setupPresetBar() {
