@@ -11,7 +11,7 @@ complexity_score: 5.0
 ## Complexity Factors
 
 - **Parameters:** 45 APVTS parameters (41 Float, 3 Choice, 1 Bool) → `min(45/5, 2.0)` = **2.0** (capped)
-  - Note: `parameter-spec.md` header says 42 Float / 46 APVTS / 49 total; the section bodies enumerate 41 Float / 45 APVTS / 48 total. Proceed with 45; reconcile the header with the spec author before Stage 1 sign-off.
+  - Note: parameter count reconciled 2026-08-28 to **45 APVTS (41 Float / 3 Choice / 1 Bool)**; `parameter-spec.md` header corrected. `bodyAttack` intentionally not exposed.
 - **Algorithms:** ~14 DSP components = **14**
   - KickEngine, KickVoice, BodyOscillator, PitchEnvelope, AmplitudeEnvelope, SubOscillator, ClickGenerator, NoiseGenerator, TailGenerator, TransientShaper, Waveshaper/Saturator (7-curve morph), OutputStage (tone + stereo + limiter + mix + DC), OversamplingProcessor, Analyzer (waveform + FFT spectrum)
 - **Features:** **4**
@@ -22,7 +22,7 @@ complexity_score: 5.0
 - **Raw total:** 2.0 + 14 + 4 = **20.0**
 - **Final (capped at 5.0):** **5.0**
 
-Additional scope multipliers (not scored but drive the phase count): `juce::dsp::Oversampling` with glitch-free runtime switching, native JUCE UI (custom LookAndFeel + 6 custom components, resizable), preset manager (factory BinaryData + user disk I/O), 17 factory presets, automated test suite + offline-render WAV utility.
+Additional scope multipliers (not scored but drive the phase count): `juce::dsp::Oversampling` wrapping the **entire voice + master chain** (AD-10) with glitch-free runtime factor switching + `fsOversampled` coefficient refresh, native JUCE UI (custom LookAndFeel + 6 custom components, resizable), preset manager (factory BinaryData + user disk I/O), 17 factory presets, automated test suite + offline-render WAV utility.
 
 ---
 
@@ -69,15 +69,16 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 
 ### Stage 2: DSP Phases
 
-#### Phase 2.1: MIDI-triggered basic kick (body + amp env)
-**Goal:** Note-on → sine body with fixed-fast attack + exponential decay. Monophonic.
-**Components:** `KickVoice` (single), `BodyOscillator` (phase accumulator), `AmplitudeEnvelope` (2 ms atk, exp decay), `KickEngine` MIDI dispatch (sample-accurate sub-block split), pitch resolver (`tuneMode`, `tune`, `fineTune`, `fundamental`, note #).
-**Params live:** `fundamental`, `bodyLevel`, `bodyDecay`, `tuneMode`, `tune`, `fineTune`, `velSensitivity` (level only).
+#### Phase 2.1: OS-region shell + MIDI-triggered basic kick (body + amp env)
+**Goal:** Establish the **oversampling region as the substrate** (AD-10) — `processSamplesUp`(zero block) → whole-voice render at `fsOversampled` → `processSamplesDown` → base-rate DC blocker + analyzer tap. Then: note-on → sine body with fixed-fast attack + exponential decay, monophonic, rendered inside that region.
+**Components:** `OversamplingProcessor` scaffold (4 `dsp::Oversampling<float>` pre-built, **`oversampling` pinned to `1x` for now** so `fsOversampled == fs` and DSP is trivially verifiable), `KickEngine` OS orchestration + `fsOversampled` coefficient plumbing, `KickVoice` (single), `BodyOscillator` (phase accumulator @ `fsOversampled`), `AmplitudeEnvelope` (2 ms atk, exp decay), `KickEngine` MIDI dispatch (sample-accurate sub-block split), pitch resolver (`tuneMode`, `tune`, `fineTune`, `fundamental`, note #).
+**Params live:** `fundamental`, `bodyLevel`, `bodyDecay`, `tuneMode`, `tune`, `fineTune`, `velSensitivity` (level only). (`oversampling` present but forced to `1x` until Phase 2.10.)
 **Checkpoint:**
+- [ ] `processSamplesUp`/`Down` pair in place; at `1x` the path is bit-transparent aside from intended DSP.
 - [ ] MIDI note → audible sine kick; pitch correct in both tune modes (AD-6 offset behaviour).
 - [ ] Fixed 2 ms attack is click-free; decay matches `bodyDecay` (offline WAV envelope check within ±5 %).
 - [ ] Velocity scales level per `velSensitivity`.
-- [ ] No NaN/Inf; silence after voice completes.
+- [ ] No NaN/Inf; silence after voice completes. No audio-thread allocation (assertion build).
 
 #### Phase 2.2: Pitch envelope
 **Goal:** Punchy pitch drop in ratio/log domain, phase-continuous.
@@ -104,7 +105,7 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 **Params live:** `clickLevel`, `clickTone`, `clickTime`, `clickPitch`, `velSensitivity` (click routing).
 **Checkpoint:**
 - [ ] Click audible and tunable across full `clickTone`/`clickPitch`/`clickTime` ranges.
-- [ ] No alias spikes in the spectrum at `clickTime = 0.1 ms` (FFT check, base rate).
+- [ ] No alias spikes in the spectrum at `clickTime = 0.1 ms` (FFT check; at `1x` still, so this validates band-limiting-by-construction independent of OS).
 - [ ] Impulse is windowed (no bare 1-sample spike).
 
 #### Phase 2.5: Sub oscillator
@@ -118,8 +119,8 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 
 #### Phase 2.6: Tail generator
 **Goal:** Sustained tail / rumble with its own length/tone/drive.
-**Components:** `TailGenerator` — dedicated LF sine @ `fundamentalEff`, slow ~10 ms attack, exp decay, `StateVariableTPTFilter` LP, `tanh` drive (drive deferred into OS section in Phase 2.10).
-**Params live:** `tailLevel`, `tailLength`, `tailTone`, (`tailDrive` provisional at base rate until 2.10).
+**Components:** `TailGenerator` — dedicated LF sine @ `fundamentalEff`, slow ~10 ms attack, exp decay, `StateVariableTPTFilter` LP, `tanh` drive. All rendered inside the OS region (currently `1x`); `tailDrive` is oversampled for real once Phase 2.10 enables 2×+.
+**Params live:** `tailLevel`, `tailLength`, `tailTone`, `tailDrive`.
 **Checkpoint:**
 - [ ] Short `tailLength` = tight; long = drone/rumble.
 - [ ] `tailTone` sweeps dark→bright; tail sits behind the transient (not competing with the click).
@@ -134,7 +135,7 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 
 #### Phase 2.8: Distortion morph
 **Goal:** Continuous 7-curve morph, loudness-compensated. **Isolated test before wiring `driveMix`.**
-**Components:** `Waveshaper/Saturator` — locked order `tanh→cubic→asym→softclip→hardclip→foldback→bitcrush`; 6-segment equal-gain crossfade; adaptive short-window RMS makeup seeded by static prime table; parallel clean/shaped blend. (Runs at base rate for now; moved inside OS in Phase 2.10.)
+**Components:** `Waveshaper/Saturator` — locked order `tanh→cubic→asym→softclip→hardclip→foldback→bitcrush`; 6-segment equal-gain crossfade; adaptive short-window RMS makeup seeded by static prime table; parallel clean/shaped blend. Runs inside the OS region like everything else (AD-10); currently `1x`, real oversampling benefit lands at Phase 2.10.
 **Params live:** `drive`, `character`, `driveMix`.
 **Checkpoint:**
 - [ ] Sweeping `character` 0→1 at fixed `drive` keeps integrated RMS within ±1.5 dB (offline sweep test).
@@ -144,7 +145,7 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 
 #### Phase 2.9: Tone / output / stereo
 **Goal:** Pre-distortion 3-band tone, stereo width with mono lows, output gain, safety limiter, mix, DC blocker.
-**Components:** `OutputStage` — 3× `dsp::IIR` (130/750/5000 Hz, invoked pre-distortion by the engine), `dsp::LinkwitzRileyFilter` split @ 130 Hz + M/S width, `dsp::Gain`, zero-latency soft-clip limiter (−0.5 dBFS), equal-power mix (processed↔silence), 5 Hz DC blocker.
+**Components:** `OutputStage` — 3× `dsp::IIR` (130/750/5000 Hz, invoked pre-distortion, in-region), `dsp::LinkwitzRileyFilter` split @ 130 Hz + M/S width (in-region), `dsp::Gain` (in-region), soft-clip `tanh` limiter −0.5 dBFS **in-region** (it's a nonlinearity — AD-10), equal-power mix (processed↔silence, in-region), then `processSamplesDown`, then the base-rate 5 Hz DC blocker. Coefficients computed against `fsOversampled`.
 **Params live:** `low`, `mid`, `high`, `bodyWidth`, `clickWidth`, `outputWidth`, `output`, `limiter`, `mix`.
 **Checkpoint:**
 - [ ] Tone bands measure correct shelf/bell response; sit pre-distortion (heavy drive stays "tight").
@@ -152,14 +153,15 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - [ ] `limiter = on` never exceeds −0.5 dBFS; `limiter = off` can exceed 0 dBFS.
 - [ ] Final DC offset < −60 dBFS mean; sub at 25 Hz not thinned.
 
-#### Phase 2.10: Oversampling
-**Goal:** Wrap the nonlinear section (`tailDrive` + Waveshaper) in `dsp::Oversampling`; glitch-free switching; correct latency.
-**Components:** `OversamplingProcessor` — 4 pre-built `dsp::Oversampling<float>` (1×/2×/4×/8×, `filterHalfBandPolyphaseIIR`, `useIntegerLatency = true`), `initProcessing` in `prepareToPlay`; atomic pointer swap + ~64-sample fade; `setLatencySamples` on message thread.
-**Params live:** `oversampling` (default index 1 = `2x`).
+#### Phase 2.10: Enable real oversampling factors + glitch-free switching
+**Goal:** Unpin `oversampling` (the region shell already exists from Phase 2.1). Enable 2×/4×/8×, `fsOversampled` coefficient refresh on factor change, glitch-free switching, correct latency reporting.
+**Components:** `OversamplingProcessor` — activate the 4 pre-built `dsp::Oversampling<float>` (1×/2×/4×/8×, `filterHalfBandPolyphaseIIR`, `useIntegerLatency = true`); atomic pointer swap + ~64-sample fade; audio-thread recompute of all in-region coefficients for the new `fsOversampled` during the fade; `setLatencySamples` on message thread + in `prepareToPlay`.
+**Params live:** `oversampling` (default index 1 = `2x`) — now functional.
 **Checkpoint:**
-- [ ] Reported latency matches `round(getLatencyInSamples())` per factor; 1× → 0.
-- [ ] Switching factors during playback is click-free (fade covers the swap) in Ableton / Logic / Reaper.
-- [ ] Aliasing at `drive = 1` visibly reduced 2×→4×→8× (FFT).
+- [ ] Reported latency matches `round(activeOs->getLatencyInSamples())` per factor; 1× → 0.
+- [ ] Switching factors during playback is click-free (fade + coefficient refresh cover the swap) in Ableton / Logic / Reaper.
+- [ ] Every in-region stage sounds pitch/time-correct at all 4 factors (coefficient refresh verified — no detune/decay drift on switch).
+- [ ] Aliasing at `drive = 1` (and `bodyHarmonics = 1`, `character = 1`) visibly reduced 1×→2×→4×→8× (FFT).
 - [ ] No audio-thread allocation (profiler / assertion build).
 
 #### Phase 2.11: Parameter smoothing, macros, state
@@ -251,7 +253,7 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - `Source/DSP/KickEngine.{h,cpp}` — orchestration, macro layer, MIDI dispatch, retrigger crossfade, analyzer taps, latency.
 - `Source/DSP/PitchEnvelope.{h,cpp}` — ratio-domain contour math (AD / research §1); highest "get the feel right" risk.
 - `Source/DSP/Waveshaper.{h,cpp}` — 7 transfer functions + crossfade + adaptive RMS makeup (AD-5); loudness-continuity risk.
-- `Source/DSP/OversamplingProcessor.{h,cpp}` — 4 pre-built instances, glitch-free swap, latency reporting (AD-2); switching risk.
+- `Source/DSP/OversamplingProcessor.{h,cpp}` — 4 pre-built instances wrapping the **whole voice + master chain** (AD-10), glitch-free swap + `fsOversampled` coefficient refresh, latency reporting (AD-2); switching risk. Built as the substrate in Phase 2.1.
 - `Source/DSP/OutputStage.{h,cpp}` — tone (pre) + LR mono crossover + M/S + soft-clip limiter + mix + DC.
 - `Source/Parameters/ParameterLayout.h` — table-driven 45-param APVTS; single point to get ranges/defaults/skews right.
 - `Source/Parameters/ParameterIDs.h` — ID single source of truth.
@@ -269,8 +271,9 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - No mutexes in the signal path.
 
 ### Performance
-- Estimate ~25–30 % of one core at 2× OS (monophonic, 48 kHz); ~40–50 % at 4×; ~70 %+ at 8×.
-- Hot paths: oversampling half-band filters; per-sample `exp`/`pow` in the pitch envelope (mitigate with per-block linear interpolation of the normalised envelope); `tanh` in the shaper (fast approximation if profiling demands).
+- **Whole voice renders in-region (AD-10)** so cost scales ~linearly with OS factor. Rough: ~10 % (1×) · ~30–40 % (2×, default) · ~60–75 % (4×) · ~90 %+ (8×) of one core (monophonic, 48 kHz). Label `8×` "high CPU".
+- **AD-10 escape hatch** (Stage 17): if 4×/8× too heavy, render the pure-sine layers (sub / body pre-`bodyHarmonics` / tail osc / pre-filtered noise) at base rate and up-sample into the OS buffer; keep only nonlinear stages + tone/transient in-region.
+- Hot paths: OS half-band filters; per-sample `exp`/`pow` in the pitch envelope (mitigate with per-block linear interpolation of the normalised envelope); `tanh` in `bodyHarmonics`/shaper/limiter (share one fast approximation if profiling demands).
 - Analyzer: FFT size 2048 (order 11); 30 fps repaint; drop to 1024 / 20 fps as a fallback.
 
 ### Latency
@@ -281,17 +284,18 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 ### Denormal / NaN / DC Protection
 - `juce::ScopedNoDenormals` at the top of `processBlock`.
 - `DSPUtils::flushDenormal` on envelope + filter states; `DSPUtils::sanitize` after the shaper and after the limiter (`jassertfalse` in debug).
-- 5 Hz one-pole DC blocker on the final bus (corner below 25 Hz sub); lighter blocker on the body path after `bodyHarmonics`.
+- 5 Hz one-pole DC blocker on the final bus **at base rate, after `processSamplesDown`** (corner below 25 Hz sub); lighter blocker on the body path after `bodyHarmonics` (in-region).
 - Foldback `while(|u|>1)` guarded with a max-iteration break.
 
 ### Known Challenges / References
 - **Pitch envelope "punch not laser":** ratio/log domain only, phase-continuous. Migrate MinimalKick's `f = f0·2^(env·semis/12)` formula (not its code). Two-stage snap+settle available as a Stage-2 tuning option.
 - **Distortion loudness continuity:** adaptive RMS makeup seeded by a static prime table; fallback to a 2-D `curve×drive` static LUT if pumping appears on short kicks.
-- **Oversampling switching:** pre-build per factor, atomic swap + fade, `useIntegerLatency = true`. Fallback: freeze `oversampling` as a prepare-time-only choice.
-- **Click aliasing:** band-limit by construction (windowed impulse, pre-filtered noise, band-limited osc). Fallback: generate click inside the OS block or drop the impulse component.
+- **Oversampling scope (AD-10):** whole voice + master chain (through the `tanh` limiter) is inside one OS region — not just the master waveshaper — so every nonlinearity is oversampled by construction, not by a "frequency is low" argument. Region shell built in Phase 2.1 (pinned 1×), factors enabled in Phase 2.10.
+- **Oversampling switching:** pre-build per factor, atomic swap + ~64-sample fade + audio-thread `fsOversampled` coefficient refresh, `useIntegerLatency = true`. Fallback: freeze `oversampling` as a prepare-time-only choice.
+- **Click aliasing:** generated in-region AND band-limited by construction (windowed impulse ≥8 samples at `fsOversampled`, pre-filtered noise, band-limited osc). Fallback: drop the impulse component / widen the window.
 - **Mono phase stability:** phase-reset all oscillators on trigger; null test. Fallback: DC-servo instead of HP if the sub thins.
 - **Native UI (no repo precedent):** build LookAndFeel + Knob first; FlexBox layout; fallback to fixed-size UI for v1 if resizable is fiddly.
-- **Parameter count discrepancy (41 vs 42 Float):** reconcile with the spec author before Stage 1 sign-off; do not invent a parameter.
+- **Parameter count:** 45 APVTS (41 Float / 3 Choice / 1 Bool), reconciled 2026-08-28; `bodyAttack` intentionally not exposed. Do not invent a parameter.
 - **Locked-spec vs brief distortion order:** parameter-spec order (`tanh→cubic→asym→softclip→hardclip→foldback→bitcrush`) is authoritative.
 
 ---
@@ -300,13 +304,13 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 
 | # | Question | Resolution |
 |---|---|---|
-| 1 | Default oversampling 2× vs 4× | **`2x`** provisional (choice index 1); confirmed at repo Stage 17 profiling. |
+| 1 | Default oversampling 2× vs 4× | **`2x`** provisional (choice index 1); confirmed at repo Stage 17 profiling. **Scope (AD-10):** the OS region wraps the entire voice + master chain (through the `tanh` safety limiter), not just the master waveshaper — every nonlinearity is oversampled by construction. Region built as the substrate in Phase 2.1 (pinned 1×), real factors enabled in Phase 2.10. CPU scales ~linearly with factor; `8×` is a "high CPU" option; base-rate escape hatch for the pure-sine layers documented for Stage 17. |
 | 2 | Safety limiter design | **Zero-latency soft-clip ceiling −0.5 dBFS** as `limiter = on`. Short-lookahead true limiter **NOT in v1** (not in locked param list); internal hook `kLimiterLookaheadSamples = 0` for a future spec bump. |
 | 3 | Distortion morph ordering + makeup | Locked order `tanh→cubic→asymmetric→soft-clip→hard-clip→foldback→bitcrush` (parameter-spec authoritative); equal-gain linear crossfade; **adaptive short-window RMS makeup** seeded by a static prime table (static 2-D LUT = fallback). Transfer functions specified in `architecture.md`. |
 | 4 | Tone position | **Fixed pre-distortion** (not switchable — no parameter). |
 | 5 | Pitch envelope contour | **Single `pitchCurve`-driven normalised-exponential snap+settle**, `k = 0.6 + pitchCurve·8.4`; `f(t) = fundamentalEff·pitchStartEff^{e(τ)}`; phase-integrated. Two-stage = optional Stage-2 refinement. |
 | 6 | Mono crossover frequency | **Fixed 130 Hz** Linkwitz-Riley split (cannot expose — not in param list). |
-| 7 | Click generator blend | **0.50 filtered-noise burst + 0.35 transient osc (with pitch drop) + 0.15 windowed raised-cosine impulse**; generated at base rate, band-limited by construction; move inside OS block only if aliasing measured at high `drive`. |
+| 7 | Click generator blend | **0.50 filtered-noise burst + 0.35 transient osc (with pitch drop) + 0.15 windowed raised-cosine impulse (≥8 samples at `fsOversampled`)**; generated **in-region** (AD-10) AND band-limited by construction. |
 | 8 | `fundamental` in MIDI Pitch mode | **Global semitone offset** `12·log2(fundamental/55)` on top of the note (0 at the 55 Hz default); absolute in Fixed Frequency mode. Keeps the knob and `macroBody` meaningful. |
 | 9 | `bodyAttack` | **Kept fixed-fast internal** (`kBodyAttackMs = 2.0`, raised-cosine). Not exposed (not in locked list). Soft-attack use case covered by negative `transientAttack`. Accepted deviation from the original spec's 0–20 ms amp attack. |
 | 10 | `mix` | **Kept automatable** (locked contract) as an **equal-power blend processed↔silence** (no dry path for an output-only instrument); functions as an automatable fade/mute. Tooltip: "leave at 100 %". |

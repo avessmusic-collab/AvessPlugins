@@ -11,7 +11,9 @@
 
 ## Total Parameter Count
 
-**49 parameters:** 42 Float, 3 Choice (`noiseType`, `oversampling`, `tuneMode`), 1 Bool (`limiter`), + 3 non-automatable UI actions (Randomize, Mutate, Save — NOT in APVTS).
+**45 APVTS parameters:** 41 Float, 3 Choice (`noiseType`, `oversampling`, `tuneMode`), 1 Bool (`limiter`). Plus 3 non-automatable UI actions (Randomize, Mutate, Save — NOT in APVTS) → 48 total controls.
+
+> _Header corrected 2026-08-28: earlier drafts said "49 / 42 Float"; enumerating the group sections below yields 41 Float / 45 APVTS. `bodyAttack` is deliberately not exposed (see Stage 0 Addendum, Open Q 9). Implementation targets the 45 parameters mapped in `architecture.md`._
 
 Skew factors below are chosen so the listed default sits near the knob's centre; Stage 1 may refine within ±0.1. All Float params: `AudioParameterFloat`; all support host automation.
 
@@ -253,9 +255,9 @@ Skew factors below are chosen so the listed default sits near the knob's centre;
 ### Oversampling ⚠️ CHOICE
 - **ID:** `oversampling` · **Choice** (`AudioParameterChoice`)
 - **Choices (index 0–3):** `["1x", "2x", "4x", "8x"]`
-- **Default index:** **1 (`"2x"`)** — provisional; Stage 17 CPU profiling confirms 2x vs 4x. Nonlinear stages (body harmonics, tail drive, distortion, click-into-distortion) run inside; linear stages (tone, stereo, limiter) outside.
+- **Default index:** **1 (`"2x"`)** — provisional; Stage 17 CPU profiling confirms 2x vs 4x. **AD-10:** the OS region wraps the *entire* voice + master chain through the safety limiter (all layer oscillators/noise, `bodyHarmonics`, `tailDrive`, tone, transient, master morph, stereo, mix, gain, `tanh` limiter). Only the final DC blocker + analyzer taps are base-rate. `8×` = "high CPU".
 - **UI:** dropdown / segmented control, global strip.
-- **DSP:** `juce::dsp::Oversampling`, one pre-built object per factor at `prepareToPlay` (runtime rebuild is NOT audio-thread safe). Switching: fade → swap atomic pointer → `reset()` → `setLatencySamples()`. Construct with `useIntegerLatency = true`, or round + report. Report total latency = oversampling latency + limiter lookahead (0 in default mode).
+- **DSP:** `juce::dsp::Oversampling` (`numChannels = 2`, `filterHalfBandPolyphaseIIR`, `useIntegerLatency = true`), one pre-built object per factor at `prepareToPlay` (runtime rebuild is NOT audio-thread safe). Switching: ~64-sample fade → swap atomic pointer → `reset()` → audio-thread recompute of all in-region coefficients for the new `fsOversampled` → `setLatencySamples()` (message thread). Report total latency = `round(activeOs->getLatencyInSamples())` (limiter adds 0).
 
 ---
 
@@ -323,13 +325,16 @@ Undo/redo backed by `APVTS.undoManager` (attach an `UndoManager` to the APVTS).
 ## Signal-Flow Order (DSP)
 
 ```
-trigger → [BodyOsc + PitchEnv + AmpEnv + bodyHarmonics] ┐
-          [SubOsc + SubEnv]                              ├─ sum → Tone(pre) → TransientShaper
-          [ClickGen]                                     │        → [Oversample ▲] Drive/Character/DriveMix, tail drive, body sat [Oversample ▼]
-          [TailGen + tailDrive]                          │        → Stereo (mono <~130 Hz; bodyWidth/clickWidth/outputWidth)
-          [NoiseGen + NoiseEnv]                         ┘        → Output gain → Mix → Safety Limiter → out
+[Oversample ▲]  ── whole voice + master chain runs inside one OS region (AD-10) ──────────────┐
+   trigger → [BodyOsc + PitchEnv + AmpEnv + bodyHarmonics] ┐                                   │
+             [SubOsc + SubEnv]                              ├─ sum → Tone(pre) → TransientShaper│
+             [ClickGen]                                     │   → Drive/Character/DriveMix       │
+             [TailGen + tailDrive]                          │   → Stereo (mono <130 Hz; body/click/output width) │
+             [NoiseGen + NoiseEnv]                         ┘   → Mix → Output gain → Safety Limiter (tanh) │
+[Oversample ▼] ──────────────────────────────────────────────────────────────────────────────┘
+   → DC blocker (base rate) → analyzer taps → out
 ```
-(Macros apply as effective-value offsets at each stage's parameter read. Tone position pre/post distortion — Stage 0 confirms.)
+(Macros apply as effective-value offsets at each stage's parameter read. **Stage 0 RESOLVED:** Tone is fixed pre-distortion; the OS region wraps everything through the safety limiter so every nonlinearity — `bodyHarmonics`, `tailDrive`, master morph, `tanh` limiter — is oversampled by construction. See `architecture.md` AD-10.)
 
 ## Open Questions for Stage 0 (from research-notes §"Open questions")
 
@@ -364,25 +369,28 @@ Stage 0 planning resolved the Open Questions and set internal DSP constants. **N
 4. `low`/`mid`/`high` tone = **fixed pre-distortion** (not switchable).
 5. Pitch envelope = **single `pitchCurve`-driven normalised-exponential snap+settle**, `k = 0.6 + pitchCurve·8.4`, `f(t) = fundamentalEff · pitchStartEff^{e(τ)}`, phase-integrated. No second parameter.
 6. Stereo mono crossover = **fixed 130 Hz** (Linkwitz-Riley).
-7. Click blend = **0.50 filtered-noise burst + 0.35 transient osc (own pitch drop) + 0.15 windowed raised-cosine impulse**; generated at base rate, band-limited by construction.
+7. Click blend = **0.50 filtered-noise burst + 0.35 transient osc (own pitch drop) + 0.15 windowed raised-cosine impulse**; generated **inside the OS region** (see AD-10 below) AND band-limited by construction (impulse window ≥ 8 samples at `fsOversampled`).
 8. `fundamental` in `MIDI Pitch` mode = **global semitone offset** `12·log2(fundamental / 55)` added to the MIDI-note pitch (0 at the 55 Hz default); absolute fundamental in `Fixed Frequency` mode.
 9. `bodyAttack` = **kept fixed-fast internal** (`kBodyAttackMs = 2.0`, raised-cosine). Not exposed. Soft-attack need is covered by negative `transientAttack`.
 10. `mix` = **kept automatable** but defined as an **equal-power blend between the processed output and silence** (an instrument has an output-only bus → no dry path). Acts as an automatable fade/mute; recommend leaving at 100 %.
 
-**Internal DSP constants set in Stage 0** (not parameters; Stage 2 may tune):
-- Tone corners: low shelf 130 Hz · mid bell 750 Hz (Q 0.7) · high shelf 5 kHz.
-- Mono/width crossover: 130 Hz. Final-bus DC blocker corner: ~5 Hz. Body-path DC blocker: ~30 Hz.
-- Fixed body attack: 2.0 ms. Retrigger crossfade: 3.0 ms equal-power.
-- Distortion `drive` maps to 0…+36 dB pre-gain. RMS makeup window ~10 ms, smoothing ~30 ms, clamp ±12 dB.
-- Click impulse window: 8 samples (base rate) raised-cosine. Limiter ceiling: −0.5 dBFS. Limiter lookahead: 0 samples.
-- Analyzer: FFT order 11 (2048), Hann window, 30 fps Timer repaint, waveform capture 16384 samples.
-- Oversampling: `filterHalfBandPolyphaseIIR`, `useIntegerLatency = true`, one instance pre-built per factor.
+**AD-10 (2026-08-28, added after implementer review) — oversampling scope:** the OS region wraps the **entire voice + master chain through the safety limiter**, not just the master waveshaper. `bodyHarmonics`, `tailDrive`, the master morph and the `tanh` limiter ceiling are all nonlinearities and are all oversampled by construction; the "body sat at base rate because the fundamental is low" reasoning in the original draft is retracted (a base-rate `tanh` on a 1.5 kHz sine aliases immediately). Linear stages run in-region too for a single up/down pair. `processSamplesUp` is fed a zero block (no audio input); `processSamplesDown` runs after the limiter; only the DC blocker + analyzer taps are base-rate. Documented Stage-17 escape hatch: render the pure-sine layers at base rate and up-sample if 4×/8× CPU is excessive. Full detail: `architecture.md` → AD-10.
 
-**Parameter-count note (for reconciliation, non-breaking):** the header states *42 Float / 46 APVTS / 49 total*. Enumerating the section bodies yields *41 Float / 45 APVTS / 48 total* — no 42nd Float parameter is present in the body (`bodyAttack` is explicitly not exposed). Stage 1 proceeds with the **45 APVTS parameters** enumerated above and mapped in `architecture.md` → *Parameter Mapping*. The spec author may correct the header count (41 Float / 45 APVTS / 48 total) without a breaking version bump; implementation must not invent a parameter to reach 42.
+**Internal DSP constants set in Stage 0** (not parameters; Stage 2 may tune). All in-region coefficients use `fsOversampled = fs · osFactor` and are recomputed on factor change:
+- Tone corners: low shelf 130 Hz · mid bell 750 Hz (Q 0.7) · high shelf 5 kHz.
+- Mono/width crossover: 130 Hz. Final-bus DC blocker corner: ~5 Hz (base rate). Body-path DC blocker: ~30 Hz (in-region).
+- Fixed body attack: 2.0 ms. Retrigger crossfade: 3.0 ms equal-power. OS-switch fade: ~64 samples.
+- Distortion `drive` maps to 0…+36 dB pre-gain. RMS makeup window ~10 ms, smoothing ~30 ms, clamp ±12 dB.
+- Click impulse window: `≈0.18 ms` raised-cosine (≥ 8 samples at 44.1 kHz base rate → more at `fsOversampled`). Limiter ceiling: −0.5 dBFS. Limiter lookahead: 0 samples.
+- Analyzer: FFT order 11 (2048), Hann window, 30 fps Timer repaint, waveform capture 16384 samples.
+- Oversampling: `filterHalfBandPolyphaseIIR`, `useIntegerLatency = true`, one instance pre-built per factor (1×/2×/4×/8×), `numChannels = 2`.
+
+**Parameter count (reconciled 2026-08-28):** **45 APVTS parameters — 41 Float, 3 Choice, 1 Bool** (+ 3 non-automatable UI actions). Earlier drafts of this file's header said "42 Float / 49 total"; that was a counting error and the header has been corrected. `bodyAttack` is intentionally not exposed (Open Q 9). Stage 1 implements exactly the 45 parameters enumerated in the group sections above and mapped in `architecture.md` → *Parameter Mapping*.
 
 **PLUGIN codes chosen:** `PLUGIN_MANUFACTURER_CODE = Plgf`, `PLUGIN_CODE = Kd02`, `COMPANY_NAME = "PluginFreedom"`.
 
 ## Version History
 
-- **v1 (2026-08-28):** Initial 49-parameter specification derived from user spec + creative-brief.md + research-notes.md. Native JUCE UI. Not yet implemented.
-- **v1 + Stage 0 Addendum (2026-08-28):** Open Questions resolved, internal DSP constants set, parameter-count discrepancy flagged. No breaking changes to automatable parameters.
+- **v1 (2026-08-28):** Initial specification (45 APVTS params: 41 Float / 3 Choice / 1 Bool) derived from user spec + creative-brief.md + research-notes.md. Native JUCE UI. Not yet implemented.
+- **v1 + Stage 0 Addendum (2026-08-28):** Open Questions resolved, internal DSP constants set.
+- **v1 + AD-10 note (2026-08-28):** after implementer review, oversampling scope widened from "master waveshaper only" to "entire voice + master chain through the safety limiter." Header parameter count corrected (45 APVTS / 41 Float). No breaking changes to automatable parameters (no add/remove/rename/re-range/re-default).
