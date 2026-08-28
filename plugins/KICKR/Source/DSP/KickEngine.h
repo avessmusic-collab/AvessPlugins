@@ -37,7 +37,13 @@ namespace kickr
         `TransientShaper` runs on the summed mono signal right after the voice mix,
         still inside the OS region (AD-10). Params live: `transientAttack`, `transientSustain`.
 
-        Later phases add: click/sub/tail/noise (2.4-2.7), sample player (2.7b), distortion
+        PHASE 2.4: `clickLevel` / `clickTone` / `clickTime` / `clickPitch` snapshot per
+        block and forwarded to every voice's `ClickGenerator` via `setClickParams`. The
+        moderate click-velocity factor (`lerp(1, v01, velSensitivity·0.6)`) is passed into
+        `KickVoice::noteOn`. The click sums with the body inside the voice (before the
+        voice mix / TransientShaper), so no engine-side routing change.
+
+        Later phases add: sub/tail/noise (2.5-2.7), sample player (2.7b), distortion
         (2.8), tone/stereo/limiter (2.9), real OS switching (2.10), smoothing/macros
         (2.11), analyzer.
     */
@@ -60,7 +66,8 @@ namespace kickr
 
         void renderSegment (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
         void handleNoteOn (const juce::MidiMessage& message);
-        void triggerVoice (KickVoice& v, float freqHz, int note, float velLevelGain, float v01) noexcept;
+        void triggerVoice (KickVoice& v, float freqHz, int note,
+                           float velLevelGain, float velClickGain, float v01) noexcept;
         float resolvePitchHz (int noteNumber) const noexcept;
 
         /** architecture Parameter Mapping row 2 — velocity (subtle) scaling of `pitchStart`. */
@@ -102,6 +109,10 @@ namespace kickr
         std::atomic<float>* pOversampling   { nullptr };
         std::atomic<float>* pTransientAttack  { nullptr };
         std::atomic<float>* pTransientSustain { nullptr };
+        std::atomic<float>* pClickLevel { nullptr };   // PHASE 2.4
+        std::atomic<float>* pClickTone  { nullptr };
+        std::atomic<float>* pClickTime  { nullptr };
+        std::atomic<float>* pClickPitch { nullptr };
 
         // Per-block parameter snapshot.
         struct Snapshot
@@ -117,6 +128,10 @@ namespace kickr
             float velSens         { 0.5f };
             float transientAttack { 0.0f };  // bipolar -1..+1
             float transientSustain { 0.0f }; // bipolar -1..+1
+            float clickLevel   { 0.4f };     // PHASE 2.4
+            float clickToneHz  { 4000.0f };
+            float clickTimeMs  { 3.0f };
+            float clickPitchHz { 5000.0f };
             int   tuneMode        { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
         };
         Snapshot snap;

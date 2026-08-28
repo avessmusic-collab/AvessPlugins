@@ -10,6 +10,7 @@ namespace kickr
         body.prepare (fsOversampled);
         ampEnv.prepare (fsOversampled);
         pitchEnv.prepare (fsOversampled);
+        click.prepare (fsOversampled);
 
         bodyLevel.reset (fsOversampled, 0.02);   // 20 ms — click-free level changes
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
@@ -23,6 +24,7 @@ namespace kickr
         body.reset();
         ampEnv.reset();
         pitchEnv.reset();
+        click.reset();
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
     }
 
@@ -36,7 +38,13 @@ namespace kickr
         pitchEnv.setParams (startRatioEff, timeMs, curve);
     }
 
-    void KickVoice::noteOn (float freqHz, int noteNumber, float velLevelGain,
+    void KickVoice::setClickParams (float clickLevel, float clickToneHz,
+                                    float clickTimeMs, float clickPitchHz) noexcept
+    {
+        click.setParams (clickLevel, clickToneHz, clickTimeMs, clickPitchHz);
+    }
+
+    void KickVoice::noteOn (float freqHz, int noteNumber, float velLevelGain, float velClickGain,
                             float bodyDecayMs, int sampleOffset) noexcept
     {
         juce::ignoreUnused (noteNumber, sampleOffset);   // PHASE 2.7b uses noteNumber
@@ -48,6 +56,7 @@ namespace kickr
         body.noteOn();                 // phase -> 0 (layering phase-stability)
         pitchEnv.noteOn();             // arm the ratio-domain contour (tSinceTrigger -> 0)
         ampEnv.noteOn (bodyDecayMs);
+        click.noteOn (velClickGain);   // arm the 3-part click (uses the per-block snapshot)
 
         // Start at the current body-level target — no 20 ms fade-in on the first hit.
         // (Retrigger level continuity is Phase 2.3's crossfade concern.)
@@ -66,22 +75,29 @@ namespace kickr
 
         for (int i = 0; i < numSamples; ++i)
         {
-            // Ratio-domain pitch drop, phase-continuous (frequency only — BodyOscillator
-            // integrates phase and is never reset mid-fall).
-            const float freqHz = pitchEnv.nextFrequency (baseFrequencyHz);
-            body.setFrequency (freqHz);
+            float bodyOut = 0.0f;
+            if (ampEnv.isActive())
+            {
+                // Ratio-domain pitch drop, phase-continuous (frequency only —
+                // BodyOscillator integrates phase and is never reset mid-fall).
+                const float freqHz = pitchEnv.nextFrequency (baseFrequencyHz);
+                body.setFrequency (freqHz);
 
-            const float env = ampEnv.tick();
-            const float osc = body.renderSample();
-            const float lvl = bodyLevel.getNextValue();
+                const float env = ampEnv.tick();
+                const float osc = body.renderSample();
+                const float lvl = bodyLevel.getNextValue();
+                bodyOut = osc * env * lvl;                 // body-level -> body only
+            }
 
-            const float s = dsputils::sanitize (osc * env * lvl * velLevel);
+            const float clickOut = click.renderSample();   // carries clickLevel + click vel
+
+            const float s = dsputils::sanitize ((bodyOut + clickOut) * velLevel);
 
             const int idx = startSample + i;
             for (int ch = 0; ch < numCh; ++ch)
                 block.addSample (ch, idx, s);
 
-            if (! ampEnv.isActive())
+            if (! ampEnv.isActive() && ! click.isActive())
             {
                 active = false;
                 break;
@@ -103,17 +119,24 @@ namespace kickr
         int i = 0;
         for (; i < numSamples; ++i)
         {
-            // Ratio-domain pitch drop, phase-continuous (frequency only).
-            const float freqHz = pitchEnv.nextFrequency (baseFrequencyHz);
-            body.setFrequency (freqHz);
+            float bodyOut = 0.0f;
+            if (ampEnv.isActive())
+            {
+                // Ratio-domain pitch drop, phase-continuous (frequency only).
+                const float freqHz = pitchEnv.nextFrequency (baseFrequencyHz);
+                body.setFrequency (freqHz);
 
-            const float env = ampEnv.tick();
-            const float osc = body.renderSample();
-            const float lvl = bodyLevel.getNextValue();
+                const float env = ampEnv.tick();
+                const float osc = body.renderSample();
+                const float lvl = bodyLevel.getNextValue();
+                bodyOut = osc * env * lvl;                 // body-level -> body only
+            }
 
-            mono[i] = dsputils::sanitize (osc * env * lvl * velLevel);
+            const float clickOut = click.renderSample();   // carries clickLevel + click vel
 
-            if (! ampEnv.isActive())
+            mono[i] = dsputils::sanitize ((bodyOut + clickOut) * velLevel);
+
+            if (! ampEnv.isActive() && ! click.isActive())
             {
                 active = false;
                 ++i;

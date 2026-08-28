@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 2 — DSP Phase 2.3 complete (amp-env refinement + transient shaper + click-free 2-voice retrigger)
+- **Current Status:** 🚧 Stage 2 — DSP Phase 2.4 complete (synthesised 3-part click generator)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -37,6 +37,18 @@
   - Params live: `transientAttack`, `transientSustain` (bipolar −1…+1, default 0 ⇒ shaper is unity, Phase 2.1/2.2 checkpoints unaffected). Cached ptrs + per-block snapshot + `transientShaper.setParams`.
   - RT-safe: no alloc/lock/log/IO; `voiceScratch` sized in `prepare` (`maxBlockSize · 8`); zero-length block early-return; `int` loop indices, `static_cast` for `size_t`↔`int`. Zero-warnings target (`-Wshorten-64-to-32` / `-Wsign-conversion`).
   - Files: `TransientShaper.{h,cpp}` (new .cpp), `KickEngine.{h,cpp}`, `KickVoice.{h,cpp}` (`renderMono`; `renderAdd` kept), `AmplitudeEnvelope.{h,cpp}`, `CMakeLists.txt`.
+- **2026-08-28 (Stage 2 — DSP Phase 2.4):** Synthesised click generator — fully algorithmic 3-part transient, NO samples.
+  - **`ClickGenerator.{h,cpp}`** (Phase-1 stub fleshed out; `.cpp` added to `KICKR_CORE_SOURCES`): per-voice layer inside `KickVoice`, summed with the body **before** the voice mono output → engine mix / `TransientShaper`. Runs at `fsOversampled` (in-region, AD-10). One-shot on `noteOn`. Blend (Open Q 7 weights, unchanged): `(0.50·A + 0.35·B + 0.15·C) · clickLevel · velClick`.
+    - **A** filtered noise burst: own `juce::Random` (not shared) → `StateVariableTPTFilter` band-pass @ `clickTone`, Q 0.7; AD attack 0.05 ms / exp decay = `clickTime`.
+    - **B** transient osc: phase-accumulator sine (`sin()` before the increment → clean `sin(0)=0` start) @ `clickPitch` with its own drop `clickPitch → 0.5·clickPitch` over `min(clickTime, 8 ms)` (fixed-curve normalised exp, k=4); AD attack 0.02 ms / exp decay = `0.8·clickTime`.
+    - **C** windowed impulse: raised-cosine window `kClickImpulseWindowMs = 0.18 ms` → samples at `fsOversampled`, clamped **[8, 256]** (never a bare spike), baked into a fixed `std::array<float,256>` LUT in `prepare`; through `StateVariableTPTFilter` low-pass @ `clickTone`, Q 2.0 (+ ~3 ms ring-out).
+    - Tone/pitch clamped `[20, fsOversampled·0.45]` before SVF coeffs; AD values denormal-flushed each sample; `snapToZero()` on both SVFs per sample; output `sanitize`d. `noteOn` no-ops when `clickLevel < 1e-6`. `// Phase 2.9: clickWidth L/R decorrelation` markers left (mono this phase).
+  - **`KickVoice.{h,cpp}`**: `ClickGenerator click` member; `setClickParams(level,toneHz,timeMs,pitchHz)`; `noteOn` gained a `velClickGain` arg. `renderMono`/`renderAdd` restructured: `mono = (osc·env·bodyLevel + click.renderSample()) · velLevel` — `bodyLevel` applies to the **body only**, the click carries `clickLevel` + `velClick` internally. Voice frees only when `ampEnv` **and** `click` are both done (a long click on a short body plays out). `clickLevel = 0` ⇒ click adds exact zeros ⇒ body render bit-identical.
+  - **`KickEngine.{h,cpp}`**: 4 cached CLICK APVTS ptrs + `Snapshot` fields; per-block `setClickParams` fan-out to both voices; `velClick = lerp(1, v01, velSensitivity·0.6)` (moderate — architecture MIDI routing) computed in `handleNoteOn`, threaded through `triggerVoice` → `KickVoice::noteOn`.
+  - Params live: `clickLevel` (0–1/0.4), `clickTone` (1000–15000 Hz/4000), `clickTime` (0.1–50 ms/3), `clickPitch` (1000–15000 Hz/5000). All prior params unchanged.
+  - Tests: new **[Phase 2.4]** block in `RunTests.cpp` (audible + `clickLevel` scales; `bAll−bBody` isolates the click; phase-0 onset; short `clickTime` finite/bounded; `clickTone`/`clickPitch` spectrum shift; `clickTime` duration). Pre-2.4 blocks now `silenceClick(p)` so they still test a bare body.
+  - RT-safe: LUT + SVFs sized/prepared in `prepare`; no alloc/lock/log/IO in the audio path; `juce::Random::nextFloat` audio-thread safe. Zero-warnings intent (`int` indices, `static_cast` all `size_t`↔`int`/`uint32`, no shadowing).
+  - Files: `ClickGenerator.{h,cpp}` (new .cpp), `KickVoice.{h,cpp}`, `KickEngine.{h,cpp}`, `Tests/RunTests.cpp`, `CMakeLists.txt`.
 
 ## Known Issues
 

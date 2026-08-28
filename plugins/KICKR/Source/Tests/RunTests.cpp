@@ -63,9 +63,19 @@ int main()
     const float  vel = 100.0f / 127.0f;
 
     std::printf ("KICKR tests  (sr %.0f)\n", sr);
+
+    // Phase 2.4 adds a per-voice click (default clickLevel 0.4). Pre-2.4 checkpoints
+    // assume a bare body, so isolate the body layer where they need it.
+    auto silenceClick = [] (KICKRAudioProcessor& p)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter ("clickLevel"))
+            prm->setValueNotifyingHost (0.0f);
+    };
+
     std::printf ("\n[Phase 2.1] OS-region shell + MIDI-triggered basic kick\n");
 
     KICKRAudioProcessor proc;
+    silenceClick (proc);
     const auto buf = kickr::tests::renderNote (proc, a1, vel, sr, 512, 1.0);
     const auto st  = analyse (buf, sr);
 
@@ -85,6 +95,7 @@ int main()
 
     {
         KICKRAudioProcessor p2;
+        silenceClick (p2);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_1.wav");
         const bool ok  = kickr::tests::renderNoteToWav (p2, wav, a1, vel, sr, 512, 1.0);
         std::printf ("  wrote %s : %s\n", wav.getFullPathName().toRawUTF8(), ok ? "ok" : "FAILED");
@@ -115,6 +126,7 @@ int main()
     // ~15 ms  ->  f ~ 55 * 4^~0.9 ~ 190 Hz  (heading for 4x55 = 220).
     {
         KICKRAudioProcessor p;
+        silenceClick (p);
         setP (p, "pitchTime", 900.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
         const double fHead = estFreq (b, sr, 0.002, 0.020);
@@ -125,6 +137,7 @@ int main()
     // Medium pitchTime (200 ms) — the fall is slow enough to track by zero-crossings.
     {
         KICKRAudioProcessor p;
+        silenceClick (p);
         setP (p, "pitchTime", 200.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fHead = estFreq (b, sr, 0.003, 0.023);
@@ -141,6 +154,7 @@ int main()
     // in the first 20 ms against a steady-state tail window, and that it settles.
     {
         KICKRAudioProcessor p;
+        silenceClick (p);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fFirst20 = estFreq (b, sr, 0.0, 0.020);
         const double fLate    = estFreq (b, sr, 0.090, 0.180);
@@ -154,6 +168,7 @@ int main()
         check (step < 0.20f,                       "click-free through the pitch fall (max step < 0.20)");
 
         KICKRAudioProcessor pw;
+        silenceClick (pw);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_2.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
@@ -161,6 +176,8 @@ int main()
     // curve = 0 (near-linear sweep) vs curve = 1 (snap) — measured mid-fall
     {
         KICKRAudioProcessor p0, p1;
+        silenceClick (p0);
+        silenceClick (p1);
         setP (p0, "pitchCurve", 0.0f);
         setP (p1, "pitchCurve", 1.0f);
         const auto b0 = kickr::tests::renderNote (p0, a1, vel, sr, 512, 1.0);
@@ -225,6 +242,7 @@ int main()
     // machine-gun retrigger: 1/32 @ 174 BPM = ~43 ms
     {
         KICKRAudioProcessor p;
+        silenceClick (p);
         auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
         const float* rx = rbuf.getReadPointer (0);
         const int rn = rbuf.getNumSamples();
@@ -257,6 +275,7 @@ int main()
     // transientAttack: +1 sharpens the onset, -1 softens it
     {
         KICKRAudioProcessor pPos, pMid, pNeg;
+        silenceClick (pPos); silenceClick (pMid); silenceClick (pNeg);
         setP (pPos, "transientAttack",  1.0f);
         setP (pNeg, "transientAttack", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -272,6 +291,7 @@ int main()
     // transientSustain: +1 lifts the body, -1 drops it
     {
         KICKRAudioProcessor pPos, pNeg;
+        silenceClick (pPos); silenceClick (pNeg);
         setP (pPos, "transientSustain",  1.0f);
         setP (pNeg, "transientSustain", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -280,6 +300,124 @@ int main()
         const double sNeg = rmsWindow (bNeg, sr, 0.050, 0.200);
         std::printf ("  body RMS (50-200ms):  sustain -1 %.4f   +1 %.4f\n", sNeg, sPos);
         check (sPos > sNeg * 1.20,               "transientSustain shifts the body level");
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.4] Synthesised click generator (3-part blend)\n");
+
+    // Body muted -> only the click layer sounds. 0.5 s is plenty (click <= ~50 ms).
+    auto renderClickOnly = [&] (float toneHz, float pitchHz, float timeMs, float level)
+    {
+        KICKRAudioProcessor p;
+        setP (p, "bodyLevel",  0.0f);
+        setP (p, "clickLevel", level);
+        setP (p, "clickTone",  toneHz);
+        setP (p, "clickPitch", pitchHz);
+        setP (p, "clickTime",  timeMs);
+        return kickr::tests::renderNote (p, a1, vel, sr, 512, 0.5);
+    };
+
+    auto lastAbove = [] (const juce::AudioBuffer<float>& b, double s, float frac)
+    {
+        const float* x = b.getReadPointer (0);
+        float pk = 0.0f;
+        for (int i = 0; i < b.getNumSamples(); ++i) pk = std::max (pk, std::abs (x[i]));
+        int last = 0;
+        for (int i = 0; i < b.getNumSamples(); ++i) if (std::abs (x[i]) > pk * frac) last = i;
+        return last / s * 1000.0;
+    };
+
+    // audible + clickLevel scales it (RMS scales ~linearly with clickLevel regardless
+    // of component correlation, so it is a stable proxy)
+    {
+        const auto cLo = renderClickOnly (4000.0f, 5000.0f, 3.0f, 0.30f);
+        const auto cHi = renderClickOnly (4000.0f, 5000.0f, 3.0f, 0.90f);
+        const auto sLo = analyse (cLo, sr);
+        const auto sHi = analyse (cHi, sr);
+        const double rLo = rmsWindow (cLo, sr, 0.0, 0.005);
+        const double rHi = rmsWindow (cHi, sr, 0.0, 0.005);
+        std::printf ("  click-only:  level 0.30 -> peak %.3f rms %.4f   level 0.90 -> peak %.3f rms %.4f\n",
+                     sLo.peak, rLo, sHi.peak, rHi);
+        check (sLo.allFinite && sHi.allFinite, "click: no NaN / Inf");
+        check (rLo > 0.005,                    "click layer is audible");
+        check (rHi > rLo * 2.2,                "clickLevel scales the click (0.9 vs 0.3 ~ 3x)");
+        check (sHi.peak < 2.0f,                "click output bounded");
+    }
+
+    // body-only render is unchanged when clickLevel = 0
+    {
+        KICKRAudioProcessor pB;  silenceClick (pB);
+        KICKRAudioProcessor pA;  // default patch: clickLevel 0.4
+        const auto bBody = kickr::tests::renderNote (pB, a1, vel, sr, 512, 1.0);
+        const auto bAll  = kickr::tests::renderNote (pA, a1, vel, sr, 512, 1.0);
+        const float* xB = bBody.getReadPointer (0);
+        const float* xA = bAll .getReadPointer (0);
+
+        // bAll - bBody is exactly the click layer (the body path is identical), so it
+        // isolates the click contribution.
+        double clickPeak = 0.0;
+        const int n20 = (int) (0.020 * sr);
+        for (int i = 0; i < n20; ++i)
+            clickPeak = std::max (clickPeak, (double) std::abs (xA[i] - xB[i]));
+
+        double lateDiff = 0.0;
+        for (int i = (int) (0.20 * sr); i < bBody.getNumSamples(); ++i)
+            lateDiff = std::max (lateDiff, (double) std::abs (xA[i] - xB[i]));
+
+        std::printf ("  body onset |x0| = %.4f   default-click peak (0-20ms) = %.4f   body-tail diff = %.2e\n",
+                     std::abs (xB[0]), clickPeak, lateDiff);
+        check (std::abs (xB[0]) < 0.02f, "clickLevel=0 -> body onset near zero (click absent)");
+        check (lateDiff < 1.0e-4,        "clickLevel=0 render == default render after the click decays (body untouched)");
+        check (clickPeak > 0.03,         "default click contributes an audible transient (bAll - bBody)");
+    }
+
+    // clean trigger onset + no bare 1-sample spike (window >= 8 samples, phase-0 osc start)
+    {
+        const auto c = renderClickOnly (12000.0f, 6000.0f, 3.0f, 0.90f);
+        const auto s = analyse (c, sr);
+        const float* x = c.getReadPointer (0);
+        std::printf ("  onset ramp: |x0| %.4f  |x1| %.4f  |x2| %.4f  |x3| %.4f  peak %.3f\n",
+                     std::abs (x[0]), std::abs (x[1]), std::abs (x[2]), std::abs (x[3]), s.peak);
+        check (s.allFinite,               "windowed impulse: no NaN / Inf");
+        check (std::abs (x[0]) < 0.02f,   "click starts at ~0 (phase-0 osc + raised-cosine window, not a bare spike)");
+        check (std::abs (x[0]) < std::abs (x[2]) || s.peak < 1.0e-3f,
+                                          "onset ramps up over several samples");
+    }
+
+    // shortest clickTime (0.1 ms) stays finite + bounded -> band-limited by construction
+    {
+        const auto c = renderClickOnly (15000.0f, 15000.0f, 0.1f, 0.90f);
+        const auto s = analyse (c, sr);
+        std::printf ("  clickTime 0.1 ms @ 15 kHz: peak %.3f  maxStep %.3f  finite %d\n",
+                     s.peak, s.maxStep, (int) s.allFinite);
+        check (s.allFinite && s.peak < 2.0f, "very short click: finite + bounded (no alias blow-up)");
+    }
+
+    // clickTone / clickPitch shift the click spectrum (zero-crossing density proxy)
+    {
+        const auto dark   = renderClickOnly (1500.0f,  1200.0f,  3.0f, 0.90f);
+        const auto bright = renderClickOnly (14000.0f, 14000.0f, 3.0f, 0.90f);
+        const double zDark   = estFreq (dark,   sr, 0.0, 0.006);
+        const double zBright = estFreq (bright, sr, 0.0, 0.006);
+        std::printf ("  click zero-crossing freq (0-6 ms):  dark %.0f Hz   bright %.0f Hz\n", zDark, zBright);
+        check (zBright > zDark * 1.5,      "clickTone/clickPitch shift the click spectrum (bright = more HF)");
+    }
+
+    // clickTime changes the click duration
+    {
+        const auto cShort = renderClickOnly (4000.0f, 5000.0f, 0.5f,  0.90f);
+        const auto cLong  = renderClickOnly (4000.0f, 5000.0f, 40.0f, 0.90f);
+        const double dShort = lastAbove (cShort, sr, 0.05f);
+        const double dLong  = lastAbove (cLong,  sr, 0.05f);
+        std::printf ("  click duration (last > 5%% peak):  0.5 ms -> %.1f ms   40 ms -> %.1f ms\n", dShort, dLong);
+        check (dLong > dShort * 1.8,       "clickTime lengthens the click (40 ms vs 0.5 ms)");
+    }
+
+    {
+        KICKRAudioProcessor pw;
+        setP (pw, "clickLevel", 0.8f);
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_4.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
 
     std::printf ("\n%d failure(s)\n", failures);

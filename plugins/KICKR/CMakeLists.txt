@@ -30,6 +30,8 @@ set(KICKR_CORE_SOURCES
     Source/DSP/KickEngine.cpp
     # DSP — Stage 2 Phase 2.3 (transient shaper + click-free 2-voice retrigger)
     Source/DSP/TransientShaper.cpp
+    # DSP — Stage 2 Phase 2.4 (synthesised click generator)
+    Source/DSP/ClickGenerator.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

@@ -6,6 +6,7 @@
 #include "DSP/BodyOscillator.h"
 #include "DSP/AmplitudeEnvelope.h"
 #include "DSP/PitchEnvelope.h"
+#include "DSP/ClickGenerator.h"
 
 namespace kickr
 {
@@ -20,8 +21,14 @@ namespace kickr
         PHASE 2.3: KickEngine owns `std::array<KickVoice, 2>` and equal-power crossfades
         between them on retrigger, so it renders each voice into its own mono scratch
         buffer via `renderMono` and mixes with the fade gains. `renderAdd` (Phase 2.1
-        stereo-block path) is kept for compatibility. Sub / Click / Tail / Noise /
-        SamplePlayer + `bodyHarmonics` land in later phases.
+        stereo-block path) is kept for compatibility.
+
+        PHASE 2.4: aggregates a per-voice `ClickGenerator` (3-part synthesised click).
+        The click is summed with the body BEFORE the voice's mono output — it carries its
+        own `clickLevel` + click-velocity gain internally, so it is NOT scaled by
+        `bodyLevel` (which now applies to the body layer only). The whole voice is then
+        scaled by the strong per-voice velocity level. Sub / Tail / Noise / SamplePlayer +
+        `bodyHarmonics` land in later phases.
     */
     class KickVoice
     {
@@ -42,11 +49,21 @@ namespace kickr
         void setPitchParams (float startRatioEff, float timeMs, float curve) noexcept;
 
         /**
-            Trigger. `velLevelGain` is the pre-resolved velocity level multiplier
-            (`lerp(1, vel/127, velSensitivity)`), `bodyDecayMs` the current Body Decay.
-            `sampleOffset` is informational for now (the engine already split the block).
+            Per-block: forward the CLICK-group snapshot to the ClickGenerator
+            (`clickLevel`, `clickTone` Hz, `clickTime` ms, `clickPitch` Hz).
+            No APVTS reads inside the voice.
         */
-        void noteOn (float freqHz, int noteNumber, float velLevelGain,
+        void setClickParams (float clickLevel, float clickToneHz,
+                             float clickTimeMs, float clickPitchHz) noexcept;
+
+        /**
+            Trigger. `velLevelGain` is the pre-resolved strong velocity level multiplier
+            (`lerp(1, vel/127, velSensitivity)`) applied to the whole voice; `velClickGain`
+            is the moderate click-only factor (`lerp(1, vel/127, velSensitivity·0.6)`).
+            `bodyDecayMs` is the current Body Decay. `sampleOffset` is informational for
+            now (the engine already split the block).
+        */
+        void noteOn (float freqHz, int noteNumber, float velLevelGain, float velClickGain,
                      float bodyDecayMs, int sampleOffset) noexcept;
 
         void noteOff() noexcept {}   // ignored — kick runs to completion
@@ -73,6 +90,7 @@ namespace kickr
         BodyOscillator            body;
         AmplitudeEnvelope         ampEnv;
         PitchEnvelope             pitchEnv;   // PHASE 2.2 — ratio-domain pitch drop
+        ClickGenerator            click;      // PHASE 2.4 — 3-part synthesised click
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> bodyLevel;
     };
 }

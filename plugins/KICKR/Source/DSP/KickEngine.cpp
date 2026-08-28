@@ -56,6 +56,10 @@ namespace kickr
         pOversampling   = apvts.getRawParameterValue (id::oversampling);
         pTransientAttack  = apvts.getRawParameterValue (id::transientAttack);
         pTransientSustain = apvts.getRawParameterValue (id::transientSustain);
+        pClickLevel       = apvts.getRawParameterValue (id::clickLevel);
+        pClickTone        = apvts.getRawParameterValue (id::clickTone);
+        pClickTime        = apvts.getRawParameterValue (id::clickTime);
+        pClickPitch       = apvts.getRawParameterValue (id::clickPitch);
 
         reset();
     }
@@ -115,9 +119,9 @@ namespace kickr
     }
 
     void KickEngine::triggerVoice (KickVoice& v, float freqHz, int note,
-                                   float velLevelGain, float v01) noexcept
+                                   float velLevelGain, float velClickGain, float v01) noexcept
     {
-        v.noteOn (freqHz, note, velLevelGain, snap.bodyDecayMs, 0);
+        v.noteOn (freqHz, note, velLevelGain, velClickGain, snap.bodyDecayMs, 0);
 
         // Refresh the pitch contour with THIS note's velocity-scaled pitchStart so the
         // freshly-armed fall is correct from sample 0.
@@ -131,8 +135,10 @@ namespace kickr
 
         const float freqHz = resolvePitchHz (note);
 
-        // Velocity -> level (Phase 2.1): lerp(1, v01, velSensitivity).
+        // Velocity -> level (Phase 2.1): lerp(1, v01, velSensitivity)  — strong, whole voice.
         const float velLevelGain = 1.0f + snap.velSens * (v01 - 1.0f);
+        // Velocity -> click (Phase 2.4): lerp(1, v01, velSensitivity·0.6) — moderate.
+        const float velClickGain = 1.0f + snap.velSens * 0.6f * (v01 - 1.0f);
 
         lastVel01 = v01;
 
@@ -156,7 +162,7 @@ namespace kickr
             incomingVoice = 1 - activeVoice;
             auto& incoming = voices[static_cast<size_t> (incomingVoice)];
             incoming.reset();
-            triggerVoice (incoming, freqHz, note, velLevelGain, v01);
+            triggerVoice (incoming, freqHz, note, velLevelGain, velClickGain, v01);
 
             theta      = 0.0;
             fadeActive = true;
@@ -164,7 +170,7 @@ namespace kickr
         else
         {
             // Voice free -> just (re)trigger it, no fade.
-            triggerVoice (active, freqHz, note, velLevelGain, v01);
+            triggerVoice (active, freqHz, note, velLevelGain, velClickGain, v01);
         }
     }
 
@@ -281,6 +287,10 @@ namespace kickr
         snap.velSens         = load (pVelSensitivity, 0.5f);
         snap.transientAttack  = load (pTransientAttack,  0.0f);
         snap.transientSustain = load (pTransientSustain, 0.0f);
+        snap.clickLevel      = load (pClickLevel, 0.4f);
+        snap.clickToneHz     = load (pClickTone,  4000.0f);
+        snap.clickTimeMs     = load (pClickTime,  3.0f);
+        snap.clickPitchHz    = load (pClickPitch, 5000.0f);
         snap.tuneMode        = static_cast<int> (load (pTuneMode, 0.0f));
 
         // Per-block refresh on BOTH voices (either can be rendering during a crossfade):
@@ -289,6 +299,7 @@ namespace kickr
         {
             v.setBodyLevel (snap.bodyLevel);
             v.setPitchParams (effectivePitchStartRatio (lastVel01), snap.pitchTimeMs, snap.pitchCurve);
+            v.setClickParams (snap.clickLevel, snap.clickToneHz, snap.clickTimeMs, snap.clickPitchHz);
         }
 
         // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.
