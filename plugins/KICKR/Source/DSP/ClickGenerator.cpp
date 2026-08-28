@@ -81,6 +81,11 @@ namespace kickr
     {
         velClick = juce::jmax (0.0f, velClickGain);
 
+        // Deterministic noise burst — every trigger renders the identical click
+        // (a kick designer wants consistency; variation is Randomize/Mutate's job,
+        //  and offline renders must be reproducible). Fixed seed, re-applied per note.
+        rng.setSeed (0x6b69636bLL);   // "kick"
+
         // Layer off -> do no work and don't extend the voice.
         if (clickLevel < 1.0e-6f)
         {

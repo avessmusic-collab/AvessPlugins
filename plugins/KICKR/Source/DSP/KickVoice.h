@@ -7,6 +7,7 @@
 #include "DSP/AmplitudeEnvelope.h"
 #include "DSP/PitchEnvelope.h"
 #include "DSP/ClickGenerator.h"
+#include "DSP/SubOscillator.h"
 
 namespace kickr
 {
@@ -27,8 +28,14 @@ namespace kickr
         The click is summed with the body BEFORE the voice's mono output — it carries its
         own `clickLevel` + click-velocity gain internally, so it is NOT scaled by
         `bodyLevel` (which now applies to the body layer only). The whole voice is then
-        scaled by the strong per-voice velocity level. Sub / Tail / Noise / SamplePlayer +
-        `bodyHarmonics` land in later phases.
+        scaled by the strong per-voice velocity level.
+
+        PHASE 2.5: aggregates a per-voice `SubOscillator` (independent mono sub sine, fixed
+        `subFreq`, phase-0 on trigger, own exp AD envelope). Summed with body + click
+        BEFORE the voice's mono output — it carries `subLevel` internally, so it is NOT
+        scaled by `bodyLevel`. NOT velocity-scaled in v1 (only the whole-voice `velLevel`
+        applies). The voice frees only when the body amp env AND the click AND the sub are
+        all done. Tail / Noise / SamplePlayer + `bodyHarmonics` land in later phases.
     */
     class KickVoice
     {
@@ -55,6 +62,12 @@ namespace kickr
         */
         void setClickParams (float clickLevel, float clickToneHz,
                              float clickTimeMs, float clickPitchHz) noexcept;
+
+        /**
+            Per-block: forward the SUB-group snapshot to the SubOscillator
+            (`subLevel` 0..1, `subFreq` Hz, `subDecay` ms). No APVTS reads inside the voice.
+        */
+        void setSubParams (float subLevel, float subFreqHz, float subDecayMs) noexcept;
 
         /**
             Trigger. `velLevelGain` is the pre-resolved strong velocity level multiplier
@@ -91,6 +104,7 @@ namespace kickr
         AmplitudeEnvelope         ampEnv;
         PitchEnvelope             pitchEnv;   // PHASE 2.2 — ratio-domain pitch drop
         ClickGenerator            click;      // PHASE 2.4 — 3-part synthesised click
+        SubOscillator             sub;        // PHASE 2.5 — independent mono sub sine
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> bodyLevel;
     };
 }

@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 2 — DSP Phase 2.4 complete (synthesised 3-part click generator)
+- **Current Status:** 🚧 Stage 2 — DSP Phase 2.5 complete (independent mono sub oscillator)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -49,6 +49,14 @@
   - Tests: new **[Phase 2.4]** block in `RunTests.cpp` (audible + `clickLevel` scales; `bAll−bBody` isolates the click; phase-0 onset; short `clickTime` finite/bounded; `clickTone`/`clickPitch` spectrum shift; `clickTime` duration). Pre-2.4 blocks now `silenceClick(p)` so they still test a bare body.
   - RT-safe: LUT + SVFs sized/prepared in `prepare`; no alloc/lock/log/IO in the audio path; `juce::Random::nextFloat` audio-thread safe. Zero-warnings intent (`int` indices, `static_cast` all `size_t`↔`int`/`uint32`, no shadowing).
   - Files: `ClickGenerator.{h,cpp}` (new .cpp), `KickVoice.{h,cpp}`, `KickEngine.{h,cpp}`, `Tests/RunTests.cpp`, `CMakeLists.txt`.
+- **2026-08-28 (Stage 2 — DSP Phase 2.5):** Sub oscillator — independent mono sub sine, phase-stable.
+  - **`SubOscillator.{h,cpp}`** (Phase-1 stub fleshed out; `.cpp` added to `KICKR_CORE_SOURCES`): per-voice layer inside `KickVoice`, summed with body + click **before** the voice mono output → engine mix / `TransientShaper`. Runs at `fsOversampled` (in-region, AD-10). Custom phase accumulator + `std::sin` (`sin()` before the increment → clean `sin(0)=0` onset). Fixed `subFreq` clamped `[10, 500]` Hz (UI range 25–80), **independent of the pitch envelope / `fundamental` / tune**; phase increment refreshed vs `fsOversampled` in `setParams` (per-block). **Phase → 0 on every `noteOn`** (research §5 — phase determinism; null test). Own AD env: fixed 1.5 ms raised-cosine attack + one-pole exp decay `coef = expDecayCoef(subDecay, fsOS)`, `isActive()` false below −90 dB and past `attack + 5 ms`, hard `≈ 2·subDecay + 50 ms` fallback; running value denormal-flushed each sample. Output `sin·env·subLevel`, **mono** (added identically to L and R downstream), **NOT velocity-scaled** in v1. `noteOn` no-ops when `subLevel < 1e-6`. Output `sanitize`d.
+  - **`KickVoice.{h,cpp}`**: `SubOscillator sub` member; `setSubParams(subLevel, subFreqHz, subDecayMs)`; `prepare`/`reset`/`noteOn` fan-out. `renderMono`/`renderAdd`: `mono = (bodyOut + clickOut + sub.renderSample()) · velLevel` — the sub is **not** scaled by `bodyLevel` (carries `subLevel` internally, like the click). Voice frees only when `ampEnv` **and** `click` **and** `sub` are all done.
+  - **`KickEngine.{h,cpp}`**: 3 cached SUB APVTS ptrs (`pSubLevel`/`pSubFreq`/`pSubDecay`) + `Snapshot` fields (`subLevel` 0.5 / `subFreqHz` 40 / `subDecayMs` 300); `v.setSubParams(...)` added to the per-block fan-out over both voices (before the MIDI sub-block loop → `noteOn` arms with current params).
+  - Params live: `subLevel` (0–1/0.5), `subFreq` (25–80 Hz/40, skew 0.57), `subDecay` (20–2000 ms/300, skew 0.35). All prior params unchanged.
+  - Tests: new **[Phase 2.5]** block in `RunTests.cpp` (audible + `subLevel` scales ~3×; `subFreq` 30/70 Hz tracked + independent of `fundamental`/`pitchStart`; null test → < 1e-6 residual; L=R mono; `subDecay` 60 vs 900 ms length ≥ 3×; `subLevel = 0` bit-identical to sub-muted body+click). New `silenceSub(p)` helper added to all pre-2.5 blocks + `renderClickOnly` (default `subLevel 0.5` = sub ON).
+  - RT-safe: trivial component — no alloc/lock/log/IO; `ScopedNoDenormals` at engine entry (unchanged). Zero-warnings intent (`int` indices, `static_cast` all `size_t`↔`int` / `float`↔`double`, no shadowing).
+  - Files: `SubOscillator.{h,cpp}` (new .cpp), `KickVoice.{h,cpp}`, `KickEngine.{h,cpp}`, `Tests/RunTests.cpp`, `CMakeLists.txt`.
 
 ## Known Issues
 

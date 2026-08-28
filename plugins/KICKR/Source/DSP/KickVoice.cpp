@@ -11,6 +11,7 @@ namespace kickr
         ampEnv.prepare (fsOversampled);
         pitchEnv.prepare (fsOversampled);
         click.prepare (fsOversampled);
+        sub.prepare (fsOversampled);
 
         bodyLevel.reset (fsOversampled, 0.02);   // 20 ms — click-free level changes
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
@@ -25,6 +26,7 @@ namespace kickr
         ampEnv.reset();
         pitchEnv.reset();
         click.reset();
+        sub.reset();
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
     }
 
@@ -44,6 +46,11 @@ namespace kickr
         click.setParams (clickLevel, clickToneHz, clickTimeMs, clickPitchHz);
     }
 
+    void KickVoice::setSubParams (float subLevel, float subFreqHz, float subDecayMs) noexcept
+    {
+        sub.setParams (subLevel, subFreqHz, subDecayMs);
+    }
+
     void KickVoice::noteOn (float freqHz, int noteNumber, float velLevelGain, float velClickGain,
                             float bodyDecayMs, int sampleOffset) noexcept
     {
@@ -57,6 +64,7 @@ namespace kickr
         pitchEnv.noteOn();             // arm the ratio-domain contour (tSinceTrigger -> 0)
         ampEnv.noteOn (bodyDecayMs);
         click.noteOn (velClickGain);   // arm the 3-part click (uses the per-block snapshot)
+        sub.noteOn();                  // phase -> 0, arm the sub AD env (per-block snapshot)
 
         // Start at the current body-level target — no 20 ms fade-in on the first hit.
         // (Retrigger level continuity is Phase 2.3's crossfade concern.)
@@ -90,14 +98,15 @@ namespace kickr
             }
 
             const float clickOut = click.renderSample();   // carries clickLevel + click vel
+            const float subOut   = sub.renderSample();      // carries subLevel (mono, not vel-scaled)
 
-            const float s = dsputils::sanitize ((bodyOut + clickOut) * velLevel);
+            const float s = dsputils::sanitize ((bodyOut + clickOut + subOut) * velLevel);
 
             const int idx = startSample + i;
             for (int ch = 0; ch < numCh; ++ch)
                 block.addSample (ch, idx, s);
 
-            if (! ampEnv.isActive() && ! click.isActive())
+            if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive())
             {
                 active = false;
                 break;
@@ -133,10 +142,11 @@ namespace kickr
             }
 
             const float clickOut = click.renderSample();   // carries clickLevel + click vel
+            const float subOut   = sub.renderSample();      // carries subLevel (mono, not vel-scaled)
 
-            mono[i] = dsputils::sanitize ((bodyOut + clickOut) * velLevel);
+            mono[i] = dsputils::sanitize ((bodyOut + clickOut + subOut) * velLevel);
 
-            if (! ampEnv.isActive() && ! click.isActive())
+            if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive())
             {
                 active = false;
                 ++i;

@@ -32,6 +32,8 @@ set(KICKR_CORE_SOURCES
     Source/DSP/TransientShaper.cpp
     # DSP — Stage 2 Phase 2.4 (synthesised click generator)
     Source/DSP/ClickGenerator.cpp
+    # DSP — Stage 2 Phase 2.5 (independent mono sub oscillator)
+    Source/DSP/SubOscillator.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

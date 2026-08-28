@@ -60,6 +60,9 @@ namespace kickr
         pClickTone        = apvts.getRawParameterValue (id::clickTone);
         pClickTime        = apvts.getRawParameterValue (id::clickTime);
         pClickPitch       = apvts.getRawParameterValue (id::clickPitch);
+        pSubLevel         = apvts.getRawParameterValue (id::subLevel);
+        pSubFreq          = apvts.getRawParameterValue (id::subFreq);
+        pSubDecay         = apvts.getRawParameterValue (id::subDecay);
 
         reset();
     }
@@ -291,6 +294,9 @@ namespace kickr
         snap.clickToneHz     = load (pClickTone,  4000.0f);
         snap.clickTimeMs     = load (pClickTime,  3.0f);
         snap.clickPitchHz    = load (pClickPitch, 5000.0f);
+        snap.subLevel        = load (pSubLevel, 0.5f);
+        snap.subFreqHz       = load (pSubFreq,  40.0f);
+        snap.subDecayMs      = load (pSubDecay, 300.0f);
         snap.tuneMode        = static_cast<int> (load (pTuneMode, 0.0f));
 
         // Per-block refresh on BOTH voices (either can be rendering during a crossfade):
@@ -300,6 +306,7 @@ namespace kickr
             v.setBodyLevel (snap.bodyLevel);
             v.setPitchParams (effectivePitchStartRatio (lastVel01), snap.pitchTimeMs, snap.pitchCurve);
             v.setClickParams (snap.clickLevel, snap.clickToneHz, snap.clickTimeMs, snap.clickPitchHz);
+            v.setSubParams (snap.subLevel, snap.subFreqHz, snap.subDecayMs);
         }
 
         // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.

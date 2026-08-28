@@ -43,7 +43,14 @@ namespace kickr
         `KickVoice::noteOn`. The click sums with the body inside the voice (before the
         voice mix / TransientShaper), so no engine-side routing change.
 
-        Later phases add: sub/tail/noise (2.5-2.7), sample player (2.7b), distortion
+        PHASE 2.5: `subLevel` / `subFreq` / `subDecay` snapshot per block and forwarded to
+        every voice's `SubOscillator` via `setSubParams`. The sub is an independent mono
+        sine at a fixed `subFreq` (pitch-envelope independent), phase-0 on trigger, own exp
+        AD envelope; it sums with body + click inside the voice (before the voice mix /
+        TransientShaper) and carries `subLevel` internally, so no engine-side routing
+        change. Not velocity-scaled in v1.
+
+        Later phases add: tail/noise (2.6-2.7), sample player (2.7b), distortion
         (2.8), tone/stereo/limiter (2.9), real OS switching (2.10), smoothing/macros
         (2.11), analyzer.
     */
@@ -113,6 +120,9 @@ namespace kickr
         std::atomic<float>* pClickTone  { nullptr };
         std::atomic<float>* pClickTime  { nullptr };
         std::atomic<float>* pClickPitch { nullptr };
+        std::atomic<float>* pSubLevel { nullptr };     // PHASE 2.5
+        std::atomic<float>* pSubFreq  { nullptr };
+        std::atomic<float>* pSubDecay { nullptr };
 
         // Per-block parameter snapshot.
         struct Snapshot
@@ -132,6 +142,9 @@ namespace kickr
             float clickToneHz  { 4000.0f };
             float clickTimeMs  { 3.0f };
             float clickPitchHz { 5000.0f };
+            float subLevel     { 0.5f };     // PHASE 2.5
+            float subFreqHz    { 40.0f };
+            float subDecayMs   { 300.0f };
             int   tuneMode        { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
         };
         Snapshot snap;

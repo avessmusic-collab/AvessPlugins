@@ -72,10 +72,19 @@ int main()
             prm->setValueNotifyingHost (0.0f);
     };
 
+    // Phase 2.5 adds a per-voice sub oscillator (default subLevel 0.5). Pre-2.5
+    // checkpoints assume a bare body (+ click where relevant), so mute the sub there.
+    auto silenceSub = [] (KICKRAudioProcessor& p)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter ("subLevel"))
+            prm->setValueNotifyingHost (0.0f);
+    };
+
     std::printf ("\n[Phase 2.1] OS-region shell + MIDI-triggered basic kick\n");
 
     KICKRAudioProcessor proc;
     silenceClick (proc);
+    silenceSub (proc);
     const auto buf = kickr::tests::renderNote (proc, a1, vel, sr, 512, 1.0);
     const auto st  = analyse (buf, sr);
 
@@ -96,6 +105,7 @@ int main()
     {
         KICKRAudioProcessor p2;
         silenceClick (p2);
+        silenceSub (p2);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_1.wav");
         const bool ok  = kickr::tests::renderNoteToWav (p2, wav, a1, vel, sr, 512, 1.0);
         std::printf ("  wrote %s : %s\n", wav.getFullPathName().toRawUTF8(), ok ? "ok" : "FAILED");
@@ -127,6 +137,7 @@ int main()
     {
         KICKRAudioProcessor p;
         silenceClick (p);
+        silenceSub (p);
         setP (p, "pitchTime", 900.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
         const double fHead = estFreq (b, sr, 0.002, 0.020);
@@ -138,6 +149,7 @@ int main()
     {
         KICKRAudioProcessor p;
         silenceClick (p);
+        silenceSub (p);
         setP (p, "pitchTime", 200.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fHead = estFreq (b, sr, 0.003, 0.023);
@@ -155,6 +167,7 @@ int main()
     {
         KICKRAudioProcessor p;
         silenceClick (p);
+        silenceSub (p);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fFirst20 = estFreq (b, sr, 0.0, 0.020);
         const double fLate    = estFreq (b, sr, 0.090, 0.180);
@@ -169,6 +182,7 @@ int main()
 
         KICKRAudioProcessor pw;
         silenceClick (pw);
+        silenceSub (pw);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_2.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
@@ -178,6 +192,8 @@ int main()
         KICKRAudioProcessor p0, p1;
         silenceClick (p0);
         silenceClick (p1);
+        silenceSub (p0);
+        silenceSub (p1);
         setP (p0, "pitchCurve", 0.0f);
         setP (p1, "pitchCurve", 1.0f);
         const auto b0 = kickr::tests::renderNote (p0, a1, vel, sr, 512, 1.0);
@@ -243,6 +259,7 @@ int main()
     {
         KICKRAudioProcessor p;
         silenceClick (p);
+        silenceSub (p);
         auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
         const float* rx = rbuf.getReadPointer (0);
         const int rn = rbuf.getNumSamples();
@@ -276,6 +293,7 @@ int main()
     {
         KICKRAudioProcessor pPos, pMid, pNeg;
         silenceClick (pPos); silenceClick (pMid); silenceClick (pNeg);
+        silenceSub (pPos); silenceSub (pMid); silenceSub (pNeg);
         setP (pPos, "transientAttack",  1.0f);
         setP (pNeg, "transientAttack", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -292,6 +310,7 @@ int main()
     {
         KICKRAudioProcessor pPos, pNeg;
         silenceClick (pPos); silenceClick (pNeg);
+        silenceSub (pPos); silenceSub (pNeg);
         setP (pPos, "transientSustain",  1.0f);
         setP (pNeg, "transientSustain", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -310,6 +329,7 @@ int main()
     {
         KICKRAudioProcessor p;
         setP (p, "bodyLevel",  0.0f);
+        setP (p, "subLevel",   0.0f);
         setP (p, "clickLevel", level);
         setP (p, "clickTone",  toneHz);
         setP (p, "clickPitch", pitchHz);
@@ -346,8 +366,8 @@ int main()
 
     // body-only render is unchanged when clickLevel = 0
     {
-        KICKRAudioProcessor pB;  silenceClick (pB);
-        KICKRAudioProcessor pA;  // default patch: clickLevel 0.4
+        KICKRAudioProcessor pB;  silenceClick (pB);  silenceSub (pB);
+        KICKRAudioProcessor pA;  silenceSub (pA);  // default patch minus sub: clickLevel 0.4
         const auto bBody = kickr::tests::renderNote (pB, a1, vel, sr, 512, 1.0);
         const auto bAll  = kickr::tests::renderNote (pA, a1, vel, sr, 512, 1.0);
         const float* xB = bBody.getReadPointer (0);
@@ -417,6 +437,134 @@ int main()
         KICKRAudioProcessor pw;
         setP (pw, "clickLevel", 0.8f);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_4.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.5] Sub oscillator (independent mono sub, phase-stable)\n");
+
+    // Body + click muted -> only the sub layer sounds.
+    auto renderSubOnly = [&] (float subLevel, float subFreqHz, float subDecayMs)
+    {
+        KICKRAudioProcessor p;
+        setP (p, "bodyLevel",  0.0f);
+        setP (p, "clickLevel", 0.0f);
+        setP (p, "subLevel",   subLevel);
+        setP (p, "subFreq",    subFreqHz);
+        setP (p, "subDecay",   subDecayMs);
+        return kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+    };
+
+    // audible + subLevel scales it (RMS ~linear in subLevel)
+    {
+        const auto lo = renderSubOnly (0.25f, 40.0f, 300.0f);
+        const auto hi = renderSubOnly (0.75f, 40.0f, 300.0f);
+        const auto sLo = analyse (lo, sr);
+        const auto sHi = analyse (hi, sr);
+        const double rLo = rmsWindow (lo, sr, 0.0, 0.20);
+        const double rHi = rmsWindow (hi, sr, 0.0, 0.20);
+        std::printf ("  sub-only:  level 0.25 -> peak %.3f rms %.4f   level 0.75 -> peak %.3f rms %.4f\n",
+                     sLo.peak, rLo, sHi.peak, rHi);
+        check (sLo.allFinite && sHi.allFinite,      "sub: no NaN / Inf");
+        check (rLo > 0.01,                          "sub layer is audible");
+        check (rHi > rLo * 2.4 && rHi < rLo * 3.6,  "subLevel scales the sub (~3x for 0.75 vs 0.25)");
+        check (std::abs (lo.getReadPointer (0)[0]) < 0.02f,
+                                                    "sub onset starts near zero (raised-cosine attack)");
+    }
+
+    // subFreq sets the sub pitch, and it is independent of fundamental / pitchStart
+    {
+        const auto f30 = renderSubOnly (0.7f, 30.0f, 900.0f);
+        const auto f70 = renderSubOnly (0.7f, 70.0f, 900.0f);
+        const double z30 = estFreq (f30, sr, 0.05, 0.30);
+        const double z70 = estFreq (f70, sr, 0.05, 0.30);
+        std::printf ("  sub zero-crossing freq:  subFreq 30 -> %.1f Hz   subFreq 70 -> %.1f Hz\n", z30, z70);
+        check (z30 > 24.0 && z30 < 37.0, "sub tracks subFreq = 30 Hz");
+        check (z70 > 60.0 && z70 < 80.0, "sub tracks subFreq = 70 Hz");
+
+        // Same subFreq (50 Hz), wildly different fundamental + pitchStart -> sub pitch unchanged.
+        KICKRAudioProcessor pa, pb;
+        setP (pa, "bodyLevel", 0.0f); setP (pa, "clickLevel", 0.0f);
+        setP (pb, "bodyLevel", 0.0f); setP (pb, "clickLevel", 0.0f);
+        setP (pa, "subFreq", 50.0f);  setP (pa, "subDecay", 900.0f);
+        setP (pb, "subFreq", 50.0f);  setP (pb, "subDecay", 900.0f);
+        setP (pa, "fundamental", 40.0f);  setP (pa, "pitchStart", 1.5f);
+        setP (pb, "fundamental", 120.0f); setP (pb, "pitchStart", 8.0f);
+        const auto ba = kickr::tests::renderNote (pa, a1, vel, sr, 512, 1.0);
+        const auto bb = kickr::tests::renderNote (pb, a1, vel, sr, 512, 1.0);
+        const double za = estFreq (ba, sr, 0.05, 0.30);
+        const double zb = estFreq (bb, sr, 0.05, 0.30);
+        std::printf ("  subFreq 50 vs fundamental/pitchStart:  patch A %.1f Hz   patch B %.1f Hz\n", za, zb);
+        check (za > 42.0 && za < 58.0 && std::abs (za - zb) < 4.0,
+               "sub pitch independent of fundamental / pitch envelope");
+    }
+
+    // null test — two identical triggers, one inverted, sum to silence (phase-0 determinism)
+    {
+        const auto r1 = renderSubOnly (0.6f, 43.0f, 500.0f);
+        const auto r2 = renderSubOnly (0.6f, 43.0f, 500.0f);
+        const int n = std::min (r1.getNumSamples(), r2.getNumSamples());
+        const float* a = r1.getReadPointer (0);
+        const float* b = r2.getReadPointer (0);
+        double resid = 0.0, peak = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            resid = std::max (resid, (double) std::abs (a[i] - b[i]));
+            peak  = std::max (peak,  (double) std::abs (a[i]));
+        }
+        std::printf ("  null test:  peak %.3f   max|r1 - r2| = %.2e\n", peak, resid);
+        check (peak > 0.02,        "sub null test has real signal");
+        check (resid < 1.0e-6,     "identical triggers cancel to silence (phase-0 determinism)");
+
+        // mono: L and R are the same value
+        if (r1.getNumChannels() >= 2)
+        {
+            const float* L = r1.getReadPointer (0);
+            const float* R = r1.getReadPointer (1);
+            double lr = 0.0;
+            for (int i = 0; i < r1.getNumSamples(); ++i)
+                lr = std::max (lr, (double) std::abs (L[i] - R[i]));
+            check (lr < 1.0e-6,    "sub summed identically to L and R (mono)");
+        }
+    }
+
+    // subDecay changes the sub length
+    {
+        const auto sShort = renderSubOnly (0.7f, 45.0f, 60.0f);
+        const auto sLong  = renderSubOnly (0.7f, 45.0f, 900.0f);
+        const double dShort = lastAbove (sShort, sr, 0.05f);
+        const double dLong  = lastAbove (sLong,  sr, 0.05f);
+        std::printf ("  sub duration (last > 5%% peak):  60 ms -> %.0f ms   900 ms -> %.0f ms\n", dShort, dLong);
+        check (dLong > dShort * 3.0, "subDecay changes the sub length");
+    }
+
+    // subLevel = 0 is a true bypass: render == body + click render with the sub muted
+    {
+        KICKRAudioProcessor pRef;   silenceSub (pRef);       // body + click, sub off via param
+        KICKRAudioProcessor pZero;  setP (pZero, "subLevel", 0.0f);
+        KICKRAudioProcessor pOn;    // default patch: subLevel 0.5
+        const auto bRef  = kickr::tests::renderNote (pRef,  a1, vel, sr, 512, 1.0);
+        const auto bZero = kickr::tests::renderNote (pZero, a1, vel, sr, 512, 1.0);
+        const auto bOn   = kickr::tests::renderNote (pOn,   a1, vel, sr, 512, 1.0);
+        const float* xR = bRef .getReadPointer (0);
+        const float* xZ = bZero.getReadPointer (0);
+        const float* xO = bOn  .getReadPointer (0);
+        double zeroDiff = 0.0, onDiff = 0.0;
+        for (int i = 0; i < bRef.getNumSamples(); ++i)
+        {
+            zeroDiff = std::max (zeroDiff, (double) std::abs (xR[i] - xZ[i]));
+            onDiff   = std::max (onDiff,   (double) std::abs (xR[i] - xO[i]));
+        }
+        std::printf ("  subLevel=0 vs body+click ref: max|diff| = %.2e   (sub ON diff = %.3f)\n",
+                     zeroDiff, onDiff);
+        check (zeroDiff < 1.0e-6, "subLevel = 0 render == prior body + click render");
+        check (onDiff   > 0.02,   "default subLevel adds an audible sub layer");
+    }
+
+    {
+        KICKRAudioProcessor pw;
+        setP (pw, "subLevel", 0.8f);
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_5.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
 
