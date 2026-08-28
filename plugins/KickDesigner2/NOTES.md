@@ -1,7 +1,7 @@
 # KickDesigner2 Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 0 (Research & Planning complete)
+- **Current Status:** 🚧 Stage 1 (Foundation + Shell complete)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument)
 
@@ -10,6 +10,7 @@
 - **2026-08-28:** Ideated via `/dream`. Full creative brief captured from detailed user spec (algorithmic kick-design instrument for Techno / Hard Techno / Hardstyle / Hardcore / EDM / House / Trap / DnB / Industrial). Repo inspected: JUCE 8.0.15, CMake+Ninja, auto-discovery root CMake.
 - **2026-08-28 (Stage 0):** Research & Planning complete — `architecture.md` + `plan.md` created. Complexity score **5.0** (capped) → phased implementation. ~14 DSP components specified; all 10 Open Questions resolved (oversampling default 2× provisional, soft-clip `tanh` limiter, locked distortion morph order, pre-distortion tone, 130 Hz mono crossover, single-param pitch contour, `fundamental` = global offset in MIDI mode, fixed 2 ms body attack, `mix` = processed↔silence). Parameter count reconciled to 45 APVTS (41 Float / 3 Choice / 1 Bool). PLUGIN codes: `Plgf` / `Kd02`.
 - **2026-08-28 (Stage 0 revision, post-review):** **AD-10** — oversampling scope widened from "master waveshaper only" to the **entire voice + master chain through the `tanh` safety limiter**. Every nonlinearity (`bodyHarmonics`, `tailDrive`, master morph, limiter) is oversampled by construction, not by a "fundamental is low" argument. OS region is the Phase-2.1 substrate (pinned 1×), real factors enabled Phase 2.10; CPU scales ~linearly with factor, `8×` labelled high-CPU, Stage-17 base-rate escape hatch documented. `architecture.md` + `plan.md` + `parameter-spec.md` updated consistently.
+- **2026-08-28 (Stage 1 — Foundation + Shell):** Buildable synth shell created. `CMakeLists.txt` (`IS_SYNTH TRUE`, `NEEDS_MIDI_INPUT TRUE`, VST3/AU/Standalone, `juce_dsp` linked, `juce_generate_juce_header` after `target_link_libraries`, no WebView). Full **45-parameter APVTS** implemented table-driven (`Source/Parameters/ParameterIDs.h` + `ParameterLayout.h`) — 41 `AudioParameterFloat`, 3 `AudioParameterChoice` (`noiseType`/`oversampling`/`tuneMode`), 1 `AudioParameterBool` (`limiter`), exact ranges/defaults/skews from the locked spec. Output-only stereo bus in the constructor; `UndoManager` attached to the APVTS; state round-trip with `stateVersion = 1` + `currentPresetName`/`currentPresetPath`. Deeper `Source/` subtree scaffolded (`DSP/` 14 stub headers, `Utilities/DSPUtils.{h,cpp}`, `Tests/OfflineRender.{h,cpp}` functional headless render loop, `Presets/PresetManager.h`, `UI/LookAndFeel.h`). Native editor stub (resizable, placeholder). Empty engine — `processBlock` clears the buffer; no DSP, no real UI yet. Build verification handled by the orchestrator.
 
 ## Known Issues
 

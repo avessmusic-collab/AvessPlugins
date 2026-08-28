@@ -42,7 +42,7 @@
 | PadForge | 💡 Ideated | - | Synth (Instrument) | 2025-11-14 |
 | AngelGrain | 📦 Installed | 1.0.0 | Audio Effect (Granular Delay) | 2025-11-19 |
 | Transitionist | 📦 Installed | 1.0.0 | Audio Effect (Transition Chain) | 2026-08-26 |
-| KickDesigner2 | 🚧 Stage 0 | - | Synth (Kick Instrument) | 2026-08-28 |
+| KickDesigner2 | 🚧 Stage 1 | - | Synth (Kick Instrument) | 2026-08-28 |
 
 **For detailed plugin information (lifecycle timeline, known issues, parameters, etc.), see:**
 `plugins/[PluginName]/NOTES.md`
