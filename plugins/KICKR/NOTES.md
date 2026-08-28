@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 2 — DSP Phase 2.6 complete (dedicated LF tail generator)
+- **Current Status:** 🚧 Stage 2 — DSP Phase 2.7 complete (optional white/pink/filtered noise layer, default OFF)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -70,6 +70,20 @@
   - Tests: new **[Phase 2.6]** block in `RunTests.cpp` (audible + `tailLevel` scales ~3×; `tailLength` 40 vs 1500 ms length ≥ 4×; `tailTone` dark vs bright on a 150 Hz fixed tail, bright RMS > 1.3× dark; `tailDrive` 1 vs 0 first-difference-RMS ratio ≥ 1.3× + finite/bounded; `tailLevel = 0` bit-identical to tail-muted body+click+sub; tail rise-to-50 % ≥ 3× the click's). New `silenceTail(p)` helper retrofitted to all pre-2.6 blocks + `renderClickOnly`/`renderSubOnly` (default `tailLevel 0.3` = tail ON).
   - RT-safe: trivial component — no alloc/lock/log/IO; `ScopedNoDenormals` at engine entry (unchanged); AD env denormal-flushed + SVF `snapToZero()` each sample; LP cutoff clamped `[20, fsOS·0.45]`; output `sanitize`d. Zero-warnings intent (`int` indices, `static_cast` all `size_t`↔`uint32` / `double`↔`float`, no shadowing).
   - Files: `TailGenerator.{h,cpp}` (new .cpp), `KickVoice.{h,cpp}`, `KickEngine.{h,cpp}`, `Tests/RunTests.cpp`, `CMakeLists.txt`.
+- **2026-08-28 (Stage 2 — DSP Phase 2.7):** Noise generator — optional white / pink / filtered noise layer, **DEFAULT OFF**.
+  - **`NoiseGenerator.{h,cpp}`** (Phase-1 stub fleshed out; `.cpp` added to `KICKR_CORE_SOURCES`): per-voice layer inside `KickVoice`, summed with body + click + sub + tail **before** the voice mono output. Runs at `fsOversampled` (in-region, AD-10).
+    - **`noiseLevel` defaults to 0.0 ⇒ exactly silent by default.** `noteOn` no-ops (true bypass) when `noiseLevel < 1e-6` — `renderSample()` returns exact `0.0f`, no idle noise, no DC, no voice extension. The `noiseLevel = 0` render is **bit-identical** to the prior body+click+sub+tail render (THE key check).
+    - Per-`NoiseGenerator` `juce::Random` (NOT shared), **re-seeded `kSeed = 0x6e6f697aLL` ("noiz") on every `noteOn`** → deterministic / reproducible offline renders (same pattern as `ClickGenerator`).
+    - **`noiseType`** (Choice 0..2): **White** = raw noise → `noiseTone` tilt; **Pink** = Paul Kellet 7-pole (standard coeffs, `×0.11` norm) → same tilt; **Filtered** = white → `StateVariableTPTFilter<float>` band-pass, centre `200·pow(12000/200, noiseTone)` (log 200 Hz → 12 kHz), Q 1.5, coeffs vs `fsOS`, clamped `[20, fsOS·0.45]`, per-block (no tilt on Filtered).
+    - **Tilt** (White/Pink): first-order shelf around a fixed ~1.5 kHz pivot — `low += tiltCoef·(in−low)` (`tiltCoef = 1 − exp(−2π·1500/fs)`), `high = in − low`, `out = 2(1−tone)·low + 2·tone·high` → tone 0 = dark (+6 dB low), **tone 0.5 = flat / unity**, tone 1 = bright.
+    - **AD env:** fixed `kAttackMs = 0.1` ms raised-cosine attack → exp decay `expDecayCoef(noiseDecay, fsOS)` (`noiseDecay` 20–500 ms). No sustain. `minLengthSamples = attack + 5 ms`, hard `maxLengthSamples ≈ 2·noiseDecay + 50 ms` fallback (same shape as `SubOscillator` / `TailGenerator`). `isActive()` false below −90 dB and past `minLengthSamples`.
+    - **Output:** `noise_after_filter · noiseEnv · noiseLevel`. **MONO** (added identically to L/R — verified L=R). **NOT** velocity-scaled. env + tilt state + all 7 Kellet states + SVF (`bp.snapToZero()` when `type == 2`) denormal-flushed each sample; output `sanitize`d.
+  - **`KickVoice.{h,cpp}`**: `NoiseGenerator noise` member; `setNoiseParams(level, decayMs, tone01, type)`; `prepare`/`reset`/`noteOn` fan-out. `renderMono`/`renderAdd`: `mono = (bodyOut + clickOut + subOut + tailOut + noise.renderSample()) · velLevel` — the noise carries `noiseLevel` internally, **not** scaled by `bodyLevel`. Voice frees only when `ampEnv` **and** `click` **and** `sub` **and** `tail` **and** `noise` are all done.
+  - **`KickEngine.{h,cpp}`**: 4 cached NOISE APVTS ptrs (`pNoiseLevel`/`pNoiseDecay`/`pNoiseTone`/`pNoiseType` — `noiseType` is an `AudioParameterChoice`, index read via `getRawParameterValue` + `static_cast<int>`, same as `tuneMode`) + `Snapshot` fields (`noiseLevel` 0.0 / `noiseDecayMs` 60 / `noiseTone01` 0.5 / `noiseType` 0); `v.setNoiseParams(...)` added to the per-block fan-out over both voices.
+  - Params live: `noiseLevel` (0–1 / **0.0**, OFF), `noiseDecay` (20–500 ms / 60, skew 0.28), `noiseTone` (0–1 / 0.5), `noiseType` (Choice White/Pink/Filtered, idx 0). All prior params unchanged.
+  - Tests: new **[Phase 2.7]** block in `RunTests.cpp` (exact bypass at `noiseLevel = 0`, `< 1e-9`; 3 types audible + distinct spectra, White brighter than Pink; Filtered centre tracks `noiseTone` ≥ 2×; White/Pink tilt dark↔bright ≥ 1.3× via `hfRatio`; `noiseDecay` 30 vs 400 ms length ≥ 3×; deterministic `< 1e-9` + mono L=R). New `renderNoiseOnly` helper; **no `silenceNoise` retrofit** — the default is already off so pre-2.7 blocks are unaffected.
+  - RT-safe: trivial component — no alloc/lock/log/IO; `ScopedNoDenormals` at engine entry (unchanged); `juce::Random::nextFloat()` audio-thread safe; SVF prepared in `prepare`; `pow`/`exp` per block only (`updateDerived`). Zero-warnings intent (`int` indices, `static_cast` all `size_t`↔`uint32` / `double`↔`float`, `setParams` args prefixed `noise*` to avoid shadowing members).
+  - Files: `NoiseGenerator.{h,cpp}` (new .cpp), `KickVoice.{h,cpp}`, `KickEngine.{h,cpp}`, `Tests/RunTests.cpp`, `CMakeLists.txt`.
 
 ## Known Issues
 

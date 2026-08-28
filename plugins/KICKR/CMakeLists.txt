@@ -36,6 +36,8 @@ set(KICKR_CORE_SOURCES
     Source/DSP/SubOscillator.cpp
     # DSP — Stage 2 Phase 2.6 (dedicated LF tail generator)
     Source/DSP/TailGenerator.cpp
+    # DSP — Stage 2 Phase 2.7 (optional white/pink/filtered noise layer)
+    Source/DSP/NoiseGenerator.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

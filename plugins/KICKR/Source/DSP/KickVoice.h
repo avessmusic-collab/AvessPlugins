@@ -9,6 +9,7 @@
 #include "DSP/ClickGenerator.h"
 #include "DSP/SubOscillator.h"
 #include "DSP/TailGenerator.h"
+#include "DSP/NoiseGenerator.h"
 
 namespace kickr
 {
@@ -44,8 +45,14 @@ namespace kickr
         shaper — the whole layer in-region, AD-10). Summed with body + click + sub BEFORE
         the voice's mono output; carries `tailLevel` internally, so it is NOT scaled by
         `bodyLevel`. NOT velocity-scaled. The voice frees only when the body amp env AND the
-        click AND the sub AND the tail are all done. Noise / SamplePlayer + `bodyHarmonics`
-        land in later phases.
+        click AND the sub AND the tail are all done.
+
+        PHASE 2.7: aggregates a per-voice `NoiseGenerator` (optional white/pink/filtered
+        noise layer, DEFAULT OFF — `noiseLevel` defaults to 0.0 so it is exactly silent and
+        `noteOn` no-ops). Summed with body + click + sub + tail BEFORE the voice's mono
+        output; carries `noiseLevel` internally, so it is NOT scaled by `bodyLevel`. NOT
+        velocity-scaled. Factored into the voice-free check alongside ampEnv / click / sub /
+        tail. SamplePlayer + `bodyHarmonics` land in later phases.
     */
     class KickVoice
     {
@@ -89,6 +96,14 @@ namespace kickr
                             float tailTone01, float tailDrive01) noexcept;
 
         /**
+            Per-block: forward the NOISE-group snapshot to the NoiseGenerator
+            (`noiseLevel` 0..1, `noiseDecay` ms, `noiseTone` 0..1, `noiseType` 0..2).
+            No APVTS reads inside the voice. Default `noiseLevel` 0.0 => the layer is off.
+        */
+        void setNoiseParams (float noiseLevel, float noiseDecayMs,
+                             float noiseTone01, int noiseType) noexcept;
+
+        /**
             Trigger. `velLevelGain` is the pre-resolved strong velocity level multiplier
             (`lerp(1, vel/127, velSensitivity)`) applied to the whole voice; `velClickGain`
             is the moderate click-only factor (`lerp(1, vel/127, velSensitivity·0.6)`).
@@ -125,6 +140,7 @@ namespace kickr
         ClickGenerator            click;      // PHASE 2.4 — 3-part synthesised click
         SubOscillator             sub;        // PHASE 2.5 — independent mono sub sine
         TailGenerator             tail;       // PHASE 2.6 — dedicated LF tail / rumble
+        NoiseGenerator            noise;      // PHASE 2.7 — optional white/pink/filtered noise
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> bodyLevel;
     };
 }

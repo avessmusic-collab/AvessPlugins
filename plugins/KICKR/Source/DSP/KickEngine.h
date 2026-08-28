@@ -58,9 +58,16 @@ namespace kickr
         inside the voice (before the voice mix / TransientShaper) and carries `tailLevel`
         internally, so no engine-side routing change. Not velocity-scaled.
 
-        Later phases add: noise (2.7), sample player (2.7b), distortion
-        (2.8), tone/stereo/limiter (2.9), real OS switching (2.10), smoothing/macros
-        (2.11), analyzer.
+        PHASE 2.7: `noiseLevel` / `noiseDecay` / `noiseTone` / `noiseType` snapshot per block
+        and forwarded to every voice's `NoiseGenerator` via `setNoiseParams`. Optional
+        white/pink/filtered noise layer, DEFAULT OFF (`noiseLevel` default 0.0 => the layer
+        no-ops on `noteOn` and adds exact zeros). `noiseType` is an `AudioParameterChoice`
+        (index read via `getRawParameterValue`, same as `tuneMode`). It sums with body +
+        click + sub + tail inside the voice (before the voice mix / TransientShaper) and
+        carries `noiseLevel` internally, so no engine-side routing change. Not velocity-scaled.
+
+        Later phases add: sample player (2.7b), distortion (2.8), tone/stereo/limiter (2.9),
+        real OS switching (2.10), smoothing/macros (2.11), analyzer.
     */
     class KickEngine
     {
@@ -135,6 +142,10 @@ namespace kickr
         std::atomic<float>* pTailLength { nullptr };
         std::atomic<float>* pTailTone   { nullptr };
         std::atomic<float>* pTailDrive  { nullptr };
+        std::atomic<float>* pNoiseLevel { nullptr };   // PHASE 2.7
+        std::atomic<float>* pNoiseDecay { nullptr };
+        std::atomic<float>* pNoiseTone  { nullptr };
+        std::atomic<float>* pNoiseType  { nullptr };   // AudioParameterChoice — index
 
         // Per-block parameter snapshot.
         struct Snapshot
@@ -161,6 +172,10 @@ namespace kickr
             float tailLengthMs { 200.0f };
             float tailTone01   { 0.5f };
             float tailDrive01  { 0.2f };
+            float noiseLevel   { 0.0f };     // PHASE 2.7 — default OFF
+            float noiseDecayMs { 60.0f };
+            float noiseTone01  { 0.5f };
+            int   noiseType    { 0 };        // 0 = White, 1 = Pink, 2 = Filtered
             int   tuneMode        { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
         };
         Snapshot snap;

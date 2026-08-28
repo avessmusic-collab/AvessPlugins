@@ -757,6 +757,140 @@ int main()
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.5);
     }
 
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.7] Noise generator (White / Pink / Filtered, default OFF)\n");
+
+    // Body + click + sub + tail muted -> only the noise layer sounds.
+    auto renderNoiseOnly = [&] (float noiseLevel, float noiseDecayMs, float noiseTone01, float noiseType)
+    {
+        KICKRAudioProcessor p;
+        setP (p, "bodyLevel",  0.0f);
+        setP (p, "clickLevel", 0.0f);
+        setP (p, "subLevel",   0.0f);
+        setP (p, "tailLevel",  0.0f);
+        setP (p, "noiseLevel", noiseLevel);
+        setP (p, "noiseDecay", noiseDecayMs);
+        setP (p, "noiseTone",  noiseTone01);
+        setP (p, "noiseType",  noiseType);
+        return kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+    };
+
+    // THE key check (default is off): noiseLevel = 0 is an EXACT bypass — the render is
+    // bit-identical to the prior body+click+sub+tail render whether the noise code path
+    // runs with level 0 or the param is left untouched.
+    {
+        KICKRAudioProcessor pRef;                                  // default patch (noiseLevel 0)
+        KICKRAudioProcessor pZero;  setP (pZero, "noiseLevel", 0.0f);
+        KICKRAudioProcessor pOn;    setP (pOn,   "noiseLevel", 0.6f);
+        const auto bRef  = kickr::tests::renderNote (pRef,  a1, vel, sr, 512, 1.0);
+        const auto bZero = kickr::tests::renderNote (pZero, a1, vel, sr, 512, 1.0);
+        const auto bOn   = kickr::tests::renderNote (pOn,   a1, vel, sr, 512, 1.0);
+        const float* xR = bRef .getReadPointer (0);
+        const float* xZ = bZero.getReadPointer (0);
+        const float* xO = bOn  .getReadPointer (0);
+        double zeroDiff = 0.0, onDiff = 0.0;
+        for (int i = 0; i < bRef.getNumSamples(); ++i)
+        {
+            zeroDiff = std::max (zeroDiff, (double) std::abs (xR[i] - xZ[i]));
+            onDiff   = std::max (onDiff,   (double) std::abs (xR[i] - xO[i]));
+        }
+        std::printf ("  noiseLevel=0 vs default: max|diff| = %.2e   (noise ON diff = %.3f)\n",
+                     zeroDiff, onDiff);
+        check (zeroDiff < 1.0e-9, "noiseLevel = 0 is an exact bypass (bit-identical to prior render)");
+        check (onDiff   > 0.02,   "noiseLevel > 0 adds an audible noise layer");
+        check (analyse (bOn, sr).allFinite, "noise ON: no NaN / Inf");
+    }
+
+    // White / Pink / Filtered each audible with a distinct spectrum.
+    {
+        const auto white = renderNoiseOnly (0.7f, 200.0f, 0.5f, 0.0f);
+        const auto pink  = renderNoiseOnly (0.7f, 200.0f, 0.5f, 1.0f);
+        const auto filt  = renderNoiseOnly (0.7f, 200.0f, 0.5f, 2.0f);
+        const double rW = rmsWindow (white, sr, 0.0, 0.15);
+        const double rP = rmsWindow (pink,  sr, 0.0, 0.15);
+        const double rF = rmsWindow (filt,  sr, 0.0, 0.15);
+        const double hW = hfRatio (white, sr, 0.0, 0.15);
+        const double hP = hfRatio (pink,  sr, 0.0, 0.15);
+        std::printf ("  noise-only RMS  W %.4f  P %.4f  F %.4f   |  hfRatio  W %.3f  P %.3f\n",
+                     rW, rP, rF, hW, hP);
+        check (analyse (white, sr).allFinite && analyse (pink, sr).allFinite
+               && analyse (filt, sr).allFinite,       "noise: no NaN / Inf (all 3 types)");
+        check (rW > 0.01 && rP > 0.01 && rF > 0.005,  "White / Pink / Filtered all audible");
+        check (hW > hP * 1.3,                         "White is brighter than Pink (hfRatio proxy)");
+    }
+
+    // Filtered band-pass centre tracks noiseTone (log 200 Hz -> 12 kHz).
+    {
+        const auto lo = renderNoiseOnly (0.8f, 300.0f, 0.2f, 2.0f);
+        const auto hi = renderNoiseOnly (0.8f, 300.0f, 0.8f, 2.0f);
+        const double zLo = estFreq (lo, sr, 0.01, 0.20);
+        const double zHi = estFreq (hi, sr, 0.01, 0.20);
+        std::printf ("  Filtered zero-crossing freq:  noiseTone 0.2 -> %.0f Hz   0.8 -> %.0f Hz\n", zLo, zHi);
+        check (zHi > zLo * 2.0, "Filtered centre tracks noiseTone (low = dark, high = bright)");
+    }
+
+    // noiseTone 0 = dark, 1 = bright for White + Pink (tilt filter).
+    {
+        const auto wDark   = renderNoiseOnly (0.7f, 200.0f, 0.0f, 0.0f);
+        const auto wBright = renderNoiseOnly (0.7f, 200.0f, 1.0f, 0.0f);
+        const auto pDark   = renderNoiseOnly (0.7f, 200.0f, 0.0f, 1.0f);
+        const auto pBright = renderNoiseOnly (0.7f, 200.0f, 1.0f, 1.0f);
+        const double hwD = hfRatio (wDark,   sr, 0.0, 0.15);
+        const double hwB = hfRatio (wBright, sr, 0.0, 0.15);
+        const double hpD = hfRatio (pDark,   sr, 0.0, 0.15);
+        const double hpB = hfRatio (pBright, sr, 0.0, 0.15);
+        std::printf ("  tilt hfRatio  White %.3f -> %.3f   Pink %.3f -> %.3f   (noiseTone 0 -> 1)\n",
+                     hwD, hwB, hpD, hpB);
+        check (hwB > hwD * 1.3, "White noiseTone 0 = dark, 1 = bright");
+        check (hpB > hpD * 1.3, "Pink noiseTone 0 = dark, 1 = bright");
+    }
+
+    // noiseDecay changes the noise length.
+    {
+        const auto nShort = renderNoiseOnly (0.8f, 30.0f,  0.5f, 0.0f);
+        const auto nLong  = renderNoiseOnly (0.8f, 400.0f, 0.5f, 0.0f);
+        const double dShort = lastAbove (nShort, sr, 0.05f);
+        const double dLong  = lastAbove (nLong,  sr, 0.05f);
+        std::printf ("  noise duration (last > 5%% peak):  30 ms -> %.0f ms   400 ms -> %.0f ms\n", dShort, dLong);
+        check (dLong > dShort * 3.0, "noiseDecay changes the noise length");
+    }
+
+    // deterministic — two renders of the same noise patch are bit-identical (seeded rng).
+    {
+        const auto r1 = renderNoiseOnly (0.7f, 250.0f, 0.4f, 1.0f);
+        const auto r2 = renderNoiseOnly (0.7f, 250.0f, 0.4f, 1.0f);
+        const int n = std::min (r1.getNumSamples(), r2.getNumSamples());
+        const float* a = r1.getReadPointer (0);
+        const float* b = r2.getReadPointer (0);
+        double resid = 0.0, peak = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            resid = std::max (resid, (double) std::abs (a[i] - b[i]));
+            peak  = std::max (peak,  (double) std::abs (a[i]));
+        }
+        std::printf ("  determinism:  peak %.3f   max|r1 - r2| = %.2e\n", peak, resid);
+        check (peak > 0.02,     "noise determinism test has real signal");
+        check (resid < 1.0e-9,  "seeded rng -> two renders bit-identical");
+
+        if (r1.getNumChannels() >= 2)
+        {
+            const float* L = r1.getReadPointer (0);
+            const float* R = r1.getReadPointer (1);
+            double lr = 0.0;
+            for (int i = 0; i < r1.getNumSamples(); ++i)
+                lr = std::max (lr, (double) std::abs (L[i] - R[i]));
+            check (lr < 1.0e-6, "noise summed identically to L and R (mono)");
+        }
+    }
+
+    {
+        KICKRAudioProcessor pw;
+        setP (pw, "noiseLevel", 0.5f);
+        setP (pw, "noiseType",  1.0f);
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_7.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

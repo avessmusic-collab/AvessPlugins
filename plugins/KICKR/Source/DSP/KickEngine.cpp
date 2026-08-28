@@ -67,6 +67,10 @@ namespace kickr
         pTailLength       = apvts.getRawParameterValue (id::tailLength);
         pTailTone         = apvts.getRawParameterValue (id::tailTone);
         pTailDrive        = apvts.getRawParameterValue (id::tailDrive);
+        pNoiseLevel       = apvts.getRawParameterValue (id::noiseLevel);
+        pNoiseDecay       = apvts.getRawParameterValue (id::noiseDecay);
+        pNoiseTone        = apvts.getRawParameterValue (id::noiseTone);
+        pNoiseType        = apvts.getRawParameterValue (id::noiseType);
 
         reset();
     }
@@ -305,6 +309,10 @@ namespace kickr
         snap.tailLengthMs    = load (pTailLength, 200.0f);
         snap.tailTone01      = load (pTailTone,   0.5f);
         snap.tailDrive01     = load (pTailDrive,  0.2f);
+        snap.noiseLevel      = load (pNoiseLevel, 0.0f);
+        snap.noiseDecayMs    = load (pNoiseDecay, 60.0f);
+        snap.noiseTone01     = load (pNoiseTone,  0.5f);
+        snap.noiseType       = static_cast<int> (load (pNoiseType, 0.0f));
         snap.tuneMode        = static_cast<int> (load (pTuneMode, 0.0f));
 
         // Per-block refresh on BOTH voices (either can be rendering during a crossfade):
@@ -317,6 +325,7 @@ namespace kickr
             v.setSubParams (snap.subLevel, snap.subFreqHz, snap.subDecayMs);
             // Phase 2.11: tail* below = tailLevel/Length/Tone + macroTail offsets.
             v.setTailParams (snap.tailLevel, snap.tailLengthMs, snap.tailTone01, snap.tailDrive01);
+            v.setNoiseParams (snap.noiseLevel, snap.noiseDecayMs, snap.noiseTone01, snap.noiseType);
         }
 
         // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.

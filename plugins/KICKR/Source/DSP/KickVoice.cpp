@@ -13,6 +13,7 @@ namespace kickr
         click.prepare (fsOversampled);
         sub.prepare (fsOversampled);
         tail.prepare (fsOversampled);
+        noise.prepare (fsOversampled);
 
         bodyLevel.reset (fsOversampled, 0.02);   // 20 ms — click-free level changes
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
@@ -29,6 +30,7 @@ namespace kickr
         click.reset();
         sub.reset();
         tail.reset();
+        noise.reset();
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
     }
 
@@ -59,6 +61,12 @@ namespace kickr
         tail.setParams (tailLevel, tailLengthMs, tailTone01, tailDrive01);
     }
 
+    void KickVoice::setNoiseParams (float noiseLevel, float noiseDecayMs,
+                                    float noiseTone01, int noiseType) noexcept
+    {
+        noise.setParams (noiseLevel, noiseDecayMs, noiseTone01, noiseType);
+    }
+
     void KickVoice::noteOn (float freqHz, int noteNumber, float velLevelGain, float velClickGain,
                             float bodyDecayMs, int sampleOffset) noexcept
     {
@@ -74,6 +82,7 @@ namespace kickr
         click.noteOn (velClickGain);   // arm the 3-part click (uses the per-block snapshot)
         sub.noteOn();                  // phase -> 0, arm the sub AD env (per-block snapshot)
         tail.noteOn (freqHz);          // dedicated LF sine locked to fundamentalEff (pre pitch-env)
+        noise.noteOn();                // re-seed rng + arm the noise AD env (no-op when noiseLevel 0)
 
         // Start at the current body-level target — no 20 ms fade-in on the first hit.
         // (Retrigger level continuity is Phase 2.3's crossfade concern.)
@@ -109,14 +118,16 @@ namespace kickr
             const float clickOut = click.renderSample();   // carries clickLevel + click vel
             const float subOut   = sub.renderSample();      // carries subLevel (mono, not vel-scaled)
             const float tailOut  = tail.renderSample();     // carries tailLevel (mono, not vel-scaled)
+            const float noiseOut = noise.renderSample();    // carries noiseLevel (mono, not vel-scaled)
 
-            const float s = dsputils::sanitize ((bodyOut + clickOut + subOut + tailOut) * velLevel);
+            const float s = dsputils::sanitize ((bodyOut + clickOut + subOut + tailOut + noiseOut) * velLevel);
 
             const int idx = startSample + i;
             for (int ch = 0; ch < numCh; ++ch)
                 block.addSample (ch, idx, s);
 
-            if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive() && ! tail.isActive())
+            if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive()
+                && ! tail.isActive() && ! noise.isActive())
             {
                 active = false;
                 break;
@@ -154,10 +165,12 @@ namespace kickr
             const float clickOut = click.renderSample();   // carries clickLevel + click vel
             const float subOut   = sub.renderSample();      // carries subLevel (mono, not vel-scaled)
             const float tailOut  = tail.renderSample();     // carries tailLevel (mono, not vel-scaled)
+            const float noiseOut = noise.renderSample();    // carries noiseLevel (mono, not vel-scaled)
 
-            mono[i] = dsputils::sanitize ((bodyOut + clickOut + subOut + tailOut) * velLevel);
+            mono[i] = dsputils::sanitize ((bodyOut + clickOut + subOut + tailOut + noiseOut) * velLevel);
 
-            if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive() && ! tail.isActive())
+            if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive()
+                && ! tail.isActive() && ! noise.isActive())
             {
                 active = false;
                 ++i;
