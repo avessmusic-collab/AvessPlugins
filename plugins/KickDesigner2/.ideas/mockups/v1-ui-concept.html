@@ -7,7 +7,7 @@
   /* ============================================================
      Kick Designer 2 — UI concept v2
      Committed single visual world: a soft-bodied rack instrument.
-     Fixed 1600x1120 "instrument" that scales to fit the viewport,
+     Fixed 1600x1052 "instrument" that scales to fit the viewport,
      so it always reads as one photo. Design notes flow below.
      ============================================================ */
   :root{
@@ -60,7 +60,7 @@
 
   /* ===================== THE INSTRUMENT ===================== */
   .instrument{
-    width:1600px;height:904px;flex:none;
+    width:1600px;height:1052px;flex:none;
     transform:scale(var(--s,1));transform-origin:top center;
     background:
       linear-gradient(157deg,var(--chassis-hi) 0%,var(--chassis-mid) 46%,var(--chassis-lo) 100%);
@@ -265,6 +265,41 @@
   .seg button.on{color:var(--ink-hi);background:rgba(69,44,221,.26)}
   .seg button.on.r{background:rgba(209,54,58,.26)}
 
+  /* ===================== SAMPLE strip (v2) ===================== */
+  .sample{
+    display:grid;grid-template-columns:360px 1fr;gap:16px;flex:none;
+    background:linear-gradient(176deg,var(--panel-hi),#242832 45%,var(--panel-lo));
+    border-radius:var(--r-panel);padding:14px 16px;
+    box-shadow:inset 0 2px 0 rgba(255,255,255,.06),inset 0 -16px 28px rgba(0,0,0,.4),
+      0 3px 1px rgba(0,0,0,.5),0 20px 36px -14px rgba(0,0,0,.7);
+  }
+  .sbank{display:flex;flex-direction:column;gap:9px;min-width:0}
+  .stoggles{display:flex;gap:7px}
+  .stog{
+    flex:1;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-dim);cursor:pointer;
+    background:linear-gradient(#241f2b,#191420);border:1px solid var(--panel-edge);border-radius:9px;padding:8px 0;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .stog.on{color:var(--ink-hi);border-color:rgba(69,44,221,.55);box-shadow:inset 0 0 14px rgba(69,44,221,.28)}
+  .stog.r.on{border-color:rgba(209,54,58,.55);box-shadow:inset 0 0 14px rgba(209,54,58,.28)}
+  .sslot{
+    position:relative;flex:1;border:1px dashed var(--panel-edge);border-radius:11px;overflow:hidden;
+    background:linear-gradient(#0b0910,#060409);box-shadow:inset 0 2px 10px rgba(0,0,0,.85);
+    min-height:96px;
+  }
+  .sslot canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  .sslot-top{position:absolute;left:10px;right:10px;top:8px;display:flex;justify-content:space-between;align-items:center}
+  .sname{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--lowfam);text-shadow:0 0 10px rgba(111,123,255,.4);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+  .sdrop{font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:8px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--ink-dim)}
+  .strans{position:absolute;left:10px;right:10px;bottom:7px;display:flex;align-items:center;gap:6px}
+  .strans button{background:#100c17;border:1px solid var(--well-edge);border-radius:6px;color:var(--ink);
+    cursor:pointer;padding:3px 8px;font-size:10px;line-height:1}
+  .strans span{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:8px;color:var(--ink-dim);letter-spacing:.1em}
+  .stweaks{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;align-content:center}
+
   a:focus-visible,button:focus-visible{outline:2px solid var(--magenta);outline-offset:2px;border-radius:6px}
 
   /* ===================== DESIGN NOTES (below the fold) ===================== */
@@ -321,6 +356,38 @@
         </div>
         <div class="xax"><span>0</span><span>100&nbsp;ms</span><span>200</span><span>300</span><span>400</span><span>500</span></div>
         <div class="vig"></div>
+      </div>
+
+      <!-- SAMPLE strip: user's recorded-kick bank + tweak controls (v2) -->
+      <div class="sample">
+        <div class="sbank">
+          <div class="stoggles">
+            <button class="stog on">Synth</button>
+            <button class="stog r on">Sample</button>
+          </div>
+          <div class="sslot">
+            <canvas id="samp"></canvas>
+            <div class="sslot-top">
+              <span class="sname">808_Warehouse_03.wav</span>
+              <span class="sdrop">drop&nbsp;audio&nbsp;&#8595;</span>
+            </div>
+            <div class="strans"><button aria-label="Previous sample">&#9664;</button><button aria-label="Next sample">&#9654;</button><span>bank&nbsp;&#183;&nbsp;12</span></div>
+          </div>
+        </div>
+        <div class="stweaks">
+          <div class="kc"><div class="knob sm" style="--p:.70;--acc:var(--red)"></div><span class="lab">Level</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.06;--acc:var(--lowfam)"></div><span class="lab">Start</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.92;--acc:var(--lowfam)"></div><span class="lab">End</span></div>
+          <div class="kc"><div class="seg"><button class="on">Rev</button></div><span class="lab" style="margin-top:5px">Reverse</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.5;--acc:var(--lowfam)"></div><span class="lab">Tune</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.5;--acc:var(--lowfam)"></div><span class="lab">Fine</span></div>
+          <div class="kc"><div class="seg"><button class="on">Trk</button></div><span class="lab" style="margin-top:5px">MIDI</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.10;--acc:var(--magenta)"></div><span class="lab">Attack</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.55;--acc:var(--magenta)"></div><span class="lab">Decay</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.0;--acc:var(--violet)"></div><span class="lab">HP</span></div>
+          <div class="kc"><div class="knob sm" style="--p:1;--acc:var(--violet)"></div><span class="lab">LP</span></div>
+          <div class="kc"><div class="knob sm" style="--p:.24;--acc:var(--red)"></div><span class="lab">Crush</span></div>
+        </div>
       </div>
 
       <!-- hero macro modules -->
@@ -477,8 +544,8 @@
   <!-- ===================== DESIGN NOTES ===================== -->
   <div class="notes">
     <div>
-      <h2>UI Concept &mdash; v2</h2>
-      <p>A soft-bodied rack instrument. The chassis, bezel, panel material and control anatomy follow the reference &mdash; a pillowy rounded body, a full-width inset screen, modules that pair a big soft knob with a glowing LCD and a cluster of small knobs, discreet round indicator lamps. Reworked for a 45-parameter kick synth: the four <strong>macros</strong> (Punch / Body / Crush / Tail) are the hero modules, and an eight-cell engine strip below carries every remaining section.</p>
+      <h2>UI Concept &mdash; v3</h2>
+      <p>A soft-bodied rack instrument. The chassis, bezel, panel material and control anatomy follow the reference &mdash; a pillowy rounded body, a full-width inset screen, modules that pair a big soft knob with a glowing LCD and a cluster of small knobs, discreet round indicator lamps. Reworked for a 59-parameter kick instrument: a <strong>SAMPLE strip</strong> (the user's own recorded-kick bank + tweak controls), four <strong>macros</strong> (Punch / Body / Crush / Tail) as hero modules, and an eight-cell engine strip carrying every remaining synth section.</p>
     </div>
 
     <div>
@@ -519,7 +586,8 @@
         <ul>
           <li>Near-black ground, violet + red instead of blue + amber.</li>
           <li>The screen is a <strong>kick oscilloscope</strong> &mdash; the most recent hit, computed from the pitch + amplitude envelopes: hot transient, then the fundamental settling and decaying. <code>WAVE / SPECTRUM</code> toggles it.</li>
-          <li>Macros are the hero row; an 8-cell engine strip fits the full parameter set with no menu.</li>
+          <li><strong>SAMPLE strip (v2)</strong> &mdash; the user's own recorded-kick bank. Drop an audio file anywhere on the plugin &rarr; it&rsquo;s copied into a managed folder and browsable here. A dashed slot shows the sample with its trim window; <code>SYNTH</code> / <code>SAMPLE</code> toggles blend or isolate the two engines. Twelve tweak controls: Level, Start/End, Reverse, Tune/Fine, MIDI-track, Attack/Decay, HP/LP, Crush. No factory samples ship.</li>
+          <li>Macros are the hero row; an 8-cell engine strip fits the full synth parameter set with no menu.</li>
           <li>Output-only &mdash; it is an instrument, no input fader.</li>
         </ul>
       </div>
@@ -530,11 +598,12 @@
       <h4>Every control has a home</h4>
       <ul>
         <li><strong>Header</strong> &mdash; preset shuttle, Save, Undo/Redo, Randomize, Mutate, A/B.</li>
+        <li><strong>Sample strip</strong> &mdash; Synth/Sample toggles, bank browser + drop slot, then Level/Start/End/Reverse/Tune/Fine/MIDI-track/Attack/Decay/HP/LP/Crush.</li>
         <li><strong>Punch</strong> &mdash; macro + Transient Atk/Sus + Pitch Start &nbsp;&middot;&nbsp; <strong>Body</strong> &mdash; macro/Fundamental + Level/Decay/Harmonics</li>
         <li><strong>Crush</strong> &mdash; macro + Drive/Character morph/Mix &nbsp;&middot;&nbsp; <strong>Tail</strong> &mdash; macro/Length + Level/Tone/Drive</li>
         <li><strong>Engine strip</strong> &mdash; Pitch (Fund/Start/Time/Curve), Click (Level/Tone/Time/Pitch), Sub (Level/Freq/Decay), Noise (Type/Level/Decay/Tone), Tone (Low/Mid/High), Stereo (Body/Click/Out width), Tuning (Mode/Tune/Fine), Output (Gain/Mix/Limiter/Oversampling).</li>
       </ul>
-      <p style="margin-top:12px">45 automatable parameters + 4 macros, all on one face. Static concept &mdash; knob positions show a plausible &ldquo;Warehouse&rdquo; patch. Target: the native-JUCE UI in Stage&nbsp;3.</p>
+      <p style="margin-top:12px">59 automatable parameters + 4 macros, all on one face; sample selection is a bank pick, not a parameter. Static concept &mdash; knob positions show a plausible &ldquo;Warehouse&rdquo; patch. Target: the native-JUCE UI in Stage&nbsp;3.</p>
     </div>
   </div>
 </div>
@@ -550,10 +619,10 @@
   var inst = document.querySelector(".instrument");
   var fitEl = document.querySelector(".fit");
   function fit(){
-    var s = Math.min(window.innerWidth / 1600, (window.innerHeight - 28) / 904, 1);
+    var s = Math.min(window.innerWidth / 1600, (window.innerHeight - 28) / 1052, 1);
     s = Math.max(s, 0.2);
     inst.style.setProperty("--s", s);
-    fitEl.style.height = (904 * s + 28) + "px";
+    fitEl.style.height = (1052 * s + 28) + "px";
   }
   fit();
 
@@ -662,7 +731,44 @@
   /* cheap deterministic noise so the click looks the same every render */
   function pseudo(n){ var x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); }
 
-  function draw(){ drawWave(); }
+  /* ---- sample-slot waveform: a recorded-kick file view with a trim window ---- */
+  function drawSamp(){
+    var c = document.getElementById("samp"); if(!c) return;
+    var g = c.getContext("2d");
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = c.clientWidth, h = c.clientHeight;
+    if(!w || !h) return;
+    c.width = w * dpr; c.height = h * dpr; g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,w,h);
+    var mid = h * 0.56;
+    var startX = w * 0.06, endX = w * 0.92;   // trim window (matches Start/End knobs)
+
+    /* dim outside the trim window */
+    g.fillStyle = "rgba(0,0,0,0.45)";
+    g.fillRect(0,0,startX,h); g.fillRect(endX,0,w-endX,h);
+    g.strokeStyle = "rgba(111,123,255,0.5)"; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(startX,0); g.lineTo(startX,h); g.moveTo(endX,0); g.lineTo(endX,h); g.stroke();
+
+    /* a plausible recorded-kick envelope: sharp attack, body, ringy tail */
+    g.beginPath();
+    for(var i=0;i<=w;i++){
+      var x = i/w;
+      var env = x < 0.03 ? (x/0.03)
+              : Math.exp(-(x-0.03)/0.16) * (0.7 + 0.3*Math.exp(-(x-0.03)/0.02));
+      var osc = Math.sin(x*2*Math.PI*(9 + 34*Math.exp(-x/0.05)))
+              + 0.35*Math.sin(x*2*Math.PI*3.1)
+              + (x<0.02 ? (pseudo(i)-0.5)*1.3 : 0);
+      var y = mid - env * osc * h * 0.34;
+      i ? g.lineTo(i,y) : g.moveTo(i,y);
+    }
+    var grd = g.createLinearGradient(0,0,w,0);
+    grd.addColorStop(0,"#D1363A"); grd.addColorStop(0.12,"#C041DD"); grd.addColorStop(1,"#6F7BFF");
+    g.strokeStyle = grd; g.lineWidth = 1.4;
+    g.shadowColor = "rgba(120,80,255,0.4)"; g.shadowBlur = reduce ? 0 : 6;
+    g.stroke(); g.shadowBlur = 0;
+  }
+
+  function draw(){ drawWave(); drawSamp(); }
   draw();
 
   var raf;
