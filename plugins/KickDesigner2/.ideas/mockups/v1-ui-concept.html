@@ -4,735 +4,672 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 
 <style>
-  /* ---- committed single visual world: a blacked-out rack instrument ---- */
+  /* ============================================================
+     Kick Designer 2 — UI concept v2
+     Committed single visual world: a soft-bodied rack instrument.
+     Fixed 1600x1120 "instrument" that scales to fit the viewport,
+     so it always reads as one photo. Design notes flow below.
+     ============================================================ */
   :root{
-    --void:#08090E;        /* outer ground / deepest recess */
-    --rack:#0E0D14;         /* unit body */
-    --panel-top:#1A1722;    /* panel surface, lit edge */
-    --panel-bot:#121019;    /* panel surface, base */
-    --sunk:#09080F;         /* inset wells / LCD ground */
-    --stroke:#282433;       /* hairline edges */
-    --stroke-soft:#1C1926;
+    --void:#08090E;
 
-    --violet:#452CDD;       /* primary accent — knobs, waveform, active */
-    --magenta:#C041DD;      /* secondary — LCD glow, morph, CRUSH */
-    --red:#D1363A;          /* energy — PUNCH, drive extremes, transient, limiter */
-    --indigo:#1B139D;       /* depth — TAIL, waveform fill */
-    --indigo-2:#17155D;
+    /* soft rubbery chassis — lifted blue-grey body like the reference unit */
+    --chassis-hi:#4C4556;
+    --chassis-mid:#3B3547;
+    --chassis-lo:#2C2738;
+    --faceplate-hi:#221C2B;      /* recessed faceplate the panels sit on */
+    --faceplate-lo:#181320;
+    --bezel-light:rgba(196,172,222,.22);
+    --bezel-dark:rgba(0,0,0,.7);
 
-    --text:#9EA0AE;         /* labels / secondary */
-    --text-dim:#5D5A69;
-    --text-hi:#ECECF2;      /* values / titles */
+    /* raised modules that sit proud of the faceplate */
+    --panel-hi:#322B3C;
+    --panel-lo:#221C2C;
+    --panel-edge:#413A4D;
+    --well:#0A0810;              /* inset screens / recesses */
+    --well-edge:#241D2C;
 
-    --sz-knob:46px;
-    --sz-knob-sm:34px;
-    --sz-macro:74px;
+    --violet:#452CDD;            /* primary — most pointers, active */
+    --lowfam:#6F7BFF;            /* low-end family — pitch/body/sub/tail */
+    --magenta:#C041DD;           /* LCD glow, Crush, morph */
+    --red:#D1363A;               /* energy — Punch, drive, transient, limiter */
+    --indigo:#1B139D;
+
+    --ink:#9EA0AE;              /* labels */
+    --ink-dim:#6B6678;
+    --ink-hi:#ECEAF2;          /* values / titles */
+
+    --r-chassis:42px;
+    --r-panel:24px;
   }
 
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
   body{
     margin:0;
-    background:
-      radial-gradient(1200px 500px at 50% -8%, #14101f 0%, transparent 60%),
-      var(--void);
-    color:var(--text);
     font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
-    line-height:1.5;
-    padding:32px 20px 64px;
-    display:flex;flex-direction:column;align-items:center;gap:28px;
+    color:var(--ink);
+    background:
+      radial-gradient(1500px 780px at 50% 4%, #23202e 0%, #131019 46%, transparent 72%),
+      var(--void);
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-  .wrap{width:min(1180px,100%);display:flex;flex-direction:column;gap:26px}
+  .stage{position:fixed;inset:0;overflow-y:auto;overflow-x:hidden}
+  .fit{display:flex;align-items:flex-start;justify-content:center;padding-top:16px}
 
-  /* ============================ THE UNIT ============================ */
-  .unit{
-    position:relative;
-    background:linear-gradient(#111019,#0B0A11);
-    border:1px solid var(--stroke);
-    border-radius:26px;
-    padding:16px;
-    box-shadow:
-      0 0 0 1px #000 inset,
-      0 1px 0 rgba(120,90,200,.14) inset,   /* violet rim-light, top */
-      0 40px 90px -30px #000,
-      0 8px 30px rgba(0,0,0,.6);
-    display:flex;flex-direction:column;gap:14px;
-    overflow:hidden;
-  }
-  .unit::before{ /* faint corner screws / bevel hint */
-    content:"";position:absolute;inset:6px;border:1px solid var(--stroke-soft);
-    border-radius:20px;pointer-events:none;
-  }
-
-  /* ---- header ---- */
-  .topbar{
-    display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-    padding:4px 6px;
-  }
-  .brand{display:flex;align-items:baseline;gap:9px;margin-right:auto}
-  .brand b{
-    font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:19px;
-    letter-spacing:.16em;color:var(--text-hi);text-transform:uppercase;
-  }
-  .brand .mk{
-    width:9px;height:9px;border-radius:50%;background:var(--red);
-    box-shadow:0 0 10px var(--red);align-self:center;
-  }
-  .brand span{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--text-dim);letter-spacing:.1em}
-
-  .shuttle{
-    display:flex;align-items:center;gap:2px;
-    background:var(--sunk);border:1px solid var(--stroke);border-radius:9px;
-    padding:3px;box-shadow:inset 0 1px 5px rgba(0,0,0,.7);
-  }
-  .shuttle button{
-    background:none;border:0;color:var(--text-dim);cursor:pointer;
-    padding:5px 8px;border-radius:6px;font-size:13px;line-height:1;
-  }
-  .shuttle button:hover{color:var(--text-hi);background:#17141f}
-  .shuttle .name{
-    font-family:"Chakra Petch",sans-serif;font-weight:600;font-size:12px;letter-spacing:.14em;
-    color:var(--magenta);text-shadow:0 0 12px rgba(192,65,221,.5);
-    min-width:118px;text-align:center;text-transform:uppercase;
-  }
-  .actions{display:flex;gap:6px;flex-wrap:wrap}
-  .btn{
-    font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:10px;letter-spacing:.12em;
-    text-transform:uppercase;color:var(--text);
-    background:linear-gradient(#1a1722,#131019);border:1px solid var(--stroke);
-    border-radius:8px;padding:7px 11px;cursor:pointer;white-space:nowrap;
-  }
-  .btn:hover{color:var(--text-hi);border-color:#3a3550}
-  .btn.hot{color:#fff;border-color:rgba(209,54,58,.55);
-    background:linear-gradient(#241016,#1a0c10);box-shadow:0 0 14px rgba(209,54,58,.28) inset}
-  .btn.sel{color:var(--text-hi);border-color:rgba(69,44,221,.5);box-shadow:0 0 12px rgba(69,44,221,.25) inset}
-
-  /* ---- scope ---- */
-  .scope{
-    position:relative;
-    border:1px solid var(--stroke);border-radius:16px;
+  /* ===================== THE INSTRUMENT ===================== */
+  .instrument{
+    width:1600px;height:904px;flex:none;
+    transform:scale(var(--s,1));transform-origin:top center;
     background:
-      radial-gradient(120% 140% at 50% 0%, #16111f 0%, #0a0810 55%, #070509 100%);
-    box-shadow:inset 0 2px 22px rgba(0,0,0,.85), inset 0 0 0 1px #000;
+      linear-gradient(157deg,var(--chassis-hi) 0%,var(--chassis-mid) 46%,var(--chassis-lo) 100%);
+    border-radius:var(--r-chassis);
+    padding:34px;                                  /* thick moulded frame */
+    box-shadow:
+      inset 0 4px 2px var(--bezel-light),
+      inset 0 -10px 22px var(--bezel-dark),
+      inset 0 0 0 1px rgba(0,0,0,.4),
+      0 3px 0 rgba(255,255,255,.06),
+      0 80px 150px -46px #000,
+      0 34px 70px rgba(0,0,0,.62);
+    position:relative;
+  }
+  .faceplate{ /* recessed faceplate that holds the screen + panels */
+    position:relative;height:100%;
+    background:linear-gradient(170deg,var(--faceplate-hi),var(--faceplate-lo));
+    border-radius:calc(var(--r-chassis) - 16px);
+    padding:20px 22px 22px;
+    box-shadow:
+      inset 0 3px 10px rgba(0,0,0,.75),
+      inset 0 -1px 0 rgba(255,255,255,.05),
+      inset 0 0 0 1px rgba(0,0,0,.5),
+      0 1px 0 rgba(255,255,255,.05);
+    display:flex;flex-direction:column;gap:14px;
+  }
+
+  /* ---------- header ---------- */
+  .head{display:flex;align-items:center;gap:16px;padding:2px 6px}
+  .logo{display:flex;align-items:center;gap:10px;margin-right:auto}
+  .logo .led{width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 12px var(--red)}
+  .logo b{font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:21px;letter-spacing:.2em;color:var(--ink-hi);text-transform:uppercase}
+  .logo s{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--ink-dim);text-decoration:none;letter-spacing:.12em}
+
+  .pill{
+    background:linear-gradient(#0c0a12,#090710);
+    border:1px solid var(--well-edge);border-radius:12px;
+    box-shadow:inset 0 2px 8px rgba(0,0,0,.8);
+    display:flex;align-items:center;gap:2px;padding:4px;
+  }
+  .pill button{background:none;border:0;color:var(--ink-dim);cursor:pointer;padding:6px 9px;border-radius:8px;font-size:13px;line-height:1}
+  .pill button:hover{color:var(--ink-hi);background:#171320}
+  .pill .name{
+    font-family:"Chakra Petch",sans-serif;font-weight:600;font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--magenta);text-shadow:0 0 14px rgba(192,65,221,.55);min-width:140px;text-align:center;
+  }
+  .btns{display:flex;gap:7px}
+  .b{
+    font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--ink);background:linear-gradient(#241f2b,#191420);
+    border:1px solid var(--panel-edge);border-radius:10px;padding:9px 13px;cursor:pointer;white-space:nowrap;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 2px 5px rgba(0,0,0,.35);
+  }
+  .b:hover{color:var(--ink-hi)}
+  .b.hot{color:#fff;border-color:rgba(209,54,58,.5);background:linear-gradient(#2a1319,#1c0d12);box-shadow:inset 0 0 16px rgba(209,54,58,.3)}
+
+  /* ---------- oscilloscope ---------- */
+  .scope{
+    position:relative;height:236px;border-radius:20px;
+    background:radial-gradient(130% 150% at 50% -10%, #17111f 0%, #0a0710 52%, #060409 100%);
+    box-shadow:
+      inset 0 4px 30px rgba(0,0,0,.92),
+      inset 0 0 0 1px #000,
+      inset 0 0 0 3px rgba(120,90,180,.06),
+      0 2px 0 rgba(255,255,255,.05);
     overflow:hidden;
-    height:236px;
   }
   .scope canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-  .scope .watermark{
-    position:absolute;left:20px;top:14px;
-    font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:13px;letter-spacing:.34em;
-    color:rgba(158,160,174,.16);text-transform:uppercase;pointer-events:none;
-  }
-  .scope .vignette{position:absolute;inset:0;pointer-events:none;
-    box-shadow:inset 0 0 90px 10px rgba(4,3,7,.9)}
-  .scope .modes{
-    position:absolute;right:12px;top:11px;display:flex;gap:0;
-    border:1px solid var(--stroke);border-radius:7px;overflow:hidden;background:var(--sunk);
-  }
-  .scope .modes button{
-    background:none;border:0;cursor:pointer;padding:5px 10px;
-    font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.14em;color:var(--text-dim);
-  }
-  .scope .modes button.on{color:var(--text-hi);background:rgba(69,44,221,.22)}
-  .scope .ax{
-    position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:space-between;
-    padding:0 16px;font-family:"IBM Plex Mono",monospace;font-size:9px;color:rgba(158,160,174,.4);
-    pointer-events:none;
-  }
-  .scope .scale{
-    position:absolute;left:12px;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;
-    gap:26px;font-family:"IBM Plex Mono",monospace;font-size:8px;color:rgba(158,160,174,.32);pointer-events:none;
-  }
+  .scope .wm{position:absolute;right:16px;bottom:24px;font-family:"Chakra Petch",sans-serif;font-weight:600;
+    font-size:10px;letter-spacing:.42em;color:rgba(158,160,174,.12);text-transform:uppercase;pointer-events:none}
+  .scope .vig{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 110px 14px rgba(3,2,6,.92);border-radius:20px}
+  .scope .modes{position:absolute;right:14px;top:12px;display:flex;border:1px solid var(--well-edge);border-radius:8px;overflow:hidden;background:#0a0810}
+  .scope .modes button{background:none;border:0;cursor:pointer;padding:6px 12px;font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.16em;color:var(--ink-dim)}
+  .scope .modes button.on{color:var(--ink-hi);background:rgba(69,44,221,.24)}
+  .scope .xax{position:absolute;left:0;right:0;bottom:9px;display:flex;justify-content:space-between;padding:0 20px;
+    font-family:"IBM Plex Mono",monospace;font-size:9px;color:rgba(158,160,174,.42);pointer-events:none}
+  .scope .yax{position:absolute;left:14px;top:12px;bottom:26px;display:flex;flex-direction:column;justify-content:space-between;
+    font-family:"IBM Plex Mono",monospace;font-size:8px;color:rgba(158,160,174,.32);pointer-events:none}
 
-  /* ---- macro bar ---- */
-  .macros{
-    display:grid;grid-template-columns:repeat(4,1fr);gap:12px;
-    background:linear-gradient(#141019,#0e0b13);
-    border:1px solid var(--stroke);border-radius:16px;padding:14px 12px;
-    box-shadow:0 1px 0 rgba(255,255,255,.03) inset;
-  }
-  .macro{display:flex;flex-direction:column;align-items:center;gap:8px}
-  .macro .cap{
-    font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:12px;letter-spacing:.2em;
-    text-transform:uppercase;color:var(--text-hi);
-  }
-  .macro .sub{font-family:"IBM Plex Mono",monospace;font-size:8.5px;letter-spacing:.06em;color:var(--text-dim);margin-top:-4px;text-align:center}
-  .macro .val{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--text);font-variant-numeric:tabular-nums}
-
-  /* ============================ KNOB ============================ */
+  /* ===================== KNOB ===================== */
+  /* knob: matte domed cap in a moulded recess, thin pointer + travel dot.
+     Very little arc — the reference knobs are clean. */
   .knob{
-    --p:.5; --acc:var(--violet); --track:#231f30;
-    width:var(--sz-knob);height:var(--sz-knob);border-radius:50%;position:relative;flex:none;
+    --p:.5;--acc:var(--violet);--d:60px;
+    width:var(--d);height:var(--d);border-radius:50%;position:relative;flex:none;
     background:
-      radial-gradient(circle at 38% 30%, #322b41 0%, #1a1622 52%, #0d0b12 100%);
+      radial-gradient(circle at 42% 30%, #423a4e 0%, #262030 44%, #14101c 78%, #0e0b14 100%);
     box-shadow:
-      inset 0 2px 3px rgba(255,255,255,.06),
-      inset 0 -7px 13px rgba(0,0,0,.7),
-      0 5px 12px rgba(0,0,0,.55);
+      inset 0 4px 5px rgba(255,255,255,.10),
+      inset 0 -11px 18px rgba(0,0,0,.78),
+      0 9px 18px rgba(0,0,0,.55),
+      0 2px 0 rgba(255,255,255,.05),
+      0 0 0 6px rgba(0,0,0,.28),           /* recess ring */
+      0 0 0 7px rgba(255,255,255,.03);
   }
-  .knob::before{ /* value arc */
-    content:"";position:absolute;inset:-7px;border-radius:50%;
-    background:conic-gradient(from 225deg,
-      var(--acc) 0 calc(var(--p) * 270deg),
-      var(--track) calc(var(--p) * 270deg) 270deg,
-      transparent 270deg);
-    -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 calc(100% - 3px));
-            mask:radial-gradient(farthest-side,transparent calc(100% - 4px),#000 calc(100% - 3px));
-    filter:drop-shadow(0 0 4px color-mix(in srgb,var(--acc) 60%,transparent));
+  .knob::before{ /* faint value tick arc, low-key */
+    content:"";position:absolute;inset:-9px;border-radius:50%;
+    background:conic-gradient(from 224deg,
+      var(--acc) 0 calc(var(--p) * 272deg),
+      rgba(255,255,255,.04) calc(var(--p) * 272deg) 272deg,
+      transparent 272deg);
+    -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2.5px),#000 calc(100% - 1.5px));
+            mask:radial-gradient(farthest-side,transparent calc(100% - 2.5px),#000 calc(100% - 1.5px));
+    opacity:.7;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--acc) 50%,transparent));
   }
-  .knob::after{ /* indicator */
-    content:"";position:absolute;left:50%;top:14%;width:2px;height:32%;border-radius:2px;
-    background:var(--acc);box-shadow:0 0 6px var(--acc);
-    transform-origin:50% 100%;
-    transform:translateX(-50%) rotate(calc((var(--p) - .5) * 270deg));
+  .knob::after{ /* thin short pointer near the rim */
+    content:"";position:absolute;left:50%;top:13%;width:3px;height:24%;border-radius:3px;
+    background:var(--acc);box-shadow:0 0 9px var(--acc),0 0 2px #fff;
+    transform-origin:50% 210%;
+    transform:translateX(-50%) rotate(calc((var(--p) - .5) * 272deg));
   }
-  .knob.sm{width:var(--sz-knob-sm);height:var(--sz-knob-sm)}
-  .knob.lg{width:var(--sz-macro);height:var(--sz-macro)}
-  .knob.lg::after{height:30%}
+  .knob.lg{--d:94px}
+  .knob.lg::after{height:22%}
+  .knob.sm{--d:40px}
+  .knob.sm::after{height:26%;width:2.5px}
+  .knob.sm{box-shadow:
+      inset 0 3px 4px rgba(255,255,255,.09),
+      inset 0 -8px 13px rgba(0,0,0,.75),
+      0 6px 12px rgba(0,0,0,.5),
+      0 0 0 4px rgba(0,0,0,.26)}
 
-  .kctl{display:flex;flex-direction:column;align-items:center;gap:5px}
-  .kctl .lab{
-    font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:8.5px;letter-spacing:.13em;
-    text-transform:uppercase;color:var(--text-dim);white-space:nowrap;
-  }
+  .kc{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .kc .lab{font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:8.5px;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--ink-dim);white-space:nowrap}
 
-  /* ============================ LCD ============================ */
+  /* ===================== LCD ===================== */
   .lcd{
-    background:linear-gradient(#0a0910,#060509);
-    border:1px solid #201c2a;border-radius:9px;padding:7px 9px;
-    box-shadow:inset 0 1px 7px rgba(0,0,0,.85), 0 0 0 1px #000;
-    display:flex;flex-direction:column;gap:2px;min-width:0;
+    background:linear-gradient(#0b0910,#060409);
+    border:1px solid var(--well-edge);border-radius:11px;padding:9px 12px;
+    box-shadow:inset 0 2px 9px rgba(0,0,0,.88),0 0 0 1px #000;
+    display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;
   }
-  .lcd .l{
-    font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:7.5px;letter-spacing:.16em;
-    color:#4f4b5c;text-transform:uppercase;
-  }
-  .lcd .row{display:flex;align-items:baseline;gap:4px}
-  .lcd .v{
-    font-family:"IBM Plex Mono",monospace;font-weight:500;font-size:19px;line-height:1;
-    color:var(--lcd,var(--magenta));text-shadow:0 0 12px currentColor;
-    font-variant-numeric:tabular-nums;
-  }
-  .lcd .u{font-family:"IBM Plex Mono",monospace;font-size:9px;color:#6a6675}
-  .lcd.blue{--lcd:#6f7bff}
+  .lcd .l{font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:8px;letter-spacing:.18em;color:#514c60;text-transform:uppercase}
+  .lcd .row{display:flex;align-items:baseline;gap:5px}
+  .lcd .v{font-family:"IBM Plex Mono",monospace;font-weight:500;font-size:26px;line-height:1;color:var(--lcd,var(--magenta));
+    text-shadow:0 0 16px currentColor;font-variant-numeric:tabular-nums}
+  .lcd .u{font-family:"IBM Plex Mono",monospace;font-size:11px;color:#6a6675}
+  .lcd.blue{--lcd:var(--lowfam)}
   .lcd.red{--lcd:var(--red)}
 
-  /* ============================ RACK PANELS ============================ */
-  .rack{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-  .panel{
-    background:linear-gradient(var(--panel-top),var(--panel-bot));
-    border:1px solid var(--stroke);border-radius:15px;padding:13px 13px 15px;
-    box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 12px 26px -10px rgba(0,0,0,.7);
-    display:flex;flex-direction:column;gap:11px;min-width:0;
+  /* ===================== HERO MACRO MODULES ===================== */
+  .heroes{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;flex:none}
+  .mod{
+    background:linear-gradient(176deg,var(--panel-hi) 0%,#241f2e 45%,var(--panel-lo) 100%);
+    border-radius:var(--r-panel);
+    padding:17px 18px 19px;
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,.07),
+      inset 0 1px 0 1px rgba(255,255,255,.03),
+      inset 0 -20px 34px rgba(0,0,0,.45),
+      0 3px 1px rgba(0,0,0,.5),
+      0 22px 40px -14px rgba(0,0,0,.7);
+    display:flex;flex-direction:column;gap:15px;min-width:0;
   }
-  .phead{display:flex;align-items:center;justify-content:space-between;gap:8px}
-  .phead h3{
-    margin:0;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:12.5px;
-    letter-spacing:.15em;text-transform:uppercase;color:#cbc8d6;
-  }
-  .dots{display:flex;gap:5px}
-  .dot{width:6px;height:6px;border-radius:50%;background:#2b2736;box-shadow:inset 0 0 0 1px #000}
-  .dot.on{background:var(--violet);box-shadow:0 0 7px var(--violet)}
-  .dot.on.red{background:var(--red);box-shadow:0 0 7px var(--red)}
+  .mhead{display:flex;align-items:center;justify-content:space-between}
+  .mhead h3{margin:0;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:17px;letter-spacing:.22em;
+    text-transform:uppercase;color:#d6d2e0}
+  .dots{display:flex;gap:7px}
+  .dot{width:19px;height:19px;border-radius:50%;position:relative;cursor:pointer;
+    background:radial-gradient(circle at 40% 32%,#332c3e,#1a1522 70%,#100c17);
+    box-shadow:inset 0 1px 2px rgba(255,255,255,.12),inset 0 -3px 5px rgba(0,0,0,.7),0 1px 2px rgba(0,0,0,.5)}
+  .dot::after{content:"";position:absolute;inset:6px;border-radius:50%;background:#0b0912;box-shadow:inset 0 1px 2px rgba(0,0,0,.9)}
+  .dot.on::after{background:var(--acc,var(--violet));box-shadow:0 0 9px var(--acc,var(--violet)),inset 0 0 2px rgba(255,255,255,.6)}
+  .dot.on.r::after{background:var(--red);box-shadow:0 0 9px var(--red),inset 0 0 2px rgba(255,255,255,.6)}
 
-  .prow{display:flex;align-items:center;gap:11px}
-  .prow .lcd{flex:1}
-  .psmall{display:flex;gap:12px;justify-content:flex-start;flex-wrap:wrap}
+  .mbody{display:flex;align-items:center;gap:16px}
+  .mfoot{display:flex;gap:14px;justify-content:space-around;padding-top:4px}
 
-  .selector{
-    display:flex;align-items:center;gap:6px;background:var(--sunk);
-    border:1px solid #201c2a;border-radius:8px;padding:5px 7px;
-    box-shadow:inset 0 1px 6px rgba(0,0,0,.8);
-  }
-  .selector b{
-    font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.1em;color:var(--magenta);
-    text-shadow:0 0 10px rgba(192,65,221,.45);text-transform:uppercase;flex:1;text-align:center;
-  }
-  .selector span{color:var(--text-dim);font-size:11px;cursor:pointer}
+  /* selector LCD (Character morph / Noise type) */
+  .sel{display:flex;align-items:center;gap:8px;background:linear-gradient(#0b0910,#060409);
+    border:1px solid var(--well-edge);border-radius:11px;padding:10px 10px;flex:1;
+    box-shadow:inset 0 2px 9px rgba(0,0,0,.85)}
+  .sel b{flex:1;text-align:center;font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.08em;
+    color:var(--magenta);text-shadow:0 0 12px rgba(192,65,221,.5);text-transform:uppercase}
+  .sel span{color:var(--ink-dim);font-size:13px;cursor:pointer;user-select:none}
 
-  .toggle{
-    display:inline-flex;border:1px solid var(--stroke);border-radius:8px;overflow:hidden;background:var(--sunk);
+  /* ===================== ENGINE STRIP ===================== */
+  .engine{
+    background:linear-gradient(176deg,var(--panel-hi),#241f2e 45%,var(--panel-lo));
+    border-radius:var(--r-panel);
+    box-shadow:
+      inset 0 2px 0 rgba(255,255,255,.06),
+      inset 0 -18px 30px rgba(0,0,0,.4),
+      0 3px 1px rgba(0,0,0,.5),
+      0 22px 40px -16px rgba(0,0,0,.7);
+    display:grid;grid-template-columns:repeat(8,1fr);flex:1;
+    overflow:hidden;
   }
-  .toggle button{
-    background:none;border:0;cursor:pointer;padding:6px 9px;
-    font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.1em;color:var(--text-dim);text-transform:uppercase;
-  }
-  .toggle button.on{color:var(--text-hi);background:rgba(69,44,221,.25)}
-  .toggle button.on.red{background:rgba(209,54,58,.25)}
-
-  .minicurve{height:34px;border:1px solid #201c2a;border-radius:8px;background:var(--sunk);
-    box-shadow:inset 0 1px 6px rgba(0,0,0,.8);position:relative;overflow:hidden}
-
-  /* ---- utility strip ---- */
-  .utility{display:grid;grid-template-columns:1.1fr 1.1fr 1fr 1.2fr;gap:12px}
-  .utility .panel{gap:9px}
-  .bipole{display:flex;gap:16px}
-  .fader{
-    width:12px;height:64px;border-radius:7px;background:var(--sunk);position:relative;flex:none;
-    border:1px solid #201c2a;box-shadow:inset 0 1px 6px rgba(0,0,0,.85);
-  }
-  .fader::after{
-    content:"";position:absolute;left:-4px;right:-4px;height:14px;border-radius:4px;
-    background:linear-gradient(#3a3350,#1c1a28);border:1px solid #000;
-    top:calc(var(--p,.7) * (64px - 14px));
-    box-shadow:0 2px 5px rgba(0,0,0,.6), 0 0 8px rgba(69,44,221,.4);
-  }
-  .outwrap{display:flex;align-items:flex-end;gap:14px}
-
-  /* ============================ DESIGN NOTES ============================ */
-  .notes{
-    border:1px solid var(--stroke);border-radius:18px;
-    background:linear-gradient(#100e17,#0b0a11);
-    padding:26px 26px 30px;display:flex;flex-direction:column;gap:22px;
-  }
-  .notes h2{
-    margin:0;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:15px;letter-spacing:.14em;
-    text-transform:uppercase;color:var(--text-hi);
-  }
-  .notes h4{
-    margin:0 0 8px;font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:10px;letter-spacing:.14em;
-    text-transform:uppercase;color:var(--magenta);
-  }
-  .notes p{margin:0;max-width:64ch;font-size:13.5px;color:#b6b7c2}
-  .notes .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:22px}
-  .notes ul{margin:0;padding-left:18px;font-size:13px;color:#a9aab6;display:flex;flex-direction:column;gap:5px}
-  .notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:#c9c6d2;background:#17141f;padding:1px 5px;border-radius:4px}
-
-  .swatches{display:flex;flex-wrap:wrap;gap:10px}
-  .sw{display:flex;align-items:center;gap:8px;font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--text)}
-  .sw i{width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.12);display:block}
-
-  .divider{height:1px;background:var(--stroke-soft)}
+  .cell{padding:16px 13px 16px;display:flex;flex-direction:column;gap:12px;min-width:0;
+    border-right:1px solid rgba(0,0,0,.4);box-shadow:1px 0 0 rgba(255,255,255,.03)}
+  .cell:last-child{border-right:0;box-shadow:none}
+  .cell h4{margin:0;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:#b7b3c4;display:flex;align-items:center;gap:6px}
+  .cell h4 i{width:5px;height:5px;border-radius:50%;background:var(--acc,var(--violet));box-shadow:0 0 6px var(--acc,var(--violet))}
+  .cell .knobs{display:flex;flex-wrap:wrap;gap:12px 10px;align-content:flex-start;flex:1}
+  .miniscreen{font-family:"IBM Plex Mono",monospace;font-size:14px;color:var(--lowfam);text-shadow:0 0 10px currentColor;
+    background:#0a0810;border:1px solid var(--well-edge);border-radius:8px;padding:5px 8px;text-align:center;
+    box-shadow:inset 0 1px 6px rgba(0,0,0,.8)}
+  .seg{display:inline-flex;border:1px solid var(--well-edge);border-radius:8px;overflow:hidden;background:#0a0810}
+  .seg button{background:none;border:0;cursor:pointer;padding:5px 7px;font-family:"IBM Plex Mono",monospace;
+    font-size:8px;letter-spacing:.08em;color:var(--ink-dim);text-transform:uppercase}
+  .seg button.on{color:var(--ink-hi);background:rgba(69,44,221,.26)}
+  .seg button.on.r{background:rgba(209,54,58,.26)}
 
   a:focus-visible,button:focus-visible{outline:2px solid var(--magenta);outline-offset:2px;border-radius:6px}
 
-  @media (max-width:900px){
-    .rack{grid-template-columns:repeat(2,1fr)}
-    .utility{grid-template-columns:repeat(2,1fr)}
-    .macros{grid-template-columns:repeat(2,1fr)}
-  }
-  @media (max-width:540px){
-    .rack,.utility,.macros{grid-template-columns:1fr}
-    body{padding:16px 10px 40px}
-  }
+  /* ===================== DESIGN NOTES (below the fold) ===================== */
+  .notes{width:min(1100px,92vw);margin:26px auto 64px;border:1px solid var(--panel-edge);border-radius:20px;
+    background:linear-gradient(#100d16,#0b0912);padding:28px;display:flex;flex-direction:column;gap:22px}
+  .notes h2{margin:0;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:15px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-hi)}
+  .notes h4{margin:0 0 8px;font-family:"IBM Plex Sans",sans-serif;font-weight:600;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--magenta)}
+  .notes p{margin:0;max-width:66ch;font-size:13.5px;color:#b3b4c0}
+  .notes ul{margin:0;padding-left:18px;font-size:13px;color:#a7a8b4;display:flex;flex-direction:column;gap:5px}
+  .notes .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:22px}
+  .notes code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:#c9c6d2;background:#17131f;padding:1px 5px;border-radius:4px}
+  .sw{display:flex;flex-wrap:wrap;gap:10px}
+  .sw span{display:flex;align-items:center;gap:8px;font-family:"IBM Plex Mono",monospace;font-size:10px}
+  .sw i{width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.12)}
+  .rule{height:1px;background:var(--panel-edge)}
 </style>
 
-<div class="wrap">
+<div class="stage">
+  <div class="fit">
 
-  <!-- ================= THE INSTRUMENT ================= -->
-  <div class="unit" role="img" aria-label="Kick Designer 2 plugin interface concept: a blacked-out rack instrument with a kick-waveform oscilloscope, four macro knobs, and eight synthesis panels.">
+    <div class="instrument" role="img" aria-label="Kick Designer 2 plugin interface concept: a soft-bodied rack instrument with a kick-waveform oscilloscope, four macro modules (Punch, Body, Crush, Tail) and an eight-cell engine strip.">
+     <div class="faceplate">
 
-    <div class="topbar">
-      <div class="brand">
-        <i class="mk"></i>
-        <b>Kick&nbsp;Designer&nbsp;2</b>
-        <span>v1.0</span>
+      <!-- header -->
+      <div class="head">
+        <div class="logo">
+          <i class="led"></i>
+          <b>Kick&nbsp;Designer&nbsp;2</b>
+          <s>v1.0</s>
+        </div>
+        <div class="pill">
+          <button aria-label="Previous preset">&#9664;</button>
+          <div class="name">Warehouse</div>
+          <button aria-label="Next preset">&#9654;</button>
+        </div>
+        <div class="btns">
+          <button class="b">Save</button>
+          <button class="b">Undo</button>
+          <button class="b">Redo</button>
+          <button class="b hot">Randomize</button>
+          <button class="b">Mutate</button>
+          <button class="b">A/B</button>
+        </div>
       </div>
-      <div class="shuttle">
-        <button aria-label="Previous preset">&#9664;</button>
-        <div class="name">Warehouse</div>
-        <button aria-label="Next preset">&#9654;</button>
+
+      <!-- oscilloscope: the real kick waveform -->
+      <div class="scope">
+        <canvas id="wave"></canvas>
+        <div class="wm">Kick&nbsp;Designer&nbsp;2</div>
+        <div class="yax"><span>+1</span><span>0</span><span>&minus;1</span></div>
+        <div class="modes">
+          <button class="on">WAVE</button>
+          <button>SPECTRUM</button>
+        </div>
+        <div class="xax"><span>0</span><span>100&nbsp;ms</span><span>200</span><span>300</span><span>400</span><span>500</span></div>
+        <div class="vig"></div>
       </div>
-      <div class="actions">
-        <button class="btn">Save</button>
-        <button class="btn">Undo</button>
-        <button class="btn">Redo</button>
-        <button class="btn sel">Randomize</button>
-        <button class="btn">Mutate</button>
-        <button class="btn">A/B</button>
+
+      <!-- hero macro modules -->
+      <div class="heroes">
+
+        <div class="mod">
+          <div class="mhead"><h3>Punch</h3>
+            <div class="dots" style="--acc:var(--red)"><span class="dot on r"></span><span class="dot"></span></div></div>
+          <div class="mbody">
+            <div class="knob lg" style="--p:.63;--acc:var(--red)"></div>
+            <div class="lcd red"><span class="l">Transient + pitch attack</span><span class="row"><span class="v">+63</span><span class="u">%</span></span></div>
+          </div>
+          <div class="mfoot">
+            <div class="kc"><div class="knob sm" style="--p:.72;--acc:var(--red)"></div><span class="lab">T&#8202;Atk</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.40;--acc:var(--red)"></div><span class="lab">T&#8202;Sus</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.44;--acc:var(--lowfam)"></div><span class="lab">P&#8202;Start</span></div>
+          </div>
+        </div>
+
+        <div class="mod">
+          <div class="mhead"><h3>Body</h3>
+            <div class="dots" style="--acc:var(--lowfam)"><span class="dot on"></span><span class="dot"></span></div></div>
+          <div class="mbody">
+            <div class="knob lg" style="--p:.55;--acc:var(--lowfam)"></div>
+            <div class="lcd blue"><span class="l">Fundamental</span><span class="row"><span class="v">55</span><span class="u">Hz</span></span></div>
+          </div>
+          <div class="mfoot">
+            <div class="kc"><div class="knob sm" style="--p:1;--acc:var(--violet)"></div><span class="lab">Level</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.42;--acc:var(--lowfam)"></div><span class="lab">Decay</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.15;--acc:var(--violet)"></div><span class="lab">Harm</span></div>
+          </div>
+        </div>
+
+        <div class="mod">
+          <div class="mhead"><h3>Crush</h3>
+            <div class="dots" style="--acc:var(--magenta)"><span class="dot on"></span><span class="dot"></span></div></div>
+          <div class="mbody">
+            <div class="knob lg" style="--p:.71;--acc:var(--magenta)"></div>
+            <div class="sel"><span>&#9664;</span><b>Tanh&#8202;&#8594;&#8202;Cubic</b><span>&#9654;</span></div>
+          </div>
+          <div class="mfoot">
+            <div class="kc"><div class="knob sm" style="--p:.30;--acc:var(--red)"></div><span class="lab">Drive</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.10;--acc:var(--magenta)"></div><span class="lab">Charactr</span></div>
+            <div class="kc"><div class="knob sm" style="--p:1;--acc:var(--magenta)"></div><span class="lab">Mix</span></div>
+          </div>
+        </div>
+
+        <div class="mod">
+          <div class="mhead"><h3>Tail</h3>
+            <div class="dots" style="--acc:var(--lowfam)"><span class="dot on"></span><span class="dot"></span></div></div>
+          <div class="mbody">
+            <div class="knob lg" style="--p:.38;--acc:var(--lowfam)"></div>
+            <div class="lcd blue"><span class="l">Length</span><span class="row"><span class="v">200</span><span class="u">ms</span></span></div>
+          </div>
+          <div class="mfoot">
+            <div class="kc"><div class="knob sm" style="--p:.30;--acc:var(--lowfam)"></div><span class="lab">Level</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.50;--acc:var(--lowfam)"></div><span class="lab">Tone</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.22;--acc:var(--red)"></div><span class="lab">Drive</span></div>
+          </div>
+        </div>
+
       </div>
+
+      <!-- engine strip: every remaining section -->
+      <div class="engine">
+
+        <div class="cell" style="--acc:var(--lowfam)">
+          <h4><i></i>Pitch</h4>
+          <div class="miniscreen">55 Hz</div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:.33;--acc:var(--lowfam)"></div><span class="lab">Fund</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.44;--acc:var(--lowfam)"></div><span class="lab">Start</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.28;--acc:var(--lowfam)"></div><span class="lab">Time</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.70;--acc:var(--lowfam)"></div><span class="lab">Curve</span></div>
+          </div>
+        </div>
+
+        <div class="cell" style="--acc:var(--magenta)">
+          <h4><i></i>Click</h4>
+          <div class="miniscreen" style="color:var(--magenta)">4.0 kHz</div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:.40;--acc:var(--magenta)"></div><span class="lab">Level</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.50;--acc:var(--magenta)"></div><span class="lab">Tone</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.20;--acc:var(--magenta)"></div><span class="lab">Time</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.55;--acc:var(--magenta)"></div><span class="lab">Pitch</span></div>
+          </div>
+        </div>
+
+        <div class="cell" style="--acc:var(--lowfam)">
+          <h4><i></i>Sub</h4>
+          <div class="miniscreen">40 Hz</div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:.55;--acc:var(--lowfam)"></div><span class="lab">Level</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.30;--acc:var(--lowfam)"></div><span class="lab">Freq</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.28;--acc:var(--lowfam)"></div><span class="lab">Decay</span></div>
+          </div>
+        </div>
+
+        <div class="cell" style="--acc:var(--magenta)">
+          <h4><i></i>Noise</h4>
+          <div class="seg"><button class="on">White</button><button>Pink</button><button>Filt</button></div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:0;--acc:var(--magenta)"></div><span class="lab">Level</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.30;--acc:var(--magenta)"></div><span class="lab">Decay</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.50;--acc:var(--magenta)"></div><span class="lab">Tone</span></div>
+          </div>
+        </div>
+
+        <div class="cell" style="--acc:var(--violet)">
+          <h4><i></i>Tone</h4>
+          <div class="miniscreen" style="color:var(--violet)">PRE&#8202;DIST</div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:.62;--acc:var(--violet)"></div><span class="lab">Low</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.44;--acc:var(--violet)"></div><span class="lab">Mid</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.55;--acc:var(--violet)"></div><span class="lab">High</span></div>
+          </div>
+        </div>
+
+        <div class="cell" style="--acc:var(--violet)">
+          <h4><i></i>Stereo</h4>
+          <div class="miniscreen" style="color:var(--violet);font-size:11px">MONO&#8202;&lt;&#8202;130</div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:0;--acc:var(--violet)"></div><span class="lab">Body</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.30;--acc:var(--magenta)"></div><span class="lab">Click</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.50;--acc:var(--violet)"></div><span class="lab">Out</span></div>
+          </div>
+        </div>
+
+        <div class="cell" style="--acc:var(--lowfam)">
+          <h4><i></i>Tuning</h4>
+          <div class="seg"><button class="on">MIDI</button><button>Fixed</button></div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:.5;--acc:var(--lowfam)"></div><span class="lab">Tune</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.5;--acc:var(--lowfam)"></div><span class="lab">Fine</span></div>
+          </div>
+        </div>
+
+        <div class="cell" style="--acc:var(--red)">
+          <h4><i></i>Output</h4>
+          <div class="seg"><button>1&times;</button><button class="on">2&times;</button><button>4&times;</button><button>8&times;</button></div>
+          <div class="knobs">
+            <div class="kc"><div class="knob sm" style="--p:.62;--acc:var(--violet)"></div><span class="lab">Gain</span></div>
+            <div class="kc"><div class="knob sm" style="--p:1;--acc:var(--violet)"></div><span class="lab">Mix</span></div>
+            <div class="kc"><div class="seg" style="align-self:center"><button class="on r">Lim</button></div><span class="lab" style="margin-top:6px">Limiter</span></div>
+          </div>
+        </div>
+
+      </div>
+
+     </div>
     </div>
-
-    <!-- ---- KICK OSCILLOSCOPE (replaces the reference's spectrum/EQ) ---- -->
-    <div class="scope">
-      <canvas id="wave"></canvas>
-      <div class="watermark">Kick&nbsp;Designer&nbsp;2</div>
-      <div class="scale"><span>0&nbsp;dB</span><span>&minus;12</span><span>&minus;24</span></div>
-      <div class="modes">
-        <button class="on">WAVE</button>
-        <button>SPECTRUM</button>
-      </div>
-      <div class="ax"><span>0</span><span>100&nbsp;ms</span><span>200</span><span>300</span><span>400</span></div>
-      <div class="vignette"></div>
-    </div>
-
-    <!-- ---- MACROS ---- -->
-    <div class="macros">
-      <div class="macro">
-        <div class="knob lg" style="--p:.62;--acc:var(--red)"></div>
-        <div class="cap">Punch</div>
-        <div class="sub">transient + pitch attack</div>
-        <div class="val">+62</div>
-      </div>
-      <div class="macro">
-        <div class="knob lg" style="--p:.55;--acc:var(--violet)"></div>
-        <div class="cap">Body</div>
-        <div class="sub">level + decay + tune</div>
-        <div class="val">+55</div>
-      </div>
-      <div class="macro">
-        <div class="knob lg" style="--p:.71;--acc:var(--magenta)"></div>
-        <div class="cap">Crush</div>
-        <div class="sub">drive + character</div>
-        <div class="val">+71</div>
-      </div>
-      <div class="macro">
-        <div class="knob lg" style="--p:.38;--acc:#6f7bff"></div>
-        <div class="cap">Tail</div>
-        <div class="sub">level + length + tone</div>
-        <div class="val">&minus;24</div>
-      </div>
-    </div>
-
-    <!-- ---- RACK: 8 synthesis panels ---- -->
-    <div class="rack">
-
-      <!-- PITCH -->
-      <div class="panel">
-        <div class="phead"><h3>Pitch</h3><div class="dots"><span class="dot on"></span></div></div>
-        <div class="prow">
-          <div class="knob" style="--p:.33;--acc:#6f7bff" title="Fundamental"></div>
-          <div class="lcd blue"><span class="l">Fundamental</span><span class="row"><span class="v">55</span><span class="u">Hz</span></span></div>
-        </div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:.42;--acc:#6f7bff"></div><span class="lab">Start</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.28;--acc:#6f7bff"></div><span class="lab">Time</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.70;--acc:#6f7bff"></div><span class="lab">Curve</span></div>
-        </div>
-      </div>
-
-      <!-- BODY -->
-      <div class="panel">
-        <div class="phead"><h3>Body</h3><div class="dots"><span class="dot on"></span></div></div>
-        <div class="prow">
-          <div class="knob" style="--p:1;--acc:var(--violet)" title="Body Level"></div>
-          <div class="lcd"><span class="l">Decay</span><span class="row"><span class="v">400</span><span class="u">ms</span></span></div>
-        </div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:1;--acc:var(--violet)"></div><span class="lab">Level</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.15;--acc:var(--violet)"></div><span class="lab">Harm</span></div>
-        </div>
-      </div>
-
-      <!-- CLICK -->
-      <div class="panel">
-        <div class="phead"><h3>Click</h3><div class="dots"><span class="dot on"></span></div></div>
-        <div class="prow">
-          <div class="knob" style="--p:.40;--acc:var(--magenta)" title="Click Level"></div>
-          <div class="lcd"><span class="l">Tone</span><span class="row"><span class="v">4.0</span><span class="u">kHz</span></span></div>
-        </div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:.40;--acc:var(--magenta)"></div><span class="lab">Level</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.20;--acc:var(--magenta)"></div><span class="lab">Time</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.55;--acc:var(--magenta)"></div><span class="lab">Pitch</span></div>
-        </div>
-      </div>
-
-      <!-- SUB -->
-      <div class="panel">
-        <div class="phead"><h3>Sub</h3><div class="dots"><span class="dot on"></span></div></div>
-        <div class="prow">
-          <div class="knob" style="--p:.55;--acc:#6f7bff" title="Sub Level"></div>
-          <div class="lcd blue"><span class="l">Frequency &middot; mono</span><span class="row"><span class="v">40</span><span class="u">Hz</span></span></div>
-        </div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:.55;--acc:#6f7bff"></div><span class="lab">Level</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.30;--acc:#6f7bff"></div><span class="lab">Decay</span></div>
-        </div>
-      </div>
-
-      <!-- TAIL -->
-      <div class="panel">
-        <div class="phead"><h3>Tail</h3><div class="dots"><span class="dot on"></span></div></div>
-        <div class="prow">
-          <div class="knob" style="--p:.30;--acc:#6f7bff" title="Tail Level"></div>
-          <div class="lcd"><span class="l">Length</span><span class="row"><span class="v">200</span><span class="u">ms</span></span></div>
-        </div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:.30;--acc:#6f7bff"></div><span class="lab">Level</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.50;--acc:#6f7bff"></div><span class="lab">Tone</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.20;--acc:var(--red)"></div><span class="lab">Drive</span></div>
-        </div>
-      </div>
-
-      <!-- NOISE -->
-      <div class="panel">
-        <div class="phead"><h3>Noise</h3><div class="dots"><span class="dot"></span></div></div>
-        <div class="prow">
-          <div class="knob" style="--p:0;--acc:var(--magenta)" title="Noise Level (off)"></div>
-          <div class="selector"><span>&#9664;</span><b>White</b><span>&#9654;</span></div>
-        </div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:0;--acc:var(--magenta)"></div><span class="lab">Level</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.30;--acc:var(--magenta)"></div><span class="lab">Decay</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.50;--acc:var(--magenta)"></div><span class="lab">Tone</span></div>
-        </div>
-      </div>
-
-      <!-- DRIVE -->
-      <div class="panel">
-        <div class="phead"><h3>Drive</h3><div class="dots"><span class="dot on red"></span></div></div>
-        <div class="prow">
-          <div class="knob" style="--p:.30;--acc:var(--red)" title="Drive"></div>
-          <div class="lcd red"><span class="l">Character &middot; morph</span><span class="row"><span class="v" style="font-size:12px">TANH&#8594;CUBIC</span></span></div>
-        </div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:.30;--acc:var(--red)"></div><span class="lab">Drive</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.06;--acc:var(--magenta)"></div><span class="lab">Charactr</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:1;--acc:var(--red)"></div><span class="lab">Mix</span></div>
-        </div>
-      </div>
-
-      <!-- TONE -->
-      <div class="panel">
-        <div class="phead"><h3>Tone</h3><div class="dots"><span class="dot on"></span></div></div>
-        <div class="minicurve"><canvas id="tone" style="width:100%;height:100%;display:block"></canvas></div>
-        <div class="psmall" style="justify-content:space-between">
-          <div class="kctl"><div class="knob sm" style="--p:.62;--acc:var(--violet)"></div><span class="lab">Low</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.44;--acc:var(--violet)"></div><span class="lab">Mid</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.55;--acc:var(--violet)"></div><span class="lab">High</span></div>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- ---- UTILITY STRIP ---- -->
-    <div class="utility">
-
-      <div class="panel">
-        <div class="phead"><h3>Transient</h3></div>
-        <div class="bipole">
-          <div class="kctl"><div class="knob" style="--p:.72;--acc:var(--red)"></div><span class="lab">Attack</span></div>
-          <div class="kctl"><div class="knob" style="--p:.40;--acc:var(--red)"></div><span class="lab">Sustain</span></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="phead"><h3>Stereo</h3><span class="lab" style="color:var(--text-dim)">mono &lt; 130 Hz</span></div>
-        <div class="psmall" style="justify-content:space-between">
-          <div class="kctl"><div class="knob sm" style="--p:0;--acc:var(--violet)"></div><span class="lab">Body</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.30;--acc:var(--magenta)"></div><span class="lab">Click</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.50;--acc:var(--violet)"></div><span class="lab">Output</span></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="phead"><h3>Tuning</h3></div>
-        <div class="toggle"><button class="on">MIDI</button><button>Fixed</button></div>
-        <div class="psmall">
-          <div class="kctl"><div class="knob sm" style="--p:.5;--acc:#6f7bff"></div><span class="lab">Tune</span></div>
-          <div class="kctl"><div class="knob sm" style="--p:.5;--acc:#6f7bff"></div><span class="lab">Fine</span></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="phead"><h3>Output</h3>
-          <div class="toggle"><button class="on red">LIM</button></div>
-        </div>
-        <div class="outwrap">
-          <div class="fader" style="--p:.6" aria-hidden="true"></div>
-          <div class="kctl"><div class="knob sm" style="--p:1;--acc:var(--violet)"></div><span class="lab">Mix</span></div>
-          <div class="toggle" style="margin-left:auto"><button>1&times;</button><button class="on">2&times;</button><button>4&times;</button><button>8&times;</button></div>
-        </div>
-      </div>
-
-    </div>
-
   </div>
 
-  <!-- ================= DESIGN NOTES ================= -->
+  <!-- ===================== DESIGN NOTES ===================== -->
   <div class="notes">
     <div>
-      <h2>UI Concept &mdash; v1</h2>
-      <p>A blacked-out rack instrument for hard-techno kick design. It borrows the <em>anatomy</em> of the reference &mdash; a full-width screen up top, a row of rounded panels each pairing a big knob with an inset LCD readout and a cluster of small knobs, discreet power/solo dots &mdash; but it is darker, harder-edged, and organised for a 45-parameter synth rather than a 4-panel bass tool.</p>
+      <h2>UI Concept &mdash; v2</h2>
+      <p>A soft-bodied rack instrument. The chassis, bezel, panel material and control anatomy follow the reference &mdash; a pillowy rounded body, a full-width inset screen, modules that pair a big soft knob with a glowing LCD and a cluster of small knobs, discreet round indicator lamps. Reworked for a 45-parameter kick synth: the four <strong>macros</strong> (Punch / Body / Crush / Tail) are the hero modules, and an eight-cell engine strip below carries every remaining section.</p>
     </div>
 
     <div>
       <h4>Palette</h4>
-      <div class="swatches">
-        <span class="sw"><i style="background:#08090E"></i>#08090E&nbsp;void</span>
-        <span class="sw"><i style="background:#4B3C46"></i>#4B3C46&nbsp;surface&nbsp;tint</span>
-        <span class="sw"><i style="background:#452CDD"></i>#452CDD&nbsp;primary</span>
-        <span class="sw"><i style="background:#C041DD"></i>#C041DD&nbsp;secondary</span>
-        <span class="sw"><i style="background:#D1363A"></i>#D1363A&nbsp;energy</span>
-        <span class="sw"><i style="background:#1B139D"></i>#1B139D&nbsp;depth</span>
-        <span class="sw"><i style="background:#17155D"></i>#17155D&nbsp;depth</span>
-        <span class="sw"><i style="background:#9EA0AE"></i>#9EA0AE&nbsp;text</span>
+      <div class="sw">
+        <span><i style="background:#08090E"></i>#08090E&nbsp;void</span>
+        <span><i style="background:#4B3C46"></i>#4B3C46&nbsp;chassis&nbsp;warmth</span>
+        <span><i style="background:#452CDD"></i>#452CDD&nbsp;primary</span>
+        <span><i style="background:#6F7BFF"></i>#6F7BFF&nbsp;low-end&nbsp;family</span>
+        <span><i style="background:#C041DD"></i>#C041DD&nbsp;LCD&nbsp;/&nbsp;Crush</span>
+        <span><i style="background:#D1363A"></i>#D1363A&nbsp;energy</span>
+        <span><i style="background:#1B139D"></i>#1B139D&nbsp;depth</span>
+        <span><i style="background:#9EA0AE"></i>#9EA0AE&nbsp;text</span>
       </div>
-      <p style="margin-top:10px">Violet&#8594;magenta is the signature; <strong style="color:var(--red)">red</strong> is reserved for energy &mdash; Punch, drive, the transient of the waveform, the limiter&nbsp;LED. Blue-violet (<code>#6f7bff</code>, a lifted <code>#452CDD</code>) marks the pitch/sub/tail family so the eye can group the low-end controls.</p>
+      <p style="margin-top:10px">Violet&#8594;magenta is the signature; <strong style="color:#D1363A">red</strong> is reserved for energy &mdash; Punch, drive, the transient of the waveform, the limiter lamp. A lifted blue-violet (<code>#6F7BFF</code>) tags the low-frequency family (Pitch, Body, Sub, Tail) so those controls read as a group.</p>
     </div>
 
-    <div class="grid">
+    <div class="cols">
       <div>
         <h4>Type</h4>
         <ul>
-          <li><strong>Chakra Petch</strong> &mdash; wordmark, panel titles, macro caps. Angular, technical, a little aggressive.</li>
-          <li><strong>IBM Plex Sans</strong> &mdash; control labels, buttons.</li>
-          <li><strong>IBM Plex Mono</strong> &mdash; every numeric readout and LCD, tabular figures.</li>
+          <li><strong>Chakra Petch</strong> &mdash; wordmark, titles. Angular, technical.</li>
+          <li><strong>IBM Plex Sans</strong> &mdash; labels, buttons.</li>
+          <li><strong>IBM Plex Mono</strong> &mdash; every readout, tabular figures.</li>
         </ul>
       </div>
       <div>
-        <h4>Taken from the reference</h4>
+        <h4>From the reference</h4>
         <ul>
-          <li>Full-width screen; panel = title + dots + big knob + LCD + small knobs.</li>
-          <li>Glowing LCD readouts with label / value / unit.</li>
-          <li>Soft rounded rack body, inset wells, a single rim-light on the top edge.</li>
-          <li>A morph/selector LCD (their TUBE &#8594; our Character morph).</li>
+          <li>Soft rounded chassis, thick bezel, rim-light on the top edge.</li>
+          <li>Panel = title + indicator lamps + big knob + inset LCD + small knobs.</li>
+          <li>Thin short knob pointer near the rim, not a full needle.</li>
+          <li>Glowing LCDs; a selector screen (their TUBE &#8594; our Character morph).</li>
         </ul>
       </div>
       <div>
         <h4>Deliberately different</h4>
         <ul>
           <li>Near-black ground, violet + red instead of blue + amber.</li>
-          <li><strong>Kick oscilloscope</strong> up top &mdash; the most recent kick, red transient collapsing into a violet decaying sine &mdash; not a spectrum/EQ. <code>WAVE / SPECTRUM</code> toggles it.</li>
-          <li>A dedicated <strong>macro bar</strong> (Punch / Body / Crush / Tail) as the primary layer.</li>
-          <li>Two rows of eight panels for the full engine; a utility strip for transient, stereo, tuning, output + oversampling.</li>
-          <li>No input fader &mdash; it is an instrument, output-only.</li>
+          <li>The screen is a <strong>kick oscilloscope</strong> &mdash; the most recent hit, computed from the pitch + amplitude envelopes: hot transient, then the fundamental settling and decaying. <code>WAVE / SPECTRUM</code> toggles it.</li>
+          <li>Macros are the hero row; an 8-cell engine strip fits the full parameter set with no menu.</li>
+          <li>Output-only &mdash; it is an instrument, no input fader.</li>
         </ul>
       </div>
     </div>
 
-    <div class="divider"></div>
-
+    <div class="rule"></div>
     <div>
       <h4>Every control has a home</h4>
       <ul>
         <li><strong>Header</strong> &mdash; preset shuttle, Save, Undo/Redo, Randomize, Mutate, A/B.</li>
-        <li><strong>Scope</strong> &mdash; waveform of the last kick (spectrum on toggle); ms axis, dB scale.</li>
-        <li><strong>Macros</strong> &mdash; Punch, Body, Crush, Tail.</li>
-        <li><strong>Pitch</strong> &mdash; Fundamental, Start, Time, Curve &nbsp;&middot;&nbsp; <strong>Body</strong> &mdash; Level, Decay, Harmonics</li>
-        <li><strong>Click</strong> &mdash; Level, Tone, Time, Pitch &nbsp;&middot;&nbsp; <strong>Sub</strong> &mdash; Level, Frequency, Decay</li>
-        <li><strong>Tail</strong> &mdash; Level, Length, Tone, Drive &nbsp;&middot;&nbsp; <strong>Noise</strong> &mdash; Level, Decay, Tone, Type</li>
-        <li><strong>Drive</strong> &mdash; Drive, Character (morph), Mix &nbsp;&middot;&nbsp; <strong>Tone</strong> &mdash; Low, Mid, High</li>
-        <li><strong>Utility</strong> &mdash; Transient Attack/Sustain, Stereo Body/Click/Output width, Tune Mode + Tune/Fine, Output + Limiter + Mix + Oversampling.</li>
+        <li><strong>Punch</strong> &mdash; macro + Transient Atk/Sus + Pitch Start &nbsp;&middot;&nbsp; <strong>Body</strong> &mdash; macro/Fundamental + Level/Decay/Harmonics</li>
+        <li><strong>Crush</strong> &mdash; macro + Drive/Character morph/Mix &nbsp;&middot;&nbsp; <strong>Tail</strong> &mdash; macro/Length + Level/Tone/Drive</li>
+        <li><strong>Engine strip</strong> &mdash; Pitch (Fund/Start/Time/Curve), Click (Level/Tone/Time/Pitch), Sub (Level/Freq/Decay), Noise (Type/Level/Decay/Tone), Tone (Low/Mid/High), Stereo (Body/Click/Out width), Tuning (Mode/Tune/Fine), Output (Gain/Mix/Limiter/Oversampling).</li>
       </ul>
-      <p style="margin-top:12px">45 automatable parameters + 4 macros, all visible without a menu. This mockup is a static concept &mdash; knob positions show a plausible &ldquo;Warehouse&rdquo; patch. Built for the native-JUCE UI in Stage&nbsp;3.</p>
+      <p style="margin-top:12px">45 automatable parameters + 4 macros, all on one face. Static concept &mdash; knob positions show a plausible &ldquo;Warehouse&rdquo; patch. Target: the native-JUCE UI in Stage&nbsp;3.</p>
     </div>
   </div>
-
 </div>
 
 <script>
 (function(){
   "use strict";
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+  window.scrollTo(0, 0);
   var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  /* ---------- kick oscilloscope ---------- */
-  var wc = document.getElementById("wave");
-  var wx = wc.getContext("2d");
-
-  function synthKick(t){
-    // t in seconds (0 .. 0.45). Returns sample -1..1
-    var fund = 55, startRatio = 4.4, pitchTime = 0.052, k = 6.6;
-    var tau = Math.min(t / pitchTime, 1);
-    var e = (Math.exp(-k*tau) - Math.exp(-k)) / (1 - Math.exp(-k)); // 1 -> 0
-    // integrate frequency for phase (closed enough for a picture)
-    // approximate running phase via small-step accumulation handled by caller
-    return e; // caller does phase; return envelope helper only
+  /* ---- scale the fixed instrument to the viewport ---- */
+  var inst = document.querySelector(".instrument");
+  var fitEl = document.querySelector(".fit");
+  function fit(){
+    var s = Math.min(window.innerWidth / 1600, (window.innerHeight - 28) / 904, 1);
+    s = Math.max(s, 0.2);
+    inst.style.setProperty("--s", s);
+    fitEl.style.height = (904 * s + 28) + "px";
   }
+  fit();
+
+  /* ---- kick oscilloscope: waveform from the actual envelope model ---- */
+  var wc = document.getElementById("wave"), wx = wc.getContext("2d");
 
   function drawWave(){
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
     var w = wc.clientWidth, h = wc.clientHeight;
-    wc.width = w*dpr; wc.height = h*dpr;
-    wx.setTransform(dpr,0,0,dpr,0,0);
-    wx.clearRect(0,0,w,h);
+    if(!w || !h) return;
+    wc.width = w * dpr; wc.height = h * dpr;
+    wx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    wx.clearRect(0, 0, w, h);
 
-    // grid
-    wx.strokeStyle = "rgba(158,160,174,0.08)";
-    wx.lineWidth = 1;
-    for(var gi=1; gi<5; gi++){ var gx = w*gi/5; wx.beginPath(); wx.moveTo(gx,0); wx.lineTo(gx,h); wx.stroke(); }
-    wx.strokeStyle = "rgba(158,160,174,0.10)";
-    wx.beginPath(); wx.moveTo(0,h/2); wx.lineTo(w,h/2); wx.stroke();
+    var mid = h * 0.52, amp = h * 0.40;
 
-    var dur = 0.45, N = Math.max(600, Math.floor(w*2));
-    var fund = 55, startRatio = 4.4, pitchTime = 0.052, kP = 6.6;
-    var ampDecay = 0.10;               // seconds
-    var mid = h/2, amp = h*0.40;
-    var phase = 0, prevT = 0;
+    /* grid */
+    wx.strokeStyle = "rgba(158,160,174,0.07)"; wx.lineWidth = 1;
+    for(var g = 1; g < 6; g++){ var gx = w * g / 6; wx.beginPath(); wx.moveTo(gx, 0); wx.lineTo(gx, h); wx.stroke(); }
+    wx.strokeStyle = "rgba(158,160,174,0.11)";
+    wx.beginPath(); wx.moveTo(0, mid); wx.lineTo(w, mid); wx.stroke();
 
-    var pts = [];
-    for(var i=0;i<=N;i++){
-      var tt = i/N * dur;
-      var tau = Math.min(tt/pitchTime,1);
-      var eP = (Math.exp(-kP*tau)-Math.exp(-kP))/(1-Math.exp(-kP));
-      var f = fund * Math.pow(startRatio, eP);
-      var dt = tt - prevT; prevT = tt;
-      phase += 2*Math.PI*f*dt;
-      var env = Math.exp(-tt/ampDecay);
-      // click burst: first ~5 ms of bright content
-      var click = (tt < 0.006) ? (Math.exp(-tt/0.0016) * (Math.sin(tt*2*Math.PI*5200) + (Math.random()-0.5)*0.5) * 0.5) : 0;
-      var s = env * Math.sin(phase) + click*Math.exp(-tt/0.02);
-      pts.push([ i/N*w, mid - s*amp ]);
+    /* --- kick model (matches the spec's Warehouse-ish default) --- */
+    var dur = 0.52;                       // seconds shown
+    var fund = 52;                        // Hz  (fundamental, ~ -a few st under 55)
+    var startMult = 5.6;                  // pitch start x fundamental
+    var pitchTime = 0.045;                // s   pitch fall
+    var kP = 7.2;                         // pitch curve sharpness
+    var ampDecay = 0.115;                 // s   body exponential decay
+    var attackMs = 0.002;
+
+    var N = Math.max(1400, Math.floor(w * 2.2));
+    var phase = 0, prevT = 0, pts = [];
+    var eK = 1 - Math.exp(-kP);
+    for(var i = 0; i <= N; i++){
+      var t = i / N * dur;
+      var tau = Math.min(t / pitchTime, 1);
+      var e = (Math.exp(-kP * tau) - Math.exp(-kP)) / eK;         // 1 -> 0
+      var f = fund * Math.pow(startMult, e);
+      var dt = t - prevT; prevT = t;
+      phase += 2 * Math.PI * f * dt;
+
+      var atk = t < attackMs ? (t / attackMs) : 1;                 // 2 ms raised
+      atk = atk * atk * (3 - 2 * atk);
+      var env = atk * Math.exp(-t / ampDecay);
+
+      var body = env * Math.sin(phase);
+
+      /* click: bright filtered-noise + high sine burst, ~4 ms */
+      var click = 0;
+      if(t < 0.005){
+        var cd = Math.exp(-t / 0.0013);
+        click = cd * (0.55 * Math.sin(t * 2 * Math.PI * 5400) + 0.45 * (pseudo(i) - 0.5)) * 0.9;
+      }
+      var s = body + click;
+      pts.push([ i / N * w, mid - s * amp ]);
     }
 
-    // fill under curve
-    var gradF = wx.createLinearGradient(0,0,w,0);
-    gradF.addColorStop(0, "rgba(209,54,58,0.22)");
-    gradF.addColorStop(0.10, "rgba(192,65,221,0.20)");
-    gradF.addColorStop(1, "rgba(69,44,221,0.03)");
+    /* amplitude-envelope ghost outline */
+    wx.strokeStyle = "rgba(111,123,255,0.22)"; wx.lineWidth = 1; wx.setLineDash([3,4]);
     wx.beginPath();
-    wx.moveTo(pts[0][0], mid);
-    for(var p=0;p<pts.length;p++) wx.lineTo(pts[p][0], pts[p][1]);
-    wx.lineTo(w, mid);
-    wx.closePath();
-    wx.fillStyle = gradF; wx.fill();
-
-    // stroke — glow pass then crisp pass
-    var grad = wx.createLinearGradient(0,0,w,0);
-    grad.addColorStop(0, "#D1363A");
-    grad.addColorStop(0.06, "#D1363A");
-    grad.addColorStop(0.14, "#C041DD");
-    grad.addColorStop(1, "#6a55ff");
-
-    wx.lineJoin = "round"; wx.lineCap = "round";
-    if(!reduce){
-      wx.strokeStyle = grad; wx.lineWidth = 5;
-      wx.shadowColor = "rgba(120,70,255,0.55)"; wx.shadowBlur = 14;
-      wx.beginPath();
-      for(var q=0;q<pts.length;q++){ q?wx.lineTo(pts[q][0],pts[q][1]):wx.moveTo(pts[q][0],pts[q][1]); }
-      wx.stroke();
-      wx.shadowBlur = 0;
+    for(var q = 0; q <= 60; q++){
+      var tt = q / 60 * dur;
+      var ev = Math.exp(-tt / ampDecay);
+      wx.lineTo(q / 60 * w, mid - ev * amp);
     }
-    wx.strokeStyle = grad; wx.lineWidth = 1.6;
-    wx.beginPath();
-    for(var r=0;r<pts.length;r++){ r?wx.lineTo(pts[r][0],pts[r][1]):wx.moveTo(pts[r][0],pts[r][1]); }
     wx.stroke();
-  }
-
-  /* ---------- tone mini-curve ---------- */
-  function drawTone(){
-    var c = document.getElementById("tone"); if(!c) return;
-    var g = c.getContext("2d");
-    var dpr = Math.min(window.devicePixelRatio || 1, 2);
-    var w = c.clientWidth, h = c.clientHeight;
-    c.width = w*dpr; c.height = h*dpr; g.setTransform(dpr,0,0,dpr,0,0);
-    g.clearRect(0,0,w,h);
-    g.strokeStyle = "rgba(158,160,174,0.10)";
-    g.beginPath(); g.moveTo(0,h/2); g.lineTo(w,h/2); g.stroke();
-    // a gentle low-shelf-up / high-shelf-slight tilt
-    g.beginPath();
-    for(var i=0;i<=w;i++){
-      var x = i/w;
-      var y = h/2
-        - Math.exp(-Math.pow((x-0.0)/0.5,2)) * h*0.22   // low bump
-        + Math.exp(-Math.pow((x-0.5)/0.16,2)) * h*0.05   // mid dip
-        - (x>0.7 ? (x-0.7)*h*0.28 : 0);                  // high lift
-      i?g.lineTo(i,y):g.moveTo(i,y);
+    wx.beginPath();
+    for(var q2 = 0; q2 <= 60; q2++){
+      var tt2 = q2 / 60 * dur;
+      var ev2 = Math.exp(-tt2 / ampDecay);
+      wx.lineTo(q2 / 60 * w, mid + ev2 * amp);
     }
-    g.strokeStyle = "#6a55ff"; g.lineWidth = 1.6;
-    g.shadowColor = "rgba(106,85,255,0.5)"; g.shadowBlur = 6;
-    g.stroke();
+    wx.stroke();
+    wx.setLineDash([]);
+
+    /* fill under the wave */
+    var gf = wx.createLinearGradient(0, 0, w, 0);
+    gf.addColorStop(0.00, "rgba(209,54,58,0.20)");
+    gf.addColorStop(0.09, "rgba(192,65,221,0.17)");
+    gf.addColorStop(1.00, "rgba(69,44,221,0.03)");
+    wx.beginPath(); wx.moveTo(pts[0][0], mid);
+    for(var p = 0; p < pts.length; p++) wx.lineTo(pts[p][0], pts[p][1]);
+    wx.lineTo(w, mid); wx.closePath();
+    wx.fillStyle = gf; wx.fill();
+
+    /* the wave — glow pass + crisp pass */
+    var gs = wx.createLinearGradient(0, 0, w, 0);
+    gs.addColorStop(0.00, "#F0474B");
+    gs.addColorStop(0.07, "#D1363A");
+    gs.addColorStop(0.16, "#C041DD");
+    gs.addColorStop(1.00, "#7C6BFF");
+    wx.lineJoin = "round"; wx.lineCap = "round";
+
+    if(!reduce){
+      wx.strokeStyle = gs; wx.lineWidth = 6;
+      wx.shadowColor = "rgba(140,80,255,0.55)"; wx.shadowBlur = 16;
+      trace(pts); wx.shadowBlur = 0;
+    }
+    wx.strokeStyle = gs; wx.lineWidth = 1.7;
+    trace(pts);
+
+    function trace(P){ wx.beginPath(); for(var k = 0; k < P.length; k++){ k ? wx.lineTo(P[k][0], P[k][1]) : wx.moveTo(P[k][0], P[k][1]); } wx.stroke(); }
   }
 
-  function all(){ drawWave(); drawTone(); }
-  all();
+  /* cheap deterministic noise so the click looks the same every render */
+  function pseudo(n){ var x = Math.sin(n * 12.9898) * 43758.5453; return x - Math.floor(x); }
+
+  function draw(){ drawWave(); }
+  draw();
+
   var raf;
   window.addEventListener("resize", function(){
+    fit();
     cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(all);
+    raf = requestAnimationFrame(draw);
   });
 })();
 </script>
