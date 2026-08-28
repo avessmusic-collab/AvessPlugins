@@ -50,7 +50,15 @@ namespace kickr
         TransientShaper) and carries `subLevel` internally, so no engine-side routing
         change. Not velocity-scaled in v1.
 
-        Later phases add: tail/noise (2.6-2.7), sample player (2.7b), distortion
+        PHASE 2.6: `tailLevel` / `tailLength` / `tailTone` / `tailDrive` snapshot per block
+        and forwarded to every voice's `TailGenerator` via `setTailParams`. The tail is a
+        dedicated LF sine locked to the resolved `fundamentalEff` (the same `freqHz` the
+        body gets in `triggerVoice`, before the pitch envelope) — slow ~10 ms attack, exp
+        decay, LP + `tanh` drive, all in-region (AD-10). It sums with body + click + sub
+        inside the voice (before the voice mix / TransientShaper) and carries `tailLevel`
+        internally, so no engine-side routing change. Not velocity-scaled.
+
+        Later phases add: noise (2.7), sample player (2.7b), distortion
         (2.8), tone/stereo/limiter (2.9), real OS switching (2.10), smoothing/macros
         (2.11), analyzer.
     */
@@ -123,6 +131,10 @@ namespace kickr
         std::atomic<float>* pSubLevel { nullptr };     // PHASE 2.5
         std::atomic<float>* pSubFreq  { nullptr };
         std::atomic<float>* pSubDecay { nullptr };
+        std::atomic<float>* pTailLevel  { nullptr };   // PHASE 2.6
+        std::atomic<float>* pTailLength { nullptr };
+        std::atomic<float>* pTailTone   { nullptr };
+        std::atomic<float>* pTailDrive  { nullptr };
 
         // Per-block parameter snapshot.
         struct Snapshot
@@ -145,6 +157,10 @@ namespace kickr
             float subLevel     { 0.5f };     // PHASE 2.5
             float subFreqHz    { 40.0f };
             float subDecayMs   { 300.0f };
+            float tailLevel    { 0.3f };     // PHASE 2.6
+            float tailLengthMs { 200.0f };
+            float tailTone01   { 0.5f };
+            float tailDrive01  { 0.2f };
             int   tuneMode        { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
         };
         Snapshot snap;

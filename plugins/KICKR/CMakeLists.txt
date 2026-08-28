@@ -34,6 +34,8 @@ set(KICKR_CORE_SOURCES
     Source/DSP/ClickGenerator.cpp
     # DSP — Stage 2 Phase 2.5 (independent mono sub oscillator)
     Source/DSP/SubOscillator.cpp
+    # DSP — Stage 2 Phase 2.6 (dedicated LF tail generator)
+    Source/DSP/TailGenerator.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

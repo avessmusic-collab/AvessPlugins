@@ -63,6 +63,10 @@ namespace kickr
         pSubLevel         = apvts.getRawParameterValue (id::subLevel);
         pSubFreq          = apvts.getRawParameterValue (id::subFreq);
         pSubDecay         = apvts.getRawParameterValue (id::subDecay);
+        pTailLevel        = apvts.getRawParameterValue (id::tailLevel);
+        pTailLength       = apvts.getRawParameterValue (id::tailLength);
+        pTailTone         = apvts.getRawParameterValue (id::tailTone);
+        pTailDrive        = apvts.getRawParameterValue (id::tailDrive);
 
         reset();
     }
@@ -297,6 +301,10 @@ namespace kickr
         snap.subLevel        = load (pSubLevel, 0.5f);
         snap.subFreqHz       = load (pSubFreq,  40.0f);
         snap.subDecayMs      = load (pSubDecay, 300.0f);
+        snap.tailLevel       = load (pTailLevel,  0.3f);
+        snap.tailLengthMs    = load (pTailLength, 200.0f);
+        snap.tailTone01      = load (pTailTone,   0.5f);
+        snap.tailDrive01     = load (pTailDrive,  0.2f);
         snap.tuneMode        = static_cast<int> (load (pTuneMode, 0.0f));
 
         // Per-block refresh on BOTH voices (either can be rendering during a crossfade):
@@ -307,6 +315,8 @@ namespace kickr
             v.setPitchParams (effectivePitchStartRatio (lastVel01), snap.pitchTimeMs, snap.pitchCurve);
             v.setClickParams (snap.clickLevel, snap.clickToneHz, snap.clickTimeMs, snap.clickPitchHz);
             v.setSubParams (snap.subLevel, snap.subFreqHz, snap.subDecayMs);
+            // Phase 2.11: tail* below = tailLevel/Length/Tone + macroTail offsets.
+            v.setTailParams (snap.tailLevel, snap.tailLengthMs, snap.tailTone01, snap.tailDrive01);
         }
 
         // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.

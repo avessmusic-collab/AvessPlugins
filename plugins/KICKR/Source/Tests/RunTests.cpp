@@ -80,11 +80,21 @@ int main()
             prm->setValueNotifyingHost (0.0f);
     };
 
+    // Phase 2.6 adds a per-voice tail generator (default tailLevel 0.3 = tail ON).
+    // Pre-2.6 checkpoints assume a bare body (+ click/sub where relevant), so mute
+    // the tail there.
+    auto silenceTail = [] (KICKRAudioProcessor& p)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter ("tailLevel"))
+            prm->setValueNotifyingHost (0.0f);
+    };
+
     std::printf ("\n[Phase 2.1] OS-region shell + MIDI-triggered basic kick\n");
 
     KICKRAudioProcessor proc;
     silenceClick (proc);
     silenceSub (proc);
+    silenceTail (proc);
     const auto buf = kickr::tests::renderNote (proc, a1, vel, sr, 512, 1.0);
     const auto st  = analyse (buf, sr);
 
@@ -106,6 +116,7 @@ int main()
         KICKRAudioProcessor p2;
         silenceClick (p2);
         silenceSub (p2);
+        silenceTail (p2);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_1.wav");
         const bool ok  = kickr::tests::renderNoteToWav (p2, wav, a1, vel, sr, 512, 1.0);
         std::printf ("  wrote %s : %s\n", wav.getFullPathName().toRawUTF8(), ok ? "ok" : "FAILED");
@@ -138,6 +149,7 @@ int main()
         KICKRAudioProcessor p;
         silenceClick (p);
         silenceSub (p);
+        silenceTail (p);
         setP (p, "pitchTime", 900.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
         const double fHead = estFreq (b, sr, 0.002, 0.020);
@@ -150,6 +162,7 @@ int main()
         KICKRAudioProcessor p;
         silenceClick (p);
         silenceSub (p);
+        silenceTail (p);
         setP (p, "pitchTime", 200.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fHead = estFreq (b, sr, 0.003, 0.023);
@@ -168,6 +181,7 @@ int main()
         KICKRAudioProcessor p;
         silenceClick (p);
         silenceSub (p);
+        silenceTail (p);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fFirst20 = estFreq (b, sr, 0.0, 0.020);
         const double fLate    = estFreq (b, sr, 0.090, 0.180);
@@ -183,6 +197,7 @@ int main()
         KICKRAudioProcessor pw;
         silenceClick (pw);
         silenceSub (pw);
+        silenceTail (pw);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_2.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
@@ -194,6 +209,8 @@ int main()
         silenceClick (p1);
         silenceSub (p0);
         silenceSub (p1);
+        silenceTail (p0);
+        silenceTail (p1);
         setP (p0, "pitchCurve", 0.0f);
         setP (p1, "pitchCurve", 1.0f);
         const auto b0 = kickr::tests::renderNote (p0, a1, vel, sr, 512, 1.0);
@@ -260,6 +277,7 @@ int main()
         KICKRAudioProcessor p;
         silenceClick (p);
         silenceSub (p);
+        silenceTail (p);
         auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
         const float* rx = rbuf.getReadPointer (0);
         const int rn = rbuf.getNumSamples();
@@ -294,6 +312,7 @@ int main()
         KICKRAudioProcessor pPos, pMid, pNeg;
         silenceClick (pPos); silenceClick (pMid); silenceClick (pNeg);
         silenceSub (pPos); silenceSub (pMid); silenceSub (pNeg);
+        silenceTail (pPos); silenceTail (pMid); silenceTail (pNeg);
         setP (pPos, "transientAttack",  1.0f);
         setP (pNeg, "transientAttack", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -311,6 +330,7 @@ int main()
         KICKRAudioProcessor pPos, pNeg;
         silenceClick (pPos); silenceClick (pNeg);
         silenceSub (pPos); silenceSub (pNeg);
+        silenceTail (pPos); silenceTail (pNeg);
         setP (pPos, "transientSustain",  1.0f);
         setP (pNeg, "transientSustain", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -330,6 +350,7 @@ int main()
         KICKRAudioProcessor p;
         setP (p, "bodyLevel",  0.0f);
         setP (p, "subLevel",   0.0f);
+        setP (p, "tailLevel",  0.0f);
         setP (p, "clickLevel", level);
         setP (p, "clickTone",  toneHz);
         setP (p, "clickPitch", pitchHz);
@@ -366,8 +387,8 @@ int main()
 
     // body-only render is unchanged when clickLevel = 0
     {
-        KICKRAudioProcessor pB;  silenceClick (pB);  silenceSub (pB);
-        KICKRAudioProcessor pA;  silenceSub (pA);  // default patch minus sub: clickLevel 0.4
+        KICKRAudioProcessor pB;  silenceClick (pB);  silenceSub (pB);  silenceTail (pB);
+        KICKRAudioProcessor pA;  silenceSub (pA);  silenceTail (pA);  // default patch minus sub/tail: clickLevel 0.4
         const auto bBody = kickr::tests::renderNote (pB, a1, vel, sr, 512, 1.0);
         const auto bAll  = kickr::tests::renderNote (pA, a1, vel, sr, 512, 1.0);
         const float* xB = bBody.getReadPointer (0);
@@ -449,6 +470,7 @@ int main()
         KICKRAudioProcessor p;
         setP (p, "bodyLevel",  0.0f);
         setP (p, "clickLevel", 0.0f);
+        setP (p, "tailLevel",  0.0f);
         setP (p, "subLevel",   subLevel);
         setP (p, "subFreq",    subFreqHz);
         setP (p, "subDecay",   subDecayMs);
@@ -484,8 +506,8 @@ int main()
 
         // Same subFreq (50 Hz), wildly different fundamental + pitchStart -> sub pitch unchanged.
         KICKRAudioProcessor pa, pb;
-        setP (pa, "bodyLevel", 0.0f); setP (pa, "clickLevel", 0.0f);
-        setP (pb, "bodyLevel", 0.0f); setP (pb, "clickLevel", 0.0f);
+        setP (pa, "bodyLevel", 0.0f); setP (pa, "clickLevel", 0.0f); setP (pa, "tailLevel", 0.0f);
+        setP (pb, "bodyLevel", 0.0f); setP (pb, "clickLevel", 0.0f); setP (pb, "tailLevel", 0.0f);
         setP (pa, "subFreq", 50.0f);  setP (pa, "subDecay", 900.0f);
         setP (pb, "subFreq", 50.0f);  setP (pb, "subDecay", 900.0f);
         setP (pa, "fundamental", 40.0f);  setP (pa, "pitchStart", 1.5f);
@@ -540,9 +562,9 @@ int main()
 
     // subLevel = 0 is a true bypass: render == body + click render with the sub muted
     {
-        KICKRAudioProcessor pRef;   silenceSub (pRef);       // body + click, sub off via param
-        KICKRAudioProcessor pZero;  setP (pZero, "subLevel", 0.0f);
-        KICKRAudioProcessor pOn;    // default patch: subLevel 0.5
+        KICKRAudioProcessor pRef;   silenceSub (pRef);  silenceTail (pRef);   // body + click, sub off via param
+        KICKRAudioProcessor pZero;  setP (pZero, "subLevel", 0.0f);  silenceTail (pZero);
+        KICKRAudioProcessor pOn;    silenceTail (pOn);   // default patch: subLevel 0.5
         const auto bRef  = kickr::tests::renderNote (pRef,  a1, vel, sr, 512, 1.0);
         const auto bZero = kickr::tests::renderNote (pZero, a1, vel, sr, 512, 1.0);
         const auto bOn   = kickr::tests::renderNote (pOn,   a1, vel, sr, 512, 1.0);
@@ -566,6 +588,173 @@ int main()
         setP (pw, "subLevel", 0.8f);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_5.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.6] Tail generator (dedicated LF sine @ fundamentalEff)\n");
+
+    // Body + click + sub muted -> only the tail layer sounds.
+    auto renderTailOnly = [&] (float tailLevel, float tailLengthMs, float tailTone01, float tailDrive01)
+    {
+        KICKRAudioProcessor p;
+        setP (p, "bodyLevel",  0.0f);
+        setP (p, "clickLevel", 0.0f);
+        setP (p, "subLevel",   0.0f);
+        setP (p, "tailLevel",  tailLevel);
+        setP (p, "tailLength", tailLengthMs);
+        setP (p, "tailTone",   tailTone01);
+        setP (p, "tailDrive",  tailDrive01);
+        return kickr::tests::renderNote (p, a1, vel, sr, 512, 2.5);
+    };
+
+    // HF-content proxy: RMS of the first difference relative to the signal RMS.
+    auto hfRatio = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1)
+    {
+        const int i0 = std::max (1, (int) (t0 * s));
+        const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+        const float* x = b.getReadPointer (0);
+        double sq = 0.0, dsq = 0.0;
+        for (int i = i0; i < i1; ++i)
+        {
+            sq  += (double) x[i] * x[i];
+            dsq += (double) (x[i] - x[i - 1]) * (x[i] - x[i - 1]);
+        }
+        return std::sqrt (dsq / std::max (1.0e-12, sq));
+    };
+
+    // audible + tailLevel scales it (RMS ~linear in tailLevel)
+    {
+        const auto lo = renderTailOnly (0.20f, 300.0f, 0.5f, 0.2f);
+        const auto hi = renderTailOnly (0.60f, 300.0f, 0.5f, 0.2f);
+        const auto sLo = analyse (lo, sr);
+        const auto sHi = analyse (hi, sr);
+        const double rLo = rmsWindow (lo, sr, 0.02, 0.25);
+        const double rHi = rmsWindow (hi, sr, 0.02, 0.25);
+        std::printf ("  tail-only:  level 0.20 -> peak %.3f rms %.4f   level 0.60 -> peak %.3f rms %.4f\n",
+                     sLo.peak, rLo, sHi.peak, rHi);
+        check (sLo.allFinite && sHi.allFinite,      "tail: no NaN / Inf");
+        check (rLo > 0.005,                         "tail layer is audible");
+        check (rHi > rLo * 2.3 && rHi < rLo * 3.8,  "tailLevel scales the tail (~3x for 0.60 vs 0.20)");
+        check (std::abs (lo.getReadPointer (0)[0]) < 0.02f,
+                                                    "tail onset starts near zero (raised-cosine attack)");
+    }
+
+    // tailLength: short = tight, long = drone / rumble
+    {
+        const auto tShort = renderTailOnly (0.5f, 40.0f,   0.5f, 0.2f);
+        const auto tLong  = renderTailOnly (0.5f, 1500.0f, 0.5f, 0.2f);
+        const double dShort = lastAbove (tShort, sr, 0.05f);
+        const double dLong  = lastAbove (tLong,  sr, 0.05f);
+        std::printf ("  tail duration (last > 5%% peak):  40 ms -> %.0f ms   1500 ms -> %.0f ms\n", dShort, dLong);
+        check (dLong > dShort * 4.0, "tailLength short = tight, long = drone/rumble");
+    }
+
+    // tailTone: LP cutoff 120 Hz -> 4 kHz (pre-drive). With a high tail pitch (150 Hz,
+    // fixed) the dark setting sits the cutoff below the tail -> less energy; bright opens.
+    {
+        auto renderTailTone = [&] (float tone01)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "bodyLevel",   0.0f);
+            setP (p, "clickLevel",  0.0f);
+            setP (p, "subLevel",    0.0f);
+            setP (p, "tuneMode",    1.0f);        // Fixed Frequency
+            setP (p, "fundamental", 150.0f);
+            setP (p, "tailLevel",   0.7f);
+            setP (p, "tailLength",  500.0f);
+            setP (p, "tailTone",    tone01);
+            setP (p, "tailDrive",   0.0f);
+            return kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+        };
+        const auto dark   = renderTailTone (0.0f);
+        const auto bright = renderTailTone (1.0f);
+        const double rDark   = rmsWindow (dark,   sr, 0.05, 0.40);
+        const double rBright = rmsWindow (bright, sr, 0.05, 0.40);
+        std::printf ("  tailTone @ 150 Hz tail:  dark RMS %.4f   bright RMS %.4f\n", rDark, rBright);
+        check (analyse (dark, sr).allFinite && analyse (bright, sr).allFinite, "tailTone: no NaN / Inf");
+        check (rBright > rDark * 1.3, "tailTone 0 = dark (LP bites), 1 = bright (open)");
+    }
+
+    // tailDrive: 1 adds harmonics / distortion vs 0.
+    // Long tail (2 s) so the drive still bites through the measurement window, bright
+    // tone so tanh harmonics aren't LP'd. tanh saturation flattens the peaks -> the
+    // crest factor (peak / RMS) drops toward a square wave, and HF content rises.
+    {
+        const auto clean  = renderTailOnly (0.6f, 2000.0f, 1.0f, 0.0f);
+        const auto driven = renderTailOnly (0.6f, 2000.0f, 1.0f, 1.0f);
+        const double hClean  = hfRatio (clean,  sr, 0.02, 0.30);
+        const double hDriven = hfRatio (driven, sr, 0.02, 0.30);
+
+        auto crest = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1)
+        {
+            const int i0 = std::max (0, (int) (t0 * s));
+            const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+            const float* x = b.getReadPointer (0);
+            double pk = 0.0, sq = 0.0;
+            for (int i = i0; i < i1; ++i) { pk = std::max (pk, (double) std::abs (x[i])); sq += (double) x[i] * x[i]; }
+            const double rms = std::sqrt (sq / std::max (1, i1 - i0));
+            return rms > 1.0e-9 ? pk / rms : 0.0;
+        };
+        const double cClean  = crest (clean,  sr, 0.02, 0.20);
+        const double cDriven = crest (driven, sr, 0.02, 0.20);
+        const auto sD = analyse (driven, sr);
+        std::printf ("  tailDrive:  HF %.4f -> %.4f   crest %.3f -> %.3f   (sine ~1.41, square ~1.0)\n",
+                     hClean, hDriven, cClean, cDriven);
+        check (sD.allFinite && sD.peak < 2.0f,   "tailDrive 1: finite + bounded");
+        check (cDriven < cClean * 0.92,          "tailDrive 1 flattens the waveform (crest -> square)");
+        check (hDriven > hClean * 1.15,          "tailDrive 1 adds high-frequency harmonic content");
+    }
+
+    // tailLevel = 0 render == prior body + click + sub render exactly
+    {
+        KICKRAudioProcessor pRef;   silenceTail (pRef);               // body + click + sub, tail off
+        KICKRAudioProcessor pZero;  setP (pZero, "tailLevel", 0.0f);  // tail off via param
+        KICKRAudioProcessor pOn;    // default patch: tailLevel 0.3
+        const auto bRef  = kickr::tests::renderNote (pRef,  a1, vel, sr, 512, 1.0);
+        const auto bZero = kickr::tests::renderNote (pZero, a1, vel, sr, 512, 1.0);
+        const auto bOn   = kickr::tests::renderNote (pOn,   a1, vel, sr, 512, 1.0);
+        const float* xR = bRef .getReadPointer (0);
+        const float* xZ = bZero.getReadPointer (0);
+        const float* xO = bOn  .getReadPointer (0);
+        double zeroDiff = 0.0, onDiff = 0.0;
+        for (int i = 0; i < bRef.getNumSamples(); ++i)
+        {
+            zeroDiff = std::max (zeroDiff, (double) std::abs (xR[i] - xZ[i]));
+            onDiff   = std::max (onDiff,   (double) std::abs (xR[i] - xO[i]));
+        }
+        std::printf ("  tailLevel=0 vs body+click+sub ref: max|diff| = %.2e   (tail ON diff = %.3f)\n",
+                     zeroDiff, onDiff);
+        check (zeroDiff < 1.0e-6, "tailLevel = 0 render == prior body + click + sub render");
+        check (onDiff   > 0.01,   "default tailLevel adds an audible tail layer");
+    }
+
+    // tail attack sits behind the transient: slower rise than the click
+    {
+        auto riseSamples = [] (const juce::AudioBuffer<float>& b, float frac)
+        {
+            const float* x = b.getReadPointer (0);
+            float pk = 0.0f;
+            for (int i = 0; i < b.getNumSamples(); ++i) pk = std::max (pk, std::abs (x[i]));
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                if (std::abs (x[i]) > pk * frac) return i;
+            return b.getNumSamples();
+        };
+        const auto tailBuf  = renderTailOnly (0.7f, 400.0f, 0.5f, 0.0f);
+        const auto clickBuf = renderClickOnly (4000.0f, 5000.0f, 3.0f, 0.9f);
+        const int tRise = riseSamples (tailBuf,  0.5f);
+        const int cRise = riseSamples (clickBuf, 0.5f);
+        std::printf ("  rise-to-50%%-peak:  tail %.2f ms   click %.2f ms\n",
+                     tRise / sr * 1000.0, cRise / sr * 1000.0);
+        check (tRise > cRise * 3, "tail attack slower than the click (sits behind the transient)");
+    }
+
+    {
+        KICKRAudioProcessor pw;
+        setP (pw, "tailLevel",  0.6f);
+        setP (pw, "tailLength", 600.0f);
+        setP (pw, "tailDrive",  0.4f);
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_6.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.5);
     }
 
     std::printf ("\n%d failure(s)\n", failures);

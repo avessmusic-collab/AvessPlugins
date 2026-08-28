@@ -8,6 +8,7 @@
 #include "DSP/PitchEnvelope.h"
 #include "DSP/ClickGenerator.h"
 #include "DSP/SubOscillator.h"
+#include "DSP/TailGenerator.h"
 
 namespace kickr
 {
@@ -34,8 +35,17 @@ namespace kickr
         `subFreq`, phase-0 on trigger, own exp AD envelope). Summed with body + click
         BEFORE the voice's mono output — it carries `subLevel` internally, so it is NOT
         scaled by `bodyLevel`. NOT velocity-scaled in v1 (only the whole-voice `velLevel`
-        applies). The voice frees only when the body amp env AND the click AND the sub are
-        all done. Tail / Noise / SamplePlayer + `bodyHarmonics` land in later phases.
+        applies).
+
+        PHASE 2.6: aggregates a per-voice `TailGenerator` (dedicated LF sine locked to the
+        resolved `fundamentalEff` the body got — NO pitch envelope, NOT a body-bus tap —
+        with a slow ~10 ms attack so it sits behind the transient, exp decay = `tailLength`,
+        a `StateVariableTPTFilter` low-pass driven by `tailTone`, and a `tanh` `tailDrive`
+        shaper — the whole layer in-region, AD-10). Summed with body + click + sub BEFORE
+        the voice's mono output; carries `tailLevel` internally, so it is NOT scaled by
+        `bodyLevel`. NOT velocity-scaled. The voice frees only when the body amp env AND the
+        click AND the sub AND the tail are all done. Noise / SamplePlayer + `bodyHarmonics`
+        land in later phases.
     */
     class KickVoice
     {
@@ -68,6 +78,15 @@ namespace kickr
             (`subLevel` 0..1, `subFreq` Hz, `subDecay` ms). No APVTS reads inside the voice.
         */
         void setSubParams (float subLevel, float subFreqHz, float subDecayMs) noexcept;
+
+        /**
+            Per-block: forward the TAIL-group snapshot to the TailGenerator
+            (`tailLevel` 0..1, `tailLength` ms, `tailTone` 0..1, `tailDrive` 0..1).
+            No APVTS reads inside the voice.
+            // Phase 2.11: tail* args are the macroTail-offset effective values.
+        */
+        void setTailParams (float tailLevel, float tailLengthMs,
+                            float tailTone01, float tailDrive01) noexcept;
 
         /**
             Trigger. `velLevelGain` is the pre-resolved strong velocity level multiplier
@@ -105,6 +124,7 @@ namespace kickr
         PitchEnvelope             pitchEnv;   // PHASE 2.2 — ratio-domain pitch drop
         ClickGenerator            click;      // PHASE 2.4 — 3-part synthesised click
         SubOscillator             sub;        // PHASE 2.5 — independent mono sub sine
+        TailGenerator             tail;       // PHASE 2.6 — dedicated LF tail / rumble
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> bodyLevel;
     };
 }

@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 2 — DSP Phase 2.5 complete (independent mono sub oscillator)
+- **Current Status:** 🚧 Stage 2 — DSP Phase 2.6 complete (dedicated LF tail generator)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -57,6 +57,19 @@
   - Tests: new **[Phase 2.5]** block in `RunTests.cpp` (audible + `subLevel` scales ~3×; `subFreq` 30/70 Hz tracked + independent of `fundamental`/`pitchStart`; null test → < 1e-6 residual; L=R mono; `subDecay` 60 vs 900 ms length ≥ 3×; `subLevel = 0` bit-identical to sub-muted body+click). New `silenceSub(p)` helper added to all pre-2.5 blocks + `renderClickOnly` (default `subLevel 0.5` = sub ON).
   - RT-safe: trivial component — no alloc/lock/log/IO; `ScopedNoDenormals` at engine entry (unchanged). Zero-warnings intent (`int` indices, `static_cast` all `size_t`↔`int` / `float`↔`double`, no shadowing).
   - Files: `SubOscillator.{h,cpp}` (new .cpp), `KickVoice.{h,cpp}`, `KickEngine.{h,cpp}`, `Tests/RunTests.cpp`, `CMakeLists.txt`.
+- **2026-08-28 (Stage 2 — DSP Phase 2.6):** Tail generator — sustained tail / rumble with its own length / tone / drive.
+  - **`TailGenerator.{h,cpp}`** (Phase-1 stub fleshed out; `.cpp` added to `KICKR_CORE_SOURCES`): per-voice layer inside `KickVoice`, summed with body + click + sub **before** the voice mono output → engine mix / `TransientShaper`. The whole layer (osc + LP + `tailDrive` shaper) renders at `fsOversampled` (in-region, AD-10) so the `tanh` harmonics are genuinely oversampled once Phase 2.10 enables 2×+.
+    - **Source:** a **dedicated LF sine** locked to the resolved `fundamentalEff` — the `freqHz` the body got in `KickEngine::triggerVoice`, i.e. **before** the pitch-envelope multiplier. Custom phase accumulator + `std::sin` (`sin()` before the increment → `sin(0)=0` onset). Phase → 0 on every `noteOn`. **NOT** a body-bus tap; **no** pitch envelope — steady frequency for the whole note. `fundamentalHz` clamped `[10, 5000]`.
+    - **Envelope:** slow `kAttackMs = 10` ms raised-cosine attack (so the tail sits *behind* the transient / click) → one-pole exp decay `coef = expDecayCoef(tailLength, fsOS)` (`tailLength` 20–2000 ms). No sustain. `minLengthSamples = attack + 5 ms`, hard `maxLengthSamples ≈ 2·tailLength + 50 ms` fallback (same shape as `SubOscillator`). Running value denormal-flushed each sample.
+    - **`tailTone`:** `juce::dsp::StateVariableTPTFilter<float>` low-pass, Q 0.7, cutoff `120·pow(4000/120, tailTone)` (log 120 Hz → 4 kHz), clamped `[20, fsOS·0.45]`, coeffs vs `fsOS`, refreshed per block + on `noteOn`; `snapToZero()` each sample.
+    - **`tailDrive`:** `tanh` waveshaper on the **post-filter** tail. Pre-gain `g = 1 + tailDrive·7` (1 → 8). `shaped = tanh(g·y)/tanh(g)` (peak-preserving), applied as a **parallel blend** `y += tailDrive·(shaped − y)` so `tailDrive = 0` is exactly bit-transparent and low levels aren't just made quieter; a `driveActive` gate skips the shaper entirely below `1e-6`.
+    - **Order:** osc → env → LP(`tailTone`) → `tanh`(`tailDrive`) → `× tailLevel`. **MONO** (added identically to L/R), **NOT** velocity-scaled. `noteOn` no-ops when `tailLevel < 1e-6` (true bypass). Output `dsputils::sanitize`d.
+  - **`KickVoice.{h,cpp}`**: `TailGenerator tail` member; `setTailParams(level,lengthMs,tone01,drive01)`; `prepare`/`reset`/`noteOn` fan-out (`tail.noteOn(freqHz)` — same `freqHz` the body got). `renderMono`/`renderAdd`: `mono = (bodyOut + clickOut + subOut + tail.renderSample()) · velLevel` — the tail carries `tailLevel` internally, **not** scaled by `bodyLevel`. Voice frees only when `ampEnv` **and** `click` **and** `sub` **and** `tail` are all done.
+  - **`KickEngine.{h,cpp}`**: 4 cached TAIL APVTS ptrs (`pTailLevel`/`pTailLength`/`pTailTone`/`pTailDrive`) + `Snapshot` fields (`tailLevel` 0.3 / `tailLengthMs` 200 / `tailTone01` 0.5 / `tailDrive01` 0.2); `v.setTailParams(...)` added to the per-block fan-out over both voices. `// Phase 2.11: + macroTail` marker.
+  - Params live: `tailLevel` (0–1/0.3), `tailLength` (20–2000 ms/200, skew 0.3), `tailTone` (0–1/0.5), `tailDrive` (0–1/0.2). All prior params unchanged.
+  - Tests: new **[Phase 2.6]** block in `RunTests.cpp` (audible + `tailLevel` scales ~3×; `tailLength` 40 vs 1500 ms length ≥ 4×; `tailTone` dark vs bright on a 150 Hz fixed tail, bright RMS > 1.3× dark; `tailDrive` 1 vs 0 first-difference-RMS ratio ≥ 1.3× + finite/bounded; `tailLevel = 0` bit-identical to tail-muted body+click+sub; tail rise-to-50 % ≥ 3× the click's). New `silenceTail(p)` helper retrofitted to all pre-2.6 blocks + `renderClickOnly`/`renderSubOnly` (default `tailLevel 0.3` = tail ON).
+  - RT-safe: trivial component — no alloc/lock/log/IO; `ScopedNoDenormals` at engine entry (unchanged); AD env denormal-flushed + SVF `snapToZero()` each sample; LP cutoff clamped `[20, fsOS·0.45]`; output `sanitize`d. Zero-warnings intent (`int` indices, `static_cast` all `size_t`↔`uint32` / `double`↔`float`, no shadowing).
+  - Files: `TailGenerator.{h,cpp}` (new .cpp), `KickVoice.{h,cpp}`, `KickEngine.{h,cpp}`, `Tests/RunTests.cpp`, `CMakeLists.txt`.
 
 ## Known Issues
 
