@@ -71,6 +71,20 @@ namespace kickr
         pNoiseDecay       = apvts.getRawParameterValue (id::noiseDecay);
         pNoiseTone        = apvts.getRawParameterValue (id::noiseTone);
         pNoiseType        = apvts.getRawParameterValue (id::noiseType);
+        pSynthEnable      = apvts.getRawParameterValue (id::synthEnable);
+        pSampleEnable     = apvts.getRawParameterValue (id::sampleEnable);
+        pSampleLevel      = apvts.getRawParameterValue (id::sampleLevel);
+        pSampleStart      = apvts.getRawParameterValue (id::sampleStart);
+        pSampleEnd        = apvts.getRawParameterValue (id::sampleEnd);
+        pSampleReverse    = apvts.getRawParameterValue (id::sampleReverse);
+        pSampleTune       = apvts.getRawParameterValue (id::sampleTune);
+        pSampleFine       = apvts.getRawParameterValue (id::sampleFine);
+        pSampleMidiTrack  = apvts.getRawParameterValue (id::sampleMidiTrack);
+        pSampleAttack     = apvts.getRawParameterValue (id::sampleAttack);
+        pSampleDecay      = apvts.getRawParameterValue (id::sampleDecay);
+        pSampleHP         = apvts.getRawParameterValue (id::sampleHP);
+        pSampleLP         = apvts.getRawParameterValue (id::sampleLP);
+        pSampleCrush      = apvts.getRawParameterValue (id::sampleCrush);
 
         reset();
     }
@@ -132,7 +146,11 @@ namespace kickr
     void KickEngine::triggerVoice (KickVoice& v, float freqHz, int note,
                                    float velLevelGain, float velClickGain, float v01) noexcept
     {
-        v.noteOn (freqHz, note, velLevelGain, velClickGain, snap.bodyDecayMs, 0);
+        // architecture MIDI routing — sample level velocity: lerp(1, v01, velSensitivity).
+        const float sampleVelFactor = 1.0f + snap.velSens * (juce::jlimit (0.0f, 1.0f, v01) - 1.0f);
+
+        v.noteOn (freqHz, note, velLevelGain, velClickGain, snap.bodyDecayMs,
+                  currentSampleBuf, sampleVelFactor, 0);
 
         // Refresh the pitch contour with THIS note's velocity-scaled pitchStart so the
         // freshly-armed fall is correct from sample 0.
@@ -315,6 +333,47 @@ namespace kickr
         snap.noiseType       = static_cast<int> (load (pNoiseType, 0.0f));
         snap.tuneMode        = static_cast<int> (load (pTuneMode, 0.0f));
 
+        // PHASE 2.7b — SAMPLE group snapshot.
+        snap.synthEnable     = load (pSynthEnable,     1.0f) > 0.5f;
+        snap.sampleEnable    = load (pSampleEnable,    0.0f) > 0.5f;
+        snap.sampleLevel     = load (pSampleLevel,     0.7f);
+        snap.sampleStart     = load (pSampleStart,     0.0f);
+        snap.sampleEnd       = load (pSampleEnd,       1.0f);
+        snap.sampleReverse   = load (pSampleReverse,   0.0f) > 0.5f;
+        snap.sampleTune      = load (pSampleTune,      0.0f);
+        snap.sampleFine      = load (pSampleFine,      0.0f);
+        snap.sampleMidiTrack = load (pSampleMidiTrack, 1.0f) > 0.5f;
+        snap.sampleAttackMs  = load (pSampleAttack,    0.0f);
+        snap.sampleDecayMs   = load (pSampleDecay,     800.0f);
+        snap.sampleHPHz      = load (pSampleHP,        20.0f);
+        snap.sampleLPHz      = load (pSampleLP,        20000.0f);
+        snap.sampleCrush01   = load (pSampleCrush,     0.0f);
+
+        // PHASE 2.7b — resolve the effective SAMPLE values once per block.
+        //   velocity: sampleLevel *= lerp(1, v01, velSens)  (folded in as `velFactor` at
+        //             noteOn); sampleLP *= lerp(1, 0.6 + 0.4*v01, velSens*0.5) (darker).
+        const float v01ForSample = juce::jlimit (0.0f, 1.0f, lastVel01);
+        const float velLpScale   = 1.0f + snap.velSens * 0.5f
+                                          * ((0.6f + 0.4f * v01ForSample) - 1.0f);
+
+        SamplePlayer::SampleParams sp;
+        sp.enable    = snap.sampleEnable ? 1.0f : 0.0f;
+        sp.level     = snap.sampleLevel;   // Phase 2.11: + macroBody offset
+        sp.start01   = snap.sampleStart;
+        sp.end01     = snap.sampleEnd;
+        sp.reverse   = snap.sampleReverse;
+        sp.tuneSemis = snap.sampleTune;
+        sp.fineCents = snap.sampleFine;
+        sp.midiTrack = snap.sampleMidiTrack;
+        sp.attackMs  = snap.sampleAttackMs;
+        sp.decayMs   = snap.sampleDecayMs;
+        sp.hpHz      = snap.sampleHPHz;
+        sp.lpHz      = juce::jlimit (20.0f, 20000.0f, snap.sampleLPHz * velLpScale);
+        sp.crush01   = snap.sampleCrush01;
+
+        const float synthGate  = snap.synthEnable ? 1.0f : 0.0f;
+        const float sampleGate = (snap.sampleEnable && currentSampleBuf != nullptr) ? 1.0f : 0.0f;
+
         // Per-block refresh on BOTH voices (either can be rendering during a crossfade):
         // body level + pitch-contour coefficients (keeps automation live mid-voice).
         for (auto& v : voices)
@@ -326,6 +385,7 @@ namespace kickr
             // Phase 2.11: tail* below = tailLevel/Length/Tone + macroTail offsets.
             v.setTailParams (snap.tailLevel, snap.tailLengthMs, snap.tailTone01, snap.tailDrive01);
             v.setNoiseParams (snap.noiseLevel, snap.noiseDecayMs, snap.noiseTone01, snap.noiseType);
+            v.setSampleParams (sp, synthGate, sampleGate);
         }
 
         // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.

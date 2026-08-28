@@ -38,6 +38,9 @@ set(KICKR_CORE_SOURCES
     Source/DSP/TailGenerator.cpp
     # DSP — Stage 2 Phase 2.7 (optional white/pink/filtered noise layer)
     Source/DSP/NoiseGenerator.cpp
+    # DSP — Stage 2 Phase 2.7b (sample player + managed drag-drop library)
+    Source/DSP/SamplePlayer.cpp
+    Source/Sampling/SampleLibrary.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

@@ -74,7 +74,7 @@ All components live under `Source/DSP/`. None allocate, lock, or touch the files
 - **JUCE Class:** `juce::AudioFormatManager` (+ `registerBasicFormats` → WAV/AIFF/FLAC + CoreAudio for CAF/m4a where available), `juce::File`, `juce::RangedDirectoryIterator` / `juce::TimeSliceThread` + `juce::DirectoryContentsList` for watching, `juce::AudioFormatReader`.
 - **Purpose:** Own the managed samples folder; expose the ordered bank; decode files to `SampleBuffer`.
 - **Configuration:**
-  - **Folder:** `File::getSpecialLocation(userMusicDirectory)` is *not* used — path is `userApplicationDataDirectory / "Audio" / "Presets" / "PluginFreedom" / "KICKR" / "Samples"`, created on first run. (Matches the user-preset location.)
+  - **Folder:** `~/Music/KICKR/Samples` (`File::getSpecialLocation(userMusicDirectory) / "KICKR" / "Samples"`), created on first run. **Phase 2.7b correction:** the original plan used `~/Library/Audio/Presets/PluginFreedom/KICKR/Samples` "to match the user-preset location", but on many machines an installer created `~/Library/Audio/Presets` as **root** and a plugin cannot write into it. `~/Music/KICKR/Samples` is user-writable, Finder-discoverable, and the convention for synth/sampler content (Vital, Kick 2). `SampleLibrary::setFolder()` re-points it (tests, and a future folder pref); it falls back to a temp dir if the parent is unwritable so the plugin always runs.
   - **Bank:** sorted list of supported files in that folder (non-recursive in v1). `prev()/next()/list()` for the browser; lookup by bare name for preset recall.
   - **Import (drag-drop):** validate extension + that `AudioFormatReader` opens it + `lengthInSamples / sampleRate ≤ kMaxSampleSeconds (5.0)`; copy into the folder (deduplicating the name); rescan; return the new name.
   - **Decode:** read the whole file into `AudioBuffer<float>` (≤ 5 s × 2 ch × 96 kHz ≈ 3.7 MB worst case). Keep `sourceRate`; SamplePlayer does the rate conversion. Runs on the message thread (synchronous — small) or a `TimeSliceThread` for larger files; the result is published via the atomic pointer with the *previous* buffer kept alive until no voice references it (retire on the message thread after a short delay / next `prepareToPlay`).
@@ -361,7 +361,7 @@ base rate:
 
 **File types:** user audio — WAV / AIFF / FLAC / CAF (`AudioFormatManager::registerBasicFormats` + CoreAudio on macOS). Decoded to `juce::AudioBuffer<float>`.
 
-**Location:** `…/PluginFreedom/KICKR/Samples/` (sibling of the user-preset folder), created on first run.
+**Location:** `~/Music/KICKR/Samples/`, created on first run (see SampleLibrary note above — *not* `~/Library/Audio/Presets/…`, which can be root-owned).
 
 **Import (drag-drop on the editor, `juce::FileDragAndDropTarget`):**
 1. message thread: check extension; open an `AudioFormatReader`; reject if `length / sampleRate > 5.0 s` or > 2 channels or unreadable.

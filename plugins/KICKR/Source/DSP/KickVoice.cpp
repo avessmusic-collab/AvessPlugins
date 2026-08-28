@@ -14,9 +14,16 @@ namespace kickr
         sub.prepare (fsOversampled);
         tail.prepare (fsOversampled);
         noise.prepare (fsOversampled);
+        sample.prepare (fsOversampled);
 
         bodyLevel.reset (fsOversampled, 0.02);   // 20 ms — click-free level changes
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
+
+        // PHASE 2.7b — ~5 ms so toggling synthEnable / sampleEnable mid-tail is click-free.
+        synthGate.reset  (fsOversampled, 0.005);
+        sampleGate.reset (fsOversampled, 0.005);
+        synthGate.setCurrentAndTargetValue  (synthGate.getTargetValue());
+        sampleGate.setCurrentAndTargetValue (sampleGate.getTargetValue());
 
         reset();
     }
@@ -31,7 +38,10 @@ namespace kickr
         sub.reset();
         tail.reset();
         noise.reset();
+        sample.reset();
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
+        synthGate.setCurrentAndTargetValue  (synthGate.getTargetValue());
+        sampleGate.setCurrentAndTargetValue (sampleGate.getTargetValue());
     }
 
     void KickVoice::setBodyLevel (float level01) noexcept
@@ -67,10 +77,19 @@ namespace kickr
         noise.setParams (noiseLevel, noiseDecayMs, noiseTone01, noiseType);
     }
 
-    void KickVoice::noteOn (float freqHz, int noteNumber, float velLevelGain, float velClickGain,
-                            float bodyDecayMs, int sampleOffset) noexcept
+    void KickVoice::setSampleParams (const SamplePlayer::SampleParams& p,
+                                     float synthGate01, float sampleGate01) noexcept
     {
-        juce::ignoreUnused (noteNumber, sampleOffset);   // PHASE 2.7b uses noteNumber
+        sample.setParams (p);
+        synthGate.setTargetValue  (juce::jlimit (0.0f, 1.0f, synthGate01));
+        sampleGate.setTargetValue (juce::jlimit (0.0f, 1.0f, sampleGate01));
+    }
+
+    void KickVoice::noteOn (float freqHz, int noteNumber, float velLevelGain, float velClickGain,
+                            float bodyDecayMs, const SampleBuffer* sampleBuf, float sampleVelFactor,
+                            int sampleOffset) noexcept
+    {
+        juce::ignoreUnused (sampleOffset);
 
         baseFrequencyHz = freqHz;
         velLevel        = velLevelGain;
@@ -83,10 +102,13 @@ namespace kickr
         sub.noteOn();                  // phase -> 0, arm the sub AD env (per-block snapshot)
         tail.noteOn (freqHz);          // dedicated LF sine locked to fundamentalEff (pre pitch-env)
         noise.noteOn();                // re-seed rng + arm the noise AD env (no-op when noiseLevel 0)
+        sample.noteOn (sampleBuf, noteNumber, sampleVelFactor);   // capture the buffer for the voice's life
 
-        // Start at the current body-level target — no 20 ms fade-in on the first hit.
+        // Start at the current body-level / gate targets — no fade-in on the first hit.
         // (Retrigger level continuity is Phase 2.3's crossfade concern.)
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
+        synthGate.setCurrentAndTargetValue  (synthGate.getTargetValue());
+        sampleGate.setCurrentAndTargetValue (sampleGate.getTargetValue());
 
         active = true;
     }
@@ -120,7 +142,13 @@ namespace kickr
             const float tailOut  = tail.renderSample();     // carries tailLevel (mono, not vel-scaled)
             const float noiseOut = noise.renderSample();    // carries noiseLevel (mono, not vel-scaled)
 
-            const float s = dsputils::sanitize ((bodyOut + clickOut + subOut + tailOut + noiseOut) * velLevel);
+            // PHASE 2.7b — smoothed 0/1 layer gates + the sample layer (carries sampleLevel x velFactor).
+            const float synthG   = synthGate.getNextValue();
+            const float sampleG  = sampleGate.getNextValue();
+            const float synthSum = bodyOut + clickOut + subOut + tailOut + noiseOut;
+            const float sampleOut = sample.renderSample();
+
+            const float s = dsputils::sanitize (synthG * synthSum * velLevel + sampleG * sampleOut);
 
             const int idx = startSample + i;
             for (int ch = 0; ch < numCh; ++ch)
@@ -130,6 +158,7 @@ namespace kickr
                 && ! tail.isActive() && ! noise.isActive())
             {
                 active = false;
+                sample.reset();   // PHASE 2.7b — drop the buffer pointer so it can be retired
                 break;
             }
         }
@@ -167,12 +196,19 @@ namespace kickr
             const float tailOut  = tail.renderSample();     // carries tailLevel (mono, not vel-scaled)
             const float noiseOut = noise.renderSample();    // carries noiseLevel (mono, not vel-scaled)
 
-            mono[i] = dsputils::sanitize ((bodyOut + clickOut + subOut + tailOut + noiseOut) * velLevel);
+            // PHASE 2.7b — smoothed 0/1 layer gates + the sample layer (carries sampleLevel x velFactor).
+            const float synthG    = synthGate.getNextValue();
+            const float sampleG   = sampleGate.getNextValue();
+            const float synthSum  = bodyOut + clickOut + subOut + tailOut + noiseOut;
+            const float sampleOut = sample.renderSample();
+
+            mono[i] = dsputils::sanitize (synthG * synthSum * velLevel + sampleG * sampleOut);
 
             if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive()
                 && ! tail.isActive() && ! noise.isActive())
             {
                 active = false;
+                sample.reset();   // PHASE 2.7b — drop the buffer pointer so it can be retired
                 ++i;
                 break;
             }

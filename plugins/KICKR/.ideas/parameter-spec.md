@@ -487,7 +487,7 @@ Per user request, KICKR gains a sample-playback layer fed from a bank of the use
 - **14 new APVTS params** (SAMPLE group above): `synthEnable`, `sampleEnable`, `sampleLevel`, `sampleStart`, `sampleEnd`, `sampleReverse`, `sampleTune`, `sampleFine`, `sampleMidiTrack`, `sampleAttack`, `sampleDecay`, `sampleHP`, `sampleLP`, `sampleCrush`.
 - **No v1 parameter changed** — same IDs, ranges, defaults, types. `sampleEnable` defaults **off**, so every v1 patch and the default sound are bit-identical.
 - **New state property** `currentSampleName` (bare file name). `stateVersion` → **2**; v1 states load unchanged.
-- **New components** (`architecture.md`): `SamplePlayer` (in-region resample + AD env + HP/LP + crush, AD-10), `SampleLibrary` (managed-folder scan/watch/decode). Library folder: `~/Library/Audio/Presets/PluginFreedom/KICKR/Samples/`. Formats: WAV / AIFF / FLAC / CAF. Length cap ~5 s at session rate. Decode on message thread → atomic pointer hand-off to audio thread.
+- **New components** (`architecture.md`): `SamplePlayer` (in-region resample + AD env + HP/LP + crush, AD-10), `SampleLibrary` (managed-folder scan/watch/decode). Library folder: `~/Music/KICKR/Samples/`. Formats: WAV / AIFF / FLAC / CAF. Length cap ~5 s at session rate. Decode on message thread → atomic pointer hand-off to audio thread.
 - **No factory samples ship.** Factory presets are all synth-only.
 - **Randomize / Mutate** never touch the sample layer, the enable toggles, or the selection.
 - Open for Stage 2: per-sample root note (assumed C1 in v1), resample interpolation order (`juce::Interpolators::Lagrange` vs WindowedSinc), whether `sampleDecay` max = "play to end" or a hard 2 s cap.

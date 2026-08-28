@@ -10,6 +10,8 @@
 #include "DSP/SubOscillator.h"
 #include "DSP/TailGenerator.h"
 #include "DSP/NoiseGenerator.h"
+#include "DSP/SamplePlayer.h"
+#include "Sampling/SampleBuffer.h"
 
 namespace kickr
 {
@@ -52,7 +54,20 @@ namespace kickr
         `noteOn` no-ops). Summed with body + click + sub + tail BEFORE the voice's mono
         output; carries `noiseLevel` internally, so it is NOT scaled by `bodyLevel`. NOT
         velocity-scaled. Factored into the voice-free check alongside ampEnv / click / sub /
-        tail. SamplePlayer + `bodyHarmonics` land in later phases.
+        tail.
+
+        PHASE 2.7b: aggregates a per-voice `SamplePlayer` (the 6th layer — the user's own
+        recorded kick from the managed bank; AD-11). Its `const SampleBuffer*` is captured
+        once at `noteOn` (held for the voice's life) so a mid-note bank swap can't affect a
+        ringing voice. Two smoothed 0/1 gates (~5 ms, click-free toggling):
+          - `synthGate` multiplies the 5 synth layers (body/sub/click/tail/noise),
+          - `sampleGate` multiplies the SamplePlayer layer.
+        `synthEnable == false` -> synthGate -> 0 ; `sampleEnable == false` (or no sample
+        loaded) -> sampleGate -> 0 ; both on -> blended. The SamplePlayer carries its own
+        `sampleLevel x velFactor` internally.
+        `SamplePlayer::isActive()` is deliberately NOT in `isActive()` (architecture) — the
+        synth envelopes govern voice lifetime; the sample just goes silent once it is done.
+        `bodyHarmonics` lands in Phase 2.8+.
     */
     class KickVoice
     {
@@ -104,14 +119,25 @@ namespace kickr
                              float noiseTone01, int noiseType) noexcept;
 
         /**
+            Per-block: forward the SAMPLE-group snapshot to the SamplePlayer + set the two
+            layer gate targets (0/1, ~5 ms smoothed). No APVTS reads inside the voice.
+            `synthGate01` = `synthEnable`; `sampleGate01` = `sampleEnable && sample loaded`.
+        */
+        void setSampleParams (const SamplePlayer::SampleParams& p,
+                              float synthGate01, float sampleGate01) noexcept;
+
+        /**
             Trigger. `velLevelGain` is the pre-resolved strong velocity level multiplier
             (`lerp(1, vel/127, velSensitivity)`) applied to the whole voice; `velClickGain`
             is the moderate click-only factor (`lerp(1, vel/127, velSensitivity·0.6)`).
-            `bodyDecayMs` is the current Body Decay. `sampleOffset` is informational for
-            now (the engine already split the block).
+            `bodyDecayMs` is the current Body Decay. `sampleBuf` is the sample buffer
+            (nullptr = no sample) captured for the voice's life; `sampleVelFactor` scales
+            the sample layer level. `sampleOffset` is informational (the engine already
+            split the block).
         */
         void noteOn (float freqHz, int noteNumber, float velLevelGain, float velClickGain,
-                     float bodyDecayMs, int sampleOffset) noexcept;
+                     float bodyDecayMs, const SampleBuffer* sampleBuf, float sampleVelFactor,
+                     int sampleOffset) noexcept;
 
         void noteOff() noexcept {}   // ignored — kick runs to completion
 
@@ -141,6 +167,9 @@ namespace kickr
         SubOscillator             sub;        // PHASE 2.5 — independent mono sub sine
         TailGenerator             tail;       // PHASE 2.6 — dedicated LF tail / rumble
         NoiseGenerator            noise;      // PHASE 2.7 — optional white/pink/filtered noise
+        SamplePlayer              sample;     // PHASE 2.7b — the 6th layer (user sample)
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> bodyLevel;
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> synthGate;   // PHASE 2.7b
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> sampleGate;  // PHASE 2.7b
     };
 }

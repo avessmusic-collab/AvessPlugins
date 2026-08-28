@@ -6,9 +6,12 @@
 */
 #include "PluginProcessor.h"
 #include "Tests/OfflineRender.h"
+#include "DSP/SamplePlayer.h"
+#include "Sampling/SampleLibrary.h"
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 namespace
 {
@@ -889,6 +892,260 @@ int main()
         setP (pw, "noiseType",  1.0f);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_7.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.7b] Sample player + managed library\n");
+
+    auto writeSineWav = [] (const juce::File& f, double freq, double sr2, double secs, int ch) -> bool
+    {
+        const int n = (int) std::lround (sr2 * secs);
+        juce::AudioBuffer<float> b (ch, n);
+        for (int c = 0; c < ch; ++c)
+        {
+            auto* x = b.getWritePointer (c);
+            for (int i = 0; i < n; ++i)
+                x[i] = 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * freq * (double) i / sr2);
+        }
+        f.deleteFile();
+        f.getParentDirectory().createDirectory();
+        std::unique_ptr<juce::OutputStream> stream = f.createOutputStream();
+        if (stream == nullptr) return false;
+        juce::WavAudioFormat fmt;
+        auto writer = fmt.createWriterFor (stream,
+                                           juce::AudioFormatWriterOptions{}
+                                               .withSampleRate (sr2)
+                                               .withNumChannels (ch)
+                                               .withBitsPerSample (24));
+        if (writer == nullptr) return false;
+        return writer->writeFromAudioSampleBuffer (b, 0, n);
+    };
+
+    auto zcFreq = [] (const std::vector<float>& x, double s, double t0, double t1)
+    {
+        const int i0 = std::max (1, (int) (t0 * s));
+        const int i1 = std::min ((int) x.size(), (int) (t1 * s));
+        int c = 0;
+        for (int i = i0; i < i1; ++i)
+            if ((x[(size_t) (i - 1)] <= 0.0f) != (x[(size_t) i] <= 0.0f)) ++c;
+        return (double) c * 0.5 / (t1 - t0);
+    };
+
+    // --- SampleLibrary + SamplePlayer unit tests (temp folder) ---
+    {
+        juce::File tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                             .getChildFile ("kickr_2_7b_" + juce::String (juce::Time::currentTimeMillis()));
+        tmp.createDirectory();
+
+        const auto sineFile = tmp.getChildFile ("sine100.wav");
+        check (writeSineWav (sineFile, 100.0, 44100.0, 0.5, 1), "wrote a 100 Hz / 0.5 s test sine WAV");
+
+        kickr::SampleLibrary lib (tmp);
+        const auto name = lib.importFile (sineFile);
+        check (name.isNotEmpty(),        "SampleLibrary.importFile accepts a valid short WAV");
+        check (lib.getCount() >= 1,      "bank lists the imported file");
+        check (lib.indexOfName (name) >= 0, "imported file is findable by name");
+
+        auto sb = lib.load (name);
+        check (sb != nullptr && sb->audio.getNumSamples() > 1000,
+               "SampleLibrary.load decodes the sample");
+        check (sb != nullptr && std::abs (sb->sourceRate - 44100.0) < 1.0, "sourceRate preserved");
+
+        // too-long file is rejected
+        const auto longFile = tmp.getChildFile ("toolong.wav");
+        writeSineWav (longFile, 100.0, 44100.0, 6.0, 1);
+        check (lib.importFile (longFile).isEmpty(), "SampleLibrary rejects a sample longer than 5 s");
+
+        auto runPlayer = [&] (float tuneSemis, bool rev, float start01, float end01, float crush)
+        {
+            kickr::SamplePlayer sp;
+            sp.prepare (48000.0);
+            kickr::SamplePlayer::SampleParams p;
+            p.enable = 1.0f; p.level = 1.0f; p.midiTrack = false;
+            p.tuneSemis = tuneSemis; p.reverse = rev;
+            p.start01 = start01; p.end01 = end01;
+            p.decayMs = 5000.0f; p.crush01 = crush;
+            sp.setParams (p);
+            sp.noteOn (sb.get(), 33, 1.0f);
+            std::vector<float> out (24000, 0.0f);
+            for (auto& v : out) v = sp.renderSample();
+            return out;
+        };
+
+        const auto p0  = runPlayer (0.0f,   false, 0.0f, 1.0f, 0.0f);
+        const auto pUp = runPlayer (12.0f,  false, 0.0f, 1.0f, 0.0f);
+        const auto pDn = runPlayer (-12.0f, false, 0.0f, 1.0f, 0.0f);
+        const double f0 = zcFreq (p0,  48000.0, 0.05, 0.25);
+        const double fU = zcFreq (pUp, 48000.0, 0.05, 0.18);
+        const double fD = zcFreq (pDn, 48000.0, 0.05, 0.25);
+        std::printf ("  resample: tune 0 -> %.1f Hz   +12 -> %.1f Hz   -12 -> %.1f Hz\n", f0, fU, fD);
+        check (std::abs (f0 - 100.0) < 4.0, "tune 0 plays the sample at source pitch (~100 Hz)");
+        check (std::abs (fU / f0 - 2.0) < 0.04, "sampleTune +12 -> ~2x pitch (within 2%)");
+        check (std::abs (fD / f0 - 0.5) < 0.04, "sampleTune -12 -> ~0.5x pitch (within 2%)");
+
+        bool finite0 = true;
+        for (float v : p0) if (! std::isfinite (v)) finite0 = false;
+        check (finite0, "sample player output finite");
+
+        auto lastAboveV = [] (const std::vector<float>& x, float frac)
+        {
+            float pk = 0.0f;
+            for (float v : x) pk = std::max (pk, std::abs (v));
+            int last = 0;
+            for (int i = 0; i < (int) x.size(); ++i) if (std::abs (x[(size_t) i]) > pk * frac) last = i;
+            return last;
+        };
+        const int dFull = lastAboveV (runPlayer (0.0f, false, 0.0f, 1.0f, 0.0f), 0.02f);
+        const int dHalf = lastAboveV (runPlayer (0.0f, false, 0.5f, 1.0f, 0.0f), 0.02f);
+        const int dWin  = lastAboveV (runPlayer (0.0f, false, 0.0f, 0.5f, 0.0f), 0.02f);
+        std::printf ("  trim (last-signal samples): full %d  start=0.5 %d  end=0.5 %d\n", dFull, dHalf, dWin);
+        check (dHalf < dFull * 0.7, "sampleStart trims the front (shorter playing span)");
+        check (dWin  < dFull * 0.7, "sampleEnd trims the tail (shorter playing span)");
+
+        const auto fwd = runPlayer (0.0f, false, 0.0f, 1.0f, 0.0f);
+        const auto rev = runPlayer (0.0f, true,  0.0f, 1.0f, 0.0f);
+        bool revFinite = true; double eR = 0.0, diff = 0.0;
+        for (size_t i = 0; i < rev.size(); ++i)
+        {
+            if (! std::isfinite (rev[i])) revFinite = false;
+            eR   += (double) rev[i] * rev[i];
+            diff += std::abs ((double) fwd[i] - (double) rev[i]);
+        }
+        check (revFinite,               "sampleReverse render finite");
+        check (eR > 1.0 && diff > 1.0,  "sampleReverse produces a distinct non-silent render");
+
+        const auto clean = runPlayer (0.0f, false, 0.0f, 1.0f, 0.0f);
+        const auto crush = runPlayer (0.0f, false, 0.0f, 1.0f, 1.0f);
+        bool cFinite = true; float cPk = 0.0f; double cDiff = 0.0;
+        for (size_t i = 0; i < crush.size(); ++i)
+        {
+            if (! std::isfinite (crush[i])) cFinite = false;
+            cPk   = std::max (cPk, std::abs (crush[i]));
+            cDiff += std::abs ((double) clean[i] - (double) crush[i]);
+        }
+        check (cFinite && cPk < 2.0f, "sampleCrush = 1: finite + bounded");
+        check (cDiff > 1.0,           "sampleCrush = 1 audibly quantises / decimates the signal");
+
+        const auto c0a = runPlayer (0.0f, false, 0.0f, 1.0f, 0.0f);
+        const auto c0b = runPlayer (0.0f, false, 0.0f, 1.0f, 0.0f);
+        double idErr = 0.0;
+        for (size_t i = 0; i < c0a.size(); ++i)
+            idErr = std::max (idErr, (double) std::abs (c0a[i] - c0b[i]));
+        check (idErr < 1.0e-9, "sampleCrush = 0 is deterministic / bit-transparent");
+
+        tmp.deleteRecursively();
+    }
+
+    // --- Processor path: buffer hand-off + gates ---
+    {
+        const auto fixture = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getChildFile ("kickr_unittest_sine.wav");
+        writeSineWav (fixture, 120.0, 44100.0, 0.4, 1);
+
+        // Point each processor's SampleLibrary at a throwaway temp folder so the test
+        // never touches the user's real ~/Music/KICKR/Samples bank.
+        const auto tmpBank = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getChildFile ("kickr_test_bank");
+        tmpBank.deleteRecursively();
+        auto pointAt = [&] (KICKRAudioProcessor& p) { p.getSampleLibrary().setFolder (tmpBank); };
+
+        // sampleEnable OFF (default) -> render bit-identical to the synth-only engine
+        KICKRAudioProcessor pa, pb;
+        pointAt (pb);
+        const auto nb = pb.getSampleLibrary().importFile (fixture);
+        check (nb.isNotEmpty(), "processor bank import ok");
+        pb.loadSampleByName (nb);
+        const auto rA = kickr::tests::renderNote (pa, a1, vel, sr, 512, 1.0);
+        const auto rBoff = kickr::tests::renderNote (pb, a1, vel, sr, 512, 1.0);
+        double offDiff = 0.0;
+        for (int i = 0; i < rA.getNumSamples(); ++i)
+            offDiff = std::max (offDiff, (double) std::abs (rA.getReadPointer (0)[i] - rBoff.getReadPointer (0)[i]));
+        std::printf ("  sampleEnable off vs synth-only: max|diff| = %.2e\n", offDiff);
+        check (offDiff < 1.0e-9, "sampleEnable off (default) -> bit-identical to the synth-only render");
+
+        // sampleEnable ON -> the sample layer is added, finite
+        KICKRAudioProcessor pc;
+        pointAt (pc);
+        const auto ncName = pc.getSampleLibrary().importFile (fixture);
+        pc.loadSampleByName (ncName);
+        setP (pc, "sampleEnable", 1.0f);
+        const auto rC = kickr::tests::renderNote (pc, a1, vel, sr, 512, 1.0);
+        double onDiff = 0.0; bool onFinite = true;
+        for (int i = 0; i < rC.getNumSamples(); ++i)
+        {
+            if (! std::isfinite (rC.getReadPointer (0)[i])) onFinite = false;
+            onDiff = std::max (onDiff, (double) std::abs (rC.getReadPointer (0)[i] - rA.getReadPointer (0)[i]));
+        }
+        check (onFinite,      "sample layer: no NaN / Inf through the full chain");
+        check (onDiff > 0.02, "sampleEnable on adds the sample layer to the mix");
+
+        // synthEnable OFF + sampleEnable ON -> pure sample
+        KICKRAudioProcessor pe;
+        pointAt (pe);
+        const auto neName = pe.getSampleLibrary().importFile (fixture);
+        pe.loadSampleByName (neName);
+        setP (pe, "sampleEnable", 1.0f);
+        setP (pe, "synthEnable", 0.0f);
+        const auto rE = kickr::tests::renderNote (pe, a1, vel, sr, 512, 1.0);
+        const auto sE = analyse (rE, sr);
+        check (sE.allFinite && sE.peak > 0.02f, "synthEnable off + sampleEnable on -> pure sample plays");
+
+        // null test: (synth-only) + (sample-only) == (both on)
+        double nullErr = 0.0;
+        for (int i = 0; i < rC.getNumSamples(); ++i)
+        {
+            const double sum = (double) rA.getReadPointer (0)[i] + (double) rE.getReadPointer (0)[i];
+            nullErr = std::max (nullErr, std::abs (sum - (double) rC.getReadPointer (0)[i]));
+        }
+        std::printf ("  sample+synth null test: max|(synth + sample) - both| = %.2e\n", nullErr);
+        check (nullErr < 1.0e-4, "sample + synth both on == sum of the separate renders");
+
+        // missing-file recall -> silent layer, name retained, no crash
+        KICKRAudioProcessor pm;
+        pointAt (pm);
+        pm.loadSampleByName ("definitely_not_a_real_sample_9931.wav");
+        setP (pm, "sampleEnable", 1.0f);
+        const auto rM = kickr::tests::renderNote (pm, a1, vel, sr, 512, 1.0);
+        check (analyse (rM, sr).allFinite, "missing sample: no NaN / crash");
+        check (pm.getCurrentSampleName() == "definitely_not_a_real_sample_9931.wav",
+               "missing sample: name retained");
+
+        // machine-gun retrigger while hot-swapping the bank
+        {
+            KICKRAudioProcessor pg;
+        pointAt (pg);
+            const auto ng = pg.getSampleLibrary().importFile (fixture);
+            setP (pg, "sampleEnable", 1.0f);
+            pg.setRateAndBufferSizeDetails (sr, 128);
+            pg.prepareToPlay (sr, 128);
+            juce::AudioBuffer<float> blk (2, 128);
+            bool finite = true; float pk = 0.0f;
+            for (int bi = 0; bi < 400; ++bi)
+            {
+                blk.clear();
+                juce::MidiBuffer midi;
+                if ((bi % 3) == 0) midi.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+                pg.processBlock (blk, midi);
+                if ((bi % 17) == 0) pg.loadSampleByName (ng);
+                if ((bi % 41) == 0) pg.loadSampleByName ("missing_xyz.wav");
+                const float* x = blk.getReadPointer (0);
+                for (int i = 0; i < blk.getNumSamples(); ++i)
+                {
+                    if (! std::isfinite (x[i])) finite = false;
+                    pk = std::max (pk, std::abs (x[i]));
+                }
+            }
+            pg.releaseResources();
+            std::printf ("  machine-gun + bank swap: peak %.2f  finite %d\n", pk, (int) finite);
+            check (finite && pk < 8.0f, "hot bank-swap under machine-gun retrigger: no NaN, bounded");
+        }
+
+        // clean up every fixture we imported into the real managed bank
+        for (const auto& de : juce::RangedDirectoryIterator (kickr::SampleLibrary::defaultFolder(),
+                                                             false, "kickr_unittest_sine*",
+                                                             juce::File::findFiles))
+            de.getFile().deleteFile();
+        fixture.deleteFile();
     }
 
     std::printf ("\n%d failure(s)\n", failures);

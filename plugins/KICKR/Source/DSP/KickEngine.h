@@ -8,7 +8,9 @@
 
 #include "DSP/OversamplingProcessor.h"
 #include "DSP/KickVoice.h"
+#include "DSP/SamplePlayer.h"
 #include "DSP/TransientShaper.h"
+#include "Sampling/SampleBuffer.h"
 #include "Utilities/DSPUtils.h"
 
 namespace kickr
@@ -66,8 +68,19 @@ namespace kickr
         click + sub + tail inside the voice (before the voice mix / TransientShaper) and
         carries `noiseLevel` internally, so no engine-side routing change. Not velocity-scaled.
 
-        Later phases add: sample player (2.7b), distortion (2.8), tone/stereo/limiter (2.9),
-        real OS switching (2.10), smoothing/macros (2.11), analyzer.
+        PHASE 2.7b: the 6th layer. The processor decodes the user sample on the message
+        thread and publishes a `const SampleBuffer*` via an atomic pointer; it calls
+        `setSampleBuffer()` before each `processBlock`. The engine caches the 14 SAMPLE
+        APVTS pointers + `velSensitivity`, snapshots them per block, resolves the effective
+        sample values (velocity folds into `sampleLevel` via `velFactor` and darkens
+        `sampleLP`), and fans `KickVoice::setSampleParams(...)` out to both voices with the
+        two 0/1 gate targets (`synthEnable`, `sampleEnable && buffer present`). The buffer
+        pointer is passed into `KickVoice::noteOn` and captured there for the voice's life.
+        `anyVoiceActive()` lets the processor retire unreferenced buffers on the message
+        thread.
+
+        Later phases add: distortion (2.8), tone/stereo/limiter (2.9), real OS switching
+        (2.10), smoothing/macros (2.11 — incl. `macroBody` -> `sampleLevel`), analyzer.
     */
     class KickEngine
     {
@@ -82,6 +95,16 @@ namespace kickr
 
         /** round(activeOs->getLatencyInSamples()); 0 at 1x (Phase 2.1). */
         int getLatencySamples() const noexcept { return oversampling.getLatencySamples(); }
+
+        /** PHASE 2.7b — the processor publishes the decoded sample here (audio thread, one
+            plain-pointer store per block; the buffer is owned + retired by the processor). */
+        void setSampleBuffer (const SampleBuffer* b) noexcept { currentSampleBuf = b; }
+
+        /** PHASE 2.7b — message thread asks this before retiring an old sample buffer. */
+        bool anyVoiceActive() const noexcept
+        {
+            return voices[0].isActive() || voices[1].isActive();
+        }
 
     private:
         static constexpr double kRetriggerFadeMs = 3.0;   // equal-power crossfade length
@@ -147,6 +170,23 @@ namespace kickr
         std::atomic<float>* pNoiseTone  { nullptr };
         std::atomic<float>* pNoiseType  { nullptr };   // AudioParameterChoice — index
 
+        std::atomic<float>* pSynthEnable     { nullptr };   // PHASE 2.7b (Bool)
+        std::atomic<float>* pSampleEnable    { nullptr };   // Bool
+        std::atomic<float>* pSampleLevel     { nullptr };
+        std::atomic<float>* pSampleStart     { nullptr };
+        std::atomic<float>* pSampleEnd       { nullptr };
+        std::atomic<float>* pSampleReverse   { nullptr };   // Bool
+        std::atomic<float>* pSampleTune      { nullptr };
+        std::atomic<float>* pSampleFine      { nullptr };
+        std::atomic<float>* pSampleMidiTrack { nullptr };   // Bool
+        std::atomic<float>* pSampleAttack    { nullptr };
+        std::atomic<float>* pSampleDecay     { nullptr };
+        std::atomic<float>* pSampleHP        { nullptr };
+        std::atomic<float>* pSampleLP        { nullptr };
+        std::atomic<float>* pSampleCrush     { nullptr };
+
+        const SampleBuffer* currentSampleBuf { nullptr };   // set per block by the processor
+
         // Per-block parameter snapshot.
         struct Snapshot
         {
@@ -177,6 +217,22 @@ namespace kickr
             float noiseTone01  { 0.5f };
             int   noiseType    { 0 };        // 0 = White, 1 = Pink, 2 = Filtered
             int   tuneMode        { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
+
+            // PHASE 2.7b — SAMPLE group (effective values resolved in processBlock).
+            bool  synthEnable     { true };
+            bool  sampleEnable    { false };
+            float sampleLevel     { 0.7f };
+            float sampleStart     { 0.0f };
+            float sampleEnd       { 1.0f };
+            bool  sampleReverse   { false };
+            float sampleTune      { 0.0f };
+            float sampleFine      { 0.0f };
+            bool  sampleMidiTrack { true };
+            float sampleAttackMs  { 0.0f };
+            float sampleDecayMs   { 800.0f };
+            float sampleHPHz      { 20.0f };
+            float sampleLPHz      { 20000.0f };
+            float sampleCrush01   { 0.0f };
         };
         Snapshot snap;
 
