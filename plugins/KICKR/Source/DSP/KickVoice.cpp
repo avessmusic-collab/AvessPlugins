@@ -88,4 +88,40 @@ namespace kickr
             }
         }
     }
+
+    void KickVoice::renderMono (float* mono, int numSamples) noexcept
+    {
+        if (mono == nullptr || numSamples <= 0)
+            return;
+
+        if (! active)
+        {
+            juce::FloatVectorOperations::clear (mono, numSamples);
+            return;
+        }
+
+        int i = 0;
+        for (; i < numSamples; ++i)
+        {
+            // Ratio-domain pitch drop, phase-continuous (frequency only).
+            const float freqHz = pitchEnv.nextFrequency (baseFrequencyHz);
+            body.setFrequency (freqHz);
+
+            const float env = ampEnv.tick();
+            const float osc = body.renderSample();
+            const float lvl = bodyLevel.getNextValue();
+
+            mono[i] = dsputils::sanitize (osc * env * lvl * velLevel);
+
+            if (! ampEnv.isActive())
+            {
+                active = false;
+                ++i;
+                break;
+            }
+        }
+
+        for (; i < numSamples; ++i)
+            mono[i] = 0.0f;
+    }
 }

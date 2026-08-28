@@ -12,7 +12,10 @@ namespace kickr
         - Decay: one-pole exponential, `coef = expDecayCoef(bodyDecay_ms, fs)`
           (~-60 dB over `bodyDecay`).
         - `isActive()` is false once the tail is below -90 dB AND past a short minimum
-          length — feeds KickVoice::isActive().
+          length — feeds KickVoice::isActive(). PHASE 2.3: a hard `maxLength` fallback
+          (~2x decay + 50 ms, always past the -90 dB point of a one-pole decay) guarantees
+          the voice frees under machine-gun retriggering even if the exp tail never gets
+          denormal-flushed to exactly zero.
 
         Ticks at `fsOversampled` (AD-10). All state denormal-flushed.
     */
@@ -42,6 +45,7 @@ namespace kickr
         int    attackPos     { 0 };
         int    samplesSinceTrigger { 0 };
         int    minLengthSamples    { 0 };
+        int    maxLengthSamples    { 0 };
 
         bool   attacking { false };
         bool   running   { false };

@@ -177,6 +177,111 @@ int main()
         check (f0end < 68.0 && f1end < 68.0,      "both reach the fundamental by 100-200 ms");
     }
 
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.3] Transient shaper + click-free 2-voice retrigger\n");
+
+    // render N note-ons at a fixed interval into one buffer
+    auto renderRetrigger = [] (KICKRAudioProcessor& p, int note, float velocity,
+                               double s, int block, int nNotes, double intervalSec, double seconds)
+    {
+        const int total = std::max (1, (int) std::ceil (s * seconds));
+        p.setRateAndBufferSizeDetails (s, block);
+        p.prepareToPlay (s, block);
+        juce::AudioBuffer<float> out (juce::jmax (1, p.getTotalNumOutputChannels()), total);
+        out.clear();
+        juce::AudioBuffer<float> scratch (out.getNumChannels(), block);
+
+        std::vector<int> onsets;
+        for (int k = 0; k < nNotes; ++k) onsets.push_back ((int) (k * intervalSec * s));
+
+        for (int pos = 0; pos < total;)
+        {
+            const int n = std::min (block, total - pos);
+            juce::AudioBuffer<float> b (scratch.getArrayOfWritePointers(), out.getNumChannels(), n);
+            b.clear();
+            juce::MidiBuffer midi;
+            for (int on : onsets)
+                if (on >= pos && on < pos + n)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, note, velocity), on - pos);
+            p.processBlock (b, midi);
+            for (int ch = 0; ch < out.getNumChannels(); ++ch)
+                out.copyFrom (ch, pos, b, ch, 0, n);
+            pos += n;
+        }
+        p.releaseResources();
+        return std::make_pair (out, onsets);
+    };
+
+    auto rmsWindow = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1)
+    {
+        const int i0 = std::max (0, (int) (t0 * s));
+        const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+        const float* x = b.getReadPointer (0);
+        double sq = 0.0;
+        for (int i = i0; i < i1; ++i) sq += (double) x[i] * x[i];
+        return std::sqrt (sq / std::max (1, i1 - i0));
+    };
+
+    // machine-gun retrigger: 1/32 @ 174 BPM = ~43 ms
+    {
+        KICKRAudioProcessor p;
+        auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
+        const float* rx = rbuf.getReadPointer (0);
+        const int rn = rbuf.getNumSamples();
+
+        bool finite = true; float peak = 0.0f;
+        for (int i = 0; i < rn; ++i) { if (! std::isfinite (rx[i])) finite = false; peak = std::max (peak, std::abs (rx[i])); }
+
+        // max sample-to-sample slew inside a +/-1 ms window around every trigger
+        float worstSlew = 0.0f;
+        const int w = (int) (0.001 * sr);
+        for (int on : onsets)
+            for (int i = std::max (1, on - w); i < std::min (rn, on + w); ++i)
+                worstSlew = std::max (worstSlew, std::abs (rx[i] - rx[i - 1]));
+
+        // global worst slew as a reference (a click would spike far above this)
+        float globalSlew = 0.0f;
+        for (int i = 1; i < rn; ++i) globalSlew = std::max (globalSlew, std::abs (rx[i] - rx[i - 1]));
+
+        const double tailRms = rmsWindow (rbuf, sr, 1.7, 2.0);   // well after the last hit
+        std::printf ("  24x retrigger: peak %.2f  worstSlew@triggers %.4f  globalSlew %.4f  tailRMS %.5f\n",
+                     peak, worstSlew, globalSlew, tailRms);
+
+        check (finite,                       "no NaN / Inf under machine-gun retrigger");
+        check (peak > 0.05f && peak < 4.0f,  "output bounded (no runaway voices)");
+        check (worstSlew < 0.25f,            "retrigger crossfade is click-free (slew < 0.25 at every trigger)");
+        check (worstSlew < globalSlew * 2.5f,"no click spike vs the steady-state slew");
+        check (tailRms < 0.01,               "voices free after the last hit (no leak / stuck voice)");
+    }
+
+    // transientAttack: +1 sharpens the onset, -1 softens it
+    {
+        KICKRAudioProcessor pPos, pMid, pNeg;
+        setP (pPos, "transientAttack",  1.0f);
+        setP (pNeg, "transientAttack", -1.0f);
+        const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
+        const auto bMid = kickr::tests::renderNote (pMid, a1, vel, sr, 512, 1.0);
+        const auto bNeg = kickr::tests::renderNote (pNeg, a1, vel, sr, 512, 1.0);
+        const double aPos = rmsWindow (bPos, sr, 0.0, 0.006);
+        const double aMid = rmsWindow (bMid, sr, 0.0, 0.006);
+        const double aNeg = rmsWindow (bNeg, sr, 0.0, 0.006);
+        std::printf ("  onset RMS (0-6ms):  attack -1 %.4f   0 %.4f   +1 %.4f\n", aNeg, aMid, aPos);
+        check (aPos > aMid * 1.10 && aMid > aNeg * 1.10, "transientAttack +/- changes onset energy");
+    }
+
+    // transientSustain: +1 lifts the body, -1 drops it
+    {
+        KICKRAudioProcessor pPos, pNeg;
+        setP (pPos, "transientSustain",  1.0f);
+        setP (pNeg, "transientSustain", -1.0f);
+        const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
+        const auto bNeg = kickr::tests::renderNote (pNeg, a1, vel, sr, 512, 1.0);
+        const double sPos = rmsWindow (bPos, sr, 0.050, 0.200);
+        const double sNeg = rmsWindow (bNeg, sr, 0.050, 0.200);
+        std::printf ("  body RMS (50-200ms):  sustain -1 %.4f   +1 %.4f\n", sNeg, sPos);
+        check (sPos > sNeg * 1.20,               "transientSustain shifts the body level");
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

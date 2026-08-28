@@ -1,27 +1,69 @@
 #pragma once
 
-#include <juce_dsp/juce_dsp.h>
+#include <juce_core/juce_core.h>
 
 namespace kickr
 {
     /**
-        Stage 1 stub. Implemented in Stage 2 (plan.md Phase 2.3).
+        Kick-tuned attack / sustain enhancement on the SUMMED mono signal
+        (architecture.md -> TransientShaper, plan.md Phase 2.3).
 
-        Kick-tuned attack/sustain enhancement on the summed signal. Dual one-pole
-        envelope followers (fast ~1 ms atk / ~20 ms rel; slow ~15 ms / ~150 ms).
-        Transient region when fast > slow * 1.05. attackGainDb = transientAttackEff * 6,
-        sustainGainDb = transientSustain * 6. Position: after Tone(pre), before the
-        master Waveshaper — inside the OS region (AD-10).
+        Design (deliberately simple — NOT a full transient designer, no lookahead):
+          - Two one-pole followers of |x| vs `fsOversampled`:
+              fast : attack ~1 ms   / release ~20 ms
+              slow : attack ~15 ms  / release ~150 ms
+          - Transient region when `fast > slow * kThresh` (kThresh = 1.05).
+          - In the transient region:  gainDb = transientAttackEff * 6
+            elsewhere (sustain region): gainDb = transientSustain  * 6
+          - The APPLIED gain is one-pole smoothed (~3 ms) so the region flip
+            never zippers.
+          - Bipolar: negative `transientAttack` softens the onset (Open Q 9).
+
+        Position: after Tone(pre), before the master Waveshaper — inside the OS
+        region (AD-10). Gain-only, so oversampling it only costs a little CPU and
+        keeps the buffer plumbing to one up/down pair.
+
+        `transientAttackEff` = `transientAttack (+ macroPunch offset)` — the macro
+        offset is added upstream in KickEngine (Phase 2.11); this class just takes
+        the pre-resolved value via `setParams`.
+
+        RT-safe: no allocation / lock / IO. Follower states AND the smoothed-gain
+        state are denormal-flushed every sample.
     */
     class TransientShaper
     {
     public:
-        void prepare (const juce::dsp::ProcessSpec& spec) noexcept { fsOversampled = spec.sampleRate; }
-        void reset() noexcept { fastEnv = 0.0f; slowEnv = 0.0f; }
+        static constexpr float kThresh    = 1.05f;
+        static constexpr float kMaxGainDb = 6.0f;
+
+        /** @param fsOversampled  the in-region sample rate (fs * osFactor). */
+        void prepare (double fsOversampled) noexcept;
+        void reset() noexcept;
+
+        /** Per-block (called from KickEngine — never reads APVTS itself).
+            Both arguments are the bipolar −1…+1 controls; `attackBipolar` already
+            includes any macro offset. */
+        void setParams (float attackBipolar, float sustainBipolar) noexcept;
+
+        float processSample (float x) noexcept;
 
     private:
-        double fsOversampled { 44100.0 };
-        float  fastEnv { 0.0f };
-        float  slowEnv { 0.0f };
+        double fs { 44100.0 };
+
+        // One-pole coefficients (set in prepare()).
+        float fastAtk { 0.0f };
+        float fastRel { 0.0f };
+        float slowAtk { 0.0f };
+        float slowRel { 0.0f };
+        float gainCoef { 0.0f };
+
+        // Running state.
+        float fastEnv      { 0.0f };
+        float slowEnv      { 0.0f };
+        float smoothedGain { 1.0f };
+
+        // Per-block params.
+        float attackAmt  { 0.0f };
+        float sustainAmt { 0.0f };
     };
 }

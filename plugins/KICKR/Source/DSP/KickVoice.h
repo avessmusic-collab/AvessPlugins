@@ -15,9 +15,13 @@ namespace kickr
         PHASE 2.1: aggregates BodyOscillator + AmplitudeEnvelope. PHASE 2.2: PitchEnvelope
         now drives per-sample body frequency (ratio-domain snap+settle, phase-continuous).
         Monophonic; `noteOff()` is ignored (the kick runs to completion).
-        Renders the body layer x `bodyLevel` x velocity-scaled level and ADDS it into the
-        oversampled work block (AD-10). Sub / Click / Tail / Noise / SamplePlayer +
-        `bodyHarmonics` + the 2-voice retrigger crossfade land in later phases.
+        Renders the body layer x `bodyLevel` x velocity-scaled level.
+
+        PHASE 2.3: KickEngine owns `std::array<KickVoice, 2>` and equal-power crossfades
+        between them on retrigger, so it renders each voice into its own mono scratch
+        buffer via `renderMono` and mixes with the fade gains. `renderAdd` (Phase 2.1
+        stereo-block path) is kept for compatibility. Sub / Click / Tail / Noise /
+        SamplePlayer + `bodyHarmonics` land in later phases.
     */
     class KickVoice
     {
@@ -49,6 +53,13 @@ namespace kickr
 
         /** Add this voice's output into `block[startSample .. startSample+numSamples)`. */
         void renderAdd (juce::dsp::AudioBlock<float>& block, int startSample, int numSamples) noexcept;
+
+        /**
+            OVERWRITE `mono[0 .. numSamples)` with this voice's mono output.
+            Writes exact zeros when the voice is (or becomes) inactive, so the caller
+            can always read the full span. Used by KickEngine's retrigger crossfade.
+        */
+        void renderMono (float* mono, int numSamples) noexcept;
 
         bool isActive() const noexcept { return active; }
 

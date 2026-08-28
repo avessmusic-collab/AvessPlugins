@@ -8,6 +8,7 @@
 
 #include "DSP/OversamplingProcessor.h"
 #include "DSP/KickVoice.h"
+#include "DSP/TransientShaper.h"
 #include "Utilities/DSPUtils.h"
 
 namespace kickr
@@ -28,8 +29,15 @@ namespace kickr
         PHASE 2.2: pitch envelope live — `pitchStart` / `pitchTime` / `pitchCurve` snapshot
         per block, velocity-scaled effective `pitchStart` fed to `KickVoice::setPitchParams`.
 
-        Later phases add: 2-voice retrigger crossfade + transient
-        shaper (2.3), click/sub/tail/noise (2.4-2.7), sample player (2.7b), distortion
+        PHASE 2.3: owns `std::array<KickVoice, 2>` + `activeVoice`. A note-on while the
+        active voice is still ringing triggers the OTHER voice and starts a
+        `kRetriggerFadeMs = 3 ms` equal-power crossfade (both voices render, phase-
+        continuous; the old voice is `reset()` only once theta reaches 1). A third note
+        mid-fade snaps the fade to done first, so never more than 2 voices are live.
+        `TransientShaper` runs on the summed mono signal right after the voice mix,
+        still inside the OS region (AD-10). Params live: `transientAttack`, `transientSustain`.
+
+        Later phases add: click/sub/tail/noise (2.4-2.7), sample player (2.7b), distortion
         (2.8), tone/stereo/limiter (2.9), real OS switching (2.10), smoothing/macros
         (2.11), analyzer.
     */
@@ -48,8 +56,11 @@ namespace kickr
         int getLatencySamples() const noexcept { return oversampling.getLatencySamples(); }
 
     private:
+        static constexpr double kRetriggerFadeMs = 3.0;   // equal-power crossfade length
+
         void renderSegment (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
         void handleNoteOn (const juce::MidiMessage& message);
+        void triggerVoice (KickVoice& v, float freqHz, int note, float velLevelGain, float v01) noexcept;
         float resolvePitchHz (int noteNumber) const noexcept;
 
         /** architecture Parameter Mapping row 2 — velocity (subtle) scaling of `pitchStart`. */
@@ -62,9 +73,19 @@ namespace kickr
         int    maxBlockSize   { 512 };
 
         OversamplingProcessor oversampling;
-        KickVoice             voice;
+
+        // PHASE 2.3: two voices + click-free equal-power retrigger crossfade.
+        std::array<KickVoice, 2> voices;
+        int    activeVoice       { 0 };
+        int    incomingVoice     { 1 };
+        bool   fadeActive        { false };
+        double theta             { 0.0 };   // crossfade position 0 -> 1
+        double retriggerThetaInc { 0.0 };   // 1 / (kRetriggerFadeMs * fsOversampled)
+
+        TransientShaper transientShaper;
 
         juce::AudioBuffer<float>             scratch;        // stereo, base-rate, pre-sized
+        std::array<juce::AudioBuffer<float>, 2> voiceScratch; // mono, oversampled-rate, pre-sized
         std::array<dsputils::DCBlocker, 2>   dcBlockers;
 
         // Cached raw APVTS pointers (atomic reads on the audio thread).
@@ -79,6 +100,8 @@ namespace kickr
         std::atomic<float>* pFineTune       { nullptr };
         std::atomic<float>* pVelSensitivity { nullptr };
         std::atomic<float>* pOversampling   { nullptr };
+        std::atomic<float>* pTransientAttack  { nullptr };
+        std::atomic<float>* pTransientSustain { nullptr };
 
         // Per-block parameter snapshot.
         struct Snapshot
@@ -92,6 +115,8 @@ namespace kickr
             float tune            { 0.0f };
             float fineTune        { 0.0f };
             float velSens         { 0.5f };
+            float transientAttack { 0.0f };  // bipolar -1..+1
+            float transientSustain { 0.0f }; // bipolar -1..+1
             int   tuneMode        { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
         };
         Snapshot snap;

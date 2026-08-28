@@ -13,10 +13,25 @@ namespace kickr
         oversampling.prepare (baseSampleRate, maxBlockSize);
         fsOversampled = oversampling.getOversampledRate();     // == baseSampleRate at 1x
 
-        voice.prepare (fsOversampled);
+        for (auto& v : voices)
+            v.prepare (fsOversampled);
+
+        transientShaper.prepare (fsOversampled);
+
+        // 1 / (fade length in oversampled samples) — fsOversampled is fixed until Phase 2.10.
+        retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
 
         scratch.setSize (OversamplingProcessor::kNumChannels, maxBlockSize, false, false, true);
         scratch.clear();
+
+        // Mono per-voice render scratch @ the oversampled rate. Sized for the worst case
+        // (max block x max OS factor) so Phase 2.10 needs no resize here.
+        const int maxOsSamples = maxBlockSize * (1 << (OversamplingProcessor::kNumFactors - 1));
+        for (auto& b : voiceScratch)
+        {
+            b.setSize (1, maxOsSamples, false, false, true);
+            b.clear();
+        }
 
         // Base-rate DC blocker, ~5 Hz corner (below the 25 Hz sub — Phase 2.5).
         const auto dcR = 1.0f - (juce::MathConstants<float>::twoPi * 5.0f
@@ -39,6 +54,8 @@ namespace kickr
         pFineTune       = apvts.getRawParameterValue (id::fineTune);
         pVelSensitivity = apvts.getRawParameterValue (id::velSensitivity);
         pOversampling   = apvts.getRawParameterValue (id::oversampling);
+        pTransientAttack  = apvts.getRawParameterValue (id::transientAttack);
+        pTransientSustain = apvts.getRawParameterValue (id::transientSustain);
 
         reset();
     }
@@ -46,8 +63,20 @@ namespace kickr
     void KickEngine::reset()
     {
         oversampling.reset();
-        voice.reset();
+
+        for (auto& v : voices)
+            v.reset();
+
+        transientShaper.reset();
+
+        activeVoice   = 0;
+        incomingVoice = 1;
+        fadeActive    = false;
+        theta         = 0.0;
+
         scratch.clear();
+        for (auto& b : voiceScratch)
+            b.clear();
         for (auto& b : dcBlockers)
             b.reset();
     }
@@ -85,6 +114,16 @@ namespace kickr
         return juce::jmax (1.0f, 1.0f + (snap.pitchStartRatio - 1.0f) * vScale);
     }
 
+    void KickEngine::triggerVoice (KickVoice& v, float freqHz, int note,
+                                   float velLevelGain, float v01) noexcept
+    {
+        v.noteOn (freqHz, note, velLevelGain, snap.bodyDecayMs, 0);
+
+        // Refresh the pitch contour with THIS note's velocity-scaled pitchStart so the
+        // freshly-armed fall is correct from sample 0.
+        v.setPitchParams (effectivePitchStartRatio (v01), snap.pitchTimeMs, snap.pitchCurve);
+    }
+
     void KickEngine::handleNoteOn (const juce::MidiMessage& message)
     {
         const int   note = message.getNoteNumber();
@@ -97,11 +136,36 @@ namespace kickr
 
         lastVel01 = v01;
 
-        voice.noteOn (freqHz, note, velLevelGain, snap.bodyDecayMs, 0);
+        // A third trigger mid-fade: snap the current crossfade to done first (free the
+        // outgoing voice, promote the incoming one) so we never have > 2 voices live.
+        if (fadeActive)
+        {
+            voices[static_cast<size_t> (activeVoice)].reset();
+            activeVoice = incomingVoice;
+            fadeActive  = false;
+            theta       = 0.0;
+        }
 
-        // Refresh the pitch contour with THIS note's velocity-scaled pitchStart so the
-        // freshly-armed fall is correct from sample 0.
-        voice.setPitchParams (effectivePitchStartRatio (v01), snap.pitchTimeMs, snap.pitchCurve);
+        auto& active = voices[static_cast<size_t> (activeVoice)];
+
+        if (active.isActive())
+        {
+            // Retrigger while ringing -> start the other voice + a 3 ms equal-power
+            // crossfade. The old voice keeps running phase-continuously; it is reset
+            // only when theta reaches 1 (in renderSegment).
+            incomingVoice = 1 - activeVoice;
+            auto& incoming = voices[static_cast<size_t> (incomingVoice)];
+            incoming.reset();
+            triggerVoice (incoming, freqHz, note, velLevelGain, v01);
+
+            theta      = 0.0;
+            fadeActive = true;
+        }
+        else
+        {
+            // Voice free -> just (re)trigger it, no fade.
+            triggerVoice (active, freqHz, note, velLevelGain, v01);
+        }
     }
 
     void KickEngine::renderSegment (juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
@@ -117,7 +181,66 @@ namespace kickr
         // band-limit + decimate back to base rate. At 1x this is bit-transparent aside
         // from the intended DSP.
         auto up = oversampling.processSamplesUp (seg);
-        voice.renderAdd (up, 0, static_cast<int> (up.getNumSamples()));
+
+        const int upNum = static_cast<int> (up.getNumSamples());
+        const int upCh  = static_cast<int> (up.getNumChannels());
+
+        jassert (upNum <= voiceScratch[0].getNumSamples());
+
+        // Render each live voice into its own mono scratch (the body is mono).
+        float* dataA = voiceScratch[0].getWritePointer (0);
+        float* dataB = voiceScratch[1].getWritePointer (0);
+
+        const bool fading = fadeActive;
+
+        voices[static_cast<size_t> (activeVoice)].renderMono (dataA, upNum);
+        if (fading)
+            voices[static_cast<size_t> (incomingVoice)].renderMono (dataB, upNum);
+
+        // Voice mix (equal-power crossfade during a retrigger) -> summed-mono
+        // TransientShaper (AD-10 in-region) -> both output channels of `up`.
+        double th = theta;
+
+        for (int i = 0; i < upNum; ++i)
+        {
+            float mono;
+
+            if (fading)
+            {
+                float gOld = 1.0f, gNew = 0.0f;
+                dsputils::equalPowerGains (static_cast<float> (th), gOld, gNew);
+                mono = gOld * dataA[i] + gNew * dataB[i];
+
+                th += retriggerThetaInc;
+                if (th > 1.0)
+                    th = 1.0;
+            }
+            else
+            {
+                mono = dataA[i];
+            }
+
+            // Phase 2.11: transientAttackEff = transientAttack + macroPunch offset
+            // (the offset is added upstream in processBlock via setParams).
+            const float shaped = dsputils::sanitize (transientShaper.processSample (mono));
+
+            for (int ch = 0; ch < upCh; ++ch)
+                up.setSample (ch, i, shaped);
+        }
+
+        if (fading)
+        {
+            theta = th;
+
+            if (theta >= 1.0)
+            {
+                voices[static_cast<size_t> (activeVoice)].reset();   // free the outgoing voice
+                activeVoice = incomingVoice;
+                fadeActive  = false;
+                theta       = 0.0;
+            }
+        }
+
         oversampling.processSamplesDown (seg);
 
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -156,12 +279,21 @@ namespace kickr
         snap.tune            = load (pTune,           0.0f);
         snap.fineTune        = load (pFineTune,       0.0f);
         snap.velSens         = load (pVelSensitivity, 0.5f);
+        snap.transientAttack  = load (pTransientAttack,  0.0f);
+        snap.transientSustain = load (pTransientSustain, 0.0f);
         snap.tuneMode        = static_cast<int> (load (pTuneMode, 0.0f));
 
-        voice.setBodyLevel (snap.bodyLevel);
+        // Per-block refresh on BOTH voices (either can be rendering during a crossfade):
+        // body level + pitch-contour coefficients (keeps automation live mid-voice).
+        for (auto& v : voices)
+        {
+            v.setBodyLevel (snap.bodyLevel);
+            v.setPitchParams (effectivePitchStartRatio (lastVel01), snap.pitchTimeMs, snap.pitchCurve);
+        }
 
-        // Per-block pitch-contour coefficient refresh (keeps automation live mid-voice).
-        voice.setPitchParams (effectivePitchStartRatio (lastVel01), snap.pitchTimeMs, snap.pitchCurve);
+        // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.
+        const float transientAttackEff = snap.transientAttack;
+        transientShaper.setParams (transientAttackEff, snap.transientSustain);
 
         // Sample-accurate sub-block split at each note-on.
         int pos = 0;
@@ -176,7 +308,7 @@ namespace kickr
                 renderSegment (buffer, pos, evPos - pos);
 
             pos = evPos;
-            handleNoteOn (message);   // retrigger just restarts the voice (crossfade = Phase 2.3)
+            handleNoteOn (message);   // Phase 2.3: 2-voice 3 ms equal-power retrigger crossfade
         }
 
         if (pos < numSamples)

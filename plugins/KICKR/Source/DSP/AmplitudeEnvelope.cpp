@@ -2,6 +2,7 @@
 #include "Utilities/DSPUtils.h"
 
 #include <cmath>
+#include <limits>
 
 namespace kickr
 {
@@ -33,6 +34,12 @@ namespace kickr
         // report "done" during the initial ramp of a very short decay.
         minLengthSamples = attackSamples + static_cast<int> (std::lround (0.005 * fsOversampled));
 
+        // Hard fallback: a one-pole -60 dB/decayMs tail is past -90 dB by ~1.5x decayMs,
+        // so 2x decayMs + 50 ms always covers a fully-decayed voice. Guarantees isActive()
+        // flips false under machine-gun retriggering regardless of denormal flushing.
+        maxLengthSamples = static_cast<int> (std::lround (
+                               (static_cast<double> (decayMs) * 2.0 + 50.0) * 0.001 * fsOversampled));
+
         samplesSinceTrigger = 0;
         value     = 0.0f;
         attacking = true;
@@ -61,9 +68,12 @@ namespace kickr
         }
 
         dsputils::flushDenormal (value);
-        ++samplesSinceTrigger;
+        if (samplesSinceTrigger < std::numeric_limits<int>::max())
+            ++samplesSinceTrigger;
 
-        if (! attacking && value < floorGain && samplesSinceTrigger > minLengthSamples)
+        if (! attacking
+            && samplesSinceTrigger > minLengthSamples
+            && (value < floorGain || samplesSinceTrigger > maxLengthSamples))
         {
             running = false;
             value   = 0.0f;

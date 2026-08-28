@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 2 — DSP Phase 2.2 complete (pitch envelope — ratio-domain snap+settle)
+- **Current Status:** 🚧 Stage 2 — DSP Phase 2.3 complete (amp-env refinement + transient shaper + click-free 2-voice retrigger)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -30,6 +30,13 @@
   - Perf: `k`, `exp(-k)`, `1/(1-exp(-k))`, `log2(pitchStart)` computed once per block in `setParams(startRatioEff, timeMs, curve)`; per sample = one `std::exp` + one `std::exp2`. No per-block interpolation (plain per-sample form kept for correctness this phase).
   - `KickEngine` caches `pitchStart`/`pitchTime`/`pitchCurve`, snapshots per block, computes velocity-scaled effective `pitchStart` (`1 + (pitchStart−1)·lerp(1, 0.5+0.5·v01, velSensitivity·0.35)` — architecture Parameter Mapping row 2, "velocity subtle") and calls `KickVoice::setPitchParams` per block + right after each `noteOn`. `KickVoice::setPitchParams` forwards to `pitchEnv.setParams`; the per-sample `nextFrequency → body.setFrequency` hook was already staged in 2.1.
   - Params live: `pitchStart`, `pitchTime`, `pitchCurve`. No new translation units (header-only) — no CMake change. RT-safe: no alloc/lock/log/IO; `tSinceTrigger` monotonic (no denormal flush needed).
+- **2026-08-28 (Stage 2 — DSP Phase 2.3):** Amp-env refinement + `TransientShaper` + click-free 2-voice retrigger.
+  - **`KickEngine`** now owns `std::array<KickVoice, 2> voices` + `int activeVoice`. Note-on while the active voice rings → trigger `voices[1-activeVoice]` + a `kRetriggerFadeMs = 3.0` ms **equal-power crossfade**: per oversampled sample `out = cos(θ·π/2)·old + sin(θ·π/2)·new` (`dsputils::equalPowerGains`), `θ` 0→1 over `kRetriggerFadeMs · fsOversampled` samples. Both voices render (each into its own pre-sized mono `voiceScratch` via new `KickVoice::renderMono`); the **old voice runs phase-continuously** and is `reset()` only when `θ` reaches 1 (`activeVoice = incomingVoice`). Third note mid-fade → snap current fade to done, start a fresh one → never > 2 voices live. Plain retrigger (no fade) when the active voice is already free.
+  - **`TransientShaper`** (`Source/DSP/TransientShaper.{h,cpp}` — Phase-1 stub fleshed out; `.cpp` added to `KICKR_CORE_SOURCES`): on the **summed mono** signal right after the voice mix, inside the OS region (AD-10). Dual one-pole `|x|` followers vs `fsOversampled` (fast 1/20 ms, slow 15/150 ms); transient region when `fast > slow·1.05`. `attackGainDb = transientAttackEff·6` in the region / `sustainGainDb = transientSustain·6` elsewhere; applied **linear** gain one-pole smoothed ~3 ms (anti-zipper). Bipolar (negative attack softens onset — Open Q 9). `transientAttackEff = transientAttack` (`// Phase 2.11: + macroPunch offset` marker in `KickEngine`). Followers + smoothed-gain denormal-flushed every sample.
+  - **`AmplitudeEnvelope`**: added a hard `maxLengthSamples` fallback (`≈ 2·bodyDecay + 50 ms`, always past −90 dB of the one-pole tail) so `isActive()` reliably frees voices under machine-gun retriggering; `samplesSinceTrigger` increment saturates at `INT_MAX`. Existing −90 dB + attack+5 ms `minLength` logic kept.
+  - Params live: `transientAttack`, `transientSustain` (bipolar −1…+1, default 0 ⇒ shaper is unity, Phase 2.1/2.2 checkpoints unaffected). Cached ptrs + per-block snapshot + `transientShaper.setParams`.
+  - RT-safe: no alloc/lock/log/IO; `voiceScratch` sized in `prepare` (`maxBlockSize · 8`); zero-length block early-return; `int` loop indices, `static_cast` for `size_t`↔`int`. Zero-warnings target (`-Wshorten-64-to-32` / `-Wsign-conversion`).
+  - Files: `TransientShaper.{h,cpp}` (new .cpp), `KickEngine.{h,cpp}`, `KickVoice.{h,cpp}` (`renderMono`; `renderAdd` kept), `AmplitudeEnvelope.{h,cpp}`, `CMakeLists.txt`.
 
 ## Known Issues
 
