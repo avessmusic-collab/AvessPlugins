@@ -649,7 +649,7 @@ Every APVTS parameter → owning component + the variable/coefficient it drives.
 
 ### Native UI scope (custom LookAndFeel + 6+ custom components, resizable)
 **Complexity:** MEDIUM · **Risk Level:** LOW
-- Risk factors: departs from the repo's WebView convention → no existing reference in this codebase; resizable layout math; 11 section panels + macro row + global strip.
+- Risk factors: departs from the repo's WebView convention → no existing reference in this codebase; resizable layout math; scope-strip + sample-strip + 4 macro modules + 7-cell engine strip (no separate Pitch panel — it lives in Body).
 - Alternatives: `juce::FlexBox`/`Grid` layout; one reusable `Knob` + `SectionPanel`; constrained aspect ratio via `setResizeLimits` + `ComponentBoundsConstrainer::setFixedAspectRatio`.
 - Fallback: fixed-size UI for v1 if resizable proves fiddly (creative brief wants resizable but it is not a hard audio requirement).
 - Mitigation: build LookAndFeel + Knob first (Phase 3.1), lay out with FlexBox, test at min/mid/max size.

@@ -202,7 +202,7 @@ Sample **selection** is not an automatable parameter — the chosen file name is
 - **Center:** large real-time **waveform display** of the most recent kick; toggle/overlay **spectrum** (reasonable FFT size, low CPU, never blocks audio).
 - **Macro row:** four large knobs — PUNCH · BODY · CRUSH · TAIL.
 - **Sample module:** drag-drop target + bank browser (prev/next/list, shows current file name) · SYNTH and SAMPLE enable toggles · sample tweak controls (Level, Start/End, Reverse, Tune/Fine, MIDI-track, Attack/Decay, HP/LP, Crush). The whole plugin window is also a drop target.
-- **Section panels:** Pitch · Body · Click · Tail · Sub · Noise · Drive (Drive/Character/Mix) · Tone (Low/Mid/High) · Stereo · Output.
+- **Section panels:** Body (the tonal core — NOTE / Fundamental + Level/Decay/Harmonics + the pitch envelope Start/Time/Curve; **no separate Pitch panel**) · Click · Tail · Sub · Noise · Drive (Drive/Character/Mix) · Tone (Low/Mid/High) · Stereo · Output.
 - **Global strip:** Oversampling selector · Limiter toggle · Output gain · Mix.
 
 **Drag-and-drop:** `juce::FileDragAndDropTarget` on the editor; dropped audio files are validated (format, length) and copied into the library folder on the message thread, then the bank re-scans and selects the new file.

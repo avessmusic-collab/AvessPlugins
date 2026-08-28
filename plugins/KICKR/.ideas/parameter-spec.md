@@ -20,36 +20,40 @@
 
 ---
 
-## PITCH group
+## PITCH group  — *rendered inside the BODY panel (no separate Pitch panel; user request 2026-08-28)*
+
+These 4 parameters are unchanged; only their UI home moved. The **BODY panel** is the tonal core: a large **NOTE** knob (`fundamental`) + LCD, then `bodyLevel` · `bodyDecay` · `bodyHarmonics` · `pitchStart` · `pitchTime` · `pitchCurve` as the small-knob cluster.
 
 ### Fundamental
 - **ID:** `fundamental` · **Float** · **25.0 – 150.0 Hz** · **Default 55.0** · **Skew 0.5** · **Unit `note`** (stored as Hz internally)
-- **UI:** rotary knob, Pitch panel (labelled **NOTE**). **Displayed as the nearest musical note** — e.g. `55 Hz → "A1"`, with the Hz value shown small beside it and in the tooltip. Value string `"{note}"` (e.g. `A1`, `C#2`), sub-value `"{v.0f} Hz"`.
+- **UI:** **large rotary knob in the BODY panel, labelled NOTE** — the panel's hero control. **Displayed as the nearest musical note** — e.g. `55 Hz → "A1"`, with the Hz value shown small beside it and in the tooltip. Value string `"{note}"` (e.g. `A1`, `C#2`), sub-value `"{v.0f} Hz"`.
 - **Value ↔ note:** `midi = round(69 + 12·log2(fEff/440))`; name = `["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"][midi mod 12] + (floor(midi/12) − 1)` (so 440 Hz = A4, 55 Hz = A1). The parameter itself stays a continuous Hz float (automation is smooth); the knob **snaps to semitones on plain drag**, fine (cents-level Hz) on shift-drag — a Stage-3 Knob behaviour, not a range change.
 - **DSP:** final target frequency of body + pitch envelope. In `Fixed Frequency` tune mode this is the absolute fundamental. In `MIDI Pitch` mode the incoming note sets the fundamental and this knob is a global semitone offset `12·log2(fundamental/55)` (Stage 0 Addendum Q8) — so its note display then reads as a transpose offset, documented in the tooltip.
 
 ### Pitch Start
 - **ID:** `pitchStart` · **Float** · **1.0 – 10.0 ×** · **Default 4.0** · **Skew 0.6** · **Unit ×**
-- **UI:** rotary knob, Pitch panel. Value `{v.2f}×`.
+- **UI:** small rotary knob, **BODY panel** (labelled `P Start`). Value `{v.2f}×`.
 - **DSP:** pitch-envelope start frequency = `fundamental × pitchStart`. Envelope falls from here to `fundamental`. Operates in ratio/log domain — never linear Hz.
 
 ### Pitch Time
 - **ID:** `pitchTime` · **Float** · **5.0 – 500.0 ms** · **Default 50.0** · **Skew 0.3** · **Unit ms**
-- **UI:** rotary knob, Pitch panel. Value `{v.0f} ms`.
+- **UI:** small rotary knob, **BODY panel** (labelled `P Time`). Value `{v.0f} ms`.
 - **DSP:** time for the pitch envelope to fall from start to (near) fundamental.
 
 ### Pitch Curve
 - **ID:** `pitchCurve` · **Float** · **0.0 – 1.0** · **Default 0.7** · **Skew linear** · **Unit —**
-- **UI:** rotary knob, Pitch panel. Value `{v.0%}` or `Lin … Exp`.
+- **UI:** small rotary knob, **BODY panel** (labelled `P Curve`). Value `{v.0%}` or `Lin … Exp`.
 - **DSP:** 0.0 = near-linear fall (more audible sweep / "laser"), 1.0 = sharp exponential spike (punch). The envelope shape is implemented as a snap+settle contour (fast initial collapse, slower approach to fundamental) whose sharpness is driven by this control — no separate second parameter. See research-notes §1.
 
 ---
 
 ## BODY group
 
+The BODY panel now also hosts the PITCH group above (`fundamental` as its hero NOTE knob + `pitchStart`/`pitchTime`/`pitchCurve`). It is the tonal core of the kick.
+
 ### Body Level
 - **ID:** `bodyLevel` · **Float** · **0.0 – 1.0** · **Default 1.0** · **Skew linear** · **Unit —** (internally gain, `-inf…0 dB`)
-- **UI:** rotary knob, Body panel. Value `{v.0%}`.
+- **UI:** small rotary knob, Body panel (labelled `Level`). Value `{v.0%}`.
 - **DSP:** linear level of the body oscillator layer into the summing bus.
 
 ### Body Decay

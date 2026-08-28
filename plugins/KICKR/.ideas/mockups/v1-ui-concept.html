@@ -7,7 +7,7 @@
   /* ============================================================
      KICKR — UI concept v3
      Committed single visual world: a soft-bodied rack instrument.
-     Fixed 1600x1088 "instrument" that scales to fit the viewport,
+     Fixed 1600x1170 "instrument" that scales to fit the viewport,
      so it always reads as one photo. Design notes flow below.
      ============================================================ */
   :root{
@@ -60,7 +60,7 @@
 
   /* ===================== THE INSTRUMENT ===================== */
   .instrument{
-    width:1600px;height:1088px;flex:none;
+    width:1600px;height:1170px;flex:none;
     transform:scale(var(--s,1));transform-origin:top center;
     background:
       linear-gradient(157deg,var(--chassis-hi) 0%,var(--chassis-mid) 46%,var(--chassis-lo) 100%);
@@ -227,7 +227,7 @@
   .dot.on.r::after{background:var(--red);box-shadow:0 0 9px var(--red),inset 0 0 2px rgba(255,255,255,.6)}
 
   .mbody{display:flex;align-items:center;gap:16px}
-  .mfoot{display:flex;gap:24px;justify-content:space-around;padding-top:8px}
+  .mfoot{display:grid;grid-template-columns:repeat(3,1fr);gap:20px 14px;justify-items:center;padding-top:10px}
 
   /* selector LCD (Character morph / Noise type) */
   .sel{display:flex;align-items:center;gap:8px;background:linear-gradient(#0b0910,#060409);
@@ -246,7 +246,7 @@
       inset 0 -18px 30px rgba(0,0,0,.4),
       0 3px 1px rgba(0,0,0,.5),
       0 22px 40px -16px rgba(0,0,0,.7);
-    display:grid;grid-template-columns:repeat(8,1fr);flex:1;
+    display:grid;grid-template-columns:repeat(7,1fr);flex:1;
     overflow:hidden;
   }
   .cell{padding:16px 13px 16px;display:flex;flex-direction:column;gap:12px;min-width:0;
@@ -411,13 +411,16 @@
           <div class="mhead"><h3>Body</h3>
             <div class="dots" style="--acc:var(--lowfam)"><span class="dot on"></span><span class="dot"></span></div></div>
           <div class="mbody">
-            <div class="knob lg" style="--p:.55;--acc:var(--lowfam)"></div>
-            <div class="lcd blue"><span class="l">Fundamental &middot; note</span><span class="row"><span class="v">A1</span><span class="u">55 Hz</span></span></div>
+            <div class="knob lg" style="--p:.33;--acc:var(--lowfam)" title="Note (Fundamental)"></div>
+            <div class="lcd blue"><span class="l">Note &middot; fundamental</span><span class="row"><span class="v">A1</span><span class="u">55 Hz</span></span></div>
           </div>
           <div class="mfoot">
             <div class="kc"><div class="knob sm" style="--p:1;--acc:var(--violet)"></div><span class="lab">Level</span></div>
             <div class="kc"><div class="knob sm" style="--p:.42;--acc:var(--lowfam)"></div><span class="lab">Decay</span></div>
             <div class="kc"><div class="knob sm" style="--p:.15;--acc:var(--violet)"></div><span class="lab">Harm</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.44;--acc:var(--lowfam)"></div><span class="lab">P&#8202;Start</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.28;--acc:var(--lowfam)"></div><span class="lab">P&#8202;Time</span></div>
+            <div class="kc"><div class="knob sm" style="--p:.70;--acc:var(--lowfam)"></div><span class="lab">P&#8202;Curve</span></div>
           </div>
         </div>
 
@@ -453,17 +456,6 @@
 
       <!-- engine strip: every remaining section -->
       <div class="engine">
-
-        <div class="cell" style="--acc:var(--lowfam)">
-          <h4><i></i>Pitch</h4>
-          <div class="miniscreen">A1</div>
-          <div class="knobs">
-            <div class="kc"><div class="knob sm" style="--p:.33;--acc:var(--lowfam)"></div><span class="lab">Note</span></div>
-            <div class="kc"><div class="knob sm" style="--p:.44;--acc:var(--lowfam)"></div><span class="lab">Start</span></div>
-            <div class="kc"><div class="knob sm" style="--p:.28;--acc:var(--lowfam)"></div><span class="lab">Time</span></div>
-            <div class="kc"><div class="knob sm" style="--p:.70;--acc:var(--lowfam)"></div><span class="lab">Curve</span></div>
-          </div>
-        </div>
 
         <div class="cell" style="--acc:var(--magenta)">
           <h4><i></i>Click</h4>
@@ -599,9 +591,9 @@
       <ul>
         <li><strong>Header</strong> &mdash; preset shuttle, Save, Undo/Redo, Randomize, Mutate, A/B.</li>
         <li><strong>Sample strip</strong> &mdash; Synth/Sample toggles, bank browser + drop slot, then Level/Start/End/Reverse/Tune/Fine/MIDI-track/Attack/Decay/HP/LP/Crush.</li>
-        <li><strong>Punch</strong> &mdash; macro + Transient Atk/Sus + Pitch Start &nbsp;&middot;&nbsp; <strong>Body</strong> &mdash; macro/Fundamental (note) + Level/Decay/Harmonics</li>
+        <li><strong>Punch</strong> &mdash; macro + Transient Atk/Sus + Pitch Start &nbsp;&middot;&nbsp; <strong>Body</strong> &mdash; the tonal core: big <strong>Note</strong> knob (Fundamental, shown as A1&hellip;), + Level / Decay / Harmonics + the pitch envelope (Start / Time / Curve). There is no separate Pitch panel &mdash; it lives here.</li>
         <li><strong>Crush</strong> &mdash; macro + Drive/Character morph/Mix &nbsp;&middot;&nbsp; <strong>Tail</strong> &mdash; macro/Length + Level/Tone/Drive</li>
-        <li><strong>Engine strip</strong> &mdash; Pitch (Note/Start/Time/Curve &mdash; Fundamental is dialled as a musical note, e.g. A1, not raw Hz), Click (Level/Tone/Time/Pitch), Sub (Level/Freq/Decay), Noise (Type/Level/Decay/Tone), Tone (Low/Mid/High), Stereo (Body/Click/Out width), Tuning (Mode/Tune/Fine), Output (Gain/Mix/Limiter/Oversampling).</li>
+        <li><strong>Engine strip</strong> (7 cells) &mdash; Click (Level/Tone/Time/Pitch), Sub (Level/Freq/Decay), Noise (Type/Level/Decay/Tone), Tone (Low/Mid/High), Stereo (Body/Click/Out width), Tuning (Mode/Tune/Fine), Output (Gain/Mix/Limiter/Oversampling).</li>
       </ul>
       <p style="margin-top:12px">59 automatable parameters + 4 macros, all on one face; sample selection is a bank pick, not a parameter. Static concept &mdash; knob positions show a plausible &ldquo;Warehouse&rdquo; patch. Target: the native-JUCE UI in Stage&nbsp;3.</p>
     </div>
@@ -619,10 +611,10 @@
   var inst = document.querySelector(".instrument");
   var fitEl = document.querySelector(".fit");
   function fit(){
-    var s = Math.min(window.innerWidth / 1600, (window.innerHeight - 28) / 1088, 1);
+    var s = Math.min(window.innerWidth / 1600, (window.innerHeight - 28) / 1170, 1);
     s = Math.max(s, 0.2);
     inst.style.setProperty("--s", s);
-    fitEl.style.height = (1088 * s + 28) + "px";
+    fitEl.style.height = (1170 * s + 28) + "px";
   }
   fit();
 
