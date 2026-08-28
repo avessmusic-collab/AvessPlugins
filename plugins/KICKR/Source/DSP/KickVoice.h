@@ -12,8 +12,9 @@ namespace kickr
     /**
         One triggered kick (architecture.md -> KickVoice).
 
-        PHASE 2.1: aggregates BodyOscillator + AmplitudeEnvelope (+ PitchEnvelope
-        passthrough). Monophonic; `noteOff()` is ignored (the kick runs to completion).
+        PHASE 2.1: aggregates BodyOscillator + AmplitudeEnvelope. PHASE 2.2: PitchEnvelope
+        now drives per-sample body frequency (ratio-domain snap+settle, phase-continuous).
+        Monophonic; `noteOff()` is ignored (the kick runs to completion).
         Renders the body layer x `bodyLevel` x velocity-scaled level and ADDS it into the
         oversampled work block (AD-10). Sub / Click / Tail / Noise / SamplePlayer +
         `bodyHarmonics` + the 2-voice retrigger crossfade land in later phases.
@@ -28,6 +29,13 @@ namespace kickr
 
         /** Per-block: set the target body level (0..1). Lightly smoothed to avoid clicks. */
         void setBodyLevel (float level01) noexcept;
+
+        /**
+            Per-block: refresh the pitch-envelope contour coefficients.
+            `startRatioEff` is the velocity-scaled effective `pitchStart` (>= 1), computed
+            by KickEngine; `timeMs` = `pitchTime`, `curve` = `pitchCurve`.
+        */
+        void setPitchParams (float startRatioEff, float timeMs, float curve) noexcept;
 
         /**
             Trigger. `velLevelGain` is the pre-resolved velocity level multiplier
@@ -53,7 +61,7 @@ namespace kickr
 
         BodyOscillator            body;
         AmplitudeEnvelope         ampEnv;
-        PitchEnvelope             pitchEnv;   // PHASE 2.2 — passthrough for now
+        PitchEnvelope             pitchEnv;   // PHASE 2.2 — ratio-domain pitch drop
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> bodyLevel;
     };
 }

@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 2 — DSP Phase 2.1 complete (OS-region shell + MIDI-triggered basic kick)
+- **Current Status:** 🚧 Stage 2 — DSP Phase 2.2 complete (pitch envelope — ratio-domain snap+settle)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -25,6 +25,11 @@
   - Params live: `fundamental`, `bodyLevel`, `bodyDecay`, `tuneMode`, `tune`, `fineTune`, `velSensitivity` (level only), `oversampling` (present, forced 1x).
   - Real-time safe: no alloc/lock/log/IO in `processBlock`; `ScopedNoDenormals`; denormal flush on the running envelope; `dsputils::sanitize` on the output; zero-length block handled.
   - `PitchEnvelope` stub kept header-only (passthrough `nextFrequency`) — filled in Phase 2.2.
+- **2026-08-28 (Stage 2 — DSP Phase 2.2):** Pitch envelope — punchy ratio/log-domain pitch drop, phase-continuous.
+  - `PitchEnvelope` (header-only) now implements the resolved Open-Q-5 contour: `τ = clamp(tSinceTrigger / pitchTime, 0, 1)`, `k = 0.6 + pitchCurve·8.4` (0.6 near-linear sweep → 9.0 sharp snap+settle), `e(τ) = (exp(-k·τ) − exp(-k)) / (1 − exp(-k))` ∈ [1,0] (exactly 0 at τ=1), `f(t) = fundamentalEff · pitchStart^{e(τ)}`. Never lerps Hz. After τ ≥ 1 outputs `fundamentalEff` unchanged. Output `dsputils::sanitize` + clamp [10, 20000] Hz. `tSinceTrigger` advances by `1/fsOversampled` (in-region, AD-10).
+  - Perf: `k`, `exp(-k)`, `1/(1-exp(-k))`, `log2(pitchStart)` computed once per block in `setParams(startRatioEff, timeMs, curve)`; per sample = one `std::exp` + one `std::exp2`. No per-block interpolation (plain per-sample form kept for correctness this phase).
+  - `KickEngine` caches `pitchStart`/`pitchTime`/`pitchCurve`, snapshots per block, computes velocity-scaled effective `pitchStart` (`1 + (pitchStart−1)·lerp(1, 0.5+0.5·v01, velSensitivity·0.35)` — architecture Parameter Mapping row 2, "velocity subtle") and calls `KickVoice::setPitchParams` per block + right after each `noteOn`. `KickVoice::setPitchParams` forwards to `pitchEnv.setParams`; the per-sample `nextFrequency → body.setFrequency` hook was already staged in 2.1.
+  - Params live: `pitchStart`, `pitchTime`, `pitchCurve`. No new translation units (header-only) — no CMake change. RT-safe: no alloc/lock/log/IO; `tSinceTrigger` monotonic (no denormal flush needed).
 
 ## Known Issues
 

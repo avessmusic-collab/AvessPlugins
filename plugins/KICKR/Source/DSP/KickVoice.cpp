@@ -31,17 +31,22 @@ namespace kickr
         bodyLevel.setTargetValue (juce::jlimit (0.0f, 1.0f, level01));
     }
 
+    void KickVoice::setPitchParams (float startRatioEff, float timeMs, float curve) noexcept
+    {
+        pitchEnv.setParams (startRatioEff, timeMs, curve);
+    }
+
     void KickVoice::noteOn (float freqHz, int noteNumber, float velLevelGain,
                             float bodyDecayMs, int sampleOffset) noexcept
     {
-        juce::ignoreUnused (noteNumber, sampleOffset);   // PHASE 2.2 / 2.7b use these
+        juce::ignoreUnused (noteNumber, sampleOffset);   // PHASE 2.7b uses noteNumber
 
         baseFrequencyHz = freqHz;
         velLevel        = velLevelGain;
 
         body.setFrequency (freqHz);
         body.noteOn();                 // phase -> 0 (layering phase-stability)
-        pitchEnv.noteOn();             // PHASE 2.2: arm the contour; passthrough now
+        pitchEnv.noteOn();             // arm the ratio-domain contour (tSinceTrigger -> 0)
         ampEnv.noteOn (bodyDecayMs);
 
         // Start at the current body-level target — no 20 ms fade-in on the first hit.
@@ -61,7 +66,8 @@ namespace kickr
 
         for (int i = 0; i < numSamples; ++i)
         {
-            // PHASE 2.2: body.setFrequency (pitchEnv.nextFrequency (baseFrequencyHz));
+            // Ratio-domain pitch drop, phase-continuous (frequency only — BodyOscillator
+            // integrates phase and is never reset mid-fall).
             const float freqHz = pitchEnv.nextFrequency (baseFrequencyHz);
             body.setFrequency (freqHz);
 

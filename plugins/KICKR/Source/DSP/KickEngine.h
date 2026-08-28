@@ -25,7 +25,10 @@ namespace kickr
             (MIDI-Pitch / Fixed-Frequency + tune/fineTune + AD-6 global offset),
             applies velocity -> level, renders a single monophonic KickVoice.
 
-        Later phases add: pitch envelope (2.2), 2-voice retrigger crossfade + transient
+        PHASE 2.2: pitch envelope live — `pitchStart` / `pitchTime` / `pitchCurve` snapshot
+        per block, velocity-scaled effective `pitchStart` fed to `KickVoice::setPitchParams`.
+
+        Later phases add: 2-voice retrigger crossfade + transient
         shaper (2.3), click/sub/tail/noise (2.4-2.7), sample player (2.7b), distortion
         (2.8), tone/stereo/limiter (2.9), real OS switching (2.10), smoothing/macros
         (2.11), analyzer.
@@ -49,6 +52,9 @@ namespace kickr
         void handleNoteOn (const juce::MidiMessage& message);
         float resolvePitchHz (int noteNumber) const noexcept;
 
+        /** architecture Parameter Mapping row 2 — velocity (subtle) scaling of `pitchStart`. */
+        float effectivePitchStartRatio (float v01) const noexcept;
+
         juce::AudioProcessorValueTreeState& apvts;
 
         double baseSampleRate { 44100.0 };
@@ -63,6 +69,9 @@ namespace kickr
 
         // Cached raw APVTS pointers (atomic reads on the audio thread).
         std::atomic<float>* pFundamental    { nullptr };
+        std::atomic<float>* pPitchStart     { nullptr };
+        std::atomic<float>* pPitchTime      { nullptr };
+        std::atomic<float>* pPitchCurve     { nullptr };
         std::atomic<float>* pBodyLevel      { nullptr };
         std::atomic<float>* pBodyDecay      { nullptr };
         std::atomic<float>* pTuneMode       { nullptr };
@@ -74,15 +83,22 @@ namespace kickr
         // Per-block parameter snapshot.
         struct Snapshot
         {
-            float fundamental { 55.0f };
-            float bodyLevel   { 1.0f };
-            float bodyDecayMs { 400.0f };
-            float tune        { 0.0f };
-            float fineTune    { 0.0f };
-            float velSens     { 0.5f };
-            int   tuneMode    { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
+            float fundamental     { 55.0f };
+            float pitchStartRatio { 4.0f };
+            float pitchTimeMs     { 50.0f };
+            float pitchCurve      { 0.7f };
+            float bodyLevel       { 1.0f };
+            float bodyDecayMs     { 400.0f };
+            float tune            { 0.0f };
+            float fineTune        { 0.0f };
+            float velSens         { 0.5f };
+            int   tuneMode        { 0 };     // 0 = MIDI Pitch, 1 = Fixed Frequency
         };
         Snapshot snap;
+
+        // Velocity of the most recent trigger — folded into the effective `pitchStart`
+        // each block so pitchStart/pitchTime/pitchCurve automation stays live mid-voice.
+        float lastVel01 { 1.0f };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KickEngine)
     };

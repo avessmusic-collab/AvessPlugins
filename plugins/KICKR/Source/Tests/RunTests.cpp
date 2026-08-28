@@ -90,6 +90,93 @@ int main()
         std::printf ("  wrote %s : %s\n", wav.getFullPathName().toRawUTF8(), ok ? "ok" : "FAILED");
     }
 
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.2] Pitch envelope (ratio/log-domain snap+settle)\n");
+
+    auto setP = [] (KICKRAudioProcessor& p, juce::StringRef id, float v)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter (id))
+            prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+    };
+    // instantaneous frequency estimate via zero-crossings over [t0, t1] seconds
+    auto estFreq = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1)
+    {
+        const int i0 = std::max (1, (int) (t0 * s));
+        const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+        const float* x = b.getReadPointer (0);
+        int xings = 0;
+        for (int i = i0; i < i1; ++i)
+            if ((x[i - 1] <= 0.0f) != (x[i] <= 0.0f)) ++xings;
+        return (double) xings * 0.5 / (t1 - t0);
+    };
+
+    // Start ratio: stretch pitchTime to 900 ms so the head of the contour is
+    // slow enough to measure by zero-crossings. e stays near 1 for the first
+    // ~15 ms  ->  f ~ 55 * 4^~0.9 ~ 190 Hz  (heading for 4x55 = 220).
+    {
+        KICKRAudioProcessor p;
+        setP (p, "pitchTime", 900.0f);
+        const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
+        const double fHead = estFreq (b, sr, 0.002, 0.020);
+        std::printf ("  start-ratio probe (pitchTime 900ms): f(2-20ms) = %.0f Hz   (target ~4x55)\n", fHead);
+        check (fHead > 150.0,  "pitch starts near pitchStart x fundamental (>= ~3x up)");
+    }
+
+    // Medium pitchTime (200 ms) — the fall is slow enough to track by zero-crossings.
+    {
+        KICKRAudioProcessor p;
+        setP (p, "pitchTime", 200.0f);
+        const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+        const double fHead = estFreq (b, sr, 0.003, 0.023);
+        const double fMid  = estFreq (b, sr, 0.060, 0.110);
+        const double fTail = estFreq (b, sr, 0.300, 0.500);
+        std::printf ("  pitchTime 200ms: head %.0f -> mid %.0f -> tail %.0f Hz\n", fHead, fMid, fTail);
+        check (fHead > fMid && fMid > fTail,       "monotonic downward pitch fall");
+        check (fHead > fTail * 2.0,                "large pitch drop (head > 2x tail)");
+        check (fTail > 45.0 && fTail < 68.0,       "lands on the fundamental (~55 Hz)");
+    }
+
+    // Default patch (pitchTime 50 ms, curve 0.7): a "snap" — most of the drop in the
+    // first ~15 ms.  Verify it is pitched-up early by comparing zero-crossing density
+    // in the first 20 ms against a steady-state tail window, and that it settles.
+    {
+        KICKRAudioProcessor p;
+        const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+        const double fFirst20 = estFreq (b, sr, 0.0, 0.020);
+        const double fLate    = estFreq (b, sr, 0.090, 0.180);
+        std::printf ("  default (50ms snap): f(0-20ms) = %.0f Hz   f(90-180ms) = %.0f Hz\n", fFirst20, fLate);
+        check (fFirst20 > fLate * 1.4,             "first 20 ms is pitched up vs the settled tail");
+        check (fLate > 45.0 && fLate < 68.0,       "settles at the fundamental after ~pitchTime");
+
+        const float* x = b.getReadPointer (0);
+        float step = 0.0f;
+        for (int i = 1; i < b.getNumSamples(); ++i) step = std::max (step, std::abs (x[i] - x[i - 1]));
+        check (step < 0.20f,                       "click-free through the pitch fall (max step < 0.20)");
+
+        KICKRAudioProcessor pw;
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_2.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
+    }
+
+    // curve = 0 (near-linear sweep) vs curve = 1 (snap) — measured mid-fall
+    {
+        KICKRAudioProcessor p0, p1;
+        setP (p0, "pitchCurve", 0.0f);
+        setP (p1, "pitchCurve", 1.0f);
+        const auto b0 = kickr::tests::renderNote (p0, a1, vel, sr, 512, 1.0);
+        const auto b1 = kickr::tests::renderNote (p1, a1, vel, sr, 512, 1.0);
+
+        const double f0 = estFreq (b0, sr, 0.012, 0.028);   // still sweeping
+        const double f1 = estFreq (b1, sr, 0.012, 0.028);   // already snapped near fundamental
+        const double f0end = estFreq (b0, sr, 0.10, 0.20);
+        const double f1end = estFreq (b1, sr, 0.10, 0.20);
+        std::printf ("  curve0 f(12-28ms) = %.0f Hz   curve1 f(12-28ms) = %.0f Hz   (both end ~%.0f/%.0f Hz)\n",
+                     f0, f1, f0end, f1end);
+
+        check (f0 > f1 * 1.25,                    "curve 0 sweeps slower than curve 1 (snap vs laser)");
+        check (f0end < 68.0 && f1end < 68.0,      "both reach the fundamental by 100-200 ms");
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

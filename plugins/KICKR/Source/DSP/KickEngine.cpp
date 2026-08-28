@@ -29,6 +29,9 @@ namespace kickr
 
         // Cache raw parameter pointers (Phase 2.1 params only).
         pFundamental    = apvts.getRawParameterValue (id::fundamental);
+        pPitchStart     = apvts.getRawParameterValue (id::pitchStart);
+        pPitchTime      = apvts.getRawParameterValue (id::pitchTime);
+        pPitchCurve     = apvts.getRawParameterValue (id::pitchCurve);
         pBodyLevel      = apvts.getRawParameterValue (id::bodyLevel);
         pBodyDecay      = apvts.getRawParameterValue (id::bodyDecay);
         pTuneMode       = apvts.getRawParameterValue (id::tuneMode);
@@ -71,6 +74,17 @@ namespace kickr
         return juce::jlimit (10.0f, 5000.0f, hz);
     }
 
+    float KickEngine::effectivePitchStartRatio (float v01) const noexcept
+    {
+        // architecture Parameter Mapping row 2 — velocity (subtle):
+        //   effPitchStart = 1 + (pitchStart - 1) * lerp(1, 0.5 + 0.5*v01, velSensitivity * 0.35)
+        const float v      = juce::jlimit (0.0f, 1.0f, v01);
+        const float amt    = juce::jlimit (0.0f, 1.0f, snap.velSens * 0.35f);
+        const float vScale = 1.0f + amt * ((0.5f + 0.5f * v) - 1.0f);   // lerp(1, target, amt)
+
+        return juce::jmax (1.0f, 1.0f + (snap.pitchStartRatio - 1.0f) * vScale);
+    }
+
     void KickEngine::handleNoteOn (const juce::MidiMessage& message)
     {
         const int   note = message.getNoteNumber();
@@ -78,10 +92,16 @@ namespace kickr
 
         const float freqHz = resolvePitchHz (note);
 
-        // Velocity -> level only (Phase 2.1): lerp(1, v01, velSensitivity).
+        // Velocity -> level (Phase 2.1): lerp(1, v01, velSensitivity).
         const float velLevelGain = 1.0f + snap.velSens * (v01 - 1.0f);
 
+        lastVel01 = v01;
+
         voice.noteOn (freqHz, note, velLevelGain, snap.bodyDecayMs, 0);
+
+        // Refresh the pitch contour with THIS note's velocity-scaled pitchStart so the
+        // freshly-armed fall is correct from sample 0.
+        voice.setPitchParams (effectivePitchStartRatio (v01), snap.pitchTimeMs, snap.pitchCurve);
     }
 
     void KickEngine::renderSegment (juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
@@ -127,15 +147,21 @@ namespace kickr
             return p != nullptr ? p->load() : fallback;
         };
 
-        snap.fundamental = load (pFundamental,    55.0f);
-        snap.bodyLevel   = load (pBodyLevel,      1.0f);
-        snap.bodyDecayMs = load (pBodyDecay,      400.0f);
-        snap.tune        = load (pTune,           0.0f);
-        snap.fineTune    = load (pFineTune,       0.0f);
-        snap.velSens     = load (pVelSensitivity, 0.5f);
-        snap.tuneMode    = static_cast<int> (load (pTuneMode, 0.0f));
+        snap.fundamental     = load (pFundamental,    55.0f);
+        snap.pitchStartRatio = load (pPitchStart,     4.0f);
+        snap.pitchTimeMs     = load (pPitchTime,      50.0f);
+        snap.pitchCurve      = load (pPitchCurve,     0.7f);
+        snap.bodyLevel       = load (pBodyLevel,      1.0f);
+        snap.bodyDecayMs     = load (pBodyDecay,      400.0f);
+        snap.tune            = load (pTune,           0.0f);
+        snap.fineTune        = load (pFineTune,       0.0f);
+        snap.velSens         = load (pVelSensitivity, 0.5f);
+        snap.tuneMode        = static_cast<int> (load (pTuneMode, 0.0f));
 
         voice.setBodyLevel (snap.bodyLevel);
+
+        // Per-block pitch-contour coefficient refresh (keeps automation live mid-voice).
+        voice.setPitchParams (effectivePitchStartRatio (lastVel01), snap.pitchTimeMs, snap.pitchCurve);
 
         // Sample-accurate sub-block split at each note-on.
         int pos = 0;
