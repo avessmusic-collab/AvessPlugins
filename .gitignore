@@ -21,3 +21,8 @@ prompts/
 
 # Personal todos
 TO-DOS.md
+.claude/system-config.json
+
+# KICKR test-runner output
+/kickr_phase*.wav
+kickr_phase*.wav

@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 1 complete + v2 SAMPLE amendment — ready for Stage 2
+- **Current Status:** 🚧 Stage 2 — DSP Phase 2.1 complete (OS-region shell + MIDI-triggered basic kick)
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -19,10 +19,16 @@
   - **`fundamental` displayed as a musical note** (55 Hz = A1), Hz shown in the tooltip. Parameter stays a continuous Hz float; `hzToNoteName`/`noteNameToHz` in `ParameterLayout.h` (`withStringFromValueFunction` / `withValueFromStringFunction`). Semitone-snap-on-drag is a Stage-3 Knob behaviour.
   - **UI mockup v3.1** — small-knob gaps opened up (engine cells, sample tweaks, macro footers); Pitch panel shows the note ("A1"); wordmark/watermark → KICKR.
   - Rebuilt clean (0 warnings) VST3+AU+Standalone; pluginval strictness 10 SUCCESS; auval (`aumu Kckr Plgf`) "59 Global Scope Parameters" SUCCEEDED.
+- **2026-08-28 (Stage 2 — DSP Phase 2.1):** OS-region shell + MIDI-triggered basic kick.
+  - New components: `OversamplingProcessor` (4 pre-built `dsp::Oversampling<float>` 1x/2x/4x/8x, `filterHalfBandPolyphaseIIR`, `useIntegerLatency`, `numChannels=2`; **pinned to 1x** — real factor switching + coefficient refresh is Phase 2.10), `BodyOscillator` (custom phase-accumulator `std::sin`, per-sample-safe `setFrequency`, phase-0 on trigger), `AmplitudeEnvelope` (AD, `kBodyAttackMs = 2.0` raised-cosine attack, `expDecayCoef` decay, −90 dB + min-length `isActive()`), `KickVoice` (BodyOsc + AmpEnv + `PitchEnvelope` passthrough; renders body × bodyLevel × velocity level into the oversampled block), `KickEngine` (per-block param snapshot, sample-accurate MIDI sub-block split, pitch resolver for both tune modes + AD-6 global offset + tune/fineTune, velocity→level, `processSamplesUp(zero)`→render@`fsOversampled`→`processSamplesDown`→base-rate ~5 Hz DC blocker + NaN/Inf guard).
+  - Wired into `KICKRAudioProcessor` (`engine.prepare` / `reset` / `processBlock`; `setLatencySamples(engine.getLatencySamples())` — 0 at 1x). CMake: 5 new `.cpp` in `target_sources`.
+  - Params live: `fundamental`, `bodyLevel`, `bodyDecay`, `tuneMode`, `tune`, `fineTune`, `velSensitivity` (level only), `oversampling` (present, forced 1x).
+  - Real-time safe: no alloc/lock/log/IO in `processBlock`; `ScopedNoDenormals`; denormal flush on the running envelope; `dsputils::sanitize` on the output; zero-length block handled.
+  - `PitchEnvelope` stub kept header-only (passthrough `nextFrequency`) — filled in Phase 2.2.
 
 ## Known Issues
 
-None (not yet implemented).
+None.
 
 ## Additional Notes
 

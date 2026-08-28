@@ -15,15 +15,22 @@ juce_add_plugin(KICKR
     IS_MIDI_EFFECT FALSE
 )
 
-# Source files (only real translation units — DSP/UI/Preset headers below are Stage 1 stubs
-# and are compiled once they are #included in Stage 2 / Stage 3).
-target_sources(KICKR
-    PRIVATE
-        Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp
-        Source/Utilities/DSPUtils.cpp
-        Source/Tests/OfflineRender.cpp
+# Real translation units shared by the plugin and the console test runner.
+# (DSP/UI/Preset stub headers are compiled once they are #included.)
+set(KICKR_CORE_SOURCES
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+    Source/Utilities/DSPUtils.cpp
+    Source/Tests/OfflineRender.cpp
+    # DSP — Stage 2 Phase 2.1 (OS-region shell + MIDI-triggered basic kick)
+    Source/DSP/OversamplingProcessor.cpp
+    Source/DSP/BodyOscillator.cpp
+    Source/DSP/AmplitudeEnvelope.cpp
+    Source/DSP/KickVoice.cpp
+    Source/DSP/KickEngine.cpp
 )
+
+target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})
 
 # Include paths — everything under Source/ is reachable by "Subdir/Header.h".
 target_include_directories(KICKR
@@ -61,6 +68,38 @@ target_compile_definitions(KICKR
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+)
+
+# ---------------------------------------------------------------------------
+# Console test runner — Stage 2 offline-render checkpoints (not part of the
+# default build; run:  cmake --build build --target KICKR_Tests)
+# ---------------------------------------------------------------------------
+add_executable(KICKR_Tests EXCLUDE_FROM_ALL
+    Source/Tests/RunTests.cpp
+    ${KICKR_CORE_SOURCES}
+)
+target_include_directories(KICKR_Tests PRIVATE Source)
+target_link_libraries(KICKR_Tests
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(KICKR_Tests
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
 )
 
 # ---------------------------------------------------------------------------

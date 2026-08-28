@@ -15,13 +15,16 @@ void KICKRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     currentBlockSize  = samplesPerBlock;
 
-    // Stage 1: no engine yet. Latency stays 0 until real oversampling is enabled
-    // (Stage 2 — Phase 2.10). AD-10: the whole voice renders inside the OS region.
-    setLatencySamples (0);
+    engine.prepare (sampleRate, samplesPerBlock);
+
+    // Phase 2.1: oversampling is pinned to 1x, so this reports 0. Phase 2.10 enables
+    // real factors and updates latency on every `oversampling` change (AD-2 / AD-10).
+    setLatencySamples (engine.getLatencySamples());
 }
 
 void KICKRAudioProcessor::releaseResources()
 {
+    engine.reset();
 }
 
 bool KICKRAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -40,11 +43,10 @@ void KICKRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // Instrument → start from silence. The KickEngine is implemented in Stage 2.
-    buffer.clear();
-
-    // MIDI is consumed but not yet acted on (synthesis arrives in Stage 2 — Phase 2.1).
-    juce::ignoreUnused (midiMessages);
+    // Phase 2.1: the engine clears the buffer, renders the voice inside the OS region
+    // (processSamplesUp(zero) -> render @ fsOversampled -> processSamplesDown), then
+    // runs the base-rate DC blocker + NaN/Inf guard.
+    engine.processBlock (buffer, midiMessages);
 }
 
 juce::AudioProcessorEditor* KICKRAudioProcessor::createEditor()

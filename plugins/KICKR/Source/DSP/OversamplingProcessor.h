@@ -7,61 +7,70 @@
 namespace kickr
 {
     /**
-        Stage 1 scaffold. Real construction + processing land in Stage 2
-        (plan.md Phase 2.1 builds the region shell pinned to 1x; Phase 2.10 enables
-        real factors + glitch-free switching).
+        Oversampling region substrate (AD-2 / AD-10).
 
-        AD-2 / AD-10: one pre-built juce::dsp::Oversampling<float> instance per factor
-        (1x / 2x / 4x / 8x). The OS region wraps the ENTIRE voice + master chain through
-        the tanh safety limiter — every nonlinearity is oversampled by construction.
-        `processSamplesUp` is fed a zero block (instrument has no audio input);
-        `processSamplesDown` runs after the limiter; only the DC blocker + analyzer taps
-        are base-rate.
+        Owns one pre-built juce::dsp::Oversampling<float> instance per factor
+        (1x / 2x / 4x / 8x = log2 order 0..3), `filterHalfBandPolyphaseIIR`,
+        `useIntegerLatency = true`, `numChannels = 2`. The OS region is meant to wrap
+        the ENTIRE voice + master chain through the tanh safety limiter — every
+        nonlinearity oversampled by construction.
 
-        Switching (message thread only — runtime rebuild is NOT audio-thread safe):
-        atomic pointer swap + ~64-sample output fade + audio-thread recompute of all
-        in-region coefficients for the new fsOversampled; setLatencySamples from the
-        message-thread listener / prepareToPlay only.
+        PHASE 2.1: pinned to factor 1x (order 0) — a real zero-latency identity
+        juce::dsp::Oversampling object (JUCE adds a dummy stage). `fsOversampled == fs`
+        so the rest of the DSP is trivially verifiable. The 2x/4x/8x instances are
+        pre-built here but unused; the atomic-swap / real-factor switching + coefficient
+        refresh is Phase 2.10 (see `setFactorChoice` hook).
+
+        Usage per (sub-)block:
+            auto up = processSamplesUp (zeroedBaseBlock);   // work block @ fsOversampled
+            // ... render whole voice + master chain into `up` ...
+            processSamplesDown (baseBlock);                  // band-limit + decimate
     */
     class OversamplingProcessor
     {
     public:
-        static constexpr int   kNumFactors  = 4;   // 1x, 2x, 4x, 8x
-        static constexpr int   kNumChannels = 2;
+        static constexpr int kNumFactors  = 4;   // 1x, 2x, 4x, 8x  (log2 order 0..3)
+        static constexpr int kNumChannels = 2;
+
+        OversamplingProcessor() = default;
 
         /** log2 oversampling order for choice index 0..3. */
         static constexpr int orderForChoice (int choiceIndex) noexcept
         {
-            return juce::jlimit (0, 3, choiceIndex);
+            return juce::jlimit (0, kNumFactors - 1, choiceIndex);
         }
 
-        void prepare (double baseSampleRate, int maximumBlockSize)
-        {
-            sampleRate   = baseSampleRate;
-            maxBlockSize = maximumBlockSize;
+        void prepare (double baseSampleRate, int maximumBlockSize);
+        void reset();
 
-            // Stage 2 (Phase 2.1): construct the 4 instances here, e.g.
-            //   for (int i = 0; i < kNumFactors; ++i)
-            //       oversamplers[(size_t) i] = std::make_unique<juce::dsp::Oversampling<float>>(
-            //           kNumChannels, i,
-            //           juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-            //           /*isMaxQuality*/ true, /*useIntegerLatency*/ true);
-            //   each then oversamplers[i]->initProcessing ((size_t) maximumBlockSize);
-        }
+        /** PHASE 2.10 hook — currently a no-op: the factor is pinned to 1x. */
+        void setFactorChoice (int choiceIndex) noexcept;
 
-        void reset() {}
+        /** Up-sample a base-rate block into the internal work buffer (@ fsOversampled). */
+        juce::dsp::AudioBlock<float> processSamplesUp (const juce::dsp::AudioBlock<const float>& input) noexcept;
 
-        double getOversampledRate (int choiceIndex) const noexcept
-        {
-            return sampleRate * static_cast<double> (1 << orderForChoice (choiceIndex));
-        }
+        /** Band-limit + decimate the internal work buffer back into `output` (base rate). */
+        void processSamplesDown (juce::dsp::AudioBlock<float>& output) noexcept;
 
-        int getLatencySamples() const noexcept { return 0; } // Stage 2: round(active->getLatencyInSamples())
+        double getBaseSampleRate()   const noexcept { return sampleRate; }
+        double getOversampledRate()  const noexcept { return sampleRate * static_cast<double> (1 << activeOrder); }
+        int    getOversamplingFactor() const noexcept { return 1 << activeOrder; }
+
+        /** round(activeOs->getLatencyInSamples()); 0 at 1x. */
+        int getLatencySamples() const noexcept;
 
     private:
+        juce::dsp::Oversampling<float>* active() const noexcept
+        {
+            return oversamplers[static_cast<size_t> (activeOrder)].get();
+        }
+
         double sampleRate   { 44100.0 };
         int    maxBlockSize { 512 };
+        int    activeOrder  { 0 };   // PHASE 2.1: pinned to 0 (1x). Phase 2.10 unpins.
 
         std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, kNumFactors> oversamplers;
+
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OversamplingProcessor)
     };
 }

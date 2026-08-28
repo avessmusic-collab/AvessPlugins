@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Parameters/ParameterLayout.h"
+#include "DSP/KickEngine.h"
 
 /**
     KICKR — dedicated kick-design instrument: algorithmic synthesis +
@@ -59,6 +60,9 @@ public:
 private:
     juce::UndoManager                    undoManager;
     juce::AudioProcessorValueTreeState   apvts;
+
+    // Stage 2 Phase 2.1: OS-region shell + MIDI-triggered sine body + amp env.
+    kickr::KickEngine                    engine { apvts };
 
     juce::String currentSampleName;           // v2 — see Phase 2.7b
 
