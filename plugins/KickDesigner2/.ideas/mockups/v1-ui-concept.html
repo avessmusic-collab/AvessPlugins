@@ -13,21 +13,21 @@
   :root{
     --void:#08090E;
 
-    /* soft rubbery chassis — lifted blue-grey body like the reference unit */
-    --chassis-hi:#4C4556;
-    --chassis-mid:#3B3547;
-    --chassis-lo:#2C2738;
-    --faceplate-hi:#221C2B;      /* recessed faceplate the panels sit on */
-    --faceplate-lo:#181320;
-    --bezel-light:rgba(196,172,222,.22);
+    /* soft rubbery chassis — cool slate-grey body, sampled from the reference */
+    --chassis-hi:#3C414D;        /* top-lit bevel */
+    --chassis-mid:#31353F;       /* main body grey (reference match) */
+    --chassis-lo:#272B34;        /* lower shade */
+    --faceplate-hi:#20222B;      /* recessed faceplate the panels sit on */
+    --faceplate-lo:#181A21;
+    --bezel-light:rgba(150,166,192,.24);
     --bezel-dark:rgba(0,0,0,.7);
 
     /* raised modules that sit proud of the faceplate */
-    --panel-hi:#322B3C;
-    --panel-lo:#221C2C;
-    --panel-edge:#413A4D;
+    --panel-hi:#2A2E39;
+    --panel-lo:#1F222B;
+    --panel-edge:#3B404C;
     --well:#0A0810;              /* inset screens / recesses */
-    --well-edge:#241D2C;
+    --well-edge:#22252E;
 
     --violet:#452CDD;            /* primary — most pointers, active */
     --lowfam:#6F7BFF;            /* low-end family — pitch/body/sub/tail */
@@ -50,7 +50,7 @@
     font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
     color:var(--ink);
     background:
-      radial-gradient(1500px 780px at 50% 4%, #23202e 0%, #131019 46%, transparent 72%),
+      radial-gradient(1500px 780px at 50% 4%, #262932 0%, #14161c 46%, transparent 72%),
       var(--void);
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -147,7 +147,7 @@
     --p:.5;--acc:var(--violet);--d:60px;
     width:var(--d);height:var(--d);border-radius:50%;position:relative;flex:none;
     background:
-      radial-gradient(circle at 42% 30%, #423a4e 0%, #262030 44%, #14101c 78%, #0e0b14 100%);
+      radial-gradient(circle at 42% 30%, #3C424F 0%, #262a33 44%, #161a21 78%, #0f1218 100%);
     box-shadow:
       inset 0 4px 5px rgba(255,255,255,.10),
       inset 0 -11px 18px rgba(0,0,0,.78),
@@ -204,7 +204,7 @@
   /* ===================== HERO MACRO MODULES ===================== */
   .heroes{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;flex:none}
   .mod{
-    background:linear-gradient(176deg,var(--panel-hi) 0%,#241f2e 45%,var(--panel-lo) 100%);
+    background:linear-gradient(176deg,var(--panel-hi) 0%,#242832 45%,var(--panel-lo) 100%);
     border-radius:var(--r-panel);
     padding:17px 18px 19px;
     box-shadow:
@@ -220,7 +220,7 @@
     text-transform:uppercase;color:#d6d2e0}
   .dots{display:flex;gap:7px}
   .dot{width:19px;height:19px;border-radius:50%;position:relative;cursor:pointer;
-    background:radial-gradient(circle at 40% 32%,#332c3e,#1a1522 70%,#100c17);
+    background:radial-gradient(circle at 40% 32%,#343a45,#181b22 70%,#0f1218);
     box-shadow:inset 0 1px 2px rgba(255,255,255,.12),inset 0 -3px 5px rgba(0,0,0,.7),0 1px 2px rgba(0,0,0,.5)}
   .dot::after{content:"";position:absolute;inset:6px;border-radius:50%;background:#0b0912;box-shadow:inset 0 1px 2px rgba(0,0,0,.9)}
   .dot.on::after{background:var(--acc,var(--violet));box-shadow:0 0 9px var(--acc,var(--violet)),inset 0 0 2px rgba(255,255,255,.6)}
@@ -239,7 +239,7 @@
 
   /* ===================== ENGINE STRIP ===================== */
   .engine{
-    background:linear-gradient(176deg,var(--panel-hi),#241f2e 45%,var(--panel-lo));
+    background:linear-gradient(176deg,var(--panel-hi),#242832 45%,var(--panel-lo));
     border-radius:var(--r-panel);
     box-shadow:
       inset 0 2px 0 rgba(255,255,255,.06),
@@ -485,7 +485,7 @@
       <h4>Palette</h4>
       <div class="sw">
         <span><i style="background:#08090E"></i>#08090E&nbsp;void</span>
-        <span><i style="background:#4B3C46"></i>#4B3C46&nbsp;chassis&nbsp;warmth</span>
+        <span><i style="background:#31353F"></i>#31353F&nbsp;chassis&nbsp;(ref&nbsp;grey)</span>
         <span><i style="background:#452CDD"></i>#452CDD&nbsp;primary</span>
         <span><i style="background:#6F7BFF"></i>#6F7BFF&nbsp;low-end&nbsp;family</span>
         <span><i style="background:#C041DD"></i>#C041DD&nbsp;LCD&nbsp;/&nbsp;Crush</span>
@@ -493,7 +493,7 @@
         <span><i style="background:#1B139D"></i>#1B139D&nbsp;depth</span>
         <span><i style="background:#9EA0AE"></i>#9EA0AE&nbsp;text</span>
       </div>
-      <p style="margin-top:10px">Violet&#8594;magenta is the signature; <strong style="color:#D1363A">red</strong> is reserved for energy &mdash; Punch, drive, the transient of the waveform, the limiter lamp. A lifted blue-violet (<code>#6F7BFF</code>) tags the low-frequency family (Pitch, Body, Sub, Tail) so those controls read as a group.</p>
+      <p style="margin-top:10px">The chassis grey is sampled from the reference (<code>#31353F</code>, cool slate). Violet&#8594;magenta is the signature; <strong style="color:#D1363A">red</strong> is reserved for energy &mdash; Punch, drive, the transient of the waveform, the limiter lamp. A lifted blue-violet (<code>#6F7BFF</code>) tags the low-frequency family (Pitch, Body, Sub, Tail) so those controls read as a group.</p>
     </div>
 
     <div class="cols">
