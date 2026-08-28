@@ -26,7 +26,7 @@ void KickDesigner2AudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colours::grey);
     g.setFont (juce::FontOptions (13.0f));
-    g.drawFittedText (juce::String::fromUTF8 ("Foundation + Shell  \xc2\xb7  45 parameters  \xc2\xb7  native UI arrives in Stage 3"),
+    g.drawFittedText (juce::String::fromUTF8 ("Foundation + Shell  \xc2\xb7  59 parameters  \xc2\xb7  native UI arrives in Stage 3"),
                       getLocalBounds().reduced (24).removeFromBottom (44),
                       juce::Justification::centred, 1);
 }

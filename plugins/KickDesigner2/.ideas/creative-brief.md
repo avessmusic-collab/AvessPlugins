@@ -3,16 +3,17 @@
 ## Overview
 
 **Type:** Synth (Instrument) — dedicated kick-drum design tool
-**Core Concept:** MIDI-triggered algorithmic kick synthesizer: body + pitch envelope + transient/click + sub + tail + noise + morphing distortion + tone + stereo + safety limiter, with a real-time waveform/spectrum analyzer and a large factory preset library.
+**Core Concept:** MIDI-triggered kick instrument with **two blendable sources** — (1) an algorithmic synthesis engine (body + pitch envelope + transient/click + sub + tail + noise) and (2) a sample-playback layer fed from the user's own bank of recorded kicks — summed and shaped by a morphing distortion, tone, stereo and safety limiter, with a real-time waveform/spectrum analyzer and a large factory preset library.
 **Status:** 💡 Ideated
 **Created:** 2026-08-28
+**Revised:** 2026-08-28 — added the sample-playback engine (see *Sample Engine*); reversed the "no samples" non-goal.
 **Working title rationale:** "2" is a product/brand generation marker. No "Kick Designer 1" exists in this repo; **KickDesigner2 supersedes the stalled `MinimalKick` plugin** (see Relationship to Existing Plugins).
 
 ## Vision
 
 KickDesigner2 is a focused, commercial-grade kick-generation instrument — not a general synthesizer. Every control exists to shape one triggered kick drum. It targets Techno, Hard Techno, Hardstyle, Hardcore, Hardcore/Gabber, EDM, House, Trap, DnB, and Industrial production, spanning clean sub-heavy club kicks through fully destroyed hard-techno distortion.
 
-The kick is synthesized **algorithmically** — no prerecorded kick samples anywhere in the signal path or presets. The sound is built from independent, individually controllable layers (body, sub, click, tail, noise) summed and then shaped by a transient stage, a morphing multi-algorithm distortion, a simple 3-band tone control, frequency-dependent stereo widening, and a transparent safety limiter. Nonlinear stages run inside selectable oversampling (1×/2×/4×/8×).
+The synthesis engine builds the kick **algorithmically** from independent, individually controllable layers (body, sub, click, tail, noise). Alongside it, an optional **sample layer** plays one of the user's own recorded kicks with its own pitch, trim, envelope and lo-fi shaping. Either source can be turned off: synth-only (default), sample-only, or both blended (e.g. a recorded top-end over a synthesised sub). The combined signal is then shaped by a transient stage, a morphing multi-algorithm distortion, a simple 3-band tone control, frequency-dependent stereo widening, and a transparent safety limiter. Nonlinear stages run inside selectable oversampling (1×/2×/4×/8×).
 
 Speed of sound design is a first-class goal: four large macro knobs (Punch, Body, Crush, Tail) produce immediately musical changes, and constrained Randomize / Mutate functions generate usable kicks rather than noise.
 
@@ -22,7 +23,7 @@ The interface is a premium dark modern **native JUCE** UI (custom controls + Loo
 
 - No wavetable synthesis, no polyphonic oscillator stacks, no arpeggiator, no modulation matrix, no generic multi-effects rack.
 - No full mastering EQ (tone is 3 simple bands only).
-- No sample playback / sample import.
+- **Sample engine:** no factory / bundled / third-party samples — the bank is *only* the user's own recordings, dropped in by them. No multisampling, velocity layers or round-robin in v1 (one sample per patch). No time-stretch, no slicing, no built-in recorder.
 - Initial release is **monophonic** (fast retriggerable single voice). Polyphony is out of scope for v1.
 
 ## Relationship to Existing Plugins
@@ -38,13 +39,14 @@ MIDI Note-On (velocity)
    ▼
 KickEngine → KickVoice (monophonic, retriggerable, click-free)
    │
-   ├─ BodyOscillator ── PitchEnvelope (exp/log, high→fundamental) ── AmplitudeEnvelope (fast atk / exp decay)
-   ├─ SubOscillator ─── independent decay, mono, phase-stable
-   ├─ ClickGenerator ── filtered noise burst + transient osc + impulse, 1–15 kHz, 0.1–50 ms
-   ├─ TailGenerator ─── body-derived or dedicated LFO tail, own length/tone/drive
-   └─ NoiseGenerator ── white/pink/filtered, own decay/tone   (optional, default off)
+   ├─ SamplePlayer ──── one user sample: resample(tune/MIDI) → trim/reverse → AD env → HP/LP + bitcrush   [SAMPLE on/off]
+   ├─ BodyOscillator ── PitchEnvelope (exp/log, high→fundamental) ── AmplitudeEnvelope (fast atk / exp decay)  ┐
+   ├─ SubOscillator ─── independent decay, mono, phase-stable                                                  │
+   ├─ ClickGenerator ── filtered noise burst + transient osc + impulse, 1–15 kHz, 0.1–50 ms                    ├ [SYNTH on/off]
+   ├─ TailGenerator ─── body-derived or dedicated LFO tail, own length/tone/drive                              │
+   └─ NoiseGenerator ── white/pink/filtered, own decay/tone   (optional, default off)                          ┘
    │
-   ▼  (layer sum)
+   ▼  (layer sum — sample + synth)
 TransientShaper (kick-tuned attack/sustain)
    │
    ▼
@@ -66,6 +68,8 @@ OutputStage → Output Gain → Safety Limiter (transparent, transient-preservin
 |---|---|---|
 | `KickEngine` | Owns full synthesis, sample-rate/oversampling lifecycle, parameter smoothing, analyzer taps | — |
 | `KickVoice` | One triggered kick; monophonic retrigger with equal-power crossfade / fast fade to kill clicks | — |
+| `SamplePlayer` | Plays one user sample: variable-rate resample (tune / MIDI-track), start/end trim, reverse, AD envelope, HP/LP filter, bit/rate reduction. Runs in the OS region (AD-10). | `juce::Interpolators`, `dsp::StateVariableTPTFilter` |
+| `SampleLibrary` | Scans + watches the managed samples folder, decodes drag-dropped files, provides the ordered browsable bank. Message thread only. | `juce::AudioFormatManager`, `juce::DirectoryContentsList`, `juce::File` |
 | `BodyOscillator` | Sine fundamental + optional harmonic generation + controlled saturation. Fundamental ≈ 25–150 Hz | `dsp::Oscillator` or phase accumulator |
 | `PitchEnvelope` | Exponential/logarithmic drop from `pitchStart × fundamental` → fundamental over `pitchTime`; curve control. **Never lerp Hz** — work in ratio/semitone domain | custom exp env |
 | `AmplitudeEnvelope` | Fast attack (0–20 ms), exponential decay (20–2000 ms), level | `juce::ADSR` (AD, sustain 0) or custom exp |
@@ -83,6 +87,27 @@ OutputStage → Output Gain → Safety Limiter (transparent, transient-preservin
 ## Parameters
 
 Full APVTS specification (stable IDs, skews, units, automation flags) is finalized in `parameter-spec.md` during planning. Defaults below are **starting points to tune by ear**, not fixed requirements.
+
+### Sample engine (added 2026-08-28)
+
+| Group | Parameter (ID) | Range | Default | Notes |
+|---|---|---|---|---|
+| Sample | `synthEnable` | Off / On | **On** | Off = mute all 5 synth layers (sample-only kick) |
+| Sample | `sampleEnable` | Off / On | **Off** | Off = pure synth (current behaviour). On = sample layer active |
+| Sample | `sampleLevel` | 0–1 | 0.7 | sample layer gain into the sum |
+| Sample | `sampleStart` | 0–1 | 0.0 | trim start (fraction of file) |
+| Sample | `sampleEnd` | 0–1 | 1.0 | trim end |
+| Sample | `sampleReverse` | Off / On | Off | play the trimmed region backwards |
+| Sample | `sampleTune` | −24…+24 | 0 | semitones (resample) |
+| Sample | `sampleFine` | −100…+100 | 0 | cents |
+| Sample | `sampleMidiTrack` | Off / On | On | pitch follows MIDI note vs. fixed at the sample's native pitch |
+| Sample | `sampleAttack` | 0–200 | 0 | ms — AD envelope attack |
+| Sample | `sampleDecay` | 20–2000 | 800 | ms — AD envelope decay (tighten / extend the tail) |
+| Sample | `sampleHP` | 20–2000 | 20 | Hz — high-pass (20 = off), sample-only, pre-sum |
+| Sample | `sampleLP` | 200–20000 | 20000 | Hz — low-pass (20000 = off), sample-only, pre-sum |
+| Sample | `sampleCrush` | 0–1 | 0.0 | bit-depth + sample-rate reduction (lo-fi), sample-only |
+
+Sample **selection** is not an automatable parameter — the chosen file name is a state property (`currentSampleName`) driven by the bank browser, exactly like the preset name.
 
 ### Primary / automatable
 
@@ -151,11 +176,20 @@ Full APVTS specification (stable IDs, skews, units, automation flags) is finaliz
 | `macroCrush` | 0.5 | drive + character |
 | `macroTail` | 0.5 | tail level + tail length + tail tone |
 
+## Sample Engine
+
+- **Blendable, not a mode:** `SamplePlayer` is a 6th layer summed with the synth layers before the transient stage, so the whole downstream chain (transient, drive/character, tone, stereo, limiter, the CRUSH macro, oversampling) applies to sample and synth alike. `sampleHP` / `sampleLP` / `sampleCrush` are sample-only shaping *before* the sum.
+- **Three configurations** via the two enable toggles: synth-only (default), sample-only (`synthEnable` off), or both blended.
+- **The bank:** the user drops WAV / AIFF / FLAC / CAF files onto the plugin window. Each is decoded and **copied** into a managed library folder — `~/Library/Audio/Presets/PluginFreedom/KickDesigner2/Samples/` — which the plugin scans and watches. The header's browser shuttles through the bank (prev / next / list), same UX as presets. **No factory samples ship** — the bank is empty until the user fills it.
+- **Loading:** files are decoded to a `juce::AudioBuffer<float>` on the message thread (kick-length; **hard cap ~5 s** at session rate to bound RAM), then handed to the audio thread via an atomic pointer swap. Missing sample on preset recall → sample layer silent + a non-modal notice; the synth layers are unaffected.
+- **Playback:** one-shot on note-on, monophonic, retrigger restarts it. `sampleMidiTrack` on → note number sets playback rate relative to the sample's assumed root; off → fixed native-pitch playback (still retriggered). Velocity scales sample level (and, lightly, `sampleLP`) via `velSensitivity`.
+- **Presets** reference the sample by file name; the file must be in the library folder to recall.
+
 ## Randomize / Mutate
 
 - **Randomize:** constrained per-parameter musical ranges (genre-aware bounds), correlated where needed (e.g. shorter decay ↔ tighter tail). Target: the large majority of results are usable kicks.
 - **Mutate:** small bounded perturbations (±5–15%) around the current patch. Preserves character; explores neighborhood.
-- Both are undoable; neither touches `oversampling`, `limiter`, `output`, tuning, or velocity mappings.
+- Both are undoable; **neither touches** `oversampling`, `limiter`, `output`, `mix`, the tuning group, `velSensitivity`, the macros, **or any `sample*` parameter / `synthEnable` / `sampleEnable` / the sample selection** (the sample layer is the user's material — Randomize shapes the synth, not the sample).
 
 ## UI Concept
 
@@ -167,8 +201,11 @@ Full APVTS specification (stable IDs, skews, units, automation flags) is finaliz
 - **Header:** "Kick Designer 2" wordmark · preset browser (prev/next + list) · Save · Undo/Redo · Randomize · Mutate.
 - **Center:** large real-time **waveform display** of the most recent kick; toggle/overlay **spectrum** (reasonable FFT size, low CPU, never blocks audio).
 - **Macro row:** four large knobs — PUNCH · BODY · CRUSH · TAIL.
+- **Sample module:** drag-drop target + bank browser (prev/next/list, shows current file name) · SYNTH and SAMPLE enable toggles · sample tweak controls (Level, Start/End, Reverse, Tune/Fine, MIDI-track, Attack/Decay, HP/LP, Crush). The whole plugin window is also a drop target.
 - **Section panels:** Pitch · Body · Click · Tail · Sub · Noise · Drive (Drive/Character/Mix) · Tone (Low/Mid/High) · Stereo · Output.
 - **Global strip:** Oversampling selector · Limiter toggle · Output gain · Mix.
+
+**Drag-and-drop:** `juce::FileDragAndDropTarget` on the editor; dropped audio files are validated (format, length) and copied into the library folder on the message thread, then the bank re-scans and selects the new file.
 
 **Knob behaviour (all knobs):** smooth drag, mouse-wheel, double-click reset to default, live value readout, tooltip, host-automation compatible, sensible units + precision.
 
@@ -182,9 +219,10 @@ Full APVTS specification (stable IDs, skews, units, automation flags) is finaliz
 
 ## Presets
 
-- **Preset manager** with factory + **user disk presets** (user presets saved to a plugin folder under `~/Library/Audio/Presets/PluginFreedom/KickDesigner2/` or equivalent; Save button in header is fully functional). Factory presets baked in via `BinaryData`.
-- **Factory set** (original parameter configurations only — no copyrighted material):
+- **Preset manager** with factory + **user disk presets** (user presets saved under `~/Library/Audio/Presets/PluginFreedom/KickDesigner2/`; the sample library sits in a `Samples/` sub-folder of the same path). Factory presets baked in via `BinaryData`.
+- **Factory set** (original parameter configurations only — no copyrighted material, **all synth-only / `sampleEnable` off** since no samples ship):
   Clean · House · Techno · Hard Techno · Hardstyle · Hardcore · Industrial · Sub Heavy · Short · Long · Distorted · Clicky · Punchy · Warehouse · EDM · Trap · Cinematic.
+- A **user preset** may reference a sample by file name; recall requires that file to be present in the library folder (else the sample layer stays silent with a notice).
 - Default patch loads on first instantiation.
 
 ## Oversampling
@@ -216,11 +254,12 @@ plugins/KickDesigner2/
   Source/
     PluginProcessor.{h,cpp}
     PluginEditor.{h,cpp}
-    DSP/  KickEngine  KickVoice  BodyOscillator  PitchEnvelope  AmplitudeEnvelope
+    DSP/  KickEngine  KickVoice  SamplePlayer  BodyOscillator  PitchEnvelope  AmplitudeEnvelope
           ClickGenerator  NoiseGenerator  TailGenerator  TransientShaper
           Saturator  Waveshaper  OutputStage  OversamplingProcessor
+    Sampling/  SampleLibrary.{h,cpp}   (folder scan / watch / decode)
     Parameters/  ParameterIDs.h  ParameterLayout.h
-    UI/  Knob  WaveformDisplay  SpectrumDisplay  EnvelopeDisplay  PresetBrowser  LookAndFeel
+    UI/  Knob  WaveformDisplay  SpectrumDisplay  EnvelopeDisplay  PresetBrowser  SampleBrowser  LookAndFeel
     Presets/  PresetManager.{h,cpp}   (+ Factory/*.xml or generated)
     Utilities/  DSPUtils.{h,cpp}
     Tests/  DSPTests.cpp  KickEngineTests.cpp  OfflineRender.{h,cpp}
@@ -229,7 +268,7 @@ Note: this introduces a `Source/` subtree deeper than any existing plugin in the
 
 ## Testing
 
-Automated coverage: parameter ranges · state serialization round-trip · preset loading · MIDI triggering · voice lifecycle · pitch envelope shape · amplitude envelope shape · oversampling latency/switching · rapid retrigger (no clicks) · NaN/Inf detection · DC offset bound · output stability · silence after voice completion · deterministic offline render.
+Automated coverage: parameter ranges · state serialization round-trip · preset loading · MIDI triggering · voice lifecycle · pitch envelope shape · amplitude envelope shape · oversampling latency/switching · rapid retrigger (no clicks) · NaN/Inf detection · DC offset bound · output stability · silence after voice completion · deterministic offline render · **sample load / resample accuracy / trim / reverse / missing-file handling · sample+synth layer sum · sample path adds no audio-thread allocation**.
 Plus an **offline render utility** that renders a kick to WAV for inspection.
 
 ## Technical Notes / Risks
@@ -256,12 +295,13 @@ Plus an **offline render utility** that renders a kick to WAV for inspection.
 6. Click
 7. Sub
 8. Tail
+8b. **Sample player + library** (load / resample / trim / reverse / AD env / HP-LP / crush; folder scan + drag-drop; sample↔synth enable; sum with synth layers)
 9. Distortion (morph)
 10. Tone / output / stereo
 11. Oversampling
-12. Parameters / APVTS state
+12. Parameters / APVTS state (incl. `currentSampleName`)
 13. Presets
-14. Waveform / spectrum displays
+14. Waveform / spectrum displays + sample bank browser
 15. Final UI
 16. Tests + offline render utility
 17. Profile & optimize (lock oversampling default)

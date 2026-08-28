@@ -56,12 +56,16 @@ void KickDesigner2AudioProcessor::getStateInformation (juce::MemoryBlock& destDa
 {
     auto state = apvts.copyState();
 
-    // Forward-migration tag + preset bookkeeping (carried through the round-trip).
+    // Forward-migration tag + preset / sample bookkeeping (carried through the round-trip).
     state.setProperty ("stateVersion", kStateVersion, nullptr);
     if (! state.hasProperty ("currentPresetName"))
         state.setProperty ("currentPresetName", juce::String(), nullptr);
     if (! state.hasProperty ("currentPresetPath"))
         state.setProperty ("currentPresetPath", juce::String(), nullptr);
+    // v2: name of the loaded sample from the managed bank (bare file name, never a path).
+    // Buffer resolution / decode is Phase 2.7b; Stage 1 only persists the string.
+    if (! state.hasProperty ("currentSampleName"))
+        state.setProperty ("currentSampleName", currentSampleName, nullptr);
 
     if (auto xml = std::unique_ptr<juce::XmlElement> (state.createXml()))
         copyXmlToBinary (*xml, destData);
@@ -75,9 +79,13 @@ void KickDesigner2AudioProcessor::setStateInformation (const void* data, int siz
 
     auto tree = juce::ValueTree::fromXml (*xml);
 
-    // Reserved for future migration — only v1 exists today.
+    // Migration: v1 (pre-sample) states have no sample* params — JUCE applies their v2
+    // defaults (sampleEnable off) so an old patch sounds identical. Nothing else to do yet;
+    // Phase 2.7b adds resolve + decode of currentSampleName.
     const int stateVersion = (int) tree.getProperty ("stateVersion", kStateVersion);
     juce::ignoreUnused (stateVersion);
+
+    currentSampleName = tree.getProperty ("currentSampleName", juce::String()).toString();
 
     apvts.replaceState (tree);
 }

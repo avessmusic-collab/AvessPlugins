@@ -10,19 +10,21 @@ complexity_score: 5.0
 
 ## Complexity Factors
 
-- **Parameters:** 45 APVTS parameters (41 Float, 3 Choice, 1 Bool) → `min(45/5, 2.0)` = **2.0** (capped)
-  - Note: parameter count reconciled 2026-08-28 to **45 APVTS (41 Float / 3 Choice / 1 Bool)**; `parameter-spec.md` header corrected. `bodyAttack` intentionally not exposed.
-- **Algorithms:** ~14 DSP components = **14**
-  - KickEngine, KickVoice, BodyOscillator, PitchEnvelope, AmplitudeEnvelope, SubOscillator, ClickGenerator, NoiseGenerator, TailGenerator, TransientShaper, Waveshaper/Saturator (7-curve morph), OutputStage (tone + stereo + limiter + mix + DC), OversamplingProcessor, Analyzer (waveform + FFT spectrum)
-- **Features:** **4**
+- **Parameters:** **59 APVTS** (51 Float, 3 Choice, 5 Bool) → `min(59/5, 2.0)` = **2.0** (capped)
+  - v1 core 45 + **v2 SAMPLE group 14** (`parameter-spec.md` v2, 2026-08-28). `bodyAttack` intentionally not exposed.
+- **Algorithms:** **~17** DSP components
+  - KickEngine, KickVoice, **SamplePlayer**, BodyOscillator, PitchEnvelope, AmplitudeEnvelope, SubOscillator, ClickGenerator, NoiseGenerator, TailGenerator, TransientShaper, Waveshaper/Saturator (7-curve morph), OutputStage (tone + stereo + limiter + mix + DC), OversamplingProcessor, Analyzer (waveform + FFT spectrum) + **SampleLibrary** (message-thread folder/decode)
+- **Features:** **6**
   - FFT / frequency-domain spectrum analyzer (+1)
   - 3-band tone + Linkwitz-Riley mono-crossover band split (+1)
   - Envelope / modulation system (pitch env, per-layer AD envelopes, transient follower) (+1)
   - External MIDI trigger + velocity routing (+1)
-- **Raw total:** 2.0 + 14 + 4 = **20.0**
+  - **Sample playback: interpolated resampling + trim/reverse + AD + filter/crush (+1)**
+  - **Managed sample library: folder scan/watch, drag-drop import, decode, atomic buffer hand-off (+1)**
+- **Raw total:** 2.0 + 17 + 6 = **25.0**
 - **Final (capped at 5.0):** **5.0**
 
-Additional scope multipliers (not scored but drive the phase count): `juce::dsp::Oversampling` wrapping the **entire voice + master chain** (AD-10) with glitch-free runtime factor switching + `fsOversampled` coefficient refresh, native JUCE UI (custom LookAndFeel + 6 custom components, resizable), preset manager (factory BinaryData + user disk I/O), 17 factory presets, automated test suite + offline-render WAV utility.
+Additional scope multipliers (not scored but drive the phase count): `juce::dsp::Oversampling` wrapping the **entire voice + master chain** (AD-10) with glitch-free runtime factor switching + `fsOversampled` coefficient refresh; **sample-playback engine + managed file library + drag-drop (AD-11/AD-12)**; native JUCE UI (custom LookAndFeel + 7 custom components, resizable); preset manager (factory BinaryData + user disk I/O); 17 factory presets; automated test suite + offline-render WAV utility.
 
 ---
 
@@ -30,9 +32,9 @@ Additional scope multipliers (not scored but drive the phase count): `juce::dsp:
 
 - Stage 0: Research ✓ (`architecture.md`)
 - Stage 0: Planning ✓ (this file)
-- Stage 1: Foundation + Shell (CMake, APVTS, IDs/layout, bus config, native editor stub) ← Next
-- Stage 2: DSP — 11 phases (2.1 … 2.11)
-- Stage 3: GUI — 4 phases (3.1 … 3.4)
+- Stage 1: Foundation + Shell (CMake, APVTS **59 params**, IDs/layout, bus config, `currentSampleName` state, native editor stub) — **built at v1 (45); amended to v2 (59) — see Stage 1 v2 Amendment below**
+- Stage 2: DSP — **12 phases** (2.1 … 2.11 + **2.6b Sample player + library**)
+- Stage 3: GUI — 4 phases (3.1 … 3.4) incl. `SampleBrowser` + drag-drop
 - Stage 3: Validation (17 presets, pluginval, offline-render tests, changelog)
 - Repo Stage 17: Profile & optimize — **lock `oversampling` default (2× vs 4×)**
 - Repo Stage 18: Release build VST3 / AU / Standalone; archive `MinimalKick` once ✅ Working
@@ -61,9 +63,17 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 **Checkpoint:**
 - [ ] Builds clean (0 warnings) for VST3 + AU + Standalone.
 - [ ] Loads in Ableton / Logic / Reaper as an **instrument**; receives MIDI.
-- [ ] All 45 parameters visible in the host generic editor with correct names/ranges/defaults.
+- [ ] All parameters visible in the host generic editor with correct names/ranges/defaults.
 - [ ] `getStateInformation` → `setStateInformation` round-trips exactly (unit test).
 - [ ] Produces silence (no engine yet), no crashes on note-on/off.
+
+#### Stage 1 v2 Amendment — SAMPLE parameters (do before Phase 2.1)
+
+Stage 1 was built and validated at **v1 (45 params)**. `parameter-spec.md` v2 adds the 14-parameter SAMPLE group. Amend the shell:
+- `ParameterIDs.h` — add 14 IDs: `synthEnable`, `sampleEnable`, `sampleLevel`, `sampleStart`, `sampleEnd`, `sampleReverse`, `sampleTune`, `sampleFine`, `sampleMidiTrack`, `sampleAttack`, `sampleDecay`, `sampleHP`, `sampleLP`, `sampleCrush`.
+- `ParameterLayout.h` — add 10 floats to the table (`FloatParamSpec` array 41 → 51) + 4 `AudioParameterBool` (defaults: `synthEnable` true, `sampleEnable` false, `sampleReverse` false, `sampleMidiTrack` true).
+- `PluginProcessor` — bump `stateVersion` to **2**; add the `currentSampleName` `ValueTree` string property to `getStateInformation`/`setStateInformation` round-trip (resolution/decoding is Phase 2.7b — for now just persist the string). Confirm a `stateVersion == 1` blob still loads.
+- **Checkpoint:** clean rebuild (0 warnings) VST3+AU+Standalone · pluginval `--strictness-level 10` SUCCESS · zero-drift check now covers 59 IDs · auval shows 59 parameters · v1 state blob loads without error.
 
 ---
 
@@ -133,6 +143,25 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - [ ] All 3 `noiseType` options produce the expected spectrum.
 - [ ] `noiseLevel = 0` (default) → exactly silent (no idle noise).
 
+#### Phase 2.7b: Sample player + library (v2 — AD-11/AD-12)
+**Goal:** The 6th layer. `SampleLibrary` (message-thread folder + decode + atomic hand-off) → `SamplePlayer` (in-region resample → trim/reverse → AD → HP/LP → crush) → `synthEnable` / `sampleEnable` gates → layer sum with the synth.
+**Components:**
+- `Source/Sampling/SampleLibrary.{h,cpp}` — `AudioFormatManager` (WAV/AIFF/FLAC/CAF), managed folder `…/KickDesigner2/Samples/` (create on first run), sorted bank list, `prev/next/list`, lookup-by-name, drag-drop import (validate ≤ 5 s / ≤ 2 ch / readable → copy → rescan), decode to `SampleBuffer { AudioBuffer<float>, sourceRate, rootNote=24 }`.
+- `Source/DSP/SamplePlayer.{h,cpp}` — `juce::Interpolators::Lagrange` per channel, `ratio = sourceRate/fsOS · 2^((tune+fine/100+midiOff)/12)`, `[start,end]` clamp + 1 ms fades + reverse, raised-cosine attack + exp decay, `StateVariableTPTFilter` HP→LP (vs `fsOS`), bit `lerp(16,4)` + S&H `lerp(1,16)` crush.
+- `PluginProcessor` — `std::atomic<const SampleBuffer*> currentSample` / `pendingSample`; publish + retire-when-unreferenced on the message thread; `currentSampleName` already in state from the Stage 1 v2 amendment.
+- `KickVoice` — grab `currentSample` at `noteOn` (hold for voice life), pass `noteNumber`; smoothed 0/1 gates for `synthEnable`/`sampleEnable`.
+**Params live:** `synthEnable`, `sampleEnable`, `sampleLevel`, `sampleStart`, `sampleEnd`, `sampleReverse`, `sampleTune`, `sampleFine`, `sampleMidiTrack`, `sampleAttack`, `sampleDecay`, `sampleHP`, `sampleLP`, `sampleCrush`.
+**Test WAVs:** render 3–4 kicks with `OfflineRender` (synth engine) to use as sample-bank fixtures.
+**Checkpoint:**
+- [ ] Load a fixture WAV → plays on note-on; `sampleEnable` off (default) → silent; `synthEnable` off → pure sample through the chain.
+- [ ] Resample accuracy: a rendered 100 Hz sine at `sampleTune = +12` reads 200 Hz ±1 %, level within ±0.5 dB; `−12` reads 50 Hz with no added aliasing above −60 dBFS.
+- [ ] `sampleStart`/`sampleEnd` trim to the expected window (sample-count check); `sampleReverse` produces the time-reversed buffer; both click-free (1 ms fades).
+- [ ] `sampleAttack`/`sampleDecay` reshape the envelope (offline WAV env check); `sampleHP`/`sampleLP` at extremes are transparent; `sampleCrush = 1` degrades bit-depth + rate audibly with no NaN.
+- [ ] Missing-file recall: preset referencing an absent sample → sample layer silent, notice shown, name retained, synth unaffected.
+- [ ] Hot-swap under load: machine-gun trigger while switching the bank → no glitch, no crash, no leak (buffers retired).
+- [ ] **Zero audio-thread allocation** with the sample layer active (assertion build / profiler).
+- [ ] Sample + synth both on → layer sum is their sum (null test against separate renders).
+
 #### Phase 2.8: Distortion morph
 **Goal:** Continuous 7-curve morph, loudness-compensated. **Isolated test before wiring `driveMix`.**
 **Components:** `Waveshaper/Saturator` — locked order `tanh→cubic→asym→softclip→hardclip→foldback→bitcrush`; 6-segment equal-gain crossfade; adaptive short-window RMS makeup seeded by static prime table; parallel clean/shaped blend. Runs inside the OS region like everything else (AD-10); currently `1x`, real oversampling benefit lands at Phase 2.10.
@@ -165,7 +194,7 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - [ ] No audio-thread allocation (profiler / assertion build).
 
 #### Phase 2.11: Parameter smoothing, macros, state
-**Goal:** All 45 params smoothed; 4 macros as effective-value offsets; state version + preset-name property.
+**Goal:** All 59 params smoothed; 4 macros as effective-value offsets; state version + preset-name + `currentSampleName` property.
 **Components:** `juce::SmoothedValue` per continuous param (Multiplicative for frequencies); `KickEngine` macro layer (0.5 neutral, bipolar smoothed offsets per AD-mapping); `stateVersion`, `currentPresetName/Path` on the APVTS tree.
 **Params live:** `macroPunch`, `macroBody`, `macroCrush`, `macroTail` + smoothing for all.
 **Checkpoint:**
@@ -179,10 +208,10 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 ### Stage 3: GUI Phases
 
 #### Phase 3.1: LookAndFeel + layout + parameter binding
-**Goal:** Premium dark native UI; every control bound to the correct parameter ID.
-**Components:** `Source/UI/LookAndFeel`, `Source/UI/Knob` (drag + wheel + double-click reset + readout + tooltip + `beginChangeGesture`/`endChangeGesture` bracketing), section panels (Pitch/Body/Click/Tail/Sub/Noise/Drive/Tone/Stereo/Output), macro row (Punch/Body/Crush/Tail), global strip (Oversampling/Limiter/Output/Mix), header (wordmark + preset prev/next + Save/Undo/Redo/Randomize/Mutate). `juce::SliderAttachment` / `ButtonAttachment` / `ComboBoxAttachment` for all 45. `FlexBox`/`Grid` layout, resizable with fixed aspect + min size.
+**Goal:** Premium dark native UI (per the approved v2 mockup — soft slate-grey chassis, kick oscilloscope, PUNCH/BODY/CRUSH/TAIL macro modules, engine strip + SAMPLE module); every control bound to the correct parameter ID.
+**Components:** `Source/UI/LookAndFeel`, `Source/UI/Knob` (drag + wheel + double-click reset + readout + tooltip + `beginChangeGesture`/`endChangeGesture` bracketing), section panels (Pitch/Body/Click/Tail/Sub/Noise/Drive/Tone/Stereo/Output), **Sample module** (enable toggles + tweak knobs), macro modules (Punch/Body/Crush/Tail), global strip (Oversampling/Limiter/Output/Mix), header (wordmark + preset prev/next + Save/Undo/Redo/Randomize/Mutate). `juce::SliderAttachment` / `ButtonAttachment` / `ComboBoxAttachment` for all **59**. `FlexBox`/`Grid` layout, resizable with fixed aspect + min size.
 **Checkpoint:**
-- [ ] Every one of the 45 controls binds to the correct APVTS ID (audit against the Parameter Mapping table).
+- [ ] Every one of the 59 controls binds to the correct APVTS ID (audit against the Parameter Mapping table).
 - [ ] Double-click resets to default (incl. `output` → normalised ≈ 0.6667).
 - [ ] Host automation moves the UI; UI moves host parameters; gestures bracket correctly (Ableton touch/latch records).
 - [ ] Layout holds at min / mid / max window size.
@@ -196,15 +225,17 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - [ ] Zero allocation / locks / FFT in `processBlock` (assertion build + profiler).
 - [ ] Repaint does not starve the message thread (CPU check with UI open).
 
-#### Phase 3.3: Preset system + Randomize / Mutate / Undo
-**Goal:** Factory + user presets; constrained randomisation; undo/redo.
-**Components:** `Source/Presets/PresetManager` (factory via `BinaryData`, user disk under `~/Library/Audio/Presets/PluginFreedom/KickDesigner2/`), `Source/UI/PresetBrowser` (prev/next + list + Save), Randomize (genre-aware per-param bounds + correlations, exclusion list), Mutate (±5–15 % perturbation, same exclusions), `UndoManager` transactions.
-**Factory set (17):** Clean · House · Techno · Hard Techno · Hardstyle · Hardcore · Industrial · Sub Heavy · Short · Long · Distorted · Clicky · Punchy · Warehouse · EDM · Trap · Cinematic. Default patch loads on first instantiation.
+#### Phase 3.3: Preset system + sample browser + Randomize / Mutate / Undo
+**Goal:** Factory + user presets; sample bank UI; constrained randomisation; undo/redo.
+**Components:** `Source/Presets/PresetManager` (factory via `BinaryData`, user disk under `…/KickDesigner2/`), `Source/UI/PresetBrowser` (prev/next + list + Save), **`Source/UI/SampleBrowser`** (prev/next/list over `SampleLibrary`, current-file name, drag-drop target with visible empty-bank state + missing-file notice; the whole editor is also a `FileDragAndDropTarget`), Randomize/Mutate (genre-aware bounds + correlations, exclusion list **incl. all `sample*` / enables / selection**), `UndoManager` transactions.
+**Factory set (17):** Clean · House · Techno · Hard Techno · Hardstyle · Hardcore · Industrial · Sub Heavy · Short · Long · Distorted · Clicky · Punchy · Warehouse · EDM · Trap · Cinematic — **all synth-only (`sampleEnable` off)**. Default patch loads on first instantiation.
 **Checkpoint:**
 - [ ] All 17 factory presets load and round-trip; each is a recognisable, usable kick for its genre.
-- [ ] User Save → file on disk → reload after plugin re-instantiation restores exactly.
-- [ ] Randomize: large majority of results are usable kicks; never touches `oversampling`/`limiter`/`output`/`mix`/tuning/`velSensitivity`/macros.
-- [ ] Mutate preserves character; Undo/Redo reverts Randomize/Mutate/preset-load.
+- [ ] User Save → file on disk (+ `currentSampleName`) → reload after re-instantiation restores exactly, sample included when the file is present.
+- [ ] Drag an audio file onto the editor → copied to `Samples/`, appears in the browser, selected, `sampleEnable` on, plays.
+- [ ] Empty bank shows a clear "drop a kick here" state; missing-sample recall shows a non-modal notice, synth unaffected.
+- [ ] Randomize: large majority usable; never touches `oversampling`/`limiter`/`output`/`mix`/tuning/`velSensitivity`/macros/**`synth*`·`sample*`·selection**.
+- [ ] Mutate preserves character; Undo/Redo reverts Randomize/Mutate/preset-load (not sample selection).
 - [ ] Missing user preset on restore → falls back to Default with a non-modal notice.
 
 #### Phase 3.4: Final UI polish
@@ -218,17 +249,18 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 ---
 
 ### Stage 3: Validation
-- [ ] 17 factory presets committed (generated or `.xml` via `BinaryData`).
+- [ ] 17 factory presets committed (generated or `.xml` via `BinaryData`), all synth-only.
 - [ ] `pluginval` (strictness 10) passes for VST3 + AU.
-- [ ] Automated test suite green: parameter ranges · state round-trip · preset loading · MIDI trigger · voice lifecycle · pitch-env shape · amp-env shape · oversampling latency + switching · rapid-retrigger click detection · NaN/Inf scan · DC-offset bound · output stability · silence-after-completion · deterministic offline render.
-- [ ] `OfflineRender` utility renders a kick to WAV for manual inspection.
+- [ ] Automated test suite green: parameter ranges (59) · state round-trip (incl. `currentSampleName`, `stateVersion 1→2`) · preset loading · MIDI trigger · voice lifecycle · pitch-env shape · amp-env shape · oversampling latency + switching · rapid-retrigger click detection · NaN/Inf scan · DC-offset bound · output stability · silence-after-completion · deterministic offline render · **sample: resample accuracy · trim/reverse · missing-file · hot-swap-under-load · zero audio-thread alloc · sample+synth sum**.
+- [ ] `OfflineRender` utility renders a kick to WAV for manual inspection; also renders the sample-bank test fixtures.
+- [ ] Sample library: drag-drop copy + rescan + select works; empty-bank + missing-file UI states verified.
 - [ ] Changelog / NOTES.md updated.
 - [ ] Zero compiler warnings across all targets.
 
 ### Repo Stage 17 — Profile & optimize
-- [ ] CPU profile at 44.1 / 48 / 96 kHz, 2× vs 4× oversampling, UI open/closed.
+- [ ] CPU profile at 44.1 / 48 / 96 kHz, 2× vs 4× oversampling, UI open/closed, **synth-only vs sample-only vs blended**.
 - [ ] **Lock the `oversampling` default** (keep `2x` or promote to `4x`) — update `parameter-spec.md` note + `ParameterLayout.h` default index.
-- [ ] Optimise hot paths if needed (per-block pitch-env interpolation, fast `tanh`).
+- [ ] Optimise hot paths if needed (per-block pitch-env interpolation, fast `tanh`, sample interpolation order).
 
 ### Repo Stage 18 — Release
 - [ ] VST3 / AU / Standalone release build, signed, installed, cache-cleared (Pattern #18).
@@ -238,9 +270,9 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 
 ## Implementation Flow
 
-- Stage 1: Foundation + Shell
-- Stage 2: DSP — 11 phases (2.1 → 2.11), compile + test + zero-warnings after each
-- Stage 3: GUI — 4 phases (3.1 → 3.4), compile + test after each
+- Stage 1: Foundation + Shell (+ **v2 Amendment**: add 14 SAMPLE params, `stateVersion` → 2, `currentSampleName`)
+- Stage 2: DSP — **12 phases** (2.1 → 2.11 + **2.7b Sample player + library**), compile + test + zero-warnings after each
+- Stage 3: GUI — 4 phases (3.1 → 3.4) incl. `SampleBrowser` + drag-drop, compile + test after each
 - Stage 3: Validation — presets, pluginval, test suite, offline render, changelog
 - Repo Stage 17: Profile → lock oversampling default
 - Repo Stage 18: Release → archive MinimalKick
@@ -255,19 +287,23 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - `Source/DSP/Waveshaper.{h,cpp}` — 7 transfer functions + crossfade + adaptive RMS makeup (AD-5); loudness-continuity risk.
 - `Source/DSP/OversamplingProcessor.{h,cpp}` — 4 pre-built instances wrapping the **whole voice + master chain** (AD-10), glitch-free swap + `fsOversampled` coefficient refresh, latency reporting (AD-2); switching risk. Built as the substrate in Phase 2.1.
 - `Source/DSP/OutputStage.{h,cpp}` — tone (pre) + LR mono crossover + M/S + soft-clip limiter + mix + DC.
-- `Source/Parameters/ParameterLayout.h` — table-driven 45-param APVTS; single point to get ranges/defaults/skews right.
+- `Source/DSP/SamplePlayer.{h,cpp}` — in-region interpolated resample + trim/reverse + AD + HP/LP + crush (AD-11); reads a `const SampleBuffer*` it does not own.
+- `Source/Sampling/SampleLibrary.{h,cpp}` — managed folder scan/watch, drag-drop import + validate, `AudioFormatManager` decode, atomic buffer publish + retire (AD-11/12); message thread only; the other high-risk component.
+- `Source/Parameters/ParameterLayout.h` — table-driven **59-param** APVTS; single point to get ranges/defaults/skews right.
 - `Source/Parameters/ParameterIDs.h` — ID single source of truth.
-- `Source/Presets/PresetManager.{h,cpp}` — factory (BinaryData) + user disk I/O (message thread only).
+- `Source/Presets/PresetManager.{h,cpp}` — factory (BinaryData) + user disk I/O (message thread only); persists `currentSampleName`.
 - `Source/UI/Knob.{h,cpp}` + `LookAndFeel` — reused by every panel; gesture bracketing.
 - `Source/UI/WaveformDisplay.{h,cpp}` / `SpectrumDisplay.{h,cpp}` — lock-free capture + message-thread FFT.
-- `Source/Tests/OfflineRender.{h,cpp}` + `DSPTests.cpp` + `KickEngineTests.cpp` — the WAV-render test utility and assertions.
+- `Source/UI/SampleBrowser.{h,cpp}` — bank list + drag-drop target + empty/missing states.
+- `Source/Tests/OfflineRender.{h,cpp}` + `DSPTests.cpp` + `KickEngineTests.cpp` — the WAV-render test utility and assertions (also renders the sample-bank test fixtures).
 
 ### Thread Safety
 - Parameter reads: `apvts.getRawParameterValue(id)->load()` once per block → macro resolve → `SmoothedValue`.
 - No shared state between the two `KickVoice` instances; voice state is audio-thread-local.
 - Analyzer: audio thread does bounded `memcpy` + atomic stores only; FFT + paint on the message-thread `Timer`.
 - OS switch: `std::atomic<Oversampling*>` + `setLatencySamples` from the message-thread listener / `prepareToPlay` only.
-- Preset + file I/O: message thread only.
+- **Sample buffer:** `std::atomic<const SampleBuffer*>` `pending`/`current`; audio thread swaps `pending→current` at block start and captures `current` per `noteOn` (held for the voice); previous buffers retired on the message thread once no voice references them. No refcount on the audio thread.
+- Preset + file I/O + sample decode/copy/scan: message thread only.
 - No mutexes in the signal path.
 
 ### Performance
@@ -295,8 +331,10 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 - **Click aliasing:** generated in-region AND band-limited by construction (windowed impulse ≥8 samples at `fsOversampled`, pre-filtered noise, band-limited osc). Fallback: drop the impulse component / widen the window.
 - **Mono phase stability:** phase-reset all oscillators on trigger; null test. Fallback: DC-servo instead of HP if the sub thins.
 - **Native UI (no repo precedent):** build LookAndFeel + Knob first; FlexBox layout; fallback to fixed-size UI for v1 if resizable is fiddly.
-- **Parameter count:** 45 APVTS (41 Float / 3 Choice / 1 Bool), reconciled 2026-08-28; `bodyAttack` intentionally not exposed. Do not invent a parameter.
+- **Parameter count:** **59 APVTS** (51 Float / 3 Choice / 5 Bool) — v1 core 45 + v2 SAMPLE 14 (`parameter-spec.md` v2). `bodyAttack` not exposed. Do not invent a parameter.
 - **Locked-spec vs brief distortion order:** parameter-spec order (`tanh→cubic→asym→softclip→hardclip→foldback→bitcrush`) is authoritative.
+- **Sample-buffer threading (AD-11):** in-RAM buffer, `std::atomic<const SampleBuffer*>`, voice captures the pointer at `noteOn` and holds it, previous buffer retired on the message thread once unreferenced. No filesystem / allocation / lock on the audio thread. Fallbacks: WAV/AIFF only; rescan-on-browse (no watcher); `Lagrange` interpolation if `WindowedSinc` too costly at 8×.
+- **No factory samples (AD-12):** bank empty until the user fills it; every factory preset synth-only. UI must make the drop target + empty state obvious.
 
 ---
 
@@ -314,6 +352,16 @@ Phase breakdown follows the creative brief's 18-step development order, grouped 
 | 8 | `fundamental` in MIDI Pitch mode | **Global semitone offset** `12·log2(fundamental/55)` on top of the note (0 at the 55 Hz default); absolute in Fixed Frequency mode. Keeps the knob and `macroBody` meaningful. |
 | 9 | `bodyAttack` | **Kept fixed-fast internal** (`kBodyAttackMs = 2.0`, raised-cosine). Not exposed (not in locked list). Soft-attack use case covered by negative `transientAttack`. Accepted deviation from the original spec's 0–20 ms amp attack. |
 | 10 | `mix` | **Kept automatable** (locked contract) as an **equal-power blend processed↔silence** (no dry path for an output-only instrument); functions as an automatable fade/mute. Tooltip: "leave at 100 %". |
+
+### v2 SAMPLE engine — decisions + open items (see `architecture.md` AD-11 / AD-12, `parameter-spec.md` v2 Addendum)
+
+| Item | Decision / status |
+|---|---|
+| Engine model | **Blendable 6th layer** (`SamplePlayer`), not a mode. `synthEnable` on / `sampleEnable` off by default → v1 behaviour preserved. Turn `synthEnable` off for a pure-sample kick. |
+| Bank | Plugin-managed folder `…/KickDesigner2/Samples/`; drag-drop import (copy in); presets reference by bare file name. **No factory samples.** |
+| Buffer / threading | In-RAM `SampleBuffer`, atomic pointer, voice holds it for its life, retire-when-unreferenced. 5 s length cap. |
+| Downstream | Sample sums with synth **before** TransientShaper → identical chain (drive, tone, stereo, limiter, macros, oversampling). `sampleHP/LP/Crush` are sample-only, pre-sum, in-region. |
+| **Open — Stage 2** | (a) interpolation order: `Lagrange` vs `WindowedSinc`; (b) `sampleMidiTrack` root: fixed C1 in v1 vs a per-sample root; (c) `sampleDecay` max semantics: exp fade vs "play to trim end"; (d) whether to ship 3–4 synthesised starter WAVs as an optional pack (not v1). |
 
 ---
 

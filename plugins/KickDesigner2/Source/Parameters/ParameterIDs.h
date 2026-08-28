@@ -3,11 +3,14 @@
 /**
     Single source of truth for every KickDesigner2 APVTS parameter ID string.
 
-    45 automatable parameters: 41 Float, 3 Choice (noiseType, oversampling, tuneMode),
-    1 Bool (limiter). Randomize / Mutate / Save are UI actions, NOT parameters.
+    59 automatable parameters: 51 Float, 3 Choice (noiseType, oversampling, tuneMode),
+    5 Bool (limiter, synthEnable, sampleEnable, sampleReverse, sampleMidiTrack).
+    Randomize / Mutate / Save / sample-bank-browse / sample-drag-drop are UI actions,
+    NOT parameters. Sample selection is the state property `currentSampleName`.
 
-    Contract: parameter-spec.md (LOCKED v1) + architecture.md "Parameter Mapping".
-    Do NOT rename / add / remove without a new version of parameter-spec.md.
+    Contract: parameter-spec.md (LOCKED v2 — v1 core 45 + v2 SAMPLE group 14) +
+    architecture.md "Parameter Mapping". Do NOT rename / add / remove without a new
+    version of parameter-spec.md.
 */
 namespace kd2::id
 {
@@ -44,6 +47,22 @@ namespace kd2::id
     inline constexpr auto noiseDecay       = "noiseDecay";
     inline constexpr auto noiseTone        = "noiseTone";
     inline constexpr auto noiseType        = "noiseType";   // Choice
+
+    // ---- SAMPLE (v2) ----------------------------------------------------------
+    inline constexpr auto synthEnable      = "synthEnable";      // Bool (default true)
+    inline constexpr auto sampleEnable     = "sampleEnable";     // Bool (default false)
+    inline constexpr auto sampleLevel      = "sampleLevel";
+    inline constexpr auto sampleStart      = "sampleStart";
+    inline constexpr auto sampleEnd        = "sampleEnd";
+    inline constexpr auto sampleReverse    = "sampleReverse";    // Bool (default false)
+    inline constexpr auto sampleTune       = "sampleTune";
+    inline constexpr auto sampleFine       = "sampleFine";
+    inline constexpr auto sampleMidiTrack  = "sampleMidiTrack";  // Bool (default true)
+    inline constexpr auto sampleAttack     = "sampleAttack";
+    inline constexpr auto sampleDecay      = "sampleDecay";
+    inline constexpr auto sampleHP         = "sampleHP";
+    inline constexpr auto sampleLP         = "sampleLP";
+    inline constexpr auto sampleCrush      = "sampleCrush";
 
     // ---- TRANSIENT ------------------------------------------------------- ---
     inline constexpr auto transientAttack  = "transientAttack";
