@@ -17,7 +17,9 @@ namespace kickr
             v.prepare (fsOversampled);
 
         transientShaper.prepare (fsOversampled);
-        waveshaper.prepare (fsOversampled);      // PHASE 2.8 — coefficients vs fsOversampled
+        waveshaperL.prepare (fsOversampled);     // PHASE 2.8/2.9 — coefficients vs fsOversampled
+        waveshaperR.prepare (fsOversampled);
+        outputStage.prepare (fsOversampled);     // PHASE 2.9 — tone / crossover / limiter vs fsOversampled
 
         // 1 / (fade length in oversampled samples) — fsOversampled is fixed until Phase 2.10.
         retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
@@ -30,18 +32,12 @@ namespace kickr
         const int maxOsSamples = maxBlockSize * (1 << (OversamplingProcessor::kNumFactors - 1));
         for (auto& b : voiceScratch)
         {
-            b.setSize (1, maxOsSamples, false, false, true);
+            b.setSize (2, maxOsSamples, false, false, true);   // PHASE 2.9 — stereo per-voice scratch
             b.clear();
         }
 
-        // Base-rate DC blocker, ~5 Hz corner (below the 25 Hz sub — Phase 2.5).
-        const auto dcR = 1.0f - (juce::MathConstants<float>::twoPi * 5.0f
-                                 / static_cast<float> (baseSampleRate));
-        for (auto& b : dcBlockers)
-        {
-            b.R = juce::jlimit (0.9f, 0.99999f, dcR);
-            b.reset();
-        }
+        // (The DC blocker moved in-region into OutputStage at the Phase 2.9 checkpoint —
+        //  it must run before the safety limiter, not after it.)
 
         // Cache raw parameter pointers (Phase 2.1 params only).
         pFundamental    = apvts.getRawParameterValue (id::fundamental);
@@ -60,6 +56,15 @@ namespace kickr
         pDrive            = apvts.getRawParameterValue (id::drive);
         pCharacter        = apvts.getRawParameterValue (id::character);
         pDriveMix         = apvts.getRawParameterValue (id::driveMix);
+        pLow              = apvts.getRawParameterValue (id::low);
+        pMid              = apvts.getRawParameterValue (id::mid);
+        pHigh             = apvts.getRawParameterValue (id::high);
+        pBodyWidth        = apvts.getRawParameterValue (id::bodyWidth);
+        pClickWidth       = apvts.getRawParameterValue (id::clickWidth);
+        pOutputWidth      = apvts.getRawParameterValue (id::outputWidth);
+        pOutput           = apvts.getRawParameterValue (id::output);
+        pMix              = apvts.getRawParameterValue (id::mix);
+        pLimiter          = apvts.getRawParameterValue (id::limiter);
         pClickLevel       = apvts.getRawParameterValue (id::clickLevel);
         pClickTone        = apvts.getRawParameterValue (id::clickTone);
         pClickTime        = apvts.getRawParameterValue (id::clickTime);
@@ -101,7 +106,9 @@ namespace kickr
             v.reset();
 
         transientShaper.reset();
-        waveshaper.reset();
+        waveshaperL.reset();
+        waveshaperR.reset();
+        outputStage.reset();
 
         activeVoice   = 0;
         incomingVoice = 1;
@@ -111,8 +118,6 @@ namespace kickr
         scratch.clear();
         for (auto& b : voiceScratch)
             b.clear();
-        for (auto& b : dcBlockers)
-            b.reset();
     }
 
     float KickEngine::resolvePitchHz (int noteNumber) const noexcept
@@ -227,29 +232,34 @@ namespace kickr
 
         jassert (upNum <= voiceScratch[0].getNumSamples());
 
-        // Render each live voice into its own mono scratch (the body is mono).
-        float* dataA = voiceScratch[0].getWritePointer (0);
-        float* dataB = voiceScratch[1].getWritePointer (0);
+        // Render each live voice into its own STEREO scratch (Phase 2.9).
+        float* aL = voiceScratch[0].getWritePointer (0);
+        float* aR = voiceScratch[0].getWritePointer (1);
+        float* bL = voiceScratch[1].getWritePointer (0);
+        float* bR = voiceScratch[1].getWritePointer (1);
 
         const bool fading = fadeActive;
 
-        voices[static_cast<size_t> (activeVoice)].renderMono (dataA, upNum);
+        voices[static_cast<size_t> (activeVoice)].renderStereo (aL, aR, upNum);
         if (fading)
-            voices[static_cast<size_t> (incomingVoice)].renderMono (dataB, upNum);
+            voices[static_cast<size_t> (incomingVoice)].renderStereo (bL, bR, upNum);
 
-        // Voice mix (equal-power crossfade during a retrigger) -> summed-mono
-        // TransientShaper (AD-10 in-region) -> both output channels of `up`.
+        // Voice mix (equal-power crossfade during a retrigger) -> Tone (PRE-distortion) ->
+        // stereo-linked TransientShaper -> per-channel Waveshaper -> OutputStage
+        // (crossover / width / mix / gain / limiter). Everything in-region (AD-10).
         double th = theta;
 
         for (int i = 0; i < upNum; ++i)
         {
-            float mono;
+            float L = 0.0f;
+            float R = 0.0f;
 
             if (fading)
             {
                 float gOld = 1.0f, gNew = 0.0f;
                 dsputils::equalPowerGains (static_cast<float> (th), gOld, gNew);
-                mono = gOld * dataA[i] + gNew * dataB[i];
+                L = gOld * aL[i] + gNew * bL[i];
+                R = gOld * aR[i] + gNew * bR[i];
 
                 th += retriggerThetaInc;
                 if (th > 1.0)
@@ -257,17 +267,30 @@ namespace kickr
             }
             else
             {
-                mono = dataA[i];
+                L = aL[i];
+                R = aR[i];
             }
 
-            // Phase 2.8: TransientShaper -> Waveshaper (7-curve morph), still summed-mono,
-            // still in-region (AD-10). Macro offsets on transientAttack / drive / character
-            // are added upstream in processBlock via setParams (Phase 2.11).
-            const float shaped    = waveshaper.processSample (transientShaper.processSample (mono));
-            const float outSample = dsputils::sanitize (shaped);
+            // Macro offsets on transientAttack / drive / character / tone are added
+            // upstream in processBlock via setParams (Phase 2.11 markers there).
+            outputStage.processTone (L, R);                // 3-band, PRE-distortion
+            transientShaper.processStereo (L, R);          // stereo-linked gain
+            L = waveshaperL.processSample (L);             // per-channel 7-curve morph
+            R = waveshaperR.processSample (R);
+            outputStage.processOutput (L, R);             // crossover / width / mix / gain / limiter
 
-            for (int ch = 0; ch < upCh; ++ch)
-                up.setSample (ch, i, outSample);
+            const float outL = dsputils::sanitize (L);
+            const float outR = dsputils::sanitize (R);
+
+            if (upCh > 1)
+            {
+                up.setSample (0, i, outL);
+                up.setSample (1, i, outR);
+            }
+            else
+            {
+                up.setSample (0, i, 0.5f * (outL + outR));
+            }
         }
 
         if (fading)
@@ -326,6 +349,15 @@ namespace kickr
         snap.drive01     = load (pDrive,     0.3f);
         snap.character01 = load (pCharacter, 0.0f);
         snap.driveMix01  = load (pDriveMix,  1.0f);
+        snap.lowDb        = load (pLow,  0.0f);          // PHASE 2.9 — TONE
+        snap.midDb        = load (pMid,  0.0f);
+        snap.highDb       = load (pHigh, 0.0f);
+        snap.bodyWidth01  = load (pBodyWidth,   0.0f);   // PHASE 2.9 — STEREO
+        snap.clickWidth01 = load (pClickWidth,  0.3f);
+        snap.outputWidth01 = load (pOutputWidth, 0.5f);
+        snap.outputDb     = load (pOutput, 0.0f);        // PHASE 2.9 — OUTPUT
+        snap.mix01        = load (pMix,    1.0f);
+        snap.limiterOn    = load (pLimiter, 1.0f) > 0.5f;
         snap.clickLevel      = load (pClickLevel, 0.4f);
         snap.clickToneHz     = load (pClickTone,  4000.0f);
         snap.clickTimeMs     = load (pClickTime,  3.0f);
@@ -390,7 +422,9 @@ namespace kickr
         {
             v.setBodyLevel (snap.bodyLevel);
             v.setPitchParams (effectivePitchStartRatio (lastVel01), snap.pitchTimeMs, snap.pitchCurve);
-            v.setClickParams (snap.clickLevel, snap.clickToneHz, snap.clickTimeMs, snap.clickPitchHz);
+            v.setClickParams (snap.clickLevel, snap.clickToneHz, snap.clickTimeMs,
+                              snap.clickPitchHz, snap.clickWidth01);   // PHASE 2.9 — clickWidth
+            v.setBodyWidth (snap.bodyWidth01);                          // PHASE 2.9 — bodyWidth
             v.setSubParams (snap.subLevel, snap.subFreqHz, snap.subDecayMs);
             // Phase 2.11: tail* below = tailLevel/Length/Tone + macroTail offsets.
             v.setTailParams (snap.tailLevel, snap.tailLengthMs, snap.tailTone01, snap.tailDrive01);
@@ -406,7 +440,15 @@ namespace kickr
         //             characterEff = snap.character01 + macroCrush offset.
         const float driveEff     = snap.drive01;
         const float characterEff = snap.character01;
-        waveshaper.setParams (driveEff, characterEff, snap.driveMix01);
+        waveshaperL.setParams (driveEff, characterEff, snap.driveMix01);
+        waveshaperR.setParams (driveEff, characterEff, snap.driveMix01);
+
+        // PHASE 2.9 — tone (pre-distortion) + crossover / width / mix / gain / limiter.
+        // Phase 2.11: low/mid/high stay as-is (no macro targets); outputWidth/output/mix
+        // are excluded from macros + Randomize per the contract.
+        outputStage.setParams (snap.lowDb, snap.midDb, snap.highDb,
+                               snap.outputWidth01, snap.outputDb,
+                               snap.limiterOn, snap.mix01);
 
         // Sample-accurate sub-block split at each note-on.
         int pos = 0;
@@ -427,19 +469,17 @@ namespace kickr
         if (pos < numSamples)
             renderSegment (buffer, pos, numSamples - pos);
 
-        // Base-rate DC blocker + NaN/Inf guard on the final bus (after processSamplesDown).
-        const int numCh = juce::jmin (buffer.getNumChannels(),
-                                      static_cast<int> (dcBlockers.size()));
-        for (int ch = 0; ch < numCh; ++ch)
+        // NaN/Inf guard on the final bus (after processSamplesDown). The DC blocker now
+        // lives IN-REGION, before the limiter (OutputStage step 4) — a base-rate DC
+        // blocker after the limiter re-introduced edge peaks above the -0.5 dBFS ceiling.
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         {
             auto* data = buffer.getWritePointer (ch);
-            auto& blk  = dcBlockers[static_cast<size_t> (ch)];
-
             for (int i = 0; i < numSamples; ++i)
-                data[i] = dsputils::sanitize (blk.process (data[i]));
+                data[i] = dsputils::sanitize (data[i]);
         }
 
-        // PHASE 3.2: analyzer tap here — copy the post-DC mono sum into the lock-free
-        // FIFO / double buffer. No-op this phase.
+        // PHASE 3.2: analyzer tap here — copy the post-limiter mono sum into the
+        // lock-free FIFO / double buffer. No-op this phase.
     }
 }

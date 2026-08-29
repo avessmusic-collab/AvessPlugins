@@ -36,7 +36,14 @@ namespace kickr
         Band-limited by construction at the oversampled rate (pre-filtered noise,
         band-limited osc, raised-cosine impulse >= 8 samples) so the OS headroom is real.
 
-        Phase 2.9: `clickWidth` L/R decorrelation makes this stereo. This phase is mono.
+        PHASE 2.9 — `clickWidth` L/R decorrelation makes this stereo (`renderStereo`):
+          - noise burst (A): a second seeded `juce::Random rngR` + its own band-pass feed
+            a decorrelated R stream; R = lerp(base, decorrelated, clickWidth).
+          - osc (B) + impulse (C): a <1 ms inter-channel sample delay on R,
+            length = round(clickWidth * 0.8 ms * fsOversampled) via a tiny per-instance
+            circular buffer (pre-sized for 1 ms max in prepare()).
+          `clickWidth = 0` -> 0 delay + R == base -> L == R (mono). `renderSample()` keeps
+          the mono blend for the legacy path.
 
         RT-safe: no allocation / lock / log / IO in the audio path. `juce::Random::nextFloat`
         is fine on the audio thread. AD running values + SVF states are denormal-flushed.
@@ -50,18 +57,26 @@ namespace kickr
         static constexpr float  kPitchDropK           = 4.0f;
         // 0.18 ms * 8x * 96 kHz ~= 138 samples -> 256 is a safe cap.
         static constexpr size_t kWindowLutSize        = 256;
+        // 1 ms inter-channel delay cap at 8x * 96 kHz ~= 768 samples -> 1024 is safe.
+        static constexpr int    kDelayLutSize         = 1024;
+        static constexpr float  kMaxDelayMs           = 0.8f;   // at clickWidth = 1
 
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
-        /** Per-block, from KickEngine -> KickVoice. No APVTS reads in here. */
-        void setParams (float level, float toneHz, float timeMs, float pitchHz) noexcept;
+        /** Per-block, from KickEngine -> KickVoice. No APVTS reads in here.
+            `widthAmt` = `clickWidth` (0..1). */
+        void setParams (float level, float toneHz, float timeMs,
+                        float pitchHz, float widthAmt) noexcept;
 
         /** Trigger: arm all 3 AD envelopes, reset phases, prime the windowed impulse. */
         void noteOn (float velClickGain) noexcept;
 
-        /** Summed mono click sample. Returns exactly 0 once every part has finished. */
+        /** Summed MONO click sample (legacy path). 0 once every part has finished. */
         float renderSample() noexcept;
+
+        /** PHASE 2.9 — stereo click. `l == r` when `clickWidth == 0`. */
+        void renderStereo (float& l, float& r) noexcept;
 
         /** The body's AmplitudeEnvelope governs KickVoice::isActive(); this just reports
             whether the click still contributes anything. */
@@ -142,16 +157,24 @@ namespace kickr
         float clickLevel   { 0.4f };
         float clickTimeMs  { 3.0f };
         float clickPitchHz { 5000.0f };
+        float clickWidth   { 0.3f };   // PHASE 2.9
         int   pitchDropSamples { 64 };
+        int   bcDelaySamples   { 0 };  // PHASE 2.9 — osc+impulse inter-channel R delay
 
         // Trigger state.
         float velClick { 1.0f };
         bool  active   { false };
 
-        // Component A — filtered noise burst.
-        juce::Random rng;   // Phase 2.9: a second stream (rngR) for clickWidth decorrelation
+        // Component A — filtered noise burst (base + decorrelated R streams).
+        juce::Random rng;    // base stream (seed "kick")
+        juce::Random rngR;   // PHASE 2.9 — decorrelated R stream (seed "kicR")
         juce::dsp::StateVariableTPTFilter<float> noiseFilter;
+        juce::dsp::StateVariableTPTFilter<float> noiseFilterR;   // PHASE 2.9
         ClickAD envA;
+
+        // PHASE 2.9 — tiny circular delay for the osc+impulse R channel (1024 = kDelayLutSize).
+        std::array<float, 1024> bcDelay {};
+        int bcDelayWrite { 0 };
 
         // Component B — transient oscillator with its own pitch drop.
         double bPhase { 0.0 };

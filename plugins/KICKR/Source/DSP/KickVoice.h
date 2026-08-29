@@ -24,9 +24,8 @@ namespace kickr
         Renders the body layer x `bodyLevel` x velocity-scaled level.
 
         PHASE 2.3: KickEngine owns `std::array<KickVoice, 2>` and equal-power crossfades
-        between them on retrigger, so it renders each voice into its own mono scratch
-        buffer via `renderMono` and mixes with the fade gains. `renderAdd` (Phase 2.1
-        stereo-block path) is kept for compatibility.
+        between them on retrigger, so it renders each voice into its own scratch buffer
+        (via `renderStereo` since Phase 2.9) and mixes with the fade gains.
 
         PHASE 2.4: aggregates a per-voice `ClickGenerator` (3-part synthesised click).
         The click is summed with the body BEFORE the voice's mono output — it carries its
@@ -55,6 +54,15 @@ namespace kickr
         output; carries `noiseLevel` internally, so it is NOT scaled by `bodyLevel`. NOT
         velocity-scaled. Factored into the voice-free check alongside ampEnv / click / sub /
         tail.
+
+        PHASE 2.9: the voice is now STEREO (`renderStereo(left, right, n)`). Sub, Tail,
+        Noise and the Body *fundamental* stay mono (same sample to L/R). The Body path
+        gets a first-order all-pass decorrelator on the R channel only, blended by
+        `bodyWidth` (`r = lerp(m, allpass(m), bodyWidth)`, `g = 0.7`) — mostly affects
+        `bodyHarmonics` content; the 55 Hz fundamental is below the audible-decorrelation
+        range. The `ClickGenerator` becomes stereo via `clickWidth` (2-stream noise
+        decorrelation + <1 ms osc/impulse inter-channel delay). `bodyWidth = 0`,
+        `clickWidth = 0` -> `L == R` (mono). The sample layer stays mono for v1.
 
         PHASE 2.7b: aggregates a per-voice `SamplePlayer` (the 6th layer — the user's own
         recorded kick from the managed bank; AD-11). Its `const SampleBuffer*` is captured
@@ -89,11 +97,15 @@ namespace kickr
 
         /**
             Per-block: forward the CLICK-group snapshot to the ClickGenerator
-            (`clickLevel`, `clickTone` Hz, `clickTime` ms, `clickPitch` Hz).
+            (`clickLevel`, `clickTone` Hz, `clickTime` ms, `clickPitch` Hz, `clickWidth`).
             No APVTS reads inside the voice.
         */
         void setClickParams (float clickLevel, float clickToneHz,
-                             float clickTimeMs, float clickPitchHz) noexcept;
+                             float clickTimeMs, float clickPitchHz,
+                             float clickWidth01) noexcept;
+
+        /** PHASE 2.9 — per-block: body-path stereo decorrelation amount (`bodyWidth` 0..1). */
+        void setBodyWidth (float bodyWidth01) noexcept;
 
         /**
             Per-block: forward the SUB-group snapshot to the SubOscillator
@@ -141,15 +153,14 @@ namespace kickr
 
         void noteOff() noexcept {}   // ignored — kick runs to completion
 
-        /** Add this voice's output into `block[startSample .. startSample+numSamples)`. */
-        void renderAdd (juce::dsp::AudioBlock<float>& block, int startSample, int numSamples) noexcept;
-
         /**
-            OVERWRITE `mono[0 .. numSamples)` with this voice's mono output.
-            Writes exact zeros when the voice is (or becomes) inactive, so the caller
-            can always read the full span. Used by KickEngine's retrigger crossfade.
+            OVERWRITE `left[0 .. numSamples)` and `right[0 .. numSamples)` with this
+            voice's stereo output. Writes exact zeros when the voice is (or becomes)
+            inactive, so the caller can always read the full span. Used by KickEngine's
+            retrigger crossfade. Left channel is bit-identical to the pre-2.9 mono path
+            when `bodyWidth == 0` and the click width leaves the base stream on L.
         */
-        void renderMono (float* mono, int numSamples) noexcept;
+        void renderStereo (float* left, float* right, int numSamples) noexcept;
 
         bool isActive() const noexcept { return active; }
 
@@ -159,6 +170,12 @@ namespace kickr
 
         float  baseFrequencyHz { 55.0f };
         float  velLevel        { 1.0f };
+
+        // PHASE 2.9 — body-path R-channel all-pass decorrelator (blended by bodyWidth).
+        static constexpr float kAllpassG { 0.7f };
+        float  bodyWidthAmt { 0.0f };
+        float  apX1         { 0.0f };
+        float  apY1         { 0.0f };
 
         BodyOscillator            body;
         AmplitudeEnvelope         ampEnv;

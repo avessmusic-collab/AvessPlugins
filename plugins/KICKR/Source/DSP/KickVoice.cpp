@@ -39,6 +39,8 @@ namespace kickr
         tail.reset();
         noise.reset();
         sample.reset();
+        apX1 = 0.0f;
+        apY1 = 0.0f;
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
         synthGate.setCurrentAndTargetValue  (synthGate.getTargetValue());
         sampleGate.setCurrentAndTargetValue (sampleGate.getTargetValue());
@@ -55,9 +57,15 @@ namespace kickr
     }
 
     void KickVoice::setClickParams (float clickLevel, float clickToneHz,
-                                    float clickTimeMs, float clickPitchHz) noexcept
+                                    float clickTimeMs, float clickPitchHz,
+                                    float clickWidth01) noexcept
     {
-        click.setParams (clickLevel, clickToneHz, clickTimeMs, clickPitchHz);
+        click.setParams (clickLevel, clickToneHz, clickTimeMs, clickPitchHz, clickWidth01);
+    }
+
+    void KickVoice::setBodyWidth (float bodyWidth01) noexcept
+    {
+        bodyWidthAmt = juce::jlimit (0.0f, 1.0f, bodyWidth01);
     }
 
     void KickVoice::setSubParams (float subLevel, float subFreqHz, float subDecayMs) noexcept
@@ -113,72 +121,22 @@ namespace kickr
         active = true;
     }
 
-    void KickVoice::renderAdd (juce::dsp::AudioBlock<float>& block,
-                               int startSample, int numSamples) noexcept
+    void KickVoice::renderStereo (float* left, float* right, int numSamples) noexcept
     {
-        if (! active || numSamples <= 0)
-            return;
-
-        const int numCh = static_cast<int> (block.getNumChannels());
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float bodyOut = 0.0f;
-            if (ampEnv.isActive())
-            {
-                // Ratio-domain pitch drop, phase-continuous (frequency only —
-                // BodyOscillator integrates phase and is never reset mid-fall).
-                const float freqHz = pitchEnv.nextFrequency (baseFrequencyHz);
-                body.setFrequency (freqHz);
-
-                const float env = ampEnv.tick();
-                const float osc = body.renderSample();
-                const float lvl = bodyLevel.getNextValue();
-                bodyOut = osc * env * lvl;                 // body-level -> body only
-            }
-
-            const float clickOut = click.renderSample();   // carries clickLevel + click vel
-            const float subOut   = sub.renderSample();      // carries subLevel (mono, not vel-scaled)
-            const float tailOut  = tail.renderSample();     // carries tailLevel (mono, not vel-scaled)
-            const float noiseOut = noise.renderSample();    // carries noiseLevel (mono, not vel-scaled)
-
-            // PHASE 2.7b — smoothed 0/1 layer gates + the sample layer (carries sampleLevel x velFactor).
-            const float synthG   = synthGate.getNextValue();
-            const float sampleG  = sampleGate.getNextValue();
-            const float synthSum = bodyOut + clickOut + subOut + tailOut + noiseOut;
-            const float sampleOut = sample.renderSample();
-
-            const float s = dsputils::sanitize (synthG * synthSum * velLevel + sampleG * sampleOut);
-
-            const int idx = startSample + i;
-            for (int ch = 0; ch < numCh; ++ch)
-                block.addSample (ch, idx, s);
-
-            if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive()
-                && ! tail.isActive() && ! noise.isActive())
-            {
-                active = false;
-                sample.reset();   // PHASE 2.7b — drop the buffer pointer so it can be retired
-                break;
-            }
-        }
-    }
-
-    void KickVoice::renderMono (float* mono, int numSamples) noexcept
-    {
-        if (mono == nullptr || numSamples <= 0)
+        if (left == nullptr || right == nullptr || numSamples <= 0)
             return;
 
         if (! active)
         {
-            juce::FloatVectorOperations::clear (mono, numSamples);
+            juce::FloatVectorOperations::clear (left,  numSamples);
+            juce::FloatVectorOperations::clear (right, numSamples);
             return;
         }
 
         int i = 0;
         for (; i < numSamples; ++i)
         {
-            float bodyOut = 0.0f;
+            float bodyM = 0.0f;
             if (ampEnv.isActive())
             {
                 // Ratio-domain pitch drop, phase-continuous (frequency only).
@@ -188,21 +146,38 @@ namespace kickr
                 const float env = ampEnv.tick();
                 const float osc = body.renderSample();
                 const float lvl = bodyLevel.getNextValue();
-                bodyOut = osc * env * lvl;                 // body-level -> body only
+                bodyM = osc * env * lvl;                    // body-level -> body only
             }
 
-            const float clickOut = click.renderSample();   // carries clickLevel + click vel
-            const float subOut   = sub.renderSample();      // carries subLevel (mono, not vel-scaled)
-            const float tailOut  = tail.renderSample();     // carries tailLevel (mono, not vel-scaled)
-            const float noiseOut = noise.renderSample();    // carries noiseLevel (mono, not vel-scaled)
+            // PHASE 2.9 — first-order all-pass decorrelator on R, blended by bodyWidth.
+            //   y = -g*x + x_{-1} + g*y_{-1}
+            const float ap = -kAllpassG * bodyM + apX1 + kAllpassG * apY1;
+            apX1 = bodyM;
+            apY1 = ap;
+            dsputils::flushDenormal (apY1);
+
+            const float bodyL = bodyM;
+            const float bodyR = bodyM + bodyWidthAmt * (ap - bodyM);   // lerp(m, allpass, width)
+
+            float clickL = 0.0f;
+            float clickR = 0.0f;
+            click.renderStereo (clickL, clickR);           // carries clickLevel + click vel
+
+            const float subM   = sub.renderSample();        // carries subLevel   (mono, not vel-scaled)
+            const float tailM  = tail.renderSample();       // carries tailLevel  (mono, not vel-scaled)
+            const float noiseM = noise.renderSample();      // carries noiseLevel (mono, not vel-scaled)
 
             // PHASE 2.7b — smoothed 0/1 layer gates + the sample layer (carries sampleLevel x velFactor).
-            const float synthG    = synthGate.getNextValue();
-            const float sampleG   = sampleGate.getNextValue();
-            const float synthSum  = bodyOut + clickOut + subOut + tailOut + noiseOut;
-            const float sampleOut = sample.renderSample();
+            const float synthG  = synthGate.getNextValue();
+            const float sampleG = sampleGate.getNextValue();
+            const float sampleM = sample.renderSample();     // mono for v1
 
-            mono[i] = dsputils::sanitize (synthG * synthSum * velLevel + sampleG * sampleOut);
+            const float monoLayers = subM + tailM + noiseM;
+            const float L = synthG * (bodyL + clickL + monoLayers) * velLevel + sampleG * sampleM;
+            const float R = synthG * (bodyR + clickR + monoLayers) * velLevel + sampleG * sampleM;
+
+            left[i]  = dsputils::sanitize (L);
+            right[i] = dsputils::sanitize (R);
 
             if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive()
                 && ! tail.isActive() && ! noise.isActive())
@@ -215,6 +190,9 @@ namespace kickr
         }
 
         for (; i < numSamples; ++i)
-            mono[i] = 0.0f;
+        {
+            left[i]  = 0.0f;
+            right[i] = 0.0f;
+        }
     }
 }

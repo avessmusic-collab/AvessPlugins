@@ -47,7 +47,16 @@ namespace kickr
 
         float processSample (float x) noexcept;
 
+        /** PHASE 2.9 — stereo-linked: the dual follower + gain run on the mono
+            detector `0.5*(l + r)` and the SAME smoothed gain is applied to both
+            channels, so the transient stays phase-coherent across L/R. */
+        void processStereo (float& l, float& r) noexcept;
+
     private:
+        /** Advance the followers + smoothed gain for one detector sample and return
+            the applied gain. Shared by processSample / processStereo. */
+        float computeGain (float detector) noexcept;
+
         double fs { 44100.0 };
 
         // One-pole coefficients (set in prepare()).

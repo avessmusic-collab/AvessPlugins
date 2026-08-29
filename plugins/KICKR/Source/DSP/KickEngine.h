@@ -11,6 +11,7 @@
 #include "DSP/SamplePlayer.h"
 #include "DSP/TransientShaper.h"
 #include "DSP/Waveshaper.h"
+#include "DSP/OutputStage.h"
 #include "Sampling/SampleBuffer.h"
 #include "Utilities/DSPUtils.h"
 
@@ -91,9 +92,20 @@ namespace kickr
         default 0.3 + `character` default 0.0 (pure tanh) => the distortion is ACTIVE by
         default; `driveMix = 0` is the pre-drive-gain clean / bit-transparent path.
 
-        Later phases add: tone/stereo/limiter (2.9), real OS switching (2.10),
-        smoothing/macros (2.11 — incl. `macroBody` -> `sampleLevel`, `macroCrush` ->
-        `drive`/`character`), analyzer.
+        PHASE 2.9: tone / output / stereo. The voice mix is now STEREO. Per sample, in the
+        OS region: `outputStage.processTone(L, R)` (3-band, PRE-distortion) ->
+        `transientShaper.processStereo(L, R)` (stereo-linked gain) -> `waveshaperL/R`
+        (independent per-channel morph) -> `outputStage.processOutput(L, R)` (LR2 130 Hz
+        mono crossover + M/S width + equal-power mix-to-silence + `dbToGain(output)` +
+        an in-region ~5 Hz DC blocker just before it, then the zero-latency `tanh` soft-clip
+        limiter at -0.5 dBFS as the genuinely last stage). Then `processSamplesDown`; only a
+        NaN/Inf guard + the analyzer tap are base-rate. `KickEngine` caches + snapshots `low` /
+        `mid` / `high` / `bodyWidth` / `clickWidth` / `outputWidth` / `output` / `mix` /
+        `limiter`; `bodyWidth` -> `KickVoice::setBodyWidth`, `clickWidth` ->
+        `KickVoice::setClickParams`, the rest -> `outputStage.setParams`.
+
+        Later phases add: real OS switching (2.10), smoothing/macros (2.11 — incl.
+        `macroBody` -> `sampleLevel`, `macroCrush` -> `drive`/`character`), analyzer.
     */
     class KickEngine
     {
@@ -147,12 +159,13 @@ namespace kickr
         double theta             { 0.0 };   // crossfade position 0 -> 1
         double retriggerThetaInc { 0.0 };   // 1 / (kRetriggerFadeMs * fsOversampled)
 
-        TransientShaper transientShaper;
-        Waveshaper      waveshaper;      // PHASE 2.8 — engine-level, on the summed mono bus
+        TransientShaper transientShaper;         // stereo-linked since Phase 2.9
+        Waveshaper      waveshaperL;             // PHASE 2.8/2.9 — per-channel master morph
+        Waveshaper      waveshaperR;
+        OutputStage     outputStage;             // PHASE 2.9 — tone / crossover / width / mix / gain / limiter
 
         juce::AudioBuffer<float>             scratch;        // stereo, base-rate, pre-sized
-        std::array<juce::AudioBuffer<float>, 2> voiceScratch; // mono, oversampled-rate, pre-sized
-        std::array<dsputils::DCBlocker, 2>   dcBlockers;
+        std::array<juce::AudioBuffer<float>, 2> voiceScratch; // stereo, oversampled-rate, pre-sized (per voice)
 
         // Cached raw APVTS pointers (atomic reads on the audio thread).
         std::atomic<float>* pFundamental    { nullptr };
@@ -171,6 +184,15 @@ namespace kickr
         std::atomic<float>* pDrive     { nullptr };   // PHASE 2.8
         std::atomic<float>* pCharacter { nullptr };
         std::atomic<float>* pDriveMix  { nullptr };
+        std::atomic<float>* pLow         { nullptr };   // PHASE 2.9 — TONE
+        std::atomic<float>* pMid         { nullptr };
+        std::atomic<float>* pHigh        { nullptr };
+        std::atomic<float>* pBodyWidth   { nullptr };   // PHASE 2.9 — STEREO
+        std::atomic<float>* pClickWidth  { nullptr };
+        std::atomic<float>* pOutputWidth { nullptr };
+        std::atomic<float>* pOutput      { nullptr };   // PHASE 2.9 — OUTPUT
+        std::atomic<float>* pMix         { nullptr };
+        std::atomic<float>* pLimiter     { nullptr };   // Bool
         std::atomic<float>* pClickLevel { nullptr };   // PHASE 2.4
         std::atomic<float>* pClickTone  { nullptr };
         std::atomic<float>* pClickTime  { nullptr };
@@ -221,6 +243,15 @@ namespace kickr
             float drive01     { 0.3f };      // PHASE 2.8
             float character01 { 0.0f };
             float driveMix01  { 1.0f };
+            float lowDb        { 0.0f };     // PHASE 2.9 — TONE (bipolar dB)
+            float midDb        { 0.0f };
+            float highDb       { 0.0f };
+            float bodyWidth01  { 0.0f };     // PHASE 2.9 — STEREO
+            float clickWidth01 { 0.3f };
+            float outputWidth01 { 0.5f };
+            float outputDb     { 0.0f };     // PHASE 2.9 — OUTPUT (bipolar dB, -24..+12)
+            float mix01        { 1.0f };
+            bool  limiterOn    { true };
             float clickLevel   { 0.4f };     // PHASE 2.4
             float clickToneHz  { 4000.0f };
             float clickTimeMs  { 3.0f };

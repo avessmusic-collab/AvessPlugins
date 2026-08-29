@@ -43,6 +43,8 @@ set(KICKR_CORE_SOURCES
     Source/Sampling/SampleLibrary.cpp
     # DSP — Stage 2 Phase 2.8 (master morphing distortion — 7-curve character morph)
     Source/DSP/Waveshaper.cpp
+    # DSP — Stage 2 Phase 2.9 (tone / stereo width + mono crossover / output gain / limiter / mix)
+    Source/DSP/OutputStage.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

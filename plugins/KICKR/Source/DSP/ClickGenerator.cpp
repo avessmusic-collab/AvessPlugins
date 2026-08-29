@@ -21,6 +21,12 @@ namespace kickr
         noiseFilter.setResonance (0.7f);
         noiseFilter.setCutoffFrequency (toneInit);
 
+        // PHASE 2.9 — decorrelated R noise stream (independent state, same tuning).
+        noiseFilterR.prepare (spec);
+        noiseFilterR.setType (juce::dsp::StateVariableTPTFilterType::bandpass);
+        noiseFilterR.setResonance (0.7f);
+        noiseFilterR.setCutoffFrequency (toneInit);
+
         impulseFilter.prepare (spec);
         impulseFilter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
         impulseFilter.setResonance (2.0f);
@@ -46,12 +52,16 @@ namespace kickr
 
         cRingSamples = static_cast<int> (std::lround (0.003 * fs));   // ~3 ms LP ring-out
 
+        bcDelay.fill (0.0f);
+        bcDelayWrite = 0;
+
         reset();
     }
 
     void ClickGenerator::reset() noexcept
     {
         noiseFilter.reset();
+        noiseFilterR.reset();
         impulseFilter.reset();
         envA.reset();
         envB.reset();
@@ -61,20 +71,31 @@ namespace kickr
         impulsePos = 0;
         cActive    = false;
         active     = false;
+
+        bcDelay.fill (0.0f);
+        bcDelayWrite = 0;
     }
 
-    void ClickGenerator::setParams (float level, float toneHz, float timeMs, float pitchHz) noexcept
+    void ClickGenerator::setParams (float level, float toneHz, float timeMs,
+                                    float pitchHz, float widthAmt) noexcept
     {
         clickLevel   = juce::jlimit (0.0f, 1.0f, level);
         clickTimeMs  = juce::jlimit (0.1f, 50.0f, timeMs);
         clickPitchHz = juce::jlimit (20.0f, nyquistLimit, pitchHz);
+        clickWidth   = juce::jlimit (0.0f, 1.0f, widthAmt);
 
         const float toneClamped = juce::jlimit (20.0f, nyquistLimit, toneHz);
-        noiseFilter.setCutoffFrequency (toneClamped);
+        noiseFilter.setCutoffFrequency  (toneClamped);
+        noiseFilterR.setCutoffFrequency (toneClamped);
         impulseFilter.setCutoffFrequency (toneClamped);
 
         pitchDropSamples = juce::jmax (1, static_cast<int> (std::lround (
                                static_cast<double> (juce::jmin (clickTimeMs, 8.0f)) * 0.001 * fs)));
+
+        bcDelaySamples = juce::jlimit (0, kDelayLutSize - 1,
+                             static_cast<int> (std::lround (
+                                 static_cast<double> (clickWidth)
+                                 * static_cast<double> (kMaxDelayMs) * 0.001 * fs)));
     }
 
     void ClickGenerator::noteOn (float velClickGain) noexcept
@@ -84,7 +105,8 @@ namespace kickr
         // Deterministic noise burst — every trigger renders the identical click
         // (a kick designer wants consistency; variation is Randomize/Mutate's job,
         //  and offline renders must be reproducible). Fixed seed, re-applied per note.
-        rng.setSeed (0x6b69636bLL);   // "kick"
+        rng.setSeed  (0x6b69636bLL);   // "kick"
+        rngR.setSeed (0x6b696352LL);   // "kicR" — decorrelated R stream (fixed seed)
 
         // Layer off -> do no work and don't extend the voice.
         if (clickLevel < 1.0e-6f)
@@ -103,27 +125,38 @@ namespace kickr
         cActive    = true;
 
         noiseFilter.reset();
+        noiseFilterR.reset();
         impulseFilter.reset();
+
+        bcDelay.fill (0.0f);
+        bcDelayWrite = 0;
 
         active = true;
     }
 
-    float ClickGenerator::renderSample() noexcept
+    void ClickGenerator::renderStereo (float& l, float& r) noexcept
     {
         if (! active)
-            return 0.0f;
+        {
+            l = 0.0f;
+            r = 0.0f;
+            return;
+        }
 
-        // A — filtered white-noise burst (weight 0.50).
-        float a = 0.0f;
+        // A — filtered white-noise burst (weight 0.50): base + decorrelated R stream.
+        float aBase = 0.0f;
+        float aDec  = 0.0f;
         if (envA.isActive())
         {
-            const float w = rng.nextFloat() * 2.0f - 1.0f;
-            a = noiseFilter.processSample (0, w) * envA.tick();
+            const float envAv = envA.tick();
+            const float wBase = rng.nextFloat()  * 2.0f - 1.0f;
+            const float wDec  = rngR.nextFloat() * 2.0f - 1.0f;
+            aBase = noiseFilter.processSample  (0, wBase) * envAv;
+            aDec  = noiseFilterR.processSample (0, wDec)  * envAv;
         }
 
         // B — transient sine with its own fast pitch drop (weight 0.35).
-        // sin() BEFORE the phase increment so the first sample is exactly sin(0) = 0
-        // (clean phase-0 start — no step discontinuity at the trigger).
+        // sin() BEFORE the phase increment so the first sample is exactly sin(0) = 0.
         float b = 0.0f;
         if (envB.isActive())
         {
@@ -135,7 +168,6 @@ namespace kickr
                 e = (std::exp (-kPitchDropK * static_cast<float> (tau)) - expNegKDrop)
                         * invDenomDrop;
 
-            // clickPitch -> 0.5*clickPitch  (2^e maps e in [0,1] to ratio [1,2]).
             const float freq = 0.5f * clickPitchHz * std::exp2 (e);
 
             b = std::sin (static_cast<float> (bPhase)) * envB.tick();
@@ -161,13 +193,38 @@ namespace kickr
         }
 
         noiseFilter.snapToZero();
+        noiseFilterR.snapToZero();
         impulseFilter.snapToZero();
 
         if (! envA.isActive() && ! envB.isActive() && ! cActive)
             active = false;
 
-        // Phase 2.9: clickWidth L/R decorrelation (2nd noise stream + <1 ms osc/impulse offset).
-        const float mono = (0.50f * a + 0.35f * b + 0.15f * c) * clickLevel * velClick;
-        return dsputils::sanitize (mono);
+        // clickWidth decorrelation:
+        //   noise  : L = base, R = lerp(base, decorrelated, clickWidth)
+        //   osc + impulse : <1 ms inter-channel sample delay on R (0 delay at clickWidth 0)
+        const float noiseL = 0.50f * aBase;
+        const float noiseR = 0.50f * (aBase + clickWidth * (aDec - aBase));
+
+        const float bc = 0.35f * b + 0.15f * c;
+        bcDelay[static_cast<size_t> (bcDelayWrite)] = bc;
+
+        int readIdx = bcDelayWrite - bcDelaySamples;
+        if (readIdx < 0)
+            readIdx += kDelayLutSize;
+        const float bcR = bcDelay[static_cast<size_t> (readIdx)];
+
+        bcDelayWrite = (bcDelayWrite + 1) % kDelayLutSize;
+
+        const float gain = clickLevel * velClick;
+        l = dsputils::sanitize ((noiseL + bc)  * gain);
+        r = dsputils::sanitize ((noiseR + bcR) * gain);
+    }
+
+    float ClickGenerator::renderSample() noexcept
+    {
+        float l = 0.0f;
+        float r = 0.0f;
+        renderStereo (l, r);
+        return 0.5f * (l + r);
     }
 }

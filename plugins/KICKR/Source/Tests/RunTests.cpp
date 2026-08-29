@@ -103,6 +103,16 @@ int main()
             prm->setValueNotifyingHost (0.0f);
     };
 
+    // Phase 2.9 adds the safety limiter (default ON — a tanh soft-clip nonlinearity).
+    // Any pre-2.9 block that assumes a LINEAR chain (exact null / "a + b == both" sums)
+    // turns it off. Bit-identical checks that compare two identical configs don't need it
+    // (the limiter is deterministic + L/R-symmetric).
+    auto silenceLimiter = [] (KICKRAudioProcessor& p)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter ("limiter"))
+            prm->setValueNotifyingHost (0.0f);
+    };
+
     std::printf ("\n[Phase 2.1] OS-region shell + MIDI-triggered basic kick\n");
 
     KICKRAudioProcessor proc;
@@ -337,6 +347,7 @@ int main()
         silenceSub (pPos); silenceSub (pMid); silenceSub (pNeg);
         silenceTail (pPos); silenceTail (pMid); silenceTail (pNeg);
         silenceDist (pPos); silenceDist (pMid); silenceDist (pNeg);
+        silenceLimiter (pPos); silenceLimiter (pMid); silenceLimiter (pNeg);   // Phase 2.9 — linear onset ratios
         setP (pPos, "transientAttack",  1.0f);
         setP (pNeg, "transientAttack", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -356,6 +367,7 @@ int main()
         silenceSub (pPos); silenceSub (pNeg);
         silenceTail (pPos); silenceTail (pNeg);
         silenceDist (pPos); silenceDist (pNeg);
+        silenceLimiter (pPos); silenceLimiter (pNeg);   // Phase 2.9 — linear body-level ratio
         setP (pPos, "transientSustain",  1.0f);
         setP (pNeg, "transientSustain", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -377,6 +389,7 @@ int main()
         setP (p, "subLevel",   0.0f);
         setP (p, "tailLevel",  0.0f);
         setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the click layer
+        setP (p, "limiter",    0.0f);   // Phase 2.9 — linear level ratios
         setP (p, "clickLevel", level);
         setP (p, "clickTone",  toneHz);
         setP (p, "clickPitch", pitchHz);
@@ -498,6 +511,7 @@ int main()
         setP (p, "clickLevel", 0.0f);
         setP (p, "tailLevel",  0.0f);
         setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the sub layer
+        setP (p, "limiter",    0.0f);   // Phase 2.9 — linear level ratios
         setP (p, "subLevel",   subLevel);
         setP (p, "subFreq",    subFreqHz);
         setP (p, "subDecay",   subDecayMs);
@@ -628,6 +642,7 @@ int main()
         setP (p, "clickLevel", 0.0f);
         setP (p, "subLevel",   0.0f);
         setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the tail layer
+        setP (p, "limiter",    0.0f);   // Phase 2.9 — linear level ratios
         setP (p, "tailLevel",  tailLevel);
         setP (p, "tailLength", tailLengthMs);
         setP (p, "tailTone",   tailTone01);
@@ -687,6 +702,7 @@ int main()
             setP (p, "clickLevel",  0.0f);
             setP (p, "subLevel",    0.0f);
             setP (p, "driveMix",    0.0f);        // Phase 2.8 — isolate the tail layer
+            setP (p, "limiter",     0.0f);        // Phase 2.9 — linear tail-tone RMS
             setP (p, "tuneMode",    1.0f);        // Fixed Frequency
             setP (p, "fundamental", 150.0f);
             setP (p, "tailLevel",   0.7f);
@@ -798,6 +814,7 @@ int main()
         setP (p, "subLevel",   0.0f);
         setP (p, "tailLevel",  0.0f);
         setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the noise layer
+        setP (p, "limiter",    0.0f);   // Phase 2.9 — linear level ratios
         setP (p, "noiseLevel", noiseLevel);
         setP (p, "noiseDecay", noiseDecayMs);
         setP (p, "noiseTone",  noiseTone01);
@@ -1080,8 +1097,8 @@ int main()
         // driveMix = 0 on every processor here: the 2.7b null test assumes linear
         // summing (synth + sample == both), which the Phase 2.8 waveshaper breaks.
         KICKRAudioProcessor pa, pb;
-        silenceDist (pa);
-        silenceDist (pb);
+        silenceDist (pa);    silenceLimiter (pa);
+        silenceDist (pb);    silenceLimiter (pb);
         pointAt (pb);
         const auto nb = pb.getSampleLibrary().importFile (fixture);
         check (nb.isNotEmpty(), "processor bank import ok");
@@ -1096,7 +1113,7 @@ int main()
 
         // sampleEnable ON -> the sample layer is added, finite
         KICKRAudioProcessor pc;
-        silenceDist (pc);
+        silenceDist (pc);    silenceLimiter (pc);
         pointAt (pc);
         const auto ncName = pc.getSampleLibrary().importFile (fixture);
         pc.loadSampleByName (ncName);
@@ -1113,7 +1130,7 @@ int main()
 
         // synthEnable OFF + sampleEnable ON -> pure sample
         KICKRAudioProcessor pe;
-        silenceDist (pe);
+        silenceDist (pe);    silenceLimiter (pe);
         pointAt (pe);
         const auto neName = pe.getSampleLibrary().importFile (fixture);
         pe.loadSampleByName (neName);
@@ -1256,6 +1273,7 @@ int main()
             KICKRAudioProcessor p;
             setP (p, "drive",     0.5f);
             setP (p, "driveMix",  1.0f);
+            setP (p, "limiter",   0.0f);   // Phase 2.9 — measure the makeup, not the ceiling
             setP (p, "character", static_cast<float> (s) / 20.0f);
             const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
             const double r = rmsWindow (b, sr, 0.0, 1.0);
@@ -1313,6 +1331,156 @@ int main()
         setP (pw, "drive",     0.6f);
         setP (pw, "character", 0.5f);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_8.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.9] Tone / output / stereo\n");
+
+    // L/R correlation over a window (1.0 == perfectly mono).
+    auto lrCorr = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1)
+    {
+        if (b.getNumChannels() < 2) return 1.0;
+        const int i0 = std::max (0, (int) (t0 * s));
+        const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+        const float* L = b.getReadPointer (0);
+        const float* R = b.getReadPointer (1);
+        double sll = 0.0, srr = 0.0, slr = 0.0;
+        for (int i = i0; i < i1; ++i)
+        {
+            sll += (double) L[i] * L[i];
+            srr += (double) R[i] * R[i];
+            slr += (double) L[i] * R[i];
+        }
+        const double den = std::sqrt (sll * srr);
+        return den > 1.0e-12 ? slr / den : 1.0;
+    };
+
+    // 1. Tone bands — correct shelf direction (measured pre-distortion, in-region).
+    {
+        KICKRAudioProcessor pLowUp, pLowDn, pHiUp, pHiDn;
+        for (auto* p : { &pLowUp, &pLowDn, &pHiUp, &pHiDn }) { silenceDist (*p); silenceLimiter (*p); }
+        setP (pLowUp, "low",   12.0f);
+        setP (pLowDn, "low",  -12.0f);
+        setP (pHiUp,  "high",  12.0f);
+        setP (pHiDn,  "high", -12.0f);
+        const auto bLowUp = kickr::tests::renderNote (pLowUp, a1, vel, sr, 512, 1.0);
+        const auto bLowDn = kickr::tests::renderNote (pLowDn, a1, vel, sr, 512, 1.0);
+        const auto bHiUp  = kickr::tests::renderNote (pHiUp,  a1, vel, sr, 512, 1.0);
+        const auto bHiDn  = kickr::tests::renderNote (pHiDn,  a1, vel, sr, 512, 1.0);
+        const double rLowUp = rmsWindow (bLowUp, sr, 0.0, 0.3);
+        const double rLowDn = rmsWindow (bLowDn, sr, 0.0, 0.3);
+        const double hHiUp  = hfRatio (bHiUp, sr, 0.0, 0.05);
+        const double hHiDn  = hfRatio (bHiDn, sr, 0.0, 0.05);
+        std::printf ("  tone: low RMS +12 %.4f / -12 %.4f   |   high hfRatio +12 %.3f / -12 %.3f\n",
+                     rLowUp, rLowDn, hHiUp, hHiDn);
+        check (analyse (bLowUp, sr).allFinite && analyse (bHiDn, sr).allFinite, "tone: no NaN / Inf");
+        check (rLowUp > rLowDn * 1.5, "low shelf @ 130 Hz: +12 dB has clearly more LF energy than -12 dB");
+        check (hHiUp  > hHiDn  * 1.3, "high shelf @ 5 kHz: +12 dB has clearly more HF content than -12 dB");
+    }
+
+    // 2. Content below 130 Hz is forced mono even at outputWidth = 1.
+    {
+        KICKRAudioProcessor p;
+        setP (p, "bodyLevel", 0.0f); setP (p, "clickLevel", 0.0f); setP (p, "tailLevel", 0.0f);
+        setP (p, "driveMix", 0.0f);
+        setP (p, "subLevel", 0.8f); setP (p, "subFreq", 45.0f); setP (p, "subDecay", 700.0f);
+        setP (p, "outputWidth", 1.0f);
+        const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+        const double c = lrCorr (b, sr, 0.05, 0.5);
+        std::printf ("  45 Hz sub @ outputWidth 1.0: L/R correlation = %.5f\n", c);
+        check (c > 0.999, "content below the 130 Hz crossover stays mono at any outputWidth");
+    }
+
+    // 3. outputWidth 0 / 0.5 / 1 -> mono / unity / wide ABOVE 130 Hz (clickWidth = 1 for side content).
+    {
+        auto renderW = [&] (float ow)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "bodyLevel", 0.0f); setP (p, "subLevel", 0.0f); setP (p, "tailLevel", 0.0f);
+            setP (p, "driveMix", 0.0f);
+            setP (p, "clickLevel", 0.8f); setP (p, "clickWidth", 1.0f); setP (p, "clickTime", 30.0f);
+            setP (p, "outputWidth", ow);
+            return kickr::tests::renderNote (p, a1, vel, sr, 512, 0.5);
+        };
+        const auto w0  = renderW (0.0f);
+        const auto w05 = renderW (0.5f);
+        const auto w1  = renderW (1.0f);
+        const double c0  = lrCorr (w0,  sr, 0.0, 0.06);
+        const double c05 = lrCorr (w05, sr, 0.0, 0.06);
+        const double c1  = lrCorr (w1,  sr, 0.0, 0.06);
+        std::printf ("  click width: L/R corr  ow0 %.4f   ow0.5 %.4f   ow1 %.4f\n", c0, c05, c1);
+        check (c0 > 0.9999,  "outputWidth 0 collapses everything to mono (corr = 1)");
+        check (c05 < 0.999,  "outputWidth 0.5 (unity) passes the click side content");
+        check (c1 < c05,     "outputWidth 1 widens further than 0.5 (lower correlation)");
+    }
+
+    // 4. Safety limiter — on: never exceeds -0.5 dBFS ; off: can exceed 0 dBFS.
+    {
+        const float ceilGain = juce::Decibels::decibelsToGain (-0.5f);
+        KICKRAudioProcessor pOn, pOff;
+        setP (pOn,  "drive", 1.0f); setP (pOn,  "output", 12.0f); setP (pOn,  "limiter", 1.0f);
+        setP (pOff, "drive", 1.0f); setP (pOff, "output", 12.0f); setP (pOff, "limiter", 0.0f);
+        const auto bOn  = kickr::tests::renderNote (pOn,  a1, vel, sr, 512, 1.0);
+        const auto bOff = kickr::tests::renderNote (pOff, a1, vel, sr, 512, 1.0);
+        const auto sOn  = analyse (bOn,  sr);
+        const auto sOff = analyse (bOff, sr);
+        std::printf ("  limiter: on peak %.4f (ceil %.4f)   off peak %.4f\n",
+                     sOn.peak, ceilGain, sOff.peak);
+        check (sOn.allFinite && sOff.allFinite,     "limiter: no NaN / Inf");
+        check (sOn.peak <= ceilGain + 5.0e-3f,      "limiter on -> peak held at ~-0.5 dBFS (drive 1 / output +12)");
+        check (sOff.peak > ceilGain + 0.05f && sOff.peak > sOn.peak * 1.02f,
+                                                    "limiter off -> output exceeds the -0.5 dBFS ceiling");
+    }
+
+    // 5. Final-bus DC offset < -60 dBFS (asymmetric distortion + base-rate 5 Hz blocker).
+    {
+        KICKRAudioProcessor p;
+        setP (p, "drive", 0.8f); setP (p, "character", 2.0f / 6.0f);   // pure asymmetric curve
+        const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
+        double mean = 0.0;
+        const float* x = b.getReadPointer (0);
+        for (int i = 0; i < b.getNumSamples(); ++i) mean += (double) x[i];
+        mean /= std::max (1, b.getNumSamples());
+        std::printf ("  final-bus DC mean = %.2e (%.1f dBFS)\n",
+                     mean, 20.0 * std::log10 (std::max (1.0e-12, std::abs (mean))));
+        check (analyse (b, sr).allFinite,  "asymmetric drive: no NaN / Inf");
+        check (std::abs (mean) < 1.0e-3,   "final-bus DC mean < -60 dBFS (DC blocker after downsample)");
+    }
+
+    // 6. 25 Hz sub is NOT thinned by the 5 Hz DC blocker (within ~1 dB of a 60 Hz sub).
+    {
+        auto subRms = [&] (float freq)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "bodyLevel", 0.0f); setP (p, "clickLevel", 0.0f); setP (p, "tailLevel", 0.0f);
+            setP (p, "driveMix", 0.0f); setP (p, "limiter", 0.0f);
+            setP (p, "subLevel", 0.7f); setP (p, "subFreq", freq); setP (p, "subDecay", 800.0f);
+            const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+            return rmsWindow (b, sr, 0.05, 0.5);
+        };
+        const double r25 = subRms (25.0f);
+        const double r60 = subRms (60.0f);
+        const double dB  = 20.0 * std::log10 (r25 / std::max (1.0e-9, r60));
+        std::printf ("  sub RMS: 25 Hz %.4f   60 Hz %.4f   (%.2f dB)\n", r25, r60, dB);
+        check (std::abs (dB) < 1.0, "25 Hz sub not thinned by the 5 Hz DC blocker");
+    }
+
+    // 7. Pre-2.9 preservation — default patch still finite, audible, inside full scale, stereo bus.
+    {
+        KICKRAudioProcessor p;
+        const auto b   = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+        const auto st9 = analyse (b, sr);
+        std::printf ("  default patch: peak %.3f  channels %d  (limiter on)\n",
+                     st9.peak, b.getNumChannels());
+        check (st9.allFinite && st9.peak > 0.02f && st9.peak < 1.0f,
+               "default patch: finite, audible, within digital full scale");
+    }
+
+    {
+        KICKRAudioProcessor pw;
+        setP (pw, "low", 4.0f); setP (pw, "high", 3.0f); setP (pw, "outputWidth", 0.8f);
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_9.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
 

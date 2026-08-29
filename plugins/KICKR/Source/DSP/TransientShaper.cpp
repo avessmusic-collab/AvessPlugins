@@ -43,9 +43,9 @@ namespace kickr
         sustainAmt = juce::jlimit (-1.0f, 1.0f, sustainBipolar);
     }
 
-    float TransientShaper::processSample (float x) noexcept
+    float TransientShaper::computeGain (float detector) noexcept
     {
-        const float rect = std::abs (x);
+        const float rect = std::abs (detector);
 
         const float fc = (rect > fastEnv) ? fastAtk : fastRel;
         fastEnv = rect + fc * (fastEnv - rect);
@@ -63,6 +63,18 @@ namespace kickr
         smoothedGain = targetGain + gainCoef * (smoothedGain - targetGain);
         dsputils::flushDenormal (smoothedGain);
 
-        return dsputils::sanitize (x * smoothedGain);
+        return smoothedGain;
+    }
+
+    float TransientShaper::processSample (float x) noexcept
+    {
+        return dsputils::sanitize (x * computeGain (x));
+    }
+
+    void TransientShaper::processStereo (float& l, float& r) noexcept
+    {
+        const float g = computeGain (0.5f * (l + r));
+        l = dsputils::sanitize (l * g);
+        r = dsputils::sanitize (r * g);
     }
 }
