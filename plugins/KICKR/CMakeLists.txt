@@ -41,6 +41,8 @@ set(KICKR_CORE_SOURCES
     # DSP — Stage 2 Phase 2.7b (sample player + managed drag-drop library)
     Source/DSP/SamplePlayer.cpp
     Source/Sampling/SampleLibrary.cpp
+    # DSP — Stage 2 Phase 2.8 (master morphing distortion — 7-curve character morph)
+    Source/DSP/Waveshaper.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

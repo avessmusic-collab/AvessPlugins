@@ -17,6 +17,7 @@ namespace kickr
             v.prepare (fsOversampled);
 
         transientShaper.prepare (fsOversampled);
+        waveshaper.prepare (fsOversampled);      // PHASE 2.8 — coefficients vs fsOversampled
 
         // 1 / (fade length in oversampled samples) — fsOversampled is fixed until Phase 2.10.
         retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
@@ -56,6 +57,9 @@ namespace kickr
         pOversampling   = apvts.getRawParameterValue (id::oversampling);
         pTransientAttack  = apvts.getRawParameterValue (id::transientAttack);
         pTransientSustain = apvts.getRawParameterValue (id::transientSustain);
+        pDrive            = apvts.getRawParameterValue (id::drive);
+        pCharacter        = apvts.getRawParameterValue (id::character);
+        pDriveMix         = apvts.getRawParameterValue (id::driveMix);
         pClickLevel       = apvts.getRawParameterValue (id::clickLevel);
         pClickTone        = apvts.getRawParameterValue (id::clickTone);
         pClickTime        = apvts.getRawParameterValue (id::clickTime);
@@ -97,6 +101,7 @@ namespace kickr
             v.reset();
 
         transientShaper.reset();
+        waveshaper.reset();
 
         activeVoice   = 0;
         incomingVoice = 1;
@@ -255,12 +260,14 @@ namespace kickr
                 mono = dataA[i];
             }
 
-            // Phase 2.11: transientAttackEff = transientAttack + macroPunch offset
-            // (the offset is added upstream in processBlock via setParams).
-            const float shaped = dsputils::sanitize (transientShaper.processSample (mono));
+            // Phase 2.8: TransientShaper -> Waveshaper (7-curve morph), still summed-mono,
+            // still in-region (AD-10). Macro offsets on transientAttack / drive / character
+            // are added upstream in processBlock via setParams (Phase 2.11).
+            const float shaped    = waveshaper.processSample (transientShaper.processSample (mono));
+            const float outSample = dsputils::sanitize (shaped);
 
             for (int ch = 0; ch < upCh; ++ch)
-                up.setSample (ch, i, shaped);
+                up.setSample (ch, i, outSample);
         }
 
         if (fading)
@@ -316,6 +323,9 @@ namespace kickr
         snap.velSens         = load (pVelSensitivity, 0.5f);
         snap.transientAttack  = load (pTransientAttack,  0.0f);
         snap.transientSustain = load (pTransientSustain, 0.0f);
+        snap.drive01     = load (pDrive,     0.3f);
+        snap.character01 = load (pCharacter, 0.0f);
+        snap.driveMix01  = load (pDriveMix,  1.0f);
         snap.clickLevel      = load (pClickLevel, 0.4f);
         snap.clickToneHz     = load (pClickTone,  4000.0f);
         snap.clickTimeMs     = load (pClickTime,  3.0f);
@@ -391,6 +401,12 @@ namespace kickr
         // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.
         const float transientAttackEff = snap.transientAttack;
         transientShaper.setParams (transientAttackEff, snap.transientSustain);
+
+        // Phase 2.11: driveEff = snap.drive01 + macroCrush offset;
+        //             characterEff = snap.character01 + macroCrush offset.
+        const float driveEff     = snap.drive01;
+        const float characterEff = snap.character01;
+        waveshaper.setParams (driveEff, characterEff, snap.driveMix01);
 
         // Sample-accurate sub-block split at each note-on.
         int pos = 0;

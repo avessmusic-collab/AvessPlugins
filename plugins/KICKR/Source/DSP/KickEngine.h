@@ -10,6 +10,7 @@
 #include "DSP/KickVoice.h"
 #include "DSP/SamplePlayer.h"
 #include "DSP/TransientShaper.h"
+#include "DSP/Waveshaper.h"
 #include "Sampling/SampleBuffer.h"
 #include "Utilities/DSPUtils.h"
 
@@ -79,8 +80,20 @@ namespace kickr
         `anyVoiceActive()` lets the processor retire unreferenced buffers on the message
         thread.
 
-        Later phases add: distortion (2.8), tone/stereo/limiter (2.9), real OS switching
-        (2.10), smoothing/macros (2.11 — incl. `macroBody` -> `sampleLevel`), analyzer.
+        PHASE 2.8: master morphing distortion. `Waveshaper waveshaper;` is an engine-level
+        member (on the summed mono bus, like `transientShaper`) — runs right after the
+        transient shaper, still monophonic, still inside the OS region (AD-10). `drive` /
+        `character` / `driveMix` cached + snapshot per block; `waveshaper.setParams
+        (driveEff, characterEff, driveMix)` per block (`driveEff = drive`,
+        `characterEff = character` until Phase 2.11 folds in `macroCrush`). In the
+        per-sample loop `shaped = waveshaper.processSample (transientShaper.processSample
+        (mono))` before the write to both channels. `driveMix` default 1.0 + `drive`
+        default 0.3 + `character` default 0.0 (pure tanh) => the distortion is ACTIVE by
+        default; `driveMix = 0` is the pre-drive-gain clean / bit-transparent path.
+
+        Later phases add: tone/stereo/limiter (2.9), real OS switching (2.10),
+        smoothing/macros (2.11 — incl. `macroBody` -> `sampleLevel`, `macroCrush` ->
+        `drive`/`character`), analyzer.
     */
     class KickEngine
     {
@@ -135,6 +148,7 @@ namespace kickr
         double retriggerThetaInc { 0.0 };   // 1 / (kRetriggerFadeMs * fsOversampled)
 
         TransientShaper transientShaper;
+        Waveshaper      waveshaper;      // PHASE 2.8 — engine-level, on the summed mono bus
 
         juce::AudioBuffer<float>             scratch;        // stereo, base-rate, pre-sized
         std::array<juce::AudioBuffer<float>, 2> voiceScratch; // mono, oversampled-rate, pre-sized
@@ -154,6 +168,9 @@ namespace kickr
         std::atomic<float>* pOversampling   { nullptr };
         std::atomic<float>* pTransientAttack  { nullptr };
         std::atomic<float>* pTransientSustain { nullptr };
+        std::atomic<float>* pDrive     { nullptr };   // PHASE 2.8
+        std::atomic<float>* pCharacter { nullptr };
+        std::atomic<float>* pDriveMix  { nullptr };
         std::atomic<float>* pClickLevel { nullptr };   // PHASE 2.4
         std::atomic<float>* pClickTone  { nullptr };
         std::atomic<float>* pClickTime  { nullptr };
@@ -201,6 +218,9 @@ namespace kickr
             float velSens         { 0.5f };
             float transientAttack { 0.0f };  // bipolar -1..+1
             float transientSustain { 0.0f }; // bipolar -1..+1
+            float drive01     { 0.3f };      // PHASE 2.8
+            float character01 { 0.0f };
+            float driveMix01  { 1.0f };
             float clickLevel   { 0.4f };     // PHASE 2.4
             float clickToneHz  { 4000.0f };
             float clickTimeMs  { 3.0f };

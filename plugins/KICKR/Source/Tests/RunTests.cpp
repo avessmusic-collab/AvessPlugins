@@ -7,6 +7,7 @@
 #include "PluginProcessor.h"
 #include "Tests/OfflineRender.h"
 #include "DSP/SamplePlayer.h"
+#include "DSP/Waveshaper.h"
 #include "Sampling/SampleLibrary.h"
 
 #include <cmath>
@@ -92,12 +93,23 @@ int main()
             prm->setValueNotifyingHost (0.0f);
     };
 
+    // Phase 2.8 adds the master morphing distortion. Defaults (drive 0.3, character 0.0
+    // = pure tanh, driveMix 1.0) mean it is ACTIVE by default, so any pre-2.8 block that
+    // asserts an exact match / bypass / null / absolute level must set driveMix = 0 —
+    // the pre-drive-gain clean path is exactly bit-transparent.
+    auto silenceDist = [] (KICKRAudioProcessor& p)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter ("driveMix"))
+            prm->setValueNotifyingHost (0.0f);
+    };
+
     std::printf ("\n[Phase 2.1] OS-region shell + MIDI-triggered basic kick\n");
 
     KICKRAudioProcessor proc;
     silenceClick (proc);
     silenceSub (proc);
     silenceTail (proc);
+    silenceDist (proc);
     const auto buf = kickr::tests::renderNote (proc, a1, vel, sr, 512, 1.0);
     const auto st  = analyse (buf, sr);
 
@@ -120,6 +132,7 @@ int main()
         silenceClick (p2);
         silenceSub (p2);
         silenceTail (p2);
+        silenceDist (p2);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_1.wav");
         const bool ok  = kickr::tests::renderNoteToWav (p2, wav, a1, vel, sr, 512, 1.0);
         std::printf ("  wrote %s : %s\n", wav.getFullPathName().toRawUTF8(), ok ? "ok" : "FAILED");
@@ -153,6 +166,7 @@ int main()
         silenceClick (p);
         silenceSub (p);
         silenceTail (p);
+        silenceDist (p);
         setP (p, "pitchTime", 900.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
         const double fHead = estFreq (b, sr, 0.002, 0.020);
@@ -166,6 +180,7 @@ int main()
         silenceClick (p);
         silenceSub (p);
         silenceTail (p);
+        silenceDist (p);
         setP (p, "pitchTime", 200.0f);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fHead = estFreq (b, sr, 0.003, 0.023);
@@ -185,6 +200,7 @@ int main()
         silenceClick (p);
         silenceSub (p);
         silenceTail (p);
+        silenceDist (p);
         const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
         const double fFirst20 = estFreq (b, sr, 0.0, 0.020);
         const double fLate    = estFreq (b, sr, 0.090, 0.180);
@@ -201,6 +217,7 @@ int main()
         silenceClick (pw);
         silenceSub (pw);
         silenceTail (pw);
+        silenceDist (pw);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_2.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
@@ -214,6 +231,8 @@ int main()
         silenceSub (p1);
         silenceTail (p0);
         silenceTail (p1);
+        silenceDist (p0);
+        silenceDist (p1);
         setP (p0, "pitchCurve", 0.0f);
         setP (p1, "pitchCurve", 1.0f);
         const auto b0 = kickr::tests::renderNote (p0, a1, vel, sr, 512, 1.0);
@@ -281,6 +300,7 @@ int main()
         silenceClick (p);
         silenceSub (p);
         silenceTail (p);
+        silenceDist (p);
         auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
         const float* rx = rbuf.getReadPointer (0);
         const int rn = rbuf.getNumSamples();
@@ -316,6 +336,7 @@ int main()
         silenceClick (pPos); silenceClick (pMid); silenceClick (pNeg);
         silenceSub (pPos); silenceSub (pMid); silenceSub (pNeg);
         silenceTail (pPos); silenceTail (pMid); silenceTail (pNeg);
+        silenceDist (pPos); silenceDist (pMid); silenceDist (pNeg);
         setP (pPos, "transientAttack",  1.0f);
         setP (pNeg, "transientAttack", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -334,6 +355,7 @@ int main()
         silenceClick (pPos); silenceClick (pNeg);
         silenceSub (pPos); silenceSub (pNeg);
         silenceTail (pPos); silenceTail (pNeg);
+        silenceDist (pPos); silenceDist (pNeg);
         setP (pPos, "transientSustain",  1.0f);
         setP (pNeg, "transientSustain", -1.0f);
         const auto bPos = kickr::tests::renderNote (pPos, a1, vel, sr, 512, 1.0);
@@ -354,6 +376,7 @@ int main()
         setP (p, "bodyLevel",  0.0f);
         setP (p, "subLevel",   0.0f);
         setP (p, "tailLevel",  0.0f);
+        setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the click layer
         setP (p, "clickLevel", level);
         setP (p, "clickTone",  toneHz);
         setP (p, "clickPitch", pitchHz);
@@ -390,8 +413,8 @@ int main()
 
     // body-only render is unchanged when clickLevel = 0
     {
-        KICKRAudioProcessor pB;  silenceClick (pB);  silenceSub (pB);  silenceTail (pB);
-        KICKRAudioProcessor pA;  silenceSub (pA);  silenceTail (pA);  // default patch minus sub/tail: clickLevel 0.4
+        KICKRAudioProcessor pB;  silenceClick (pB);  silenceSub (pB);  silenceTail (pB);  silenceDist (pB);
+        KICKRAudioProcessor pA;  silenceSub (pA);  silenceTail (pA);  silenceDist (pA);  // default patch minus sub/tail: clickLevel 0.4
         const auto bBody = kickr::tests::renderNote (pB, a1, vel, sr, 512, 1.0);
         const auto bAll  = kickr::tests::renderNote (pA, a1, vel, sr, 512, 1.0);
         const float* xB = bBody.getReadPointer (0);
@@ -474,6 +497,7 @@ int main()
         setP (p, "bodyLevel",  0.0f);
         setP (p, "clickLevel", 0.0f);
         setP (p, "tailLevel",  0.0f);
+        setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the sub layer
         setP (p, "subLevel",   subLevel);
         setP (p, "subFreq",    subFreqHz);
         setP (p, "subDecay",   subDecayMs);
@@ -509,8 +533,8 @@ int main()
 
         // Same subFreq (50 Hz), wildly different fundamental + pitchStart -> sub pitch unchanged.
         KICKRAudioProcessor pa, pb;
-        setP (pa, "bodyLevel", 0.0f); setP (pa, "clickLevel", 0.0f); setP (pa, "tailLevel", 0.0f);
-        setP (pb, "bodyLevel", 0.0f); setP (pb, "clickLevel", 0.0f); setP (pb, "tailLevel", 0.0f);
+        setP (pa, "bodyLevel", 0.0f); setP (pa, "clickLevel", 0.0f); setP (pa, "tailLevel", 0.0f); setP (pa, "driveMix", 0.0f);
+        setP (pb, "bodyLevel", 0.0f); setP (pb, "clickLevel", 0.0f); setP (pb, "tailLevel", 0.0f); setP (pb, "driveMix", 0.0f);
         setP (pa, "subFreq", 50.0f);  setP (pa, "subDecay", 900.0f);
         setP (pb, "subFreq", 50.0f);  setP (pb, "subDecay", 900.0f);
         setP (pa, "fundamental", 40.0f);  setP (pa, "pitchStart", 1.5f);
@@ -565,9 +589,9 @@ int main()
 
     // subLevel = 0 is a true bypass: render == body + click render with the sub muted
     {
-        KICKRAudioProcessor pRef;   silenceSub (pRef);  silenceTail (pRef);   // body + click, sub off via param
-        KICKRAudioProcessor pZero;  setP (pZero, "subLevel", 0.0f);  silenceTail (pZero);
-        KICKRAudioProcessor pOn;    silenceTail (pOn);   // default patch: subLevel 0.5
+        KICKRAudioProcessor pRef;   silenceSub (pRef);  silenceTail (pRef);  silenceDist (pRef);   // body + click, sub off via param
+        KICKRAudioProcessor pZero;  setP (pZero, "subLevel", 0.0f);  silenceTail (pZero);  silenceDist (pZero);
+        KICKRAudioProcessor pOn;    silenceTail (pOn);  silenceDist (pOn);   // default patch: subLevel 0.5
         const auto bRef  = kickr::tests::renderNote (pRef,  a1, vel, sr, 512, 1.0);
         const auto bZero = kickr::tests::renderNote (pZero, a1, vel, sr, 512, 1.0);
         const auto bOn   = kickr::tests::renderNote (pOn,   a1, vel, sr, 512, 1.0);
@@ -603,6 +627,7 @@ int main()
         setP (p, "bodyLevel",  0.0f);
         setP (p, "clickLevel", 0.0f);
         setP (p, "subLevel",   0.0f);
+        setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the tail layer
         setP (p, "tailLevel",  tailLevel);
         setP (p, "tailLength", tailLengthMs);
         setP (p, "tailTone",   tailTone01);
@@ -661,6 +686,7 @@ int main()
             setP (p, "bodyLevel",   0.0f);
             setP (p, "clickLevel",  0.0f);
             setP (p, "subLevel",    0.0f);
+            setP (p, "driveMix",    0.0f);        // Phase 2.8 — isolate the tail layer
             setP (p, "tuneMode",    1.0f);        // Fixed Frequency
             setP (p, "fundamental", 150.0f);
             setP (p, "tailLevel",   0.7f);
@@ -710,9 +736,9 @@ int main()
 
     // tailLevel = 0 render == prior body + click + sub render exactly
     {
-        KICKRAudioProcessor pRef;   silenceTail (pRef);               // body + click + sub, tail off
-        KICKRAudioProcessor pZero;  setP (pZero, "tailLevel", 0.0f);  // tail off via param
-        KICKRAudioProcessor pOn;    // default patch: tailLevel 0.3
+        KICKRAudioProcessor pRef;   silenceTail (pRef);  silenceDist (pRef);              // body + click + sub, tail off
+        KICKRAudioProcessor pZero;  setP (pZero, "tailLevel", 0.0f);  silenceDist (pZero); // tail off via param
+        KICKRAudioProcessor pOn;    silenceDist (pOn);   // default patch: tailLevel 0.3
         const auto bRef  = kickr::tests::renderNote (pRef,  a1, vel, sr, 512, 1.0);
         const auto bZero = kickr::tests::renderNote (pZero, a1, vel, sr, 512, 1.0);
         const auto bOn   = kickr::tests::renderNote (pOn,   a1, vel, sr, 512, 1.0);
@@ -771,6 +797,7 @@ int main()
         setP (p, "clickLevel", 0.0f);
         setP (p, "subLevel",   0.0f);
         setP (p, "tailLevel",  0.0f);
+        setP (p, "driveMix",   0.0f);   // Phase 2.8 — isolate the noise layer
         setP (p, "noiseLevel", noiseLevel);
         setP (p, "noiseDecay", noiseDecayMs);
         setP (p, "noiseTone",  noiseTone01);
@@ -782,9 +809,9 @@ int main()
     // bit-identical to the prior body+click+sub+tail render whether the noise code path
     // runs with level 0 or the param is left untouched.
     {
-        KICKRAudioProcessor pRef;                                  // default patch (noiseLevel 0)
-        KICKRAudioProcessor pZero;  setP (pZero, "noiseLevel", 0.0f);
-        KICKRAudioProcessor pOn;    setP (pOn,   "noiseLevel", 0.6f);
+        KICKRAudioProcessor pRef;   silenceDist (pRef);            // default patch (noiseLevel 0)
+        KICKRAudioProcessor pZero;  setP (pZero, "noiseLevel", 0.0f);  silenceDist (pZero);
+        KICKRAudioProcessor pOn;    setP (pOn,   "noiseLevel", 0.6f);  silenceDist (pOn);
         const auto bRef  = kickr::tests::renderNote (pRef,  a1, vel, sr, 512, 1.0);
         const auto bZero = kickr::tests::renderNote (pZero, a1, vel, sr, 512, 1.0);
         const auto bOn   = kickr::tests::renderNote (pOn,   a1, vel, sr, 512, 1.0);
@@ -1049,8 +1076,12 @@ int main()
         tmpBank.deleteRecursively();
         auto pointAt = [&] (KICKRAudioProcessor& p) { p.getSampleLibrary().setFolder (tmpBank); };
 
-        // sampleEnable OFF (default) -> render bit-identical to the synth-only engine
+        // sampleEnable OFF (default) -> render bit-identical to the synth-only engine.
+        // driveMix = 0 on every processor here: the 2.7b null test assumes linear
+        // summing (synth + sample == both), which the Phase 2.8 waveshaper breaks.
         KICKRAudioProcessor pa, pb;
+        silenceDist (pa);
+        silenceDist (pb);
         pointAt (pb);
         const auto nb = pb.getSampleLibrary().importFile (fixture);
         check (nb.isNotEmpty(), "processor bank import ok");
@@ -1065,6 +1096,7 @@ int main()
 
         // sampleEnable ON -> the sample layer is added, finite
         KICKRAudioProcessor pc;
+        silenceDist (pc);
         pointAt (pc);
         const auto ncName = pc.getSampleLibrary().importFile (fixture);
         pc.loadSampleByName (ncName);
@@ -1081,6 +1113,7 @@ int main()
 
         // synthEnable OFF + sampleEnable ON -> pure sample
         KICKRAudioProcessor pe;
+        silenceDist (pe);
         pointAt (pe);
         const auto neName = pe.getSampleLibrary().importFile (fixture);
         pe.loadSampleByName (neName);
@@ -1146,6 +1179,141 @@ int main()
                                                              juce::File::findFiles))
             de.getFile().deleteFile();
         fixture.deleteFile();
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.8] Distortion morph (7-curve character morph + adaptive RMS makeup)\n");
+
+    // --- 1. each of the 7 curves matches its transfer function at character = k/6 ---
+    {
+        auto sg = [] (float v) { return v < 0.0f ? -1.0f : 1.0f; };
+        auto ref = [&] (int k, float u, float drv) -> float
+        {
+            switch (k)
+            {
+                case 0:  return std::tanh (u);
+                case 1:  return std::abs (u) < 1.0f ? u - u * u * u / 3.0f : sg (u) * (2.0f / 3.0f);
+                case 2:  return u <= 0.0f ? std::tanh (u) : 1.0f - std::exp (-u);
+                case 3:  return std::abs (u) < 1.0f ? 1.25f * (u - 0.2f * u * u * u * u * u) : sg (u);
+                case 4:  return juce::jlimit (-1.0f, 1.0f, u);
+                case 5:  { float y = u; for (int i = 0; i < 8 && std::abs (y) > 1.0f; ++i) y = 2.0f * sg (y) - y;
+                           return juce::jlimit (-1.0f, 1.0f, y); }
+                default: { const float bits = 12.0f - 10.0f * drv; const float L = std::exp2 (bits - 1.0f);
+                           return juce::jlimit (-1.0f, 1.0f, std::round (u * L) / L); }  // clamped like every other curve
+            }
+        };
+
+        const float xs[] = { -1.5f, -0.8f, -0.3f, 0.0f, 0.2f, 0.6f, 1.2f };
+        int    curveFails = 0;
+        double worstErr   = 0.0;
+
+        for (int k = 0; k < kickr::Waveshaper::kNumCurves; ++k)
+        {
+            kickr::Waveshaper ws;
+            ws.prepare (48000.0);
+            // drive 0 -> gDrive == 1 -> u == x ; driveMix 1 -> output == makeup * f(u)
+            ws.setParams (0.0f, static_cast<float> (k) / 6.0f, 1.0f);
+            const float mk = ws.getMakeup();   // frozen at the primed per-curve value (warmup)
+
+            for (float x : xs)
+            {
+                const float got = ws.processSample (x);
+                const float expv = mk * ref (k, x, 0.0f);
+                worstErr = std::max (worstErr, (double) std::abs (got - expv));
+                if (std::abs (got - expv) > 1.0e-4f) ++curveFails;
+            }
+        }
+        std::printf ("  per-curve transfer match: worst |got - makeup*f(u)| = %.2e  (%d mismatches)\n",
+                     worstErr, curveFails);
+        check (curveFails == 0, "all 7 curves match their transfer function at character = k/6");
+    }
+
+    // --- 2. driveMix = 0 is exactly bit-transparent (pre-drive-gain clean) ---
+    {
+        kickr::Waveshaper ws;
+        ws.prepare (48000.0);
+        ws.setParams (0.7f, 0.5f, 0.0f);   // heavy drive, mid morph — but driveMix 0
+        float worst = 0.0f;
+        bool  finite = true;
+        juce::Random rng (20260829);
+        for (int i = 0; i < 8000; ++i)
+        {
+            const float x = rng.nextFloat() * 2.4f - 1.2f;
+            const float y = ws.processSample (x);
+            if (! std::isfinite (y)) finite = false;
+            worst = std::max (worst, std::abs (y - x));
+        }
+        std::printf ("  driveMix = 0: max|out - in| = %.2e\n", (double) worst);
+        check (finite,        "driveMix = 0: finite");
+        check (worst == 0.0f, "driveMix = 0 -> exactly bit-transparent (out == in)");
+    }
+
+    // --- 3. sweeping character 0->1 at fixed drive keeps integrated RMS within +/-1.5 dB ---
+    {
+        double minR = 1.0e9, maxR = 0.0;
+        for (int s = 0; s <= 20; ++s)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "drive",     0.5f);
+            setP (p, "driveMix",  1.0f);
+            setP (p, "character", static_cast<float> (s) / 20.0f);
+            const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+            const double r = rmsWindow (b, sr, 0.0, 1.0);
+            minR = std::min (minR, r);
+            maxR = std::max (maxR, r);
+        }
+        const double spreadDb = 20.0 * std::log10 (maxR / std::max (1.0e-9, minR));
+        std::printf ("  character 0->1 @ drive 0.5: integrated RMS spread = %.2f dB\n", spreadDb);
+        check (spreadDb < 3.0, "character sweep stays within +/-1.5 dB (adaptive RMS makeup)");
+    }
+
+    // --- 4. no NaN / Inf at drive = 1, character = 1 ---
+    {
+        KICKRAudioProcessor p;
+        setP (p, "drive",     1.0f);
+        setP (p, "character", 1.0f);
+        setP (p, "driveMix",  1.0f);
+        const auto b   = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+        const auto st2 = analyse (b, sr);
+        std::printf ("  drive 1 / character 1: peak %.2f  finite %d\n", st2.peak, (int) st2.allFinite);
+        check (st2.allFinite, "drive = 1, character = 1: no NaN / Inf");
+    }
+
+    // --- 5. foldback (character ~ 0.83) at drive = 1 stays bounded ---
+    {
+        KICKRAudioProcessor p;
+        setP (p, "drive",     1.0f);
+        setP (p, "character", 5.0f / 6.0f);   // pure foldback segment
+        setP (p, "driveMix",  1.0f);
+        const auto b   = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+        const auto st2 = analyse (b, sr);
+        std::printf ("  foldback @ drive 1: peak %.3f  finite %d\n", st2.peak, (int) st2.allFinite);
+        check (st2.allFinite && st2.peak < 8.0f, "foldback at drive = 1: finite + bounded");
+    }
+
+    // --- 6. asymmetric (character ~ 0.33) DC removed by the downstream base-rate blocker ---
+    {
+        KICKRAudioProcessor p;
+        setP (p, "drive",     0.8f);
+        setP (p, "character", 2.0f / 6.0f);   // pure asymmetric (adds DC)
+        setP (p, "driveMix",  1.0f);
+        const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
+        double mean = 0.0;
+        const float* x = b.getReadPointer (0);
+        for (int i = 0; i < b.getNumSamples(); ++i) mean += (double) x[i];
+        mean /= std::max (1, b.getNumSamples());
+        std::printf ("  asymmetric final-bus mean = %.2e  (%.1f dBFS)\n",
+                     mean, 20.0 * std::log10 (std::max (1.0e-12, std::abs (mean))));
+        check (analyse (b, sr).allFinite,   "asymmetric @ drive 0.8: no NaN / Inf");
+        check (std::abs (mean) < 1.0e-3,    "asymmetric DC removed by the downstream blocker (mean < -60 dBFS)");
+    }
+
+    {
+        KICKRAudioProcessor pw;
+        setP (pw, "drive",     0.6f);
+        setP (pw, "character", 0.5f);
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_8.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
 
     std::printf ("\n%d failure(s)\n", failures);
