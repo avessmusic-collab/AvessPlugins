@@ -40,6 +40,41 @@ namespace kickr
         lp.reset();
     }
 
+    void TailGenerator::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        const double oldFs = fs;
+        fs           = juce::jmax (1.0, newFsOversampled);
+        nyquistLimit = static_cast<float> (fs * 0.45);
+
+        juce::dsp::ProcessSpec spec;
+        spec.sampleRate       = fs;
+        spec.maximumBlockSize = static_cast<juce::uint32> (32);
+        spec.numChannels      = static_cast<juce::uint32> (1);
+        lp.prepare (spec);   // same numChannels -> no allocation
+        lp.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+        lp.setResonance (0.7f);
+
+        updateDerived();
+        lp.setCutoffFrequency (lpCutoffHz);
+
+        phaseInc = juce::MathConstants<double>::twoPi
+                 * static_cast<double> (fundamentalHz) / fs;   // keep phase
+
+        if (active)
+        {
+            const double r = fs / juce::jmax (1.0, oldFs);
+            auto scale = [r] (int n) noexcept
+            {
+                return juce::jmax (0, static_cast<int> (std::llround (static_cast<double> (n) * r)));
+            };
+            attackSamples       = juce::jmax (1, scale (attackSamples));
+            attackPos           = scale (attackPos);
+            minLengthSamples    = scale (minLengthSamples);
+            maxLengthSamples    = scale (maxLengthSamples);
+            samplesSinceTrigger = scale (samplesSinceTrigger);
+        }
+    }
+
     void TailGenerator::updateDerived() noexcept
     {
         decayCoef = dsputils::expDecayCoef (lengthMs, fs);

@@ -41,6 +41,11 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed mid-note: recompute the phase increment + decay
+            coefficient for the new rate and rescale the in-samples counters (wall-clock
+            preserved). Running phase / envelope value are KEPT. Coefficient-only. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block from KickEngine -> KickVoice. No APVTS reads inside. */
         void setParams (float subLevel, float subFreqHz, float subDecayMs) noexcept;
 

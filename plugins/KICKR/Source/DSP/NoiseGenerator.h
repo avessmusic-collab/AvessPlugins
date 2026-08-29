@@ -60,6 +60,12 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed mid-note: recompute the decay coef, tilt coef
+            and band-pass centre for the new rate; re-`prepare` the SVF (states clear —
+            covered by the switch fade); rescale the in-samples counters. Tilt / pink
+            state are KEPT. Coefficient-only otherwise. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block from KickEngine -> KickVoice. No APVTS reads inside.
             `noiseType`: 0 = White, 1 = Pink, 2 = Filtered. */
         void setParams (float noiseLevel, float noiseDecayMs,

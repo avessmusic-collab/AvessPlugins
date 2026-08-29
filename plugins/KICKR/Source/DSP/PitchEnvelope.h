@@ -37,6 +37,16 @@ namespace kickr
 
         void reset() noexcept { tSinceTrigger = 0.0; }
 
+        /** PHASE 2.10 — OS factor changed: refresh the per-sample time step for the new
+            rate. `tSinceTrigger` is elapsed SECONDS (rate-independent) and is kept, as are
+            the contour coefficients (`k`, `expNegK`, `invDenom`, `log2StartRatio`,
+            `pitchTimeSeconds` are all seconds/ratio-domain). Coefficient-only. */
+        void updateOversampledRate (double newFsOversampled) noexcept
+        {
+            fsOversampled    = juce::jmax (1.0, newFsOversampled);
+            invFsOversampled = 1.0 / fsOversampled;
+        }
+
         /** Arm the contour — restart the elapsed-time accumulator (call on every trigger). */
         void noteOn() noexcept { tSinceTrigger = 0.0; }
 

@@ -25,6 +25,30 @@ namespace kickr
         active              = false;
     }
 
+    void SubOscillator::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        const double oldFs = fs;
+        fs = juce::jmax (1.0, newFsOversampled);
+
+        phaseInc  = juce::MathConstants<double>::twoPi
+                  * static_cast<double> (freqHz) / fs;   // keep phase
+        decayCoef = dsputils::expDecayCoef (decayMs, fs);
+
+        if (active)
+        {
+            const double r = fs / juce::jmax (1.0, oldFs);
+            auto scale = [r] (int n) noexcept
+            {
+                return juce::jmax (0, static_cast<int> (std::llround (static_cast<double> (n) * r)));
+            };
+            attackSamples       = juce::jmax (1, scale (attackSamples));
+            attackPos           = scale (attackPos);
+            minLengthSamples    = scale (minLengthSamples);
+            maxLengthSamples    = scale (maxLengthSamples);
+            samplesSinceTrigger = scale (samplesSinceTrigger);
+        }
+    }
+
     void SubOscillator::setParams (float subLevel, float subFreqHz, float subDecayMs) noexcept
     {
         level   = juce::jlimit (0.0f, 1.0f, subLevel);

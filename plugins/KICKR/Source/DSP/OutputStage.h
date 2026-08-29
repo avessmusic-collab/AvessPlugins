@@ -56,6 +56,7 @@ namespace kickr
     public:
         static constexpr float kMonoCrossoverHz         = 130.0f;
         static constexpr float kLimiterCeilingDb        = -0.5f;
+        static constexpr float kLimiterCeilingGain      = 0.94406088f;   // dbToGain(-0.5) — also the base-rate safety-clamp ceiling
         static constexpr int   kLimiterLookaheadSamples = 0;      // AD-4 hook — always 0 in v1
 
         static constexpr float kLowShelfHz  = 130.0f;
@@ -66,6 +67,13 @@ namespace kickr
 
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
+
+        /** PHASE 2.10 — OS factor changed: recompute the tone biquad coefficients
+            (in-place — IIR state is KEPT), the DC-blocker pole, and the mix/out gain
+            smoother rates for the new sample rate; re-`prepare` the Linkwitz-Riley
+            crossover (its integrator states clear — covered by the switch fade).
+            Coefficient-only otherwise. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
 
         /** Per block (from KickEngine — never reads APVTS itself). */
         void setParams (float lowDb, float midDb, float highDb,

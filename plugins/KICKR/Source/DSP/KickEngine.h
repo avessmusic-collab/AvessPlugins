@@ -118,8 +118,13 @@ namespace kickr
 
         void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
 
-        /** round(activeOs->getLatencyInSamples()); 0 at 1x (Phase 2.1). */
+        /** round(activeOs->getLatencyInSamples()); 0 at 1x. Reflects the ACTIVE factor —
+            used by `prepareToPlay`. */
         int getLatencySamples() const noexcept { return oversampling.getLatencySamples(); }
+
+        /** PHASE 2.10 — the latency the PENDING `oversampling` choice would report. Read
+            lock-free by the message-thread APVTS listener that calls `setLatencySamples`. */
+        int pendingOsLatencySamples() const noexcept { return oversampling.pendingLatencySamples(); }
 
         /** PHASE 2.7b — the processor publishes the decoded sample here (audio thread, one
             plain-pointer store per block; the buffer is owned + retired by the processor). */
@@ -132,7 +137,12 @@ namespace kickr
         }
 
     private:
-        static constexpr double kRetriggerFadeMs = 3.0;   // equal-power crossfade length
+        static constexpr double kRetriggerFadeMs   = 3.0;   // equal-power crossfade length
+        static constexpr int    kSwitchFadeSamples = 64;     // OS-factor-switch fade (base rate)
+
+        /** PHASE 2.10 — fan `updateOversampledRate` out to every in-region component and
+            recompute `retriggerThetaInc` for the new `fsOversampled`. Coefficient-only. */
+        void updateInRegionRate (double newFsOversampled);
 
         void renderSegment (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
         void handleNoteOn (const juce::MidiMessage& message);
@@ -158,6 +168,12 @@ namespace kickr
         bool   fadeActive        { false };
         double theta             { 0.0 };   // crossfade position 0 -> 1
         double retriggerThetaInc { 0.0 };   // 1 / (kRetriggerFadeMs * fsOversampled)
+
+        // PHASE 2.10 — OS-factor-switch fade. On a pending change: this block's output is
+        // ramped to silence over the last kSwitchFadeSamples, the factor is swapped +
+        // every in-region coefficient refreshed, then the NEXT `switchFadeInSamples`
+        // samples ramp back 0 -> 1.
+        int    switchFadeInSamples { 0 };
 
         TransientShaper transientShaper;         // stereo-linked since Phase 2.9
         Waveshaper      waveshaperL;             // PHASE 2.8/2.9 — per-channel master morph

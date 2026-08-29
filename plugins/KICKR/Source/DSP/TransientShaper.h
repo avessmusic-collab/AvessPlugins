@@ -40,6 +40,10 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed: recompute the five one-pole time-constants for
+            the new rate. Follower + smoothed-gain state are KEPT. Coefficient-only. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block (called from KickEngine — never reads APVTS itself).
             Both arguments are the bipolar −1…+1 controls; `attackBipolar` already
             includes any macro offset. */

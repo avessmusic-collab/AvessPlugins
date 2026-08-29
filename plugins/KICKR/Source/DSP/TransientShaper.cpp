@@ -37,6 +37,18 @@ namespace kickr
         smoothedGain = 1.0f;   // unity until the first block sets a target
     }
 
+    void TransientShaper::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        fs = juce::jmax (1.0, newFsOversampled);
+
+        fastAtk  = onePoleCoef (1.0f,   fs);
+        fastRel  = onePoleCoef (20.0f,  fs);
+        slowAtk  = onePoleCoef (15.0f,  fs);
+        slowRel  = onePoleCoef (150.0f, fs);
+        gainCoef = onePoleCoef (3.0f,   fs);
+        // fastEnv / slowEnv / smoothedGain kept
+    }
+
     void TransientShaper::setParams (float attackBipolar, float sustainBipolar) noexcept
     {
         attackAmt  = juce::jlimit (-1.0f, 1.0f, attackBipolar);

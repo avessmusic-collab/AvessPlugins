@@ -24,7 +24,8 @@
       - Empty (silent) engine — processBlock clears the buffer. DSP arrives in Stage 2
         (synth Phases 2.1–2.6/2.7, sample player + library Phase 2.7b).
 */
-class KICKRAudioProcessor final : public juce::AudioProcessor
+class KICKRAudioProcessor final : public juce::AudioProcessor,
+                                  private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     KICKRAudioProcessor();
@@ -74,6 +75,10 @@ public:
 
 private:
     void retireUnreferenced();   // PHASE 2.7b — free unreferenced sample buffers (message thread)
+
+    /** PHASE 2.10 — message thread: on an `oversampling` change, report the pending
+        factor's latency to the host. Never called from processBlock. */
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
 
     juce::UndoManager                    undoManager;
     juce::AudioProcessorValueTreeState   apvts;

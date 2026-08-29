@@ -46,6 +46,26 @@ namespace kickr
         sampleGate.setCurrentAndTargetValue (sampleGate.getTargetValue());
     }
 
+    void KickVoice::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        fsOversampled = juce::jmax (1.0, newFsOversampled);
+
+        body.updateOversampledRate (fsOversampled);
+        ampEnv.updateOversampledRate (fsOversampled);
+        pitchEnv.updateOversampledRate (fsOversampled);
+        click.updateOversampledRate (fsOversampled);
+        sub.updateOversampledRate (fsOversampled);
+        tail.updateOversampledRate (fsOversampled);
+        noise.updateOversampledRate (fsOversampled);
+        sample.updateOversampledRate (fsOversampled);
+
+        // Re-rate the smoothed gains/gates (keeps their current value at target — they
+        // are re-targeted every block by the engine anyway).
+        bodyLevel.reset  (fsOversampled, 0.02);
+        synthGate.reset  (fsOversampled, 0.005);
+        sampleGate.reset (fsOversampled, 0.005);
+    }
+
     void KickVoice::setBodyLevel (float level01) noexcept
     {
         bodyLevel.setTargetValue (juce::jlimit (0.0f, 1.0f, level01));

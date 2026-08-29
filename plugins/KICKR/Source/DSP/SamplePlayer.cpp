@@ -44,6 +44,40 @@ namespace kickr
         lp.reset();
     }
 
+    void SamplePlayer::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        const double oldFs = fs;
+        fs           = juce::jmax (1.0, newFsOversampled);
+        nyquistLimit = static_cast<float> (fs * 0.45);
+        fadeLen      = juce::jmax (1, static_cast<int> (std::lround (0.001 * fs)));
+
+        juce::dsp::ProcessSpec spec;
+        spec.sampleRate       = fs;
+        spec.maximumBlockSize = static_cast<juce::uint32> (32);
+        spec.numChannels      = static_cast<juce::uint32> (1);
+        hp.prepare (spec);   // same numChannels -> no allocation
+        hp.setType (juce::dsp::StateVariableTPTFilterType::highpass);
+        hp.setResonance (0.707f);
+        lp.prepare (spec);
+        lp.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+        lp.setResonance (0.707f);
+
+        if (buf != nullptr)
+            updateDerived();   // ratio / decayCoef / cutoffs / crush vs the new fs
+
+        if (active && ! finished)
+        {
+            const double r = fs / juce::jmax (1.0, oldFs);
+            auto scale = [r] (int n) noexcept
+            {
+                return juce::jmax (0, static_cast<int> (std::llround (static_cast<double> (n) * r)));
+            };
+            attackSamples = scale (attackSamples);
+            attackPos     = scale (attackPos);
+            sinceOn       = scale (sinceOn);
+        }
+    }
+
     void SamplePlayer::updateDerived() noexcept
     {
         // Resample ratio (source samples advanced per output sample).

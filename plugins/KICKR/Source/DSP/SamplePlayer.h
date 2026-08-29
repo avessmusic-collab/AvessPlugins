@@ -74,6 +74,13 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed mid-note: recompute the resample ratio, decay
+            coef, filter cutoffs and crush timing for the new rate (re-`prepare` the two
+            SVFs — states clear, covered by the switch fade); rescale the attack/`sinceOn`
+            counters. The source read position is in SOURCE samples (rate-independent) and
+            is KEPT. Coefficient-only otherwise. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block from KickEngine -> KickVoice. Pre-resolved effective values (velocity
             already folded into the caller's `lpHz`; `level` gets `velFactor` at render).
             No APVTS reads inside. */

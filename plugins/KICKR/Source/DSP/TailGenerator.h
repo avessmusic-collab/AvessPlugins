@@ -55,6 +55,14 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed mid-note: recompute every rate-derived
+            coefficient (phase increment, decay coef, LP cutoff, drive gain) for the new
+            rate and rescale the in-samples counters. Running phase / envelope / filter
+            state are KEPT as far as JUCE exposes (the SVF is re-`prepare`-d for the new
+            rate — its two integrator states clear, which the switch fade covers).
+            Coefficient-only otherwise. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block from KickEngine -> KickVoice. No APVTS reads inside. */
         void setParams (float tailLevel, float tailLengthMs,
                         float tailTone01, float tailDrive01) noexcept;

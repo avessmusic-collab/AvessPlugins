@@ -115,11 +115,20 @@ int main()
 
     std::printf ("\n[Phase 2.1] OS-region shell + MIDI-triggered basic kick\n");
 
+    // Phase 2.10 makes the `oversampling` default 2x (a few samples of PDC latency).
+    // Pre-2.10 blocks that assume 1x / latency-0 pin the choice to "1x" first.
+    auto pin1x = [] (KICKRAudioProcessor& p)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter ("oversampling"))
+            prm->setValueNotifyingHost (0.0f);   // choice index 0 == "1x"
+    };
+
     KICKRAudioProcessor proc;
     silenceClick (proc);
     silenceSub (proc);
     silenceTail (proc);
     silenceDist (proc);
+    pin1x (proc);
     const auto buf = kickr::tests::renderNote (proc, a1, vel, sr, 512, 1.0);
     const auto st  = analyse (buf, sr);
 
@@ -143,6 +152,7 @@ int main()
         silenceSub (p2);
         silenceTail (p2);
         silenceDist (p2);
+        pin1x (p2);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_1.wav");
         const bool ok  = kickr::tests::renderNoteToWav (p2, wav, a1, vel, sr, 512, 1.0);
         std::printf ("  wrote %s : %s\n", wav.getFullPathName().toRawUTF8(), ok ? "ok" : "FAILED");
@@ -1481,6 +1491,212 @@ int main()
         KICKRAudioProcessor pw;
         setP (pw, "low", 4.0f); setP (pw, "high", 3.0f); setP (pw, "outputWidth", 0.8f);
         const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_9.wav");
+        kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 2.10] Real oversampling factors + glitch-free switching\n");
+
+    // A freshly-prepared processor (no host ever touches `oversampling`) must already
+    // report the 2x default's PDC latency — not 0 (a DAW would then be time-misaligned).
+    {
+        KICKRAudioProcessor pd;
+        pd.setRateAndBufferSizeDetails (sr, 512);
+        pd.prepareToPlay (sr, 512);
+        const int lat = pd.getLatencySamples();
+        std::printf ("  default-prepared latency (oversampling defaults to 2x): %d\n", lat);
+        check (lat > 0, "default-prepared processor reports the 2x PDC latency (not 0)");
+    }
+
+    auto setOS = [&] (KICKRAudioProcessor& p, int choiceIdx)
+    {
+        if (auto* prm = p.getValueTreeState().getParameter ("oversampling"))
+            prm->setValueNotifyingHost (prm->convertTo0to1 (static_cast<float> (choiceIdx)));
+    };
+
+    // Faithful expected latency: build the same juce::dsp::Oversampling object the
+    // processor builds for each order and read round(getLatencyInSamples()).
+    auto expectedOsLatency = [] (int choiceIdx) -> int
+    {
+        if (choiceIdx <= 0) return 0;
+        juce::dsp::Oversampling<float> os (static_cast<size_t> (2),
+                                           static_cast<size_t> (choiceIdx),
+                                           juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
+                                           true, true);
+        os.initProcessing (static_cast<size_t> (512));
+        return static_cast<int> (std::lround (os.getLatencyInSamples()));
+    };
+
+    // (a) + (b) — every factor renders a sane kick; reported latency == round(os latency).
+    {
+        for (int idx = 0; idx < 4; ++idx)
+        {
+            KICKRAudioProcessor p;
+            setOS (p, idx);
+            const auto bb  = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
+            const auto stat = analyse (bb, sr);
+            const int  lat    = p.getLatencySamples();
+            const int  expLat = expectedOsLatency (idx);
+            std::printf ("  OS %dx: peak %.3f  finite %d  latency %d (expected %d)\n",
+                         1 << idx, stat.peak, (int) stat.allFinite, lat, expLat);
+            check (stat.allFinite && stat.peak > 0.05f && stat.peak < 1.5f,
+                   idx == 0 ? "1x: default kick finite, audible, sane peak"
+                 : idx == 1 ? "2x: default kick finite, audible, sane peak"
+                 : idx == 2 ? "4x: default kick finite, audible, sane peak"
+                            : "8x: default kick finite, audible, sane peak");
+            check (lat == expLat,
+                   idx == 0 ? "1x reported latency == 0"
+                 : idx == 1 ? "2x reported latency == round(os latency)"
+                 : idx == 2 ? "4x reported latency == round(os latency)"
+                            : "8x reported latency == round(os latency)");
+            if (idx > 0)
+                check (lat > 0,
+                       idx == 1 ? "2x latency > 0" : idx == 2 ? "4x latency > 0" : "8x latency > 0");
+        }
+    }
+
+    // (c) pitch correctness — a fixed 100 Hz body must read ~100 Hz at every factor
+    // (a wrong fsOversampled detunes the phase-accumulator).
+    {
+        auto settledFreq = [&] (int idx)
+        {
+            KICKRAudioProcessor p;
+            setOS (p, idx);
+            setP (p, "tuneMode",    1.0f);      // Fixed Frequency
+            setP (p, "fundamental", 100.0f);
+            setP (p, "pitchStart",  1.0f);      // steady — no pitch drop
+            setP (p, "bodyDecay",   2000.0f);
+            setP (p, "subLevel",    0.0f);
+            setP (p, "clickLevel",  0.0f);
+            setP (p, "tailLevel",   0.0f);
+            setP (p, "noiseLevel",  0.0f);
+            setP (p, "driveMix",    0.0f);
+            setP (p, "limiter",     0.0f);
+            const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 0.8);
+            return estFreq (b, sr, 0.10, 0.50);
+        };
+        double f[4];
+        for (int i = 0; i < 4; ++i) f[i] = settledFreq (i);
+        std::printf ("  fixed 100 Hz body:  1x %.1f  2x %.1f  4x %.1f  8x %.1f Hz\n",
+                     f[0], f[1], f[2], f[3]);
+        for (int i = 0; i < 4; ++i)
+            check (std::abs (f[i] - 100.0) < 2.0,
+                   i == 0 ? "1x body pitch within 2 percent of 100 Hz"
+                 : i == 1 ? "2x body pitch within 2 percent of 100 Hz"
+                 : i == 2 ? "4x body pitch within 2 percent of 100 Hz"
+                          : "8x body pitch within 2 percent of 100 Hz");
+    }
+
+    // (d) decay correctness — the default body -40 dB time within ~10% across factors
+    // (proves the envelope decay coefficient is refreshed for the new rate).
+    {
+        auto decay40 = [&] (int idx)
+        {
+            KICKRAudioProcessor p;
+            setOS (p, idx);
+            setP (p, "subLevel",   0.0f);
+            setP (p, "clickLevel", 0.0f);
+            setP (p, "tailLevel",  0.0f);
+            setP (p, "noiseLevel", 0.0f);
+            setP (p, "driveMix",   0.0f);
+            setP (p, "limiter",    0.0f);
+            const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.5);
+            return analyse (b, sr).lastAbove40dB / sr * 1000.0;
+        };
+        double d[4];
+        for (int i = 0; i < 4; ++i) d[i] = decay40 (i);
+        double dmin = d[0], dmax = d[0];
+        for (int i = 1; i < 4; ++i) { dmin = std::min (dmin, d[i]); dmax = std::max (dmax, d[i]); }
+        std::printf ("  body -40 dB time:  1x %.0f  2x %.0f  4x %.0f  8x %.0f ms\n",
+                     d[0], d[1], d[2], d[3]);
+        check (dmax < dmin * 1.10, "body -40 dB time within ~10% across all 4 OS factors");
+    }
+
+    // (e) clean switch — flip 1x<->4x every 10 blocks with the note kept alive:
+    // no NaN/Inf, bounded, no slew spike > 0.5 near the switch points.
+    {
+        KICKRAudioProcessor p;
+        setP (p, "subLevel",  0.0f);
+        setP (p, "tailLevel", 0.0f);
+        setP (p, "noiseLevel", 0.0f);
+        const int block  = 128;
+        const int nBlk   = 200;
+        p.setRateAndBufferSizeDetails (sr, block);
+        p.prepareToPlay (sr, block);
+        juce::AudioBuffer<float> blk (2, block);
+        juce::AudioBuffer<float> full (1, block * nBlk);
+        full.clear();
+        bool finite = true; float pk = 0.0f;
+        int flip = 0;
+        std::vector<int> switchBlocks;
+        for (int bi = 0; bi < nBlk; ++bi)
+        {
+            blk.clear();
+            juce::MidiBuffer midi;
+            if (bi == 0 || (bi % 16) == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);   // keep signal alive
+            if (bi > 0 && (bi % 10) == 0)
+            {
+                flip ^= 1;
+                if (auto* prm = p.getValueTreeState().getParameter ("oversampling"))
+                    prm->setValueNotifyingHost (prm->convertTo0to1 (flip ? 2.0f : 0.0f));  // 4x <-> 1x
+                switchBlocks.push_back (bi);
+            }
+            p.processBlock (blk, midi);
+            const float* x = blk.getReadPointer (0);
+            for (int i = 0; i < block; ++i)
+            {
+                if (! std::isfinite (x[i])) finite = false;
+                pk = std::max (pk, std::abs (x[i]));
+                full.setSample (0, bi * block + i, x[i]);
+            }
+        }
+        p.releaseResources();
+
+        float worstSlew = 0.0f;
+        const float* fx = full.getReadPointer (0);
+        for (int sb : switchBlocks)
+        {
+            const int i0 = std::max (1, (sb - 1) * block);
+            const int i1 = std::min (full.getNumSamples(), (sb + 2) * block);
+            for (int i = i0; i < i1; ++i)
+                worstSlew = std::max (worstSlew, std::abs (fx[i] - fx[i - 1]));
+        }
+        std::printf ("  1x<->4x flip x%d w/ note alive: peak %.2f  finite %d  worstSlew@switch %.3f\n",
+                     (int) switchBlocks.size(), pk, (int) finite, worstSlew);
+        check (finite,                       "OS switching under an active note: no NaN / Inf");
+        check (pk > 0.01f && pk < 4.0f,      "OS switching: output stays bounded");
+        check (worstSlew < 0.5f,             "OS switching: no slew spike > 0.5 near the switch points");
+    }
+
+    // (f) aliasing reduced — drive 1 / character 1 (pure bitcrush) folds down less at 4x.
+    {
+        auto hfAt = [&] (int idx)
+        {
+            KICKRAudioProcessor p;
+            setOS (p, idx);
+            setP (p, "drive",      1.0f);
+            setP (p, "character",  1.0f);   // pure bitcrush / decimate — worst-case aliasing
+            setP (p, "driveMix",   1.0f);
+            setP (p, "limiter",    0.0f);
+            setP (p, "subLevel",   0.0f);
+            setP (p, "tailLevel",  0.0f);
+            setP (p, "clickLevel", 0.0f);
+            setP (p, "noiseLevel", 0.0f);
+            const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 0.5);
+            return hfRatio (b, sr, 0.0, 0.30);
+        };
+        const double h1 = hfAt (0);
+        const double h4 = hfAt (2);
+        std::printf ("  drive1/char1 HF proxy:  1x %.4f   4x %.4f\n", h1, h4);
+        check (h4 < h1 * 0.95, "aliasing reduced: 4x has less HF energy above ~0.4 Nyquist than 1x");
+    }
+
+    {
+        KICKRAudioProcessor pw;
+        setP (pw, "oversampling", 3.0f);   // 8x
+        setP (pw, "drive", 0.6f); setP (pw, "character", 0.5f);
+        const auto wav = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_phase2_10.wav");
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
 

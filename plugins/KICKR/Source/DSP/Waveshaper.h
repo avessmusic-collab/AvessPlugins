@@ -59,6 +59,12 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed: recompute the ~30 ms makeup smoother alpha for
+            the new rate. RMS meters / makeup / S&H state are KEPT. Coefficient-only.
+            (`kRmsWindowSamples` is a fixed sample count at the oversampled rate — Stage-0
+            Addendum — so `rmsAlpha` is intentionally rate-independent.) */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block from KickEngine (never reads APVTS itself). All three are the raw
             0..1 controls; `drive` / `character` already include any macro offset added
             upstream (Phase 2.11). */

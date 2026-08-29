@@ -49,6 +49,30 @@ namespace kickr
         outGain.setCurrentAndTargetValue (dsputils::dbToGain (0.0f));
     }
 
+    void OutputStage::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        fs = juce::jmax (1.0, newFsOversampled);
+
+        juce::dsp::ProcessSpec spec;
+        spec.sampleRate       = fs;
+        spec.maximumBlockSize = static_cast<juce::uint32> (32);
+        spec.numChannels      = static_cast<juce::uint32> (2);
+
+        crossover.prepare (spec);   // same numChannels -> no allocation; integrators clear
+        crossover.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+        crossover.setCutoffFrequency (kMonoCrossoverHz);
+
+        const float dcR = std::exp (-2.0f * juce::MathConstants<float>::pi * 5.0f
+                                    / static_cast<float> (fs));
+        for (auto& b : dcBlock)
+            b.R = dcR;   // keep x1 / y1
+
+        mixGain.reset (fs, 0.01);
+        outGain.reset (fs, 0.01);
+
+        refreshTone();   // recompute the 3 biquads vs the new fs, in-place (IIR state kept)
+    }
+
     void OutputStage::refreshTone() noexcept
     {
         const auto low  = ArrayCoeffs::makeLowShelf  (fs, kLowShelfHz,  kShelfQ,

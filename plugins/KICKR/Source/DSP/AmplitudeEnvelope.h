@@ -28,8 +28,14 @@ namespace kickr
         void prepare (double newFsOversampled) noexcept;
         void reset() noexcept;
 
-        /** Arm the envelope: raised-cosine attack then exponential decay of `decayMs`. */
-        void noteOn (float decayMs) noexcept;
+        /** PHASE 2.10 — OS factor changed mid-note: recompute the decay coefficient for
+            the new rate from the stored `decayMs`, and rescale the in-samples counters so
+            the wall-clock timing is preserved. The running envelope `value` is KEPT (the
+            kick does not restart). Coefficient-only. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
+        /** Arm the envelope: raised-cosine attack then exponential decay of `newDecayMs`. */
+        void noteOn (float newDecayMs) noexcept;
 
         float tick() noexcept;
         bool  isActive() const noexcept { return running; }
@@ -37,6 +43,7 @@ namespace kickr
     private:
         double fsOversampled { 44100.0 };
 
+        float  decayMs       { 400.0f };   // stored for Phase 2.10 coefficient refresh
         float  decayCoef     { 0.0f };
         float  value         { 0.0f };
         float  floorGain     { 0.00003162f };   // -90 dB

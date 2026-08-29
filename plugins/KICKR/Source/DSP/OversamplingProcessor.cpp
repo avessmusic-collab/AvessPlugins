@@ -8,7 +8,8 @@ namespace kickr
     {
         sampleRate   = baseSampleRate;
         maxBlockSize = juce::jmax (1, maximumBlockSize);
-        activeOrder  = 0;   // PHASE 2.1: pinned to 1x. Phase 2.10 reads `oversampling`.
+        activeOrder  = 0;
+        pendingOrder.store (0);   // KickEngine::prepare drives the initial factor immediately after
 
         // Factor 1x — real zero-latency identity object (JUCE inserts a dummy stage).
         oversamplers[0] = std::make_unique<juce::dsp::Oversampling<float>> (
@@ -28,6 +29,11 @@ namespace kickr
             os->initProcessing (static_cast<size_t> (maxBlockSize));
             os->reset();
         }
+
+        // Cache all 4 integer latencies (order-0 identity object -> 0).
+        for (int order = 0; order < kNumFactors; ++order)
+            latencySamples[static_cast<size_t> (order)] = static_cast<int> (std::lround (
+                oversamplers[static_cast<size_t> (order)]->getLatencyInSamples()));
     }
 
     void OversamplingProcessor::reset()
@@ -39,10 +45,21 @@ namespace kickr
 
     void OversamplingProcessor::setFactorChoice (int choiceIndex) noexcept
     {
-        // PHASE 2.10: atomic pointer swap + ~64-sample fade + audio-thread recompute of
-        // every in-region coefficient for the new fsOversampled, then setLatencySamples
-        // on the message thread. PHASE 2.1: the factor is pinned to 1x.
-        juce::ignoreUnused (choiceIndex);
+        // Audio thread, every block — only stash the request. KickEngine performs the
+        // swap (applyPendingFactor) at a safe point while a ~64-sample fade covers the seam.
+        pendingOrder.store (orderForChoice (choiceIndex));
+    }
+
+    void OversamplingProcessor::applyPendingFactor() noexcept
+    {
+        activeOrder = pendingOrder.load();
+        if (auto* os = active())
+            os->reset();   // already initProcessing-ed in prepare() — no allocation
+    }
+
+    int OversamplingProcessor::latencyForOrder (int order) const noexcept
+    {
+        return latencySamples[static_cast<size_t> (juce::jlimit (0, kNumFactors - 1, order))];
     }
 
     juce::dsp::AudioBlock<float>

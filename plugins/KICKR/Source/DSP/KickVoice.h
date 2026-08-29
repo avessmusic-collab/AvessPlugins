@@ -85,6 +85,11 @@ namespace kickr
         void prepare (double newFsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed mid-voice: fan `updateOversampledRate` out to
+            every layer member (coefficient-only — a ringing voice keeps going, only its
+            rate-dependent coefficients change) and re-rate the smoothed gains/gates. */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block: set the target body level (0..1). Lightly smoothed to avoid clicks. */
         void setBodyLevel (float level01) noexcept;
 

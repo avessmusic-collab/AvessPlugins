@@ -76,13 +76,73 @@ namespace kickr
         bcDelayWrite = 0;
     }
 
+    void ClickGenerator::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        const double oldFs = fs;
+        fs           = juce::jmax (1.0, newFsOversampled);
+        nyquistLimit = static_cast<float> (fs * 0.45);
+
+        juce::dsp::ProcessSpec spec;
+        spec.sampleRate       = fs;
+        spec.maximumBlockSize = static_cast<juce::uint32> (32);
+        spec.numChannels      = static_cast<juce::uint32> (1);
+
+        const float toneClamped = juce::jlimit (20.0f, nyquistLimit, clickToneRawHz);
+
+        for (juce::dsp::StateVariableTPTFilter<float>* f : { &noiseFilter, &noiseFilterR })
+        {
+            f->prepare (spec);   // same numChannels -> no allocation
+            f->setType (juce::dsp::StateVariableTPTFilterType::bandpass);
+            f->setResonance (0.7f);
+            f->setCutoffFrequency (toneClamped);
+        }
+        impulseFilter.prepare (spec);
+        impulseFilter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+        impulseFilter.setResonance (2.0f);
+        impulseFilter.setCutoffFrequency (toneClamped);
+
+        // Raised-cosine impulse window LUT + ring lengths for the new rate.
+        const int lenFromMs = static_cast<int> (std::lround (
+                                  static_cast<double> (kClickImpulseWindowMs) * 0.001 * fs));
+        impulseLen = juce::jlimit (8, static_cast<int> (kWindowLutSize),
+                                   juce::jmax (8, lenFromMs));
+        windowLut.fill (0.0f);
+        for (int n = 0; n < impulseLen; ++n)
+            windowLut[static_cast<size_t> (n)] =
+                0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi
+                                        * static_cast<float> (n)
+                                        / static_cast<float> (impulseLen - 1));
+
+        cRingSamples = static_cast<int> (std::lround (0.003 * fs));
+
+        clickPitchHz     = juce::jlimit (20.0f, nyquistLimit, clickPitchHz);
+        pitchDropSamples = juce::jmax (1, static_cast<int> (std::lround (
+                               static_cast<double> (juce::jmin (clickTimeMs, 8.0f)) * 0.001 * fs)));
+        bcDelaySamples   = juce::jlimit (0, kDelayLutSize - 1,
+                               static_cast<int> (std::lround (
+                                   static_cast<double> (clickWidth)
+                                   * static_cast<double> (kMaxDelayMs) * 0.001 * fs)));
+
+        if (active)
+        {
+            const double r = fs / juce::jmax (1.0, oldFs);
+            auto scale = [r] (int n) noexcept
+            {
+                return juce::jmax (0, static_cast<int> (std::llround (static_cast<double> (n) * r)));
+            };
+            bPos       = scale (bPos);
+            impulsePos = scale (impulsePos);
+        }
+    }
+
     void ClickGenerator::setParams (float level, float toneHz, float timeMs,
                                     float pitchHz, float widthAmt) noexcept
     {
-        clickLevel   = juce::jlimit (0.0f, 1.0f, level);
-        clickTimeMs  = juce::jlimit (0.1f, 50.0f, timeMs);
-        clickPitchHz = juce::jlimit (20.0f, nyquistLimit, pitchHz);
-        clickWidth   = juce::jlimit (0.0f, 1.0f, widthAmt);
+        clickLevel     = juce::jlimit (0.0f, 1.0f, level);
+        clickTimeMs    = juce::jlimit (0.1f, 50.0f, timeMs);
+        clickPitchHz   = juce::jlimit (20.0f, nyquistLimit, pitchHz);
+        clickWidth     = juce::jlimit (0.0f, 1.0f, widthAmt);
+        clickToneRawHz = toneHz;
 
         const float toneClamped = juce::jlimit (20.0f, nyquistLimit, toneHz);
         noiseFilter.setCutoffFrequency  (toneClamped);

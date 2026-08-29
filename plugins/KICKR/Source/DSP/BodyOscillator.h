@@ -22,6 +22,10 @@ namespace kickr
         void prepare (double newFsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed: recompute the phase increment for the new
+            rate, KEEP the running phase (coefficient-only, no state reset). */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Hard phase reset — call on every trigger. */
         void noteOn() noexcept { phase = 0.0; }
 

@@ -8,9 +8,21 @@ KICKRAudioProcessor::KICKRAudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, &undoManager, "PARAMETERS", kickr::createParameterLayout())
 {
+    // PHASE 2.10 — report OS-factor latency changes to the host on the message thread.
+    apvts.addParameterListener (kickr::id::oversampling, this);
 }
 
-KICKRAudioProcessor::~KICKRAudioProcessor() = default;
+KICKRAudioProcessor::~KICKRAudioProcessor()
+{
+    apvts.removeParameterListener (kickr::id::oversampling, this);
+}
+
+void KICKRAudioProcessor::parameterChanged (const juce::String& parameterID, float)
+{
+    // Message thread only (APVTS dispatches parameter listeners there). Never mid-block.
+    if (parameterID == kickr::id::oversampling)
+        setLatencySamples (engine.pendingOsLatencySamples());
+}
 
 void KICKRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {

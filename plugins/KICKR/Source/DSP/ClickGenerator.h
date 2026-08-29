@@ -64,6 +64,13 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** PHASE 2.10 — OS factor changed: rebuild the raised-cosine window LUT, ring
+            lengths, pitch-drop coefficients and all three SVF cutoffs for the new rate,
+            and rescale the per-block sample counts. The click is a sub-50 ms one-shot so
+            it is almost always finished at a switch; this keeps it correct if not.
+            Coefficient-only (SVF states clear on the internal re-`prepare`). */
+        void updateOversampledRate (double newFsOversampled) noexcept;
+
         /** Per-block, from KickEngine -> KickVoice. No APVTS reads in here.
             `widthAmt` = `clickWidth` (0..1). */
         void setParams (float level, float toneHz, float timeMs,
@@ -157,6 +164,7 @@ namespace kickr
         float clickLevel   { 0.4f };
         float clickTimeMs  { 3.0f };
         float clickPitchHz { 5000.0f };
+        float clickToneRawHz { 4000.0f };   // last raw `toneHz` (re-clamped vs the current Nyquist)
         float clickWidth   { 0.3f };   // PHASE 2.9
         int   pitchDropSamples { 64 };
         int   bcDelaySamples   { 0 };  // PHASE 2.9 — osc+impulse inter-channel R delay

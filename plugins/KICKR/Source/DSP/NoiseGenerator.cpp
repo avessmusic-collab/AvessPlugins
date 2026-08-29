@@ -38,6 +38,38 @@ namespace kickr
         bp.reset();
     }
 
+    void NoiseGenerator::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        const double oldFs = fs;
+        fs           = juce::jmax (1.0, newFsOversampled);
+        nyquistLimit = static_cast<float> (fs * 0.45);
+
+        juce::dsp::ProcessSpec spec;
+        spec.sampleRate       = fs;
+        spec.maximumBlockSize = static_cast<juce::uint32> (32);
+        spec.numChannels      = static_cast<juce::uint32> (1);
+        bp.prepare (spec);   // same numChannels -> no allocation
+        bp.setType (juce::dsp::StateVariableTPTFilterType::bandpass);
+        bp.setResonance (1.5f);
+
+        updateDerived();
+        bp.setCutoffFrequency (bpCentreHz);
+
+        if (active)
+        {
+            const double r = fs / juce::jmax (1.0, oldFs);
+            auto scale = [r] (int n) noexcept
+            {
+                return juce::jmax (0, static_cast<int> (std::llround (static_cast<double> (n) * r)));
+            };
+            attackSamples       = juce::jmax (1, scale (attackSamples));
+            attackPos           = scale (attackPos);
+            minLengthSamples    = scale (minLengthSamples);
+            maxLengthSamples    = scale (maxLengthSamples);
+            samplesSinceTrigger = scale (samplesSinceTrigger);
+        }
+    }
+
     void NoiseGenerator::updateDerived() noexcept
     {
         decayCoef = dsputils::expDecayCoef (decayMs, fs);

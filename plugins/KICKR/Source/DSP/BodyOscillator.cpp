@@ -17,6 +17,12 @@ namespace kickr
         phase = 0.0;
     }
 
+    void BodyOscillator::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        fsOversampled = juce::jmax (1.0, newFsOversampled);
+        setFrequency (frequencyHz);   // recompute the increment only; phase is kept
+    }
+
     void BodyOscillator::setFrequency (float hz) noexcept
     {
         frequencyHz    = hz;

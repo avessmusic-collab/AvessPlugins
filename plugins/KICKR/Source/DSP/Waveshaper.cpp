@@ -36,6 +36,16 @@ namespace kickr
         warmup    = 0;
     }
 
+    void Waveshaper::updateOversampledRate (double newFsOversampled) noexcept
+    {
+        fs = juce::jmax (1.0, newFsOversampled);
+
+        const float tSamples = juce::jmax (1.0f, 0.001f * kMakeupSmoothMs
+                                                 * static_cast<float> (fs));
+        makeupAlpha = 1.0f - std::exp (-1.0f / tSamples);
+        // msIn / msOut / makeup / shCounter / shHeld / primed / warmup kept
+    }
+
     void Waveshaper::setParams (float drive, float character, float driveMix) noexcept
     {
         driveRaw = juce::jlimit (0.0f, 1.0f, drive);

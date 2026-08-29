@@ -22,8 +22,31 @@ namespace kickr
         running            = false;
     }
 
-    void AmplitudeEnvelope::noteOn (float decayMs) noexcept
+    void AmplitudeEnvelope::updateOversampledRate (double newFsOversampled) noexcept
     {
+        const double oldFs = fsOversampled;
+        fsOversampled = juce::jmax (1.0, newFsOversampled);
+
+        if (! running)
+            return;
+
+        decayCoef = dsputils::expDecayCoef (decayMs, fsOversampled);
+
+        const double r = fsOversampled / juce::jmax (1.0, oldFs);
+        auto scale = [r] (int n) noexcept
+        {
+            return juce::jmax (0, static_cast<int> (std::llround (static_cast<double> (n) * r)));
+        };
+        attackSamples       = juce::jmax (1, scale (attackSamples));
+        attackPos           = scale (attackPos);
+        minLengthSamples    = scale (minLengthSamples);
+        maxLengthSamples    = scale (maxLengthSamples);
+        samplesSinceTrigger = scale (samplesSinceTrigger);
+    }
+
+    void AmplitudeEnvelope::noteOn (float newDecayMs) noexcept
+    {
+        decayMs   = newDecayMs;
         decayCoef = dsputils::expDecayCoef (decayMs, fsOversampled);
 
         attackSamples = juce::jmax (1, static_cast<int> (std::lround (

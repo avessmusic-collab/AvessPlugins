@@ -10,36 +10,7 @@ namespace kickr
         baseSampleRate = juce::jmax (1.0, sampleRate);
         maxBlockSize   = juce::jmax (1, maximumBlockSize);
 
-        oversampling.prepare (baseSampleRate, maxBlockSize);
-        fsOversampled = oversampling.getOversampledRate();     // == baseSampleRate at 1x
-
-        for (auto& v : voices)
-            v.prepare (fsOversampled);
-
-        transientShaper.prepare (fsOversampled);
-        waveshaperL.prepare (fsOversampled);     // PHASE 2.8/2.9 — coefficients vs fsOversampled
-        waveshaperR.prepare (fsOversampled);
-        outputStage.prepare (fsOversampled);     // PHASE 2.9 — tone / crossover / limiter vs fsOversampled
-
-        // 1 / (fade length in oversampled samples) — fsOversampled is fixed until Phase 2.10.
-        retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
-
-        scratch.setSize (OversamplingProcessor::kNumChannels, maxBlockSize, false, false, true);
-        scratch.clear();
-
-        // Mono per-voice render scratch @ the oversampled rate. Sized for the worst case
-        // (max block x max OS factor) so Phase 2.10 needs no resize here.
-        const int maxOsSamples = maxBlockSize * (1 << (OversamplingProcessor::kNumFactors - 1));
-        for (auto& b : voiceScratch)
-        {
-            b.setSize (2, maxOsSamples, false, false, true);   // PHASE 2.9 — stereo per-voice scratch
-            b.clear();
-        }
-
-        // (The DC blocker moved in-region into OutputStage at the Phase 2.9 checkpoint —
-        //  it must run before the safety limiter, not after it.)
-
-        // Cache raw parameter pointers (Phase 2.1 params only).
+        // Cache raw parameter pointers FIRST — the OS setup below needs `pOversampling`.
         pFundamental    = apvts.getRawParameterValue (id::fundamental);
         pPitchStart     = apvts.getRawParameterValue (id::pitchStart);
         pPitchTime      = apvts.getRawParameterValue (id::pitchTime);
@@ -95,7 +66,59 @@ namespace kickr
         pSampleLP         = apvts.getRawParameterValue (id::sampleLP);
         pSampleCrush      = apvts.getRawParameterValue (id::sampleCrush);
 
+        oversampling.prepare (baseSampleRate, maxBlockSize);
+
+        // PHASE 2.10 — adopt the current `oversampling` choice immediately (not playing
+        // yet, so no fade): the components below are then prepared at the right rate.
+        if (pOversampling != nullptr)
+            oversampling.setFactorChoice (static_cast<int> (pOversampling->load()));
+        oversampling.applyPendingFactor();
+
+        fsOversampled = oversampling.getOversampledRate();
+        switchFadeInSamples = 0;
+
+        for (auto& v : voices)
+            v.prepare (fsOversampled);
+
+        transientShaper.prepare (fsOversampled);
+        waveshaperL.prepare (fsOversampled);     // PHASE 2.8/2.9 — coefficients vs fsOversampled
+        waveshaperR.prepare (fsOversampled);
+        outputStage.prepare (fsOversampled);     // PHASE 2.9 — tone / crossover / limiter vs fsOversampled
+
+        // 1 / (fade length in oversampled samples). Recomputed on every OS factor change.
+        retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
+
+        scratch.setSize (OversamplingProcessor::kNumChannels, maxBlockSize, false, false, true);
+        scratch.clear();
+
+        // Mono per-voice render scratch @ the oversampled rate. Sized for the worst case
+        // (max block x max OS factor) so Phase 2.10 needs no resize here.
+        const int maxOsSamples = maxBlockSize * (1 << (OversamplingProcessor::kNumFactors - 1));
+        for (auto& b : voiceScratch)
+        {
+            b.setSize (2, maxOsSamples, false, false, true);   // PHASE 2.9 — stereo per-voice scratch
+            b.clear();
+        }
+
+        // (The DC blocker moved in-region into OutputStage at the Phase 2.9 checkpoint —
+        //  it must run before the safety limiter, not after it.)
+
         reset();
+    }
+
+    void KickEngine::updateInRegionRate (double newFsOversampled)
+    {
+        fsOversampled = juce::jmax (1.0, newFsOversampled);
+
+        for (auto& v : voices)
+            v.updateOversampledRate (fsOversampled);
+
+        transientShaper.updateOversampledRate (fsOversampled);
+        waveshaperL.updateOversampledRate (fsOversampled);
+        waveshaperR.updateOversampledRate (fsOversampled);
+        outputStage.updateOversampledRate (fsOversampled);
+
+        retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
     }
 
     void KickEngine::reset()
@@ -110,10 +133,11 @@ namespace kickr
         waveshaperR.reset();
         outputStage.reset();
 
-        activeVoice   = 0;
-        incomingVoice = 1;
-        fadeActive    = false;
-        theta         = 0.0;
+        activeVoice        = 0;
+        incomingVoice      = 1;
+        fadeActive         = false;
+        theta              = 0.0;
+        switchFadeInSamples = 0;
 
         scratch.clear();
         for (auto& b : voiceScratch)
@@ -325,9 +349,11 @@ namespace kickr
         if (numSamples <= 0)
             return;
 
-        // PHASE 2.10 hook — pinned to 1x for now.
+        // PHASE 2.10 — stash the requested OS factor (no swap here). The swap happens
+        // below, after this block renders, under a ~64-sample fade to silence.
         if (pOversampling != nullptr)
             oversampling.setFactorChoice (static_cast<int> (pOversampling->load()));
+        const bool osSwitchNow = oversampling.factorChangePending();
 
         // Snapshot the Phase-2.1 params once per block (atomic reads).
         auto load = [] (std::atomic<float>* p, float fallback) noexcept
@@ -469,14 +495,61 @@ namespace kickr
         if (pos < numSamples)
             renderSegment (buffer, pos, numSamples - pos);
 
-        // NaN/Inf guard on the final bus (after processSamplesDown). The DC blocker now
-        // lives IN-REGION, before the limiter (OutputStage step 4) — a base-rate DC
-        // blocker after the limiter re-introduced edge peaks above the -0.5 dBFS ceiling.
+        // PHASE 2.10 — glitch-free OS factor switch.
+        //  (a) if the PREVIOUS block swapped the factor, ramp this block's output 0 -> 1;
+        //  (b) if a swap is pending, ramp this block's output -> silence over the last
+        //      kSwitchFadeSamples, adopt the new factor, refresh every in-region
+        //      coefficient for the new fsOversampled, then arm the fade-in for next block.
+        if (switchFadeInSamples > 0)
+        {
+            const int total = kSwitchFadeSamples;
+            const int done  = total - switchFadeInSamples;          // ramp samples already applied
+            const int rampN = juce::jmin (switchFadeInSamples, numSamples);
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            {
+                auto* data = buffer.getWritePointer (ch);
+                for (int i = 0; i < rampN; ++i)
+                    data[i] *= static_cast<float> (done + i + 1) / static_cast<float> (total);
+            }
+            switchFadeInSamples -= rampN;
+        }
+
+        if (osSwitchNow)
+        {
+            const int nf = juce::jmin (kSwitchFadeSamples, numSamples);
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            {
+                auto* data = buffer.getWritePointer (ch);
+                for (int i = 0; i < nf; ++i)
+                {
+                    const float g = static_cast<float> (nf - 1 - i) / static_cast<float> (juce::jmax (1, nf));
+                    data[numSamples - nf + i] *= g;                 // 1 -> ~0 over the block tail
+                }
+            }
+
+            oversampling.applyPendingFactor();
+            updateInRegionRate (oversampling.getOversampledRate());
+            switchFadeInSamples = kSwitchFadeSamples;               // next block ramps 0 -> 1
+        }
+
+        // NaN/Inf guard + final ceiling clamp on the base-rate bus (after
+        // processSamplesDown). The musical limiting is the in-region tanh soft-clip
+        // (OutputStage, oversampled, alias-free); but at 2x+ the polyphase-IIR
+        // *downsampling* filter runs after it and overshoots on a heavily-clipped
+        // kick (+1.7 dB was measured at 2x). This hard clamp catches only that
+        // residual filter overshoot — it engages on ~0.1% of samples so its own
+        // base-rate aliasing is far below the noise floor — and guarantees the
+        // -0.5 dBFS digital ceiling when `limiter` is on. `limiter` off -> raw.
+        const float ceilGain = OutputStage::kLimiterCeilingGain;
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         {
             auto* data = buffer.getWritePointer (ch);
-            for (int i = 0; i < numSamples; ++i)
-                data[i] = dsputils::sanitize (data[i]);
+            if (snap.limiterOn)
+                for (int i = 0; i < numSamples; ++i)
+                    data[i] = juce::jlimit (-ceilGain, ceilGain, dsputils::sanitize (data[i]));
+            else
+                for (int i = 0; i < numSamples; ++i)
+                    data[i] = dsputils::sanitize (data[i]);
         }
 
         // PHASE 3.2: analyzer tap here — copy the post-limiter mono sum into the
