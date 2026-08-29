@@ -66,6 +66,20 @@ namespace kickr
         pSampleLP         = apvts.getRawParameterValue (id::sampleLP);
         pSampleCrush      = apvts.getRawParameterValue (id::sampleCrush);
 
+        pMacroPunch       = apvts.getRawParameterValue (id::macroPunch);
+        pMacroBody        = apvts.getRawParameterValue (id::macroBody);
+        pMacroCrush       = apvts.getRawParameterValue (id::macroCrush);
+        pMacroTail        = apvts.getRawParameterValue (id::macroTail);
+
+        const auto macroInit = [] (std::atomic<float>* p) noexcept
+        { return p != nullptr ? p->load() : 0.5f; };
+        for (auto* sm : { &macroPunchSm, &macroBodySm, &macroCrushSm, &macroTailSm })
+            sm->reset (baseSampleRate, 0.02);   // ~20 ms — click-free macro sweeps
+        macroPunchSm.setCurrentAndTargetValue (macroInit (pMacroPunch));
+        macroBodySm .setCurrentAndTargetValue (macroInit (pMacroBody));
+        macroCrushSm.setCurrentAndTargetValue (macroInit (pMacroCrush));
+        macroTailSm .setCurrentAndTargetValue (macroInit (pMacroTail));
+
         oversampling.prepare (baseSampleRate, maxBlockSize);
 
         // PHASE 2.10 — adopt the current `oversampling` choice immediately (not playing
@@ -138,6 +152,11 @@ namespace kickr
         fadeActive         = false;
         theta              = 0.0;
         switchFadeInSamples = 0;
+
+        macroPunchSm.setCurrentAndTargetValue (macroPunchSm.getTargetValue());
+        macroBodySm .setCurrentAndTargetValue (macroBodySm .getTargetValue());
+        macroCrushSm.setCurrentAndTargetValue (macroCrushSm.getTargetValue());
+        macroTailSm .setCurrentAndTargetValue (macroTailSm .getTargetValue());
 
         scratch.clear();
         for (auto& b : voiceScratch)
@@ -417,6 +436,46 @@ namespace kickr
         snap.sampleLPHz      = load (pSampleLP,        20000.0f);
         snap.sampleCrush01   = load (pSampleCrush,     0.0f);
 
+        // ---------------------------------------------------------------------
+        // PHASE 2.11 — macro layer. 0.5 = neutral (m = 0 changes NOTHING, exactly:
+        // every offset is `+= m*k` or `*= (1 + m*k)` / `*= 2^(...*m)` which is a true
+        // identity at m = 0). The APVTS target params are NOT modified — this only
+        // shifts the effective values the engine feeds its components, so each target
+        // stays independently automatable. Full-throw amounts are tuned at Stage 17.
+        macroPunchSm.setTargetValue (load (pMacroPunch, 0.5f));
+        macroBodySm .setTargetValue (load (pMacroBody,  0.5f));
+        macroCrushSm.setTargetValue (load (pMacroCrush, 0.5f));
+        macroTailSm .setTargetValue (load (pMacroTail,  0.5f));
+        const float mPunch = (macroPunchSm.getNextValue() - 0.5f) * 2.0f;   // [-1, +1]
+        const float mBody  = (macroBodySm .getNextValue() - 0.5f) * 2.0f;
+        const float mCrush = (macroCrushSm.getNextValue() - 0.5f) * 2.0f;
+        const float mTail  = (macroTailSm .getNextValue() - 0.5f) * 2.0f;
+
+        // PUNCH: sharper transient + tighter, snappier pitch drop + more click.
+        snap.transientAttack  = juce::jlimit (-1.0f, 1.0f,  snap.transientAttack + mPunch * 0.5f);
+        snap.pitchStartRatio  = juce::jlimit (1.0f, 10.0f,  snap.pitchStartRatio * (1.0f + mPunch * 0.6f));
+        snap.pitchTimeMs      = juce::jlimit (5.0f, 500.0f, snap.pitchTimeMs     * (1.0f - mPunch * 0.35f));
+        snap.clickLevel       = juce::jlimit (0.0f, 1.0f,   snap.clickLevel      + mPunch * 0.3f);
+
+        // BODY: louder + longer body, deeper tune (<= 3 semitones down).
+        snap.bodyLevel        = juce::jlimit (0.0f, 1.0f,      snap.bodyLevel   + mBody * 0.3f);
+        snap.bodyDecayMs      = juce::jlimit (20.0f, 2000.0f,  snap.bodyDecayMs * (1.0f + mBody * 0.5f));
+        snap.fundamental      = juce::jlimit (25.0f, 150.0f,   snap.fundamental * std::exp2 (-mBody * 3.0f / 12.0f));
+
+        // CRUSH: more drive + morph further toward the digital curves.
+        snap.drive01          = juce::jlimit (0.0f, 1.0f, snap.drive01     + mCrush * 0.4f);
+        snap.character01      = juce::jlimit (0.0f, 1.0f, snap.character01 + mCrush * 0.4f);
+
+        // TAIL: louder + longer + brighter tail.
+        snap.tailLevel        = juce::jlimit (0.0f, 1.0f,     snap.tailLevel    + mTail * 0.35f);
+        snap.tailLengthMs     = juce::jlimit (20.0f, 2000.0f, snap.tailLengthMs * (1.0f + mTail * 0.6f));
+        snap.tailTone01       = juce::jlimit (0.0f, 1.0f,     snap.tailTone01   + mTail * 0.3f);
+
+        // BODY -> sampleLevel, only while the sample layer is active.
+        if (snap.sampleEnable)
+            snap.sampleLevel  = juce::jlimit (0.0f, 1.0f, snap.sampleLevel + mBody * 0.3f);
+        // ---------------------------------------------------------------------
+
         // PHASE 2.7b — resolve the effective SAMPLE values once per block.
         //   velocity: sampleLevel *= lerp(1, v01, velSens)  (folded in as `velFactor` at
         //             noteOn); sampleLP *= lerp(1, 0.6 + 0.4*v01, velSens*0.5) (darker).
@@ -426,7 +485,7 @@ namespace kickr
 
         SamplePlayer::SampleParams sp;
         sp.enable    = snap.sampleEnable ? 1.0f : 0.0f;
-        sp.level     = snap.sampleLevel;   // Phase 2.11: + macroBody offset
+        sp.level     = snap.sampleLevel;   // (macroBody offset already folded into snap above)
         sp.start01   = snap.sampleStart;
         sp.end01     = snap.sampleEnd;
         sp.reverse   = snap.sampleReverse;
@@ -452,26 +511,21 @@ namespace kickr
                               snap.clickPitchHz, snap.clickWidth01);   // PHASE 2.9 — clickWidth
             v.setBodyWidth (snap.bodyWidth01);                          // PHASE 2.9 — bodyWidth
             v.setSubParams (snap.subLevel, snap.subFreqHz, snap.subDecayMs);
-            // Phase 2.11: tail* below = tailLevel/Length/Tone + macroTail offsets.
             v.setTailParams (snap.tailLevel, snap.tailLengthMs, snap.tailTone01, snap.tailDrive01);
             v.setNoiseParams (snap.noiseLevel, snap.noiseDecayMs, snap.noiseTone01, snap.noiseType);
             v.setSampleParams (sp, synthGate, sampleGate);
         }
 
-        // Phase 2.11: transientAttackEff = snap.transientAttack + macroPunch offset.
-        const float transientAttackEff = snap.transientAttack;
+        const float transientAttackEff = snap.transientAttack;   // (macroPunch already folded in)
         transientShaper.setParams (transientAttackEff, snap.transientSustain);
 
-        // Phase 2.11: driveEff = snap.drive01 + macroCrush offset;
-        //             characterEff = snap.character01 + macroCrush offset.
-        const float driveEff     = snap.drive01;
+        const float driveEff     = snap.drive01;       // (macroCrush already folded in)
         const float characterEff = snap.character01;
         waveshaperL.setParams (driveEff, characterEff, snap.driveMix01);
         waveshaperR.setParams (driveEff, characterEff, snap.driveMix01);
 
         // PHASE 2.9 — tone (pre-distortion) + crossover / width / mix / gain / limiter.
-        // Phase 2.11: low/mid/high stay as-is (no macro targets); outputWidth/output/mix
-        // are excluded from macros + Randomize per the contract.
+        // low/mid/high, outputWidth/output/mix: no macro targets (per the contract).
         outputStage.setParams (snap.lowDb, snap.midDb, snap.highDb,
                                snap.outputWidth01, snap.outputDb,
                                snap.limiterOn, snap.mix01);

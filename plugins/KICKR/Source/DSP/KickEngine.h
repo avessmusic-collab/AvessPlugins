@@ -240,6 +240,17 @@ namespace kickr
         std::atomic<float>* pSampleLP        { nullptr };
         std::atomic<float>* pSampleCrush     { nullptr };
 
+        std::atomic<float>* pMacroPunch { nullptr };   // PHASE 2.11 — 0.5 = neutral
+        std::atomic<float>* pMacroBody  { nullptr };
+        std::atomic<float>* pMacroCrush { nullptr };
+        std::atomic<float>* pMacroTail  { nullptr };
+
+        // PHASE 2.11 — one ~20 ms smoother per macro so a fast sweep is click-free.
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> macroPunchSm { 0.5f };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> macroBodySm  { 0.5f };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> macroCrushSm { 0.5f };
+        juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> macroTailSm  { 0.5f };
+
         const SampleBuffer* currentSampleBuf { nullptr };   // set per block by the processor
 
         // Per-block parameter snapshot.

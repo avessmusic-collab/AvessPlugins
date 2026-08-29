@@ -1700,6 +1700,214 @@ int main()
         kickr::tests::renderNoteToWav (pw, wav, a1, vel, sr, 512, 1.0);
     }
 
+    // -------------------------------------------------------------------------
+    std::printf ("\n[Phase 2.11] Macros + parameter smoothing + state\n");
+
+    // Render a held A1 while linearly ramping one parameter min->max across `rampMs`.
+    auto renderRamp = [] (KICKRAudioProcessor& p, juce::StringRef id, float from, float to,
+                          double s, double rampMs, double seconds)
+    {
+        auto* prm = p.getValueTreeState().getParameter (id);
+        const int block = 64;
+        const int total = std::max (1, (int) std::ceil (s * seconds));
+        const int rampBlocks = std::max (1, (int) (rampMs * 0.001 * s / block));
+        p.setRateAndBufferSizeDetails (s, block);
+        p.prepareToPlay (s, block);
+        juce::AudioBuffer<float> out (juce::jmax (1, p.getTotalNumOutputChannels()), total);
+        out.clear();
+        juce::AudioBuffer<float> sc (out.getNumChannels(), block);
+        int bi = 0;
+        for (int pos = 0; pos < total; ++bi)
+        {
+            const int n = std::min (block, total - pos);
+            const float t = juce::jlimit (0.0f, 1.0f, (float) bi / (float) rampBlocks);
+            if (prm != nullptr) prm->setValueNotifyingHost (prm->convertTo0to1 (from + t * (to - from)));
+            juce::AudioBuffer<float> b (sc.getArrayOfWritePointers(), out.getNumChannels(), n);
+            b.clear();
+            juce::MidiBuffer midi;
+            if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 33, 0.8f), 0);
+            p.processBlock (b, midi);
+            for (int ch = 0; ch < out.getNumChannels(); ++ch) out.copyFrom (ch, pos, b, ch, 0, n);
+            pos += n;
+        }
+        p.releaseResources();
+        return out;
+    };
+    auto maxSlew = [] (const juce::AudioBuffer<float>& b)
+    {
+        float m = 0.0f; const float* x = b.getReadPointer (0);
+        for (int i = 1; i < b.getNumSamples(); ++i) m = std::max (m, std::abs (x[i] - x[i - 1]));
+        return m;
+    };
+
+    // 1. All macros at 0.5 (neutral) -> render bit-identical to defaults untouched.
+    {
+        KICKRAudioProcessor pRef, pMid;
+        setP (pMid, "macroPunch", 0.5f); setP (pMid, "macroBody", 0.5f);
+        setP (pMid, "macroCrush", 0.5f); setP (pMid, "macroTail", 0.5f);
+        const auto rRef = kickr::tests::renderNote (pRef, a1, vel, sr, 512, 1.0);
+        const auto rMid = kickr::tests::renderNote (pMid, a1, vel, sr, 512, 1.0);
+        double d = 0.0;
+        for (int i = 0; i < rRef.getNumSamples(); ++i)
+            d = std::max (d, (double) std::abs (rRef.getReadPointer (0)[i] - rMid.getReadPointer (0)[i]));
+        std::printf ("  macros @ 0.5 vs default: max|diff| = %.2e\n", d);
+        check (d < 1.0e-7, "macros at 0.5 are exactly neutral (bit-identical to default)");
+    }
+
+    // 2. PUNCH -> sharper onset. 3. BODY -> louder + deeper. 4. CRUSH -> more HF.
+    // 5. TAIL -> longer/louder tail.
+    {
+        auto rmsAt = [&] (juce::StringRef macro, float v, double t0, double t1)
+        {
+            KICKRAudioProcessor p;  setP (p, macro, v);
+            return rmsWindow (kickr::tests::renderNote (p, a1, vel, sr, 512, 1.2), sr, t0, t1);
+        };
+        const double p0 = rmsAt ("macroPunch", 0.0f, 0.0, 0.006);
+        const double p5 = rmsAt ("macroPunch", 0.5f, 0.0, 0.006);
+        const double p1 = rmsAt ("macroPunch", 1.0f, 0.0, 0.006);
+        std::printf ("  PUNCH onset RMS 0/0.5/1: %.4f / %.4f / %.4f\n", p0, p5, p1);
+        check (p1 > p5 && p5 > p0, "macroPunch: monotonic onset energy, neutral in the middle");
+
+        const double b0 = rmsAt ("macroBody", 0.0f, 0.05, 0.30);
+        const double b1 = rmsAt ("macroBody", 1.0f, 0.05, 0.30);
+        // deeper: measure the settled body frequency (fixed tune) at macroBody 0 vs 1
+        auto bodyHz = [&] (float v)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "macroBody", v); setP (p, "tuneMode", 1.0f); setP (p, "fundamental", 55.0f);
+            setP (p, "clickLevel", 0.0f); setP (p, "subLevel", 0.0f); setP (p, "tailLevel", 0.0f);
+            setP (p, "driveMix", 0.0f); setP (p, "limiter", 0.0f);
+            return estFreq (kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0), sr, 0.20, 0.45);
+        };
+        const double hz0 = bodyHz (0.5f), hz1 = bodyHz (1.0f);
+        std::printf ("  BODY: body RMS 0/1 %.4f/%.4f ; settled Hz 0.5/1.0 %.1f/%.1f\n", b0, b1, hz0, hz1);
+        check (b1 > b0 * 1.1, "macroBody: louder + longer body");
+        check (hz1 < hz0 * 0.95, "macroBody: tunes deeper (settled fundamental drops)");
+
+        const double c0 = rmsAt ("macroCrush", 0.0f, 0.0, 0.30);   // just to touch the render
+        juce::ignoreUnused (c0);
+        KICKRAudioProcessor pc0, pc1;  setP (pc0, "macroCrush", 0.0f);  setP (pc1, "macroCrush", 1.0f);
+        const double hc0 = hfRatio (kickr::tests::renderNote (pc0, a1, vel, sr, 512, 0.5), sr, 0.0, 0.3);
+        const double hc1 = hfRatio (kickr::tests::renderNote (pc1, a1, vel, sr, 512, 0.5), sr, 0.0, 0.3);
+        std::printf ("  CRUSH hfRatio 0/1: %.4f / %.4f\n", hc0, hc1);
+        check (hc1 > hc0 * 1.15, "macroCrush: adds drive + harmonic content");
+
+        auto tailOnly = [&] (float v, double t0, double t1)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "macroTail", v);
+            setP (p, "bodyLevel", 0.0f); setP (p, "subLevel", 0.0f);
+            setP (p, "clickLevel", 0.0f); setP (p, "noiseLevel", 0.0f);
+            setP (p, "driveMix", 0.0f);   setP (p, "limiter", 0.0f);
+            setP (p, "tailLevel", 0.3f);  setP (p, "tailLength", 200.0f);
+            return rmsWindow (kickr::tests::renderNote (p, a1, vel, sr, 512, 1.6), sr, t0, t1);
+        };
+        const double tLo = tailOnly (0.0f, 0.05, 0.90);
+        const double tMid = tailOnly (0.5f, 0.05, 0.90);
+        const double tHi = tailOnly (1.0f, 0.05, 0.90);
+        const double tLateMid = tailOnly (0.5f, 0.35, 0.90);
+        const double tLateHi  = tailOnly (1.0f, 0.35, 0.90);
+        std::printf ("  TAIL-only RMS  0/0.5/1 %.4f/%.4f/%.4f  late 0.5/1 %.5f/%.5f\n",
+                     tLo, tMid, tHi, tLateMid, tLateHi);
+        check (tHi > tMid * 1.3 && tMid > tLo, "macroTail: louder tail (0<0.5<1, monotonic)");
+        check (tLateHi > tLateMid * 1.4, "macroTail: longer tail (more late-window energy at 1 vs 0.5)");
+    }
+
+    // 6. Underlying param stays independent under a maxed macro.
+    {
+        KICKRAudioProcessor pLo, pHi;
+        setP (pLo, "macroCrush", 1.0f); setP (pLo, "drive", 0.0f);
+        setP (pHi, "macroCrush", 1.0f); setP (pHi, "drive", 1.0f);
+        const double lo = hfRatio (kickr::tests::renderNote (pLo, a1, vel, sr, 512, 0.5), sr, 0.0, 0.3);
+        const double hi = hfRatio (kickr::tests::renderNote (pHi, a1, vel, sr, 512, 0.5), sr, 0.0, 0.3);
+        std::printf ("  macroCrush=1, drive 0 vs 1: hfRatio %.4f / %.4f\n", lo, hi);
+        check (hi > lo * 1.05, "macro is additive: `drive` still moves the sound under macroCrush=1");
+    }
+
+    // 7. Fast macro sweep is click-free. 8. Fast param automation is click-free.
+    {
+        KICKRAudioProcessor pm;
+        const auto rm = renderRamp (pm, "macroCrush", 0.0f, 1.0f, sr, 200.0, 1.0);
+        const float sm = maxSlew (rm);
+        std::printf ("  macroCrush 0->1 over 200ms: maxSlew %.4f  finite %d\n",
+                     sm, (int) analyse (rm, sr).allFinite);
+        check (analyse (rm, sr).allFinite && sm < 0.35f, "fast macro sweep: no zipper / NaN");
+
+        for (auto id : { "bodyLevel", "low", "clickLevel", "output" })
+        {
+            KICKRAudioProcessor pp;
+            const bool bip = juce::String (id) == "low" || juce::String (id) == "output";
+            auto* prm = pp.getValueTreeState().getParameter (id);
+            const auto rng = prm->getNormalisableRange();
+            const auto rr = renderRamp (pp, id, bip ? rng.start : 0.0f, bip ? rng.end : 1.0f,
+                                        sr, 120.0, 0.9);
+            const float ss = maxSlew (rr);
+            std::printf ("  automate %-11s fast: maxSlew %.4f\n", id, ss);
+            const juce::String lbl = juce::String ("no zipper automating ") + id;
+            check (analyse (rr, sr).allFinite && ss < 0.6f, lbl.toRawUTF8());
+        }
+    }
+
+    // 9. State round-trip incl. a macro + currentSampleName; a stateVersion-1 blob loads.
+    {
+        const auto fx = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("kickr_state_fixture.wav");
+        writeSineWav (fx, 90.0, 44100.0, 0.3, 1);
+        const auto tmpBank = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getChildFile ("kickr_state_bank");
+        tmpBank.deleteRecursively();
+
+        KICKRAudioProcessor pa;
+        pa.getSampleLibrary().setFolder (tmpBank);
+        const auto nm = pa.getSampleLibrary().importFile (fx);
+        pa.loadSampleByName (nm);
+        setP (pa, "macroBody", 0.83f); setP (pa, "drive", 0.7f); setP (pa, "fundamental", 41.2f);
+        setP (pa, "sampleEnable", 1.0f); setP (pa, "character", 0.4f); setP (pa, "tailLength", 900.0f);
+
+        juce::MemoryBlock mb;
+        pa.getStateInformation (mb);
+
+        KICKRAudioProcessor pb;
+        pb.getSampleLibrary().setFolder (tmpBank);
+        pb.setStateInformation (mb.getData(), (int) mb.getSize());
+
+        auto eq = [&] (juce::StringRef id)
+        {
+            return std::abs (pa.getValueTreeState().getRawParameterValue (id)->load()
+                             - pb.getValueTreeState().getRawParameterValue (id)->load()) < 1.0e-4f;
+        };
+        const bool paramsOk = eq ("macroBody") && eq ("drive") && eq ("fundamental")
+                            && eq ("sampleEnable") && eq ("character") && eq ("tailLength");
+        std::printf ("  state round-trip: params %s ; sample '%s' -> '%s'\n",
+                     paramsOk ? "match" : "MISMATCH",
+                     pa.getCurrentSampleName().toRawUTF8(), pb.getCurrentSampleName().toRawUTF8());
+        check (paramsOk, "state round-trip: all params restore exactly");
+        check (pa.getCurrentSampleName() == pb.getCurrentSampleName() && nm.isNotEmpty(),
+               "state round-trip: currentSampleName restores");
+
+        // A minimal stateVersion-1 tree (no sample* params) must load without error.
+        juce::ValueTree v1 ("PARAMETERS");
+        v1.setProperty ("stateVersion", 1, nullptr);
+        for (auto id : { "fundamental", "bodyLevel", "drive", "oversampling" })
+        {
+            juce::ValueTree p ("PARAM");
+            p.setProperty ("id", id, nullptr);
+            p.setProperty ("value", 0.5f, nullptr);
+            v1.addChild (p, -1, nullptr);
+        }
+        juce::MemoryBlock v1mb;
+        if (auto xml = std::unique_ptr<juce::XmlElement> (v1.createXml()))
+            juce::AudioProcessor::copyXmlToBinary (*xml, v1mb);
+        KICKRAudioProcessor pv1;
+        pv1.setStateInformation (v1mb.getData(), (int) v1mb.getSize());
+        const bool sampleOff = pv1.getValueTreeState().getRawParameterValue ("sampleEnable")->load() < 0.5f;
+        check (sampleOff, "stateVersion-1 blob loads: sampleEnable stays at its v2 default (off)");
+        check (analyse (kickr::tests::renderNote (pv1, a1, vel, sr, 512, 0.3), sr).allFinite,
+               "stateVersion-1 restored processor still renders finite audio");
+
+        fx.deleteFile(); tmpBank.deleteRecursively();
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

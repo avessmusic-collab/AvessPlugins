@@ -1,7 +1,7 @@
 # KICKR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 2 — DSP Phase 2.10 complete (real oversampling factors 1×/2×/4×/8×, default 2×; glitch-free 64-sample-fade factor switching + full `fsOversampled` coefficient refresh; latency reported via an APVTS listener on the message thread)
+- **Current Status:** 🚧 Stage 3 (native JUCE UI) — **Stage 2 (DSP) COMPLETE**, all 12 phases. Full engine: 6 layers (Body+PitchEnv / Sub / Click / Tail / Noise / Sample) → Tone(pre) → Transient → 7-curve morph → 130 Hz mono-crossover + M/S width → Mix → Output → in-region DC blocker → −0.5 dBFS soft-clip limiter, wrapped in glitch-free 1×/2×/4×/8× oversampling (default 2×), + 4 macros. 163/163 KICKR_Tests PASS, pluginval strictness 6 SUCCESS, 0 warnings.
 - **Version:** N/A
 - **Type:** Synth (Kick Instrument) — algorithmic synthesis + sample-playback layer
 - **Spec:** parameter-spec v2 · 59 APVTS params
@@ -133,6 +133,19 @@
   - **Orchestrator fix at the checkpoint — base-rate final ceiling clamp.** Enabling 2× exposed a second in-region-limiter problem (same class as the 2.9 DC-blocker one): the polyphase-IIR **downsampling** filter runs *after* the in-region `tanh` limiter and overshoots on a heavily-clipped kick — measured **+1.7 dB** (peak 1.145 at 2×, was 0.944 at 1×). Added a base-rate `juce::jlimit(±OutputStage::kLimiterCeilingGain)` on the final bus (after `processSamplesDown`, replacing the plain `sanitize` loop) **only when `limiter` is on**. It engages on ~0.1 % of samples (just the filter's residual ripple) so its own base-rate aliasing is far below the noise floor, and it makes the −0.5 dBFS digital ceiling a hard guarantee regardless of OS factor. `limiter` off → raw (unclamped). Peak back to exactly **0.9441** at every factor. `architecture.md` Rate-placement + DC-blocker notes updated; `OutputStage::kLimiterCeilingGain` constant added.
   - Checkpoint: **146/146 KICKR_Tests PASS.** latency 0/4/6/6 at 1/2/4/8× (== `round(getLatencyInSamples())`); fixed 100 Hz body = 100.0 Hz at all 4 factors; body −40 dB time 275–276 ms across factors; 1x↔4x flip ×19 under a held note → worst slew 0.032, no NaN, bounded; `drive1/char1` HF proxy 0.098 → 0.061 (1×→4×); default-prepared processor reports latency **4** (the 2× PDC — a bare `AudioProcessor` reports 0 pre-`prepareToPlay`, which is what pluginval logs and is harmless). Build clean 0 warnings VST3+AU+Standalone; pluginval strictness 6 SUCCESS.
   - **Deferred (markers left):** macros (2.11), analyzer + UI (Stage 3), AD-10 base-rate escape hatch (repo Stage 17).
+- **2026-08-30 (Stage 2 — DSP Phase 2.11 — FINAL DSP PHASE):** Macros + parameter smoothing + state. *(Implemented directly by the orchestrator — the dsp-agent hit a session limit before writing any code.)* Files: `DSP/KickEngine.{h,cpp}`, `Tests/RunTests.cpp`. No CMake / contract change.
+  - **Macro layer in `KickEngine`** — 4 cached APVTS ptrs + 4 `juce::SmoothedValue` (~20 ms, so a fast macro sweep is click-free). Per block, right after the `Snapshot` load and **before** any `setParams` fan-out / note-on: `m = (macroSm.getNextValue() − 0.5)·2` ∈ [−1,+1], then mutate the `snap.*` **effective** values in place (the APVTS target params are NOT modified — each stays independently automatable):
+    - **PUNCH**: `transientAttack += m·0.5` · `pitchStartRatio ·= (1 + m·0.6)` · `pitchTimeMs ·= (1 − m·0.35)` · `clickLevel += m·0.3`
+    - **BODY**: `bodyLevel += m·0.3` · `bodyDecayMs ·= (1 + m·0.5)` · `fundamental ·= 2^(−m·3/12)` (≤ 3 semitones "deeper") · `sampleLevel += m·0.3` (only while `sampleEnable`)
+    - **CRUSH**: `drive += m·0.4` · `character += m·0.4`
+    - **TAIL**: `tailLevel += m·0.35` · `tailLengthMs ·= (1 + m·0.6)` · `tailTone += m·0.3`
+    - every result `jlimit`-clamped to range; amounts tunable at repo Stage 17.
+  - **m = 0 (macro at 0.5) is EXACTLY neutral** — `+= 0`, `·= 1.0f`, `·= exp2(0)==1.0f` are true float identities → **every prior test stays bit-identical** (`max|diff| = 0.00` verified). No `+= 0`-that-isn't-really-0.
+  - `KickEngine::reset()` snaps the 4 macro smoothers to their targets. `prepare()` caches the ptrs + `reset(baseSampleRate, 0.02)` + `setCurrentAndTargetValue`.
+  - **Smoothing audit:** all 51 continuous params already reach the DSP via `SmoothedValue` (layer gains, `mixGain`/`outGain`), per-block filter-coef recompute (tone / SVF cutoffs = the smoothing granularity), or component smoothers (`Waveshaper` makeup, `TransientShaper` gain). Fast-automation slew: `bodyLevel`/`low`/`output` ≈ 0.22, `clickLevel` ≈ 0.03, macro sweep ≈ 0.22 — all bounded, no zipper/NaN. **No extra smoothing added** (adding unneeded smoothing costs + lags).
+  - **State:** confirmed `getStateInformation` → `stateVersion = 2` + `currentPresetName`/`currentPresetPath`/`currentSampleName`; `setStateInformation` reads them + calls `loadSampleByName`. Verified full round-trip (params incl. a macro + a real `currentSampleName`) restores exactly; a hand-built `stateVersion = 1` blob (no `sample*` params) loads fine, `sampleEnable` stays off. No code change needed.
+  - Checkpoint: **163/163 `KICKR_Tests` PASS** (17 new). PUNCH onset RMS 0.37/0.45/0.50 (0/0.5/1) · BODY 54→46 Hz + body RMS 0.069→0.208 · CRUSH hfRatio 0.011→0.043 · TAIL-only 0.00/0.009/0.039 (0/0.5/1) · `drive` still moves the sound under `macroCrush = 1` · all fast ramps click-free · state round-trips. Build clean 0 warnings VST3+AU+Standalone; pluginval strictness 6 SUCCESS.
+  - **STAGE 2 (DSP) COMPLETE — all 12 phases (2.1–2.11 + 2.7b).** Next: Stage 3, native JUCE UI.
 
 ## Known Issues
 
