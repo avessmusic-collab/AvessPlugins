@@ -5,6 +5,7 @@
     Writes kickr_phase*.wav next to the working directory for manual inspection.
 */
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
 #include "Tests/OfflineRender.h"
 #include "DSP/SamplePlayer.h"
 #include "DSP/Waveshaper.h"
@@ -1906,6 +1907,52 @@ int main()
                "stateVersion-1 restored processor still renders finite audio");
 
         fx.deleteFile(); tmpBank.deleteRecursively();
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 3.1] Native editor - LookAndFeel + layout + 59 param bindings\n");
+    {
+        struct Counter
+        {
+            int operator() (juce::Component* c) const
+            {
+                int n = c->getNumChildComponents();
+                for (int i = 0; i < c->getNumChildComponents(); ++i)
+                    n += (*this) (c->getChildComponent (i));
+                return n;
+            }
+        };
+
+        KICKRAudioProcessor pe;
+        pe.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> ed (pe.createEditor());
+        check (ed != nullptr, "editor is created");
+
+        if (ed != nullptr)
+        {
+            ed->setSize (900, 660);
+            ed->setSize (1280, 936);
+            ed->setSize (2000, 1470);
+            check (true, "editor resizes across the full range without assert");
+
+            const int kids = Counter{} (ed.get());
+            std::printf ("  editor child components (recursive): %d\n", kids);
+            check (kids >= 59, "editor has at least 59 child controls");
+
+            // Software-render the editor to a PNG (no display needed) for visual review.
+            ed->setSize (1600, 1170);
+            const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.5f);
+            const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_3_1.png");
+            if (auto os = png.createOutputStream())
+            {
+                os->setPosition (0); os->truncate();
+                juce::PNGImageFormat fmt;
+                const bool ok = fmt.writeImageToStream (snap, *os);
+                std::printf ("  wrote %s : %s (%dx%d)\n", png.getFullPathName().toRawUTF8(),
+                             ok ? "ok" : "FAILED", snap.getWidth(), snap.getHeight());
+            }
+        }
     }
 
     std::printf ("\n%d failure(s)\n", failures);

@@ -45,6 +45,9 @@ set(KICKR_CORE_SOURCES
     Source/DSP/Waveshaper.cpp
     # DSP — Stage 2 Phase 2.9 (tone / stereo width + mono crossover / output gain / limiter / mix)
     Source/DSP/OutputStage.cpp
+    # GUI — Stage 3 Phase 3.1 (native LookAndFeel + compound Knob/Toggle + full editor layout)
+    Source/UI/KickrLookAndFeel.cpp
+    Source/UI/KickrKnob.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})
