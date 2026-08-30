@@ -1983,29 +1983,38 @@ int main()
             }
         };
 
-        renderBlocks (0.6, true);
+        // --- streamed capture: a short render fills only a prefix (left->right sweep) ---
+        std::array<float, kickr::Analyzer::kWaveCaptureLen> wvPartial {};
+        std::uint32_t genPartial = 0;
+        renderBlocks (0.05, true);   // ~50 ms  ->  ~2400 samples @ 48 kHz
+        const int lenPartial = pa.getAnalyzer().getWaveform (wvPartial, genPartial);
+        std::printf ("  streamed: after ~50ms  len=%d / %d  gen=%u\n",
+                     lenPartial, kickr::Analyzer::kWaveCaptureLen, genPartial);
+        check (genPartial == 1, "note-on bumps the capture generation");
+        check (lenPartial > 1500 && lenPartial < kickr::Analyzer::kWaveCaptureLen,
+               "capture is a growing prefix mid-kick (draws in left -> right)");
+
+        renderBlocks (0.6, false);   // let the same trigger fill the rest
         for (int k = 0; k < 8; ++k) pa.getAnalyzer().updateSpectrum();
 
-        // --- waveform: exactly one full kick captured per trigger ---
         std::array<float, kickr::Analyzer::kWaveCaptureLen> wv {};
-        const bool fresh = pa.getAnalyzer().getWaveform (wv);
+        std::uint32_t gen = 0;
+        const int len = pa.getAnalyzer().getWaveform (wv, gen);
         bool wFinite = true; float wPeak = 0.0f; double wSq = 0.0;
-        for (float v : wv)
+        for (int i = 0; i < len; ++i)
         {
+            const float v = wv[static_cast<size_t> (i)];
             if (! std::isfinite (v)) wFinite = false;
             wPeak = std::max (wPeak, std::abs (v));
             wSq  += (double) v * v;
         }
-        const double wRms = std::sqrt (wSq / (double) wv.size());
-        std::printf ("  waveform: fresh=%d finite=%d peak=%.3f rms=%.4f\n",
-                     (int) fresh, (int) wFinite, wPeak, wRms);
-        check (fresh,                          "waveform capture published during the render");
+        const double wRms = len > 0 ? std::sqrt (wSq / (double) len) : 0.0;
+        std::printf ("  waveform: len=%d gen=%u finite=%d peak=%.3f rms=%.4f\n",
+                     len, gen, (int) wFinite, wPeak, wRms);
+        check (len == kickr::Analyzer::kWaveCaptureLen, "capture fills to the full window");
+        check (gen == genPartial,             "still the same trigger (no new generation)");
         check (wFinite,                        "waveform capture is finite");
         check (wPeak > 0.02f && wRms > 1.0e-4, "waveform capture is non-silent");
-
-        std::array<float, kickr::Analyzer::kWaveCaptureLen> wvAgain {};
-        const bool freshAgain = pa.getAnalyzer().getWaveform (wvAgain);
-        check (! freshAgain, "getWaveform is false with no new capture (one capture per trigger)");
 
         // --- spectrum: FFT ran on this (message) thread; peak near the ~55 Hz fundamental ---
         const auto& db = pa.getAnalyzer().getSpectrumDb();
@@ -2023,14 +2032,13 @@ int main()
         check (sFinite,                            "spectrum dB frame is finite");
         check (peakHz > 20.0 && peakHz < 250.0,    "spectrum peak sits in the low-kick fundamental region");
 
-        // --- 2 s of silence must not trigger a capture ---
+        // --- 2 s of silence must not start a new capture (no armCapture -> gen unchanged) ---
         renderBlocks (2.0, false);
         std::array<float, kickr::Analyzer::kWaveCaptureLen> wvSilent {};
-        const bool freshSilent = pa.getAnalyzer().getWaveform (wvSilent);
-        float peakSilent = 0.0f;
-        if (freshSilent) for (float v : wvSilent) peakSilent = std::max (peakSilent, std::abs (v));
-        std::printf ("  post-silence: fresh=%d peak=%.4f\n", (int) freshSilent, peakSilent);
-        check (! freshSilent || peakSilent < 0.02f, "no spurious capture after 2 s of silence");
+        std::uint32_t genSilent = 0;
+        pa.getAnalyzer().getWaveform (wvSilent, genSilent);
+        std::printf ("  post-silence: gen=%u (was %u)\n", genSilent, gen);
+        check (genSilent == gen, "no spurious capture after 2 s of silence (generation unchanged)");
 
         pa.releaseResources();
     }
@@ -2039,14 +2047,29 @@ int main()
     std::printf ("\n[Phase 3.2] Editor snapshot (analyzers wired into the scope)\n");
     {
         KICKRAudioProcessor pe;
+        pe.setRateAndBufferSizeDetails (48000.0, 512);
         pe.prepareToPlay (48000.0, 512);
 
-        std::unique_ptr<juce::AudioProcessorEditor> ed (pe.createEditor());
+        // Feed ~130 ms of a real kick so the scope has a partial (drawing-in) capture.
+        {
+            juce::AudioBuffer<float> b (juce::jmax (1, pe.getTotalNumOutputChannels()), 512);
+            for (int bi = 0; bi < 12; ++bi)
+            {
+                b.clear();
+                juce::MidiBuffer m;
+                if (bi == 0) m.addEvent (juce::MidiMessage::noteOn (1, a1, 0.9f), 0);
+                pe.processBlock (b, m);
+            }
+        }
+
+        std::unique_ptr<juce::AudioProcessorEditor> edBase (pe.createEditor());
+        auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
         check (ed != nullptr, "editor with the wired analyzers is created");
 
         if (ed != nullptr)
         {
             ed->setSize (1600, 1170);
+            ed->refreshAnalyzersForSnapshot();   // Timers don't fire in the headless test
             const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
             const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_3_2.png");
             if (auto os = png.createOutputStream())

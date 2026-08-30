@@ -19,26 +19,25 @@ namespace kickr
         specFifo.reset();
         specRing.fill (0.0f);
 
-        for (auto& b : waveBuffers)
-            b.fill (0.0f);
+        waveBuffer.fill (0.0f);
 
         fftScratch.fill (0.0f);
         drainBuf.fill (0.0f);
         spectrumDb.fill (-120.0f);
 
-        fillingIndex = 0;
-        writePos     = 0;
-        lastSeenReady = -1;
-        captureArmed.store (false, std::memory_order_relaxed);
-        captureReadyBuffer.store (-1, std::memory_order_relaxed);
+        captureFull = true;
+        waveWritePos.store (0, std::memory_order_relaxed);
+        // leave waveGeneration as-is (a monotonically increasing tag)
     }
 
     //========================================================================== audio thread
     void Analyzer::armCapture() noexcept
     {
-        // Restart the write index of the (inactive) filling buffer and arm.
-        writePos = 0;
-        captureArmed.store (true, std::memory_order_relaxed);
+        // New trigger: restart the streamed capture from sample 0. The generation bump
+        // (release) pairs with the acquire load in getWaveform().
+        waveWritePos.store (0, std::memory_order_relaxed);
+        captureFull = false;
+        waveGeneration.fetch_add (1, std::memory_order_release);
     }
 
     void Analyzer::pushBlock (const float* left, const float* right, int numSamples) noexcept
@@ -46,24 +45,21 @@ namespace kickr
         if (numSamples <= 0 || left == nullptr || right == nullptr)
             return;
 
-        // ---- (a) one-kick waveform capture (double buffer + atomic publish) ----------
-        if (captureArmed.load (std::memory_order_relaxed))
+        // ---- (a) streamed one-kick waveform capture ---------------------------------
+        //  Single writer (this thread). Append, then publish the new length with a
+        //  release store so the message thread sees the samples before the count.
+        if (! captureFull)
         {
-            auto& buf = waveBuffers[static_cast<size_t> (fillingIndex)];
-            const int n = juce::jmin (numSamples, kWaveCaptureLen - writePos);
+            const int pos = waveWritePos.load (std::memory_order_relaxed);
+            const int n   = juce::jmin (numSamples, kWaveCaptureLen - pos);
 
             for (int i = 0; i < n; ++i)
-                buf[static_cast<size_t> (writePos + i)] = 0.5f * (left[i] + right[i]);
+                waveBuffer[static_cast<size_t> (pos + i)] = 0.5f * (left[i] + right[i]);
 
-            writePos += n;
+            waveWritePos.store (pos + n, std::memory_order_release);
 
-            if (writePos >= kWaveCaptureLen)
-            {
-                captureReadyBuffer.store (fillingIndex, std::memory_order_release);
-                fillingIndex ^= 1;
-                writePos = 0;
-                captureArmed.store (false, std::memory_order_relaxed);
-            }
+            if (pos + n >= kWaveCaptureLen)
+                captureFull = true;
         }
 
         // ---- (b) spectrum ring — always; drop silently if the FIFO is full ----------
@@ -80,16 +76,19 @@ namespace kickr
     }
 
     //======================================================================== message thread
-    bool Analyzer::getWaveform (std::array<float, kWaveCaptureLen>& dst) const noexcept
+    int Analyzer::getWaveform (std::array<float, kWaveCaptureLen>& dst,
+                               std::uint32_t& generation) const noexcept
     {
-        const int ready = captureReadyBuffer.load (std::memory_order_acquire);
+        // acquire the generation first, then the length; the length's release store in
+        // pushBlock() ensures the [0, len) samples are visible.
+        generation = waveGeneration.load (std::memory_order_acquire);
+        const int len = juce::jlimit (0, kWaveCaptureLen,
+                                      waveWritePos.load (std::memory_order_acquire));
 
-        if (ready < 0 || ready == lastSeenReady)
-            return false;
+        for (int i = 0; i < len; ++i)
+            dst[static_cast<size_t> (i)] = waveBuffer[static_cast<size_t> (i)];
 
-        dst = waveBuffers[static_cast<size_t> (ready)];
-        lastSeenReady = ready;
-        return true;
+        return len;
     }
 
     void Analyzer::updateSpectrum() noexcept

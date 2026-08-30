@@ -26,6 +26,9 @@ namespace kickr
         void paint (juce::Graphics&) override;
         void visibilityChanged() override;
 
+        /** Pull a frame + repaint immediately (headless snapshot tests). */
+        void refreshNow() { timerCallback(); }
+
     private:
         void timerCallback() override;
 

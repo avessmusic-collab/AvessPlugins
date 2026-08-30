@@ -36,6 +36,9 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    /** Headless snapshot tests only — pull one analyzer frame into the displays. */
+    void refreshAnalyzersForSnapshot() { waveDisplay.refreshNow(); spectrumDisplay.refreshNow(); }
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 

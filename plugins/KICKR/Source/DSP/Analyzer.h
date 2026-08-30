@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -25,8 +26,12 @@ namespace kickr
                 the spectrum ring. If the FIFO is full the extra samples are dropped.
             NO allocation, NO locks, NO FFT on the audio thread.
 
-          - Message thread (the 30 Hz display `Timer`s):
-              * `getWaveform(dst)`  — copies the ready capture if a fresh one exists
+          - Message thread (the display `Timer`s):
+              * `getWaveform(dst, gen)` — copies the *prefix that has been written so far*
+                (the audio thread only ever writes at indices >= writePos, so [0, writePos)
+                is stable). Returns that valid length + the capture generation, so the
+                display draws the kick sweeping in **left -> right** as it plays, with only
+                ~one timer tick of latency instead of waiting for a full 341 ms buffer.
               * `updateSpectrum()`  — drains the ring, Hann-windows, FFTs, magnitude->dB
                                       with a one-pole per-bin smoother
               * `getSpectrumDb()`   — the smoothed dB frame for painting
@@ -57,9 +62,13 @@ namespace kickr
         void pushBlock (const float* left, const float* right, int numSamples) noexcept;
 
         //==================================================================== message thread
-        /** Copy the ready capture into `dst` iff a new one has been published since the
-            last call. Returns whether `dst` was refreshed. */
-        bool getWaveform (std::array<float, kWaveCaptureLen>& dst) const noexcept;
+        /** Copy the samples captured *so far* for the current trigger into `dst` (the
+            audio thread only writes at indices >= the returned length, so the prefix is
+            stable). `generation` is bumped on every `armCapture()` so the caller can tell
+            a fresh trigger from a still-filling one. Returns the number of valid samples
+            in `dst` (0 before the first note). */
+        int getWaveform (std::array<float, kWaveCaptureLen>& dst,
+                         std::uint32_t& generation) const noexcept;
 
         /** Drain up to `kFftSize` samples, Hann-window, FFT, magnitude -> dB into the
             member frame with a ~0.6 one-pole per bin. Safe to call at 30 Hz. */
@@ -72,13 +81,14 @@ namespace kickr
     private:
         double currentSampleRate { 48000.0 };
 
-        // ---- waveform: double buffer + atomic index (architecture.md) ----------------
-        std::array<std::array<float, kWaveCaptureLen>, 2> waveBuffers {};
-        int               fillingIndex { 0 };          // audio-thread only
-        int               writePos     { 0 };          // audio-thread only
-        std::atomic<bool> captureArmed { false };
-        std::atomic<int>  captureReadyBuffer { -1 };
-        mutable int       lastSeenReady { -1 };         // message-thread only
+        // ---- waveform: single buffer, streamed. The audio thread appends and publishes
+        //      `waveWritePos` (release); the message thread reads it (acquire) and draws
+        //      the stable [0, pos) prefix -> the kick sweeps in left->right as it plays,
+        //      ~one timer tick of latency instead of a full 341 ms buffer wait.
+        std::array<float, kWaveCaptureLen> waveBuffer {};
+        std::atomic<int>           waveWritePos   { 0 };   // valid-sample count, release-stored
+        std::atomic<std::uint32_t> waveGeneration { 0 };   // ++ on every armCapture()
+        bool                       captureFull    { true };    // audio-thread only; true = idle
 
         // ---- spectrum: AbstractFifo-guarded ring ------------------------------------
         juce::AbstractFifo               specFifo { kSpecFifoLen };

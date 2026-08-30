@@ -20,15 +20,22 @@ namespace kickr
     void WaveformDisplay::visibilityChanged()
     {
         if (isVisible())
-            startTimerHz (30);
+            startTimerHz (60);   // ~16 ms latency — near real-time while the kick draws in
         else
             stopTimer();
     }
 
     void WaveformDisplay::timerCallback()
     {
-        if (analyzer.getWaveform (wave))
+        std::uint32_t gen = 0;
+        const int len = analyzer.getWaveform (wave, gen);
+
+        if (len != validLen || gen != generation)
+        {
+            validLen   = len;
+            generation = gen;
             repaint();
+        }
     }
 
     void WaveformDisplay::paint (juce::Graphics& g)
@@ -73,20 +80,26 @@ namespace kickr
         g.setColour (pal::ink.withAlpha (0.11f));
         g.drawHorizontalLine (juce::roundToInt (midY), r.getX(), r.getRight());
 
-        // ---- build the trace ---------------------------------------------------
-        const int   shown  = Analyzer::kWaveCaptureLen;
+        // ---- build the trace -------------------------------------------------------
+        //  The x axis is a FIXED window (kWaveCaptureLen). We only draw up to the
+        //  samples captured so far, so the trace sweeps in left -> right as the kick
+        //  plays and reaches the right edge exactly when the buffer is full.
+        const int   window = Analyzer::kWaveCaptureLen;
+        const int   drawTo = juce::jlimit (0, window, validLen);
         const float ampY   = r.getHeight() * 0.40f;
-        const int   stride = juce::jmax (1, shown / juce::jmax (1, (int) r.getWidth() * 2));
+        const int   stride = juce::jmax (1, window / juce::jmax (1, (int) r.getWidth() * 2));
 
         tracePath.clear();
         fillPath.clear();
-        bool started = false;
+        bool  started = false;
+        float lastX   = r.getX();
 
-        for (int i = 0; i < shown; i += stride)
+        for (int i = 0; i < drawTo; i += stride)
         {
-            const float x = r.getX() + r.getWidth() * (float) i / (float) shown;
+            const float x = r.getX() + r.getWidth() * (float) i / (float) window;
             const float v = juce::jlimit (-1.35f, 1.35f, wave[static_cast<size_t> (i)]);
             const float y = midY - v * ampY;
+            lastX = x;
 
             if (! started)
             {
@@ -113,7 +126,7 @@ namespace kickr
 
         if (started)
         {
-            fillPath.lineTo (r.getRight(), midY);
+            fillPath.lineTo (lastX, midY);
             fillPath.closeSubPath();
 
             g.setGradientFill (grad (0.13f));
@@ -126,10 +139,21 @@ namespace kickr
             g.setGradientFill (grad (1.0f));
             g.strokePath (tracePath, juce::PathStrokeType (1.6f * s,
                           juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            // leading-edge dot — the "pulse" head while the kick is still drawing in
+            if (drawTo < window)
+            {
+                const float hy = midY - juce::jlimit (-1.35f, 1.35f,
+                                     wave[static_cast<size_t> (juce::jmax (0, drawTo - 1))]) * ampY;
+                g.setColour (pal::lowfam.withAlpha (0.9f));
+                g.fillEllipse (lastX - 2.4f * s, hy - 2.4f * s, 4.8f * s, 4.8f * s);
+                g.setColour (pal::lowfam.withAlpha (0.25f));
+                g.fillEllipse (lastX - 5.0f * s, hy - 5.0f * s, 10.0f * s, 10.0f * s);
+            }
         }
 
         // ---- millisecond axis --------------------------------------------------
-        const double durMs = 1000.0 * (double) shown / juce::jmax (1.0, analyzer.getSampleRate());
+        const double durMs = 1000.0 * (double) window / juce::jmax (1.0, analyzer.getSampleRate());
         const int    ah    = juce::roundToInt (12.0f * s);
         const int    aw    = juce::roundToInt (54.0f * s);
         const int    ay    = juce::roundToInt (r.getBottom() - 13.0f * s);
