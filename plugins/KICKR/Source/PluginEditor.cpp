@@ -13,6 +13,13 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     setLookAndFeel (&lnf);
     tooltip.setMillisecondsBeforeTipAppears (450);
 
+    // ---------------------------------------------------------------- analyzers
+    // Added FIRST so the WAVE / SPECTRUM mode buttons (added below) sit on top.
+    // Both fill the scope panel; `waveDisplay` visible by default.
+    addChildComponent (waveDisplay);
+    addChildComponent (spectrumDisplay);
+    waveDisplay.setVisible (true);
+
     // ---------------------------------------------------------------- header
     wordmark.setText ("KICKR", juce::dontSendNotification);
     wordmark.setJustificationType (juce::Justification::centredLeft);
@@ -51,8 +58,21 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     scopeWaveButton.setRadioGroupId (0x5c09e);
     scopeSpectrumButton.setRadioGroupId (0x5c09e);
     scopeWaveButton.setToggleState (true, juce::dontSendNotification);
-    scopeWaveButton.setTooltip ("Waveform / spectrum analyzer arrives in Phase 3.2");
-    scopeSpectrumButton.setTooltip ("Waveform / spectrum analyzer arrives in Phase 3.2");
+    scopeWaveButton.setTooltip ("Kick waveform — one capture per trigger");
+    scopeSpectrumButton.setTooltip ("Live FFT spectrum");
+
+    scopeWaveButton.onClick = [this]
+    {
+        const bool wave = scopeWaveButton.getToggleState();
+        waveDisplay.setVisible (wave);
+        spectrumDisplay.setVisible (! wave);
+    };
+    scopeSpectrumButton.onClick = [this]
+    {
+        const bool spectrum = scopeSpectrumButton.getToggleState();
+        spectrumDisplay.setVisible (spectrum);
+        waveDisplay.setVisible (! spectrum);
+    };
 
     // ---------------------------------------------------------------- sample strip
     sampleNameLabel.setJustificationType (juce::Justification::centredLeft);
@@ -390,6 +410,11 @@ void KICKRAudioProcessorEditor::layoutHeader (juce::Rectangle<int> a)
 
 void KICKRAudioProcessorEditor::layoutScope (juce::Rectangle<int> a)
 {
+    // Both analyzers fill the whole scope panel; they paint their own recessed
+    // dark radial-gradient background. The mode buttons float on top, top-right.
+    waveDisplay.setBounds (a);
+    spectrumDisplay.setBounds (a);
+
     auto modes = a.reduced (scaled (14)).removeFromTop (scaled (22)).removeFromRight (scaled (150));
     scopeSpectrumButton.setBounds (modes.removeFromRight (scaled (78)));
     modes.removeFromRight (scaled (4));
@@ -549,38 +574,8 @@ void KICKRAudioProcessorEditor::paint (juce::Graphics& g)
                             (float) engineBounds.getY() + sf (10),
                             (float) engineBounds.getBottom() - sf (10));
 
-    // ---- oscilloscope placeholder (Phase 3.2) ----
-    {
-        auto s = scopeBounds.toFloat();
-        juce::ColourGradient sg (juce::Colour (0xff17111F), s.getCentreX(), s.getY() - s.getHeight() * 0.2f,
-                                 juce::Colour (0xff060409), s.getCentreX(), s.getBottom(), true);
-        sg.addColour (0.55, juce::Colour (0xff0A0710));
-        g.setGradientFill (sg);
-        g.fillRoundedRectangle (s, sf (18));
-        g.setColour (juce::Colours::black);
-        g.drawRoundedRectangle (s.reduced (0.5f), sf (18), 1.5f);
-
-        g.setColour (pal::ink.withAlpha (0.10f));
-        g.drawHorizontalLine (scopeBounds.getCentreY(), s.getX() + sf (14), s.getRight() - sf (14));
-        for (int k = 1; k < 6; ++k)
-        {
-            const int x = juce::roundToInt (s.getX() + s.getWidth() * (float) k / 6.0f);
-            g.drawVerticalLine (x, s.getY() + sf (12), s.getBottom() - sf (12));
-        }
-
-        const int axH = juce::roundToInt (sf (12));
-        const int axW = juce::roundToInt (sf (46));
-        const int axY = scopeBounds.getBottom() - juce::roundToInt (sf (16));
-        g.setColour (pal::ink.withAlpha (0.32f));
-        g.setFont (juce::Font (juce::FontOptions (sf (8))));
-        g.drawText ("0 ms",   scopeBounds.getX() + juce::roundToInt (sf (10)), axY, axW, axH, juce::Justification::left,  false);
-        g.drawText ("250",    scopeBounds.getCentreX() - axW / 2,              axY, axW, axH, juce::Justification::centred, false);
-        g.drawText ("500",    scopeBounds.getRight() - axW - juce::roundToInt (sf (10)), axY, axW, axH, juce::Justification::right, false);
-
-        g.setColour (pal::ink.withAlpha (0.12f));
-        g.setFont (kickr::KickrLookAndFeel::titleFont (sf (11)));
-        g.drawText (juce::String::fromUTF8 ("ANALYZER \xe2\x80\x94 PHASE 3.2"),
-                    scopeBounds.reduced (juce::roundToInt (sf (20))),
-                    juce::Justification::centred, false);
-    }
+    // ---- oscilloscope (Phase 3.2) ----
+    // The scope panel is now owned + painted by `waveDisplay` / `spectrumDisplay`
+    // (dark radial-gradient background, grid, trace, ms/Hz axes, KICKR watermark).
+    // The editor only reserves `scopeBounds` for them in resized().
 }

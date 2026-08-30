@@ -48,6 +48,10 @@ set(KICKR_CORE_SOURCES
     # GUI — Stage 3 Phase 3.1 (native LookAndFeel + compound Knob/Toggle + full editor layout)
     Source/UI/KickrLookAndFeel.cpp
     Source/UI/KickrKnob.cpp
+    # GUI — Stage 3 Phase 3.2 (real-time waveform + spectrum analyzers)
+    Source/DSP/Analyzer.cpp
+    Source/UI/WaveformDisplay.cpp
+    Source/UI/SpectrumDisplay.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

@@ -606,7 +606,10 @@ namespace kickr
                     data[i] = dsputils::sanitize (data[i]);
         }
 
-        // PHASE 3.2: analyzer tap here — copy the post-limiter mono sum into the
-        // lock-free FIFO / double buffer. No-op this phase.
+        // PHASE 3.2: the analyzer tap now lives in `KICKRAudioProcessor::processBlock`
+        // AFTER `engine.processBlock` (this method) returns — the engine stays pure
+        // DSP. The processor arms a one-kick capture on a note-on and calls
+        // `Analyzer::pushBlock` with the final post-limiter buffer (bounded memcpy +
+        // atomic store + AbstractFifo write only).
     }
 }

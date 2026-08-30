@@ -9,6 +9,8 @@
 
 #include "UI/KickrLookAndFeel.h"
 #include "UI/KickrKnob.h"
+#include "UI/WaveformDisplay.h"
+#include "UI/SpectrumDisplay.h"
 
 class KICKRAudioProcessor;
 
@@ -81,9 +83,11 @@ private:
     juce::TextButton presetPrev   { juce::String::fromUTF8 ("\xe2\x97\x84") };
     juce::TextButton presetNext   { juce::String::fromUTF8 ("\xe2\x96\xba") };
 
-    // ---- oscilloscope placeholder (Phase 3.2) ----
+    // ---- oscilloscope (Phase 3.2 — real-time analyzers) ----
     juce::TextButton scopeWaveButton     { "WAVE" };
     juce::TextButton scopeSpectrumButton { "SPECTRUM" };
+    kickr::WaveformDisplay waveDisplay     { proc.getAnalyzer() };
+    kickr::SpectrumDisplay spectrumDisplay { proc.getAnalyzer() };
 
     // ---- sample strip ----
     juce::Label      sampleNameLabel, sampleDropHint;

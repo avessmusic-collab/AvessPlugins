@@ -11,8 +11,10 @@
 #include "DSP/Waveshaper.h"
 #include "Sampling/SampleLibrary.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 namespace
@@ -1944,6 +1946,109 @@ int main()
             ed->setSize (1600, 1170);
             const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.5f);
             const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_3_1.png");
+            if (auto os = png.createOutputStream())
+            {
+                os->setPosition (0); os->truncate();
+                juce::PNGImageFormat fmt;
+                const bool ok = fmt.writeImageToStream (snap, *os);
+                std::printf ("  wrote %s : %s (%dx%d)\n", png.getFullPathName().toRawUTF8(),
+                             ok ? "ok" : "FAILED", snap.getWidth(), snap.getHeight());
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 3.2] Analyzer - waveform + spectrum (lock-free taps)\n");
+    {
+        const double s2  = 48000.0;
+        const int    blk = 512;
+
+        KICKRAudioProcessor pa;
+        pa.setRateAndBufferSizeDetails (s2, blk);
+        pa.prepareToPlay (s2, blk);
+
+        juce::AudioBuffer<float> ab (juce::jmax (1, pa.getTotalNumOutputChannels()), blk);
+
+        auto renderBlocks = [&] (double seconds, bool noteOnFirst)
+        {
+            const int nBlocks = std::max (1, (int) std::ceil (seconds * s2 / blk));
+            for (int bi = 0; bi < nBlocks; ++bi)
+            {
+                ab.clear();
+                juce::MidiBuffer midi;
+                if (noteOnFirst && bi == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, a1, 0.9f), 0);
+                pa.processBlock (ab, midi);
+                pa.getAnalyzer().updateSpectrum();   // stand in for the 30 Hz display Timer
+            }
+        };
+
+        renderBlocks (0.6, true);
+        for (int k = 0; k < 8; ++k) pa.getAnalyzer().updateSpectrum();
+
+        // --- waveform: exactly one full kick captured per trigger ---
+        std::array<float, kickr::Analyzer::kWaveCaptureLen> wv {};
+        const bool fresh = pa.getAnalyzer().getWaveform (wv);
+        bool wFinite = true; float wPeak = 0.0f; double wSq = 0.0;
+        for (float v : wv)
+        {
+            if (! std::isfinite (v)) wFinite = false;
+            wPeak = std::max (wPeak, std::abs (v));
+            wSq  += (double) v * v;
+        }
+        const double wRms = std::sqrt (wSq / (double) wv.size());
+        std::printf ("  waveform: fresh=%d finite=%d peak=%.3f rms=%.4f\n",
+                     (int) fresh, (int) wFinite, wPeak, wRms);
+        check (fresh,                          "waveform capture published during the render");
+        check (wFinite,                        "waveform capture is finite");
+        check (wPeak > 0.02f && wRms > 1.0e-4, "waveform capture is non-silent");
+
+        std::array<float, kickr::Analyzer::kWaveCaptureLen> wvAgain {};
+        const bool freshAgain = pa.getAnalyzer().getWaveform (wvAgain);
+        check (! freshAgain, "getWaveform is false with no new capture (one capture per trigger)");
+
+        // --- spectrum: FFT ran on this (message) thread; peak near the ~55 Hz fundamental ---
+        const auto& db = pa.getAnalyzer().getSpectrumDb();
+        bool sFinite = true; int peakBin = 1; float peakDb = -1.0e9f;
+        for (int b = 1; b < (int) db.size(); ++b)
+        {
+            const float d = db[static_cast<size_t> (b)];
+            if (! std::isfinite (d)) sFinite = false;
+            if (d > peakDb) { peakDb = d; peakBin = b; }
+        }
+        const double binHz  = (s2 * 0.5) / (double) db.size();
+        const double peakHz = (double) peakBin * binHz;
+        std::printf ("  spectrum: finite=%d peakBin=%d (~%.0f Hz) peakDb=%.1f\n",
+                     (int) sFinite, peakBin, peakHz, peakDb);
+        check (sFinite,                            "spectrum dB frame is finite");
+        check (peakHz > 20.0 && peakHz < 250.0,    "spectrum peak sits in the low-kick fundamental region");
+
+        // --- 2 s of silence must not trigger a capture ---
+        renderBlocks (2.0, false);
+        std::array<float, kickr::Analyzer::kWaveCaptureLen> wvSilent {};
+        const bool freshSilent = pa.getAnalyzer().getWaveform (wvSilent);
+        float peakSilent = 0.0f;
+        if (freshSilent) for (float v : wvSilent) peakSilent = std::max (peakSilent, std::abs (v));
+        std::printf ("  post-silence: fresh=%d peak=%.4f\n", (int) freshSilent, peakSilent);
+        check (! freshSilent || peakSilent < 0.02f, "no spurious capture after 2 s of silence");
+
+        pa.releaseResources();
+    }
+
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 3.2] Editor snapshot (analyzers wired into the scope)\n");
+    {
+        KICKRAudioProcessor pe;
+        pe.prepareToPlay (48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> ed (pe.createEditor());
+        check (ed != nullptr, "editor with the wired analyzers is created");
+
+        if (ed != nullptr)
+        {
+            ed->setSize (1600, 1170);
+            const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+            const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_3_2.png");
             if (auto os = png.createOutputStream())
             {
                 os->setPosition (0); os->truncate();

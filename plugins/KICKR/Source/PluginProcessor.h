@@ -8,6 +8,7 @@
 
 #include "Parameters/ParameterLayout.h"
 #include "DSP/KickEngine.h"
+#include "DSP/Analyzer.h"
 #include "Sampling/SampleLibrary.h"
 #include "Sampling/SampleBuffer.h"
 
@@ -71,6 +72,12 @@ public:
         drag-drop import go through this. */
     kickr::SampleLibrary& getSampleLibrary() noexcept { return sampleLibrary; }
 
+    /** PHASE 3.2 — real-time waveform + spectrum analyzer taps. The editor's
+        `WaveformDisplay` / `SpectrumDisplay` own the message-thread `Timer`s that
+        read from this; the audio thread only does a bounded `memcpy` + atomic store
+        + `AbstractFifo` write per block (see `processBlock`). */
+    kickr::Analyzer& getAnalyzer() noexcept { return analyzer; }
+
     static constexpr int kStateVersion = 2;   // v2: SAMPLE group + currentSampleName
 
 private:
@@ -85,6 +92,9 @@ private:
 
     // Stage 2 Phase 2.1: OS-region shell + MIDI-triggered sine body + amp env.
     kickr::KickEngine                    engine { apvts };
+
+    // Stage 3 Phase 3.2: lock-free waveform + spectrum taps (message-thread FFT).
+    kickr::Analyzer                      analyzer;
 
     juce::String currentSampleName;           // v2 — bare file name ("" = none)
 

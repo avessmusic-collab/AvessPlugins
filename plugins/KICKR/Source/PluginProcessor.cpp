@@ -31,6 +31,10 @@ void KICKRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     engine.prepare (sampleRate, samplesPerBlock);
 
+    // PHASE 3.2 — build the FFT + Hann window once, size the ring, reset atomics
+    // (message thread). The audio thread never touches any of that.
+    analyzer.prepare (sampleRate);
+
     // Phase 2.1: oversampling is pinned to 1x, so this reports 0. Phase 2.10 enables
     // real factors and updates latency on every `oversampling` change (AD-2 / AD-10).
     setLatencySamples (engine.getLatencySamples());
@@ -74,10 +78,33 @@ void KICKRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     engine.setSampleBuffer (currentSample.load (std::memory_order_relaxed));
 
+    // PHASE 3.2 — arm a one-kick waveform capture on any note-on in this block. The
+    // analyzer taps sit in the PROCESSOR (not KickEngine — the engine stays pure DSP)
+    // and read the FINAL post-limiter output, so the display matches what leaves the
+    // plugin. Bounded scan, no allocation.
+    for (const auto meta : midiMessages)
+    {
+        if (meta.getMessage().isNoteOn())
+        {
+            analyzer.armCapture();
+            break;
+        }
+    }
+
     // Phase 2.1: the engine clears the buffer, renders the voice inside the OS region
     // (processSamplesUp(zero) -> render @ fsOversampled -> processSamplesDown), then
     // runs the base-rate DC blocker + NaN/Inf guard.
     engine.processBlock (buffer, midiMessages);
+
+    // PHASE 3.2 — feed the post-limiter output to the analyzer: bounded memcpy +
+    // atomic store into the double-buffered capture + one AbstractFifo write. No
+    // allocation, no locks, no FFT on the audio thread.
+    if (buffer.getNumSamples() > 0 && buffer.getNumChannels() > 0)
+    {
+        const float* l = buffer.getReadPointer (0);
+        const float* r = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : l;
+        analyzer.pushBlock (l, r, buffer.getNumSamples());
+    }
 }
 
 juce::AudioProcessorEditor* KICKRAudioProcessor::createEditor()
