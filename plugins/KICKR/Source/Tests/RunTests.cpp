@@ -2083,6 +2083,210 @@ int main()
         }
     }
 
+    // ---------------------------------------------------------------------
+    std::printf ("\n[Phase 3.3] Presets + Randomize / Mutate + sample drag-drop\n");
+    {
+        const double s3 = 48000.0;
+
+        auto renderStat = [&] (KICKRAudioProcessor& p)
+        {
+            const auto rb  = kickr::tests::renderNote (p, a1, vel, s3, 512, 0.8);
+            const auto rst = analyse (rb, s3);
+            return std::make_pair (rst, rmsWindow (rb, s3, 0.0, 0.5));
+        };
+
+        // --- 17 factory presets: all load, render finite/audible, and differ ---
+        {
+            KICKRAudioProcessor p;
+            auto& pm = p.getPresetManager();
+            check (kickr::PresetManager::getNumFactory() == 17, "17 factory presets registered");
+
+            bool allOk = true; double prevRms = -1.0; int distinct = 0;
+            for (int i = 0; i < kickr::PresetManager::getNumFactory(); ++i)
+            {
+                pm.loadFactory (i);
+                p.prepareToPlay (s3, 512);
+                const auto res = renderStat (p);
+                if (! res.first.allFinite || res.first.peak < 0.02f || res.first.peak > 4.0f) allOk = false;
+                if (prevRms < 0.0 || std::abs (res.second - prevRms) > 1.0e-4) ++distinct;
+                prevRms = res.second;
+            }
+            std::printf ("  factory: allOk=%d  distinct-rms=%d/17\n", (int) allOk, distinct);
+            check (allOk, "every factory preset renders a finite, audible, bounded kick");
+            check (distinct >= 12, "factory presets are meaningfully different from each other");
+        }
+
+        // --- Randomize respects the exclusion list ---
+        {
+            KICKRAudioProcessor p;
+            auto& apvts = p.getValueTreeState();
+            const char* excluded[] = {
+                "oversampling","limiter","output","mix","tuneMode","tune","fineTune",
+                "velSensitivity","macroPunch","macroBody","macroCrush","macroTail",
+                "synthEnable","sampleEnable","sampleLevel","sampleTune","sampleCrush","sampleReverse"
+            };
+            std::vector<float> before;
+            for (auto* id : excluded) before.push_back (apvts.getRawParameterValue (id)->load());
+
+            const float drvBefore = apvts.getRawParameterValue ("drive")->load();
+
+            bool exclOk = true, finiteOk = true, movedSomething = false;
+            for (int k = 0; k < 20; ++k)
+            {
+                p.getPresetManager().randomize();
+                for (size_t i = 0; i < before.size(); ++i)
+                    if (std::abs (apvts.getRawParameterValue (excluded[i])->load() - before[i]) > 1.0e-5f)
+                        exclOk = false;
+                if (std::abs (apvts.getRawParameterValue ("drive")->load() - drvBefore) > 1.0e-4f)
+                    movedSomething = true;
+                p.prepareToPlay (s3, 512);
+                if (! analyse (kickr::tests::renderNote (p, a1, vel, s3, 512, 0.4), s3).allFinite)
+                    finiteOk = false;
+            }
+            std::printf ("  randomize x20: exclusions-held=%d  randomizable-moved=%d  finite=%d\n",
+                         (int) exclOk, (int) movedSomething, (int) finiteOk);
+            check (exclOk,        "Randomize never touches the excluded params (tuning/output/macros/sample/...)");
+            check (movedSomething, "Randomize actually moves the randomizable params");
+            check (finiteOk,      "every Randomize result renders finite audio");
+            check (p.getCurrentSampleName().isEmpty(), "Randomize never sets currentSampleName");
+        }
+
+        // --- Mutate: moves params, stays in range, excludes the same set ---
+        {
+            KICKRAudioProcessor p;
+            auto& apvts = p.getValueTreeState();
+            p.getPresetManager().loadFactory (2);   // Techno
+            const float bodyDecayBefore = apvts.getRawParameterValue ("bodyDecay")->load();
+            const float outputBefore    = apvts.getRawParameterValue ("output")->load();
+            p.getPresetManager().mutate();
+            const float bodyDecayAfter  = apvts.getRawParameterValue ("bodyDecay")->load();
+            std::printf ("  mutate: bodyDecay %.0f -> %.0f  output held=%d\n",
+                         bodyDecayBefore, bodyDecayAfter,
+                         (int) (std::abs (apvts.getRawParameterValue ("output")->load() - outputBefore) < 1.0e-5f));
+            check (std::abs (bodyDecayAfter - bodyDecayBefore) > 0.5f, "Mutate perturbs the synth params");
+            check (bodyDecayAfter >= 20.0f && bodyDecayAfter <= 2000.0f, "Mutate stays in range");
+            check (std::abs (apvts.getRawParameterValue ("output")->load() - outputBefore) < 1.0e-5f,
+                   "Mutate respects the exclusion list");
+        }
+
+        // --- Undo reverts Randomize ---
+        {
+            KICKRAudioProcessor p;
+            auto& apvts = p.getValueTreeState();
+            p.getPresetManager().loadFactory (0);
+            const float d0 = apvts.getRawParameterValue ("drive")->load();
+            const float c0 = apvts.getRawParameterValue ("character")->load();
+            const float b0 = apvts.getRawParameterValue ("bodyDecay")->load();
+            p.getPresetManager().randomize();
+            p.getUndoManager().undo();
+            const bool reverted = std::abs (apvts.getRawParameterValue ("drive")->load()     - d0) < 1.0e-4f
+                               && std::abs (apvts.getRawParameterValue ("character")->load() - c0) < 1.0e-4f
+                               && std::abs (apvts.getRawParameterValue ("bodyDecay")->load() - b0) < 1.0f;
+            std::printf ("  undo after randomize: reverted=%d\n", (int) reverted);
+            check (reverted, "Undo reverts a Randomize in one step");
+        }
+
+        // --- User preset save / load round-trip incl. currentSampleName ---
+        {
+            const auto tmpP = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("kickr_test_presets");
+            const auto tmpS = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("kickr_test_presets_samples");
+            tmpP.deleteRecursively(); tmpS.deleteRecursively();
+            kickr::PresetManager::setUserFolderForTests (tmpP);
+
+            const auto fx = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("kickr_preset_fixture.wav");
+            writeSineWav (fx, 95.0, 44100.0, 0.3, 1);
+
+            KICKRAudioProcessor pa;
+            pa.getSampleLibrary().setFolder (tmpS);
+            const auto sn = pa.getSampleLibrary().importFile (fx);
+            pa.loadSampleByName (sn);
+            setP (pa, "drive", 0.66f); setP (pa, "fundamental", 44.0f); setP (pa, "tailLength", 850.0f);
+            setP (pa, "sampleEnable", 1.0f);
+            const bool saved = pa.getPresetManager().saveUser ("RoundTrip");
+            check (saved, "user preset saved to disk");
+
+            KICKRAudioProcessor pb;
+            pb.getSampleLibrary().setFolder (tmpS);
+            const bool loaded = pb.getPresetManager().loadUser ("RoundTrip");
+            const bool match  = loaded
+                && std::abs (pb.getValueTreeState().getRawParameterValue ("drive")->load()      - 0.66f) < 1.0e-3f
+                && std::abs (pb.getValueTreeState().getRawParameterValue ("fundamental")->load() - 44.0f) < 0.5f
+                && pb.getCurrentSampleName() == sn;
+            std::printf ("  user preset: saved=%d loaded=%d params+sample match=%d\n",
+                         (int) saved, (int) loaded, (int) match);
+            check (match, "user preset restores params + currentSampleName exactly");
+            check (! pb.getPresetManager().loadUser ("does-not-exist"), "missing user preset -> false, no crash");
+
+            kickr::PresetManager::setUserFolderForTests (juce::File());   // restore
+            fx.deleteFile(); tmpP.deleteRecursively(); tmpS.deleteRecursively();
+        }
+
+        // --- drag-drop path: file -> bank -> selected -> sampleEnable on ---
+        {
+            const auto tmpS = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("kickr_test_dnd_samples");
+            tmpS.deleteRecursively();
+            const auto fx = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("kickr_dnd_fixture.wav");
+            writeSineWav (fx, 110.0, 44100.0, 0.25, 1);
+
+            KICKRAudioProcessor pe;
+            pe.getSampleLibrary().setFolder (tmpS);
+            pe.prepareToPlay (48000.0, 512);
+            std::unique_ptr<juce::AudioProcessorEditor> edBase (pe.createEditor());
+            auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
+            check (ed != nullptr, "editor created for the drag-drop test");
+            if (ed != nullptr)
+            {
+                ed->importDroppedFileForTest (fx);
+                const bool ok = pe.getCurrentSampleName().isNotEmpty()
+                             && pe.getValueTreeState().getRawParameterValue ("sampleEnable")->load() > 0.5f;
+                std::printf ("  drag-drop: sample='%s'  sampleEnable=%.0f\n",
+                             pe.getCurrentSampleName().toRawUTF8(),
+                             pe.getValueTreeState().getRawParameterValue ("sampleEnable")->load());
+                check (ok, "dropped file is imported, selected, and turns the sample layer on");
+            }
+            fx.deleteFile(); tmpS.deleteRecursively();
+        }
+
+        // --- editor snapshot with a factory patch loaded ---
+        {
+            KICKRAudioProcessor pe;
+            pe.getPresetManager().loadFactory (13);   // Warehouse
+            pe.prepareToPlay (48000.0, 512);
+            {
+                juce::AudioBuffer<float> b (juce::jmax (1, pe.getTotalNumOutputChannels()), 512);
+                for (int bi = 0; bi < 14; ++bi)
+                {
+                    b.clear();
+                    juce::MidiBuffer m;
+                    if (bi == 0) m.addEvent (juce::MidiMessage::noteOn (1, a1, 0.9f), 0);
+                    pe.processBlock (b, m);
+                }
+            }
+            std::unique_ptr<juce::AudioProcessorEditor> edBase (pe.createEditor());
+            auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
+            if (ed != nullptr)
+            {
+                ed->setSize (1600, 1170);
+                ed->refreshAnalyzersForSnapshot();
+                const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+                const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_3_3.png");
+                if (auto os = png.createOutputStream())
+                {
+                    os->setPosition (0); os->truncate();
+                    juce::PNGImageFormat fmt;
+                    const bool wrote = fmt.writeImageToStream (snap, *os);
+                    std::printf ("  wrote %s : %s\n", png.getFullPathName().toRawUTF8(),
+                                 wrote ? "ok" : "FAILED");
+                }
+            }
+        }
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

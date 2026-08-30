@@ -52,6 +52,8 @@ set(KICKR_CORE_SOURCES
     Source/DSP/Analyzer.cpp
     Source/UI/WaveformDisplay.cpp
     Source/UI/SpectrumDisplay.cpp
+    # GUI — Stage 3 Phase 3.3 (presets + sample browser + Randomize/Mutate)
+    Source/Presets/PresetManager.cpp
 )
 
 target_sources(KICKR PRIVATE ${KICKR_CORE_SOURCES})

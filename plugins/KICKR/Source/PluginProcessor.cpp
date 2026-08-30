@@ -10,6 +10,9 @@ KICKRAudioProcessor::KICKRAudioProcessor()
 {
     // PHASE 2.10 — report OS-factor latency changes to the host on the message thread.
     apvts.addParameterListener (kickr::id::oversampling, this);
+
+    // PHASE 3.3 — first instantiation with no restored session shows as "Default".
+    presetManager.markDefaultIfUnnamed();
 }
 
 KICKRAudioProcessor::~KICKRAudioProcessor()

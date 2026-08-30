@@ -27,6 +27,7 @@ class KICKRAudioProcessor;
     single `getWidth() / 1600` factor.
 */
 class KICKRAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                        public  juce::FileDragAndDropTarget,
                                         private juce::ChangeListener
 {
 public:
@@ -35,12 +36,34 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+
+    // ---- Phase 3.3: drag an audio file anywhere on the editor -> managed bank ----
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override;
+    void fileDragExit  (const juce::StringArray&) override;
+    void filesDropped  (const juce::StringArray& files, int, int) override;
 
     /** Headless snapshot tests only — pull one analyzer frame into the displays. */
     void refreshAnalyzersForSnapshot() { waveDisplay.refreshNow(); spectrumDisplay.refreshNow(); }
+    /** Test hook — run the drop path for one file. */
+    void importDroppedFileForTest (const juce::File& f) { importAudioFile (f); }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+
+    // ---- Phase 3.3 ----
+    void importAudioFile (const juce::File&);
+    void loadPresetAt (int combinedIndex);
+    void rebuildPresetList();
+    void showPresetMenu();
+    void showSaveDialog();
+    void doRandomize();
+    void doMutate();
+    void doAB();
+    void syncPresetName();
+    void showNotice (const juce::String&);
+    void clearNotice();
 
     kickr::KickrKnob&   addKnob   (juce::StringRef id, const juce::String& caption,
                                    juce::Colour accent, bool bipolar, kickr::KickrKnob::Size);
@@ -76,7 +99,7 @@ private:
     int boundParamCount { 0 };
 
     // ---- header ----
-    juce::Label wordmark, versionLabel, presetNameLabel;
+    juce::Label wordmark, versionLabel, presetNameLabel, noticeLabel;
     juce::TextButton undoButton   { "Undo" };
     juce::TextButton redoButton   { "Redo" };
     juce::TextButton saveButton   { "Save" };
@@ -117,6 +140,14 @@ private:
     std::array<juce::Rectangle<int>, 7> engineRects {};
 
     float scaleFactor { 1.0f };
+
+    // ---- Phase 3.3 preset / A-B state ----
+    juce::StringArray  presetList;        // factory names, then user names
+    int               numFactoryInList { 0 };
+    juce::MemoryBlock  abSlot[2];
+    int               abActive { 0 };
+    bool              fileDragActive { false };
+    std::unique_ptr<juce::AlertWindow> saveDialog;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KICKRAudioProcessorEditor)
 };

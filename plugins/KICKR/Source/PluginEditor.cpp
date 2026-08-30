@@ -44,14 +44,45 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
                      &scopeWaveButton, &scopeSpectrumButton, &samplePrev, &sampleNext })
         addAndMakeVisible (b);
 
-    undoButton.onClick = [this] { proc.getUndoManager().undo(); updateUndoRedoState(); };
-    redoButton.onClick = [this] { proc.getUndoManager().redo(); updateUndoRedoState(); };
-
-    for (auto* b : { &saveButton, &randomButton, &mutateButton, &abButton, &presetPrev, &presetNext })
+    auto afterAction = [this]
     {
-        b->setEnabled (false);
-        b->setTooltip ("Presets / Randomize / Mutate arrive in Phase 3.3");
-    }
+        updateUndoRedoState();
+        syncPresetName();
+        updateSampleLabel();
+    };
+
+    undoButton.onClick   = [this, afterAction] { proc.getUndoManager().undo(); afterAction(); };
+    redoButton.onClick   = [this, afterAction] { proc.getUndoManager().redo(); afterAction(); };
+    saveButton.onClick   = [this] { showSaveDialog(); };
+    randomButton.onClick = [this] { doRandomize(); };
+    mutateButton.onClick = [this] { doMutate(); };
+    abButton.onClick     = [this] { doAB(); };
+    presetPrev.onClick   = [this]
+    {
+        const int i = juce::jmax (0, presetList.indexOf (proc.getPresetManager().getCurrentPresetName()));
+        loadPresetAt ((i - 1 + juce::jmax (1, presetList.size())) % juce::jmax (1, presetList.size()));
+    };
+    presetNext.onClick   = [this]
+    {
+        const int i = juce::jmax (0, presetList.indexOf (proc.getPresetManager().getCurrentPresetName()));
+        loadPresetAt ((i + 1) % juce::jmax (1, presetList.size()));
+    };
+
+    saveButton.setTooltip   ("Save the current patch as a user preset");
+    randomButton.setTooltip ("Randomise the synth parameters (tuning / output / macros / sample untouched)");
+    mutateButton.setTooltip ("Nudge every synth parameter a little — keeps the character");
+    abButton.setTooltip     ("Stash / compare two states");
+    presetPrev.setTooltip   ("Previous preset");
+    presetNext.setTooltip   ("Next preset");
+
+    presetNameLabel.setInterceptsMouseClicks (true, false);
+    presetNameLabel.addMouseListener (this, false);
+
+    noticeLabel.setJustificationType (juce::Justification::centred);
+    noticeLabel.setColour (juce::Label::textColourId, pal::inkHi);
+    noticeLabel.setInterceptsMouseClicks (false, false);
+    noticeLabel.setFont (kickr::KickrLookAndFeel::titleFont (11.0f));
+    addChildComponent (noticeLabel);
 
     scopeWaveButton.setClickingTogglesState (true);
     scopeSpectrumButton.setClickingTogglesState (true);
@@ -214,6 +245,8 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
 
     // ---------------------------------------------------------------- wiring
     proc.getUndoManager().addChangeListener (this);
+    rebuildPresetList();
+    syncPresetName();
     updateUndoRedoState();
     updateSampleLabel();
 
@@ -310,12 +343,238 @@ void KICKRAudioProcessorEditor::updateUndoRedoState()
     redoButton.setEnabled (proc.getUndoManager().canRedo());
 }
 
+//============================================================ Phase 3.3 — presets
+void KICKRAudioProcessorEditor::rebuildPresetList()
+{
+    auto& pm = proc.getPresetManager();
+    presetList = pm.getFactoryNames();
+    numFactoryInList = presetList.size();
+    presetList.addArray (pm.getUserNames());
+}
+
+void KICKRAudioProcessorEditor::syncPresetName()
+{
+    presetNameLabel.setText (proc.getPresetManager().getCurrentPresetName(),
+                             juce::dontSendNotification);
+}
+
+void KICKRAudioProcessorEditor::loadPresetAt (int combinedIndex)
+{
+    rebuildPresetList();
+    if (presetList.isEmpty())
+        return;
+
+    const int idx = juce::jlimit (0, presetList.size() - 1, combinedIndex);
+    const auto name = presetList[idx];
+
+    const bool ok = (idx < numFactoryInList)
+                        ? (proc.getPresetManager().loadFactory (idx), true)
+                        : proc.getPresetManager().loadUser (name);
+
+    updateUndoRedoState();
+    syncPresetName();
+    updateSampleLabel();
+    showNotice (ok ? "Loaded  " + name : "Preset not found — kept current");
+}
+
+void KICKRAudioProcessorEditor::showPresetMenu()
+{
+    rebuildPresetList();
+
+    juce::PopupMenu menu, factory, user;
+    for (int i = 0; i < numFactoryInList; ++i)
+        factory.addItem (i + 1, presetList[i]);
+    for (int i = numFactoryInList; i < presetList.size(); ++i)
+        user.addItem (i + 1, presetList[i]);
+
+    menu.addSubMenu ("Factory", factory);
+    if (user.getNumItems() > 0)
+        menu.addSubMenu ("User", user);
+    menu.addSeparator();
+    menu.addItem (1000, "Save As…");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetNameLabel),
+                        [this] (int r)
+                        {
+                            if (r == 0) return;
+                            if (r == 1000) { showSaveDialog(); return; }
+                            loadPresetAt (r - 1);
+                        });
+}
+
+void KICKRAudioProcessorEditor::showSaveDialog()
+{
+    saveDialog = std::make_unique<juce::AlertWindow> ("Save preset",
+                     "Name this patch:", juce::MessageBoxIconType::NoIcon, this);
+    saveDialog->addTextEditor ("name", proc.getPresetManager().getCurrentPresetName()
+                                           .replace ("*", "").trim());
+    saveDialog->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    saveDialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    saveDialog->enterModalState (true, juce::ModalCallbackFunction::create (
+        [this] (int r)
+        {
+            if (r == 1)
+            {
+                const auto name = saveDialog->getTextEditorContents ("name").trim();
+                const bool ok   = proc.getPresetManager().saveUser (name);
+                syncPresetName();
+                showNotice (ok ? "Saved  " + name : "Could not save preset");
+            }
+            saveDialog.reset();
+        }), false);
+}
+
+void KICKRAudioProcessorEditor::doRandomize()
+{
+    proc.getPresetManager().randomize();
+    updateUndoRedoState();
+    syncPresetName();
+    showNotice ("Randomised");
+}
+
+void KICKRAudioProcessorEditor::doMutate()
+{
+    proc.getPresetManager().mutate();
+    updateUndoRedoState();
+    syncPresetName();
+    showNotice ("Mutated");
+}
+
+void KICKRAudioProcessorEditor::doAB()
+{
+    // Stash the current state into the *inactive* slot, then apply the other slot.
+    juce::MemoryBlock cur;
+    proc.getStateInformation (cur);
+    abSlot[abActive] = cur;
+
+    const int other = 1 - abActive;
+    if (abSlot[other].getSize() > 0)
+    {
+        proc.setStateInformation (abSlot[other].getData(), (int) abSlot[other].getSize());
+        abActive = other;
+        updateUndoRedoState();
+        syncPresetName();
+        updateSampleLabel();
+        showNotice (abActive == 0 ? "A" : "B");
+    }
+    else
+    {
+        showNotice (juce::String (abActive == 0 ? "A" : "B") + " stored — switch again to compare");
+        abActive = other;
+    }
+}
+
+//======================================================= Phase 3.3 — sample drag-drop
+bool KICKRAudioProcessorEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+    {
+        const auto ext = juce::File (f).getFileExtension().toLowerCase();
+        if (ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".flac" || ext == ".caf")
+            return true;
+    }
+    return false;
+}
+
+void KICKRAudioProcessorEditor::fileDragEnter (const juce::StringArray&, int, int)
+{
+    fileDragActive = true;  repaint();
+}
+
+void KICKRAudioProcessorEditor::fileDragExit (const juce::StringArray&)
+{
+    fileDragActive = false; repaint();
+}
+
+void KICKRAudioProcessorEditor::filesDropped (const juce::StringArray& files, int, int)
+{
+    fileDragActive = false; repaint();
+    for (const auto& f : files)
+    {
+        const juce::File file (f);
+        const auto ext = file.getFileExtension().toLowerCase();
+        if (ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".flac" || ext == ".caf")
+        {
+            importAudioFile (file);
+            return;   // first accepted file only
+        }
+    }
+}
+
+void KICKRAudioProcessorEditor::importAudioFile (const juce::File& file)
+{
+    const auto name = proc.getSampleLibrary().importFile (file);
+    if (name.isEmpty())
+    {
+        showNotice ("Couldn't import — needs WAV/AIFF/FLAC/CAF, <= 5 s, <= 2 ch");
+        return;
+    }
+
+    proc.loadSampleByName (name);
+
+    if (auto* en = proc.getValueTreeState().getParameter (kickr::id::sampleEnable))
+        en->setValueNotifyingHost (1.0f);   // drop -> sample layer on
+
+    updateSampleLabel();
+    showNotice ("Added  " + name);
+}
+
+//================================================================ Phase 3.3 — notice
+void KICKRAudioProcessorEditor::showNotice (const juce::String& text)
+{
+    noticeLabel.setText (text, juce::dontSendNotification);
+    noticeLabel.setVisible (true);
+    noticeLabel.toFront (false);
+
+    juce::Timer::callAfterDelay (3800, [safe = juce::Component::SafePointer<KICKRAudioProcessorEditor> (this)]
+    {
+        if (safe != nullptr) safe->clearNotice();
+    });
+}
+
+void KICKRAudioProcessorEditor::clearNotice()
+{
+    noticeLabel.setVisible (false);
+}
+
+void KICKRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.eventComponent == &presetNameLabel)
+        showPresetMenu();
+}
+
 void KICKRAudioProcessorEditor::updateSampleLabel()
 {
+    auto& lib = proc.getSampleLibrary();
     const auto n = proc.getCurrentSampleName();
-    sampleNameLabel.setText (n.isEmpty() ? juce::String::fromUTF8 ("\xe2\x80\x94 drop a kick \xe2\x80\x94")
-                                         : n,
-                             juce::dontSendNotification);
+
+    juce::String text;
+    juce::Colour col = pal::lowfam;
+
+    if (n.isNotEmpty() && lib.indexOfName (n) < 0)
+    {
+        text = juce::String::fromUTF8 ("sample missing \xe2\x80\x94 ") + n;   // recall, file gone
+        col  = pal::red;
+    }
+    else if (n.isNotEmpty())
+    {
+        text = n;
+    }
+    else if (lib.getCount() == 0)
+    {
+        text = juce::String::fromUTF8 ("\xe2\x80\x94 drop a kick here \xe2\x80\x94");
+        col  = pal::inkDim;
+    }
+    else
+    {
+        text = juce::String::fromUTF8 ("\xe2\x97\x84 \xe2\x96\xba  ") + juce::String (lib.getCount())
+             + (lib.getCount() == 1 ? " kick in the bank" : " kicks in the bank");
+        col  = pal::inkDim;
+    }
+
+    sampleNameLabel.setText (text, juce::dontSendNotification);
+    sampleNameLabel.setColour (juce::Label::textColourId, col);
 }
 
 //==============================================================================
@@ -386,6 +645,10 @@ void KICKRAudioProcessorEditor::resized()
     layoutSample (sample);
     layoutHeroes (heroes);
     layoutEngine (engine);
+
+    // Notice strip — centred over the top of the scope panel.
+    noticeLabel.setBounds (scopeBounds.withHeight (scaled (26)).reduced (scaled (8), scaled (4)));
+    noticeLabel.setFont (kickr::KickrLookAndFeel::titleFont ((float) scaled (11)));
 }
 
 void KICKRAudioProcessorEditor::layoutHeader (juce::Rectangle<int> a)
@@ -578,4 +841,14 @@ void KICKRAudioProcessorEditor::paint (juce::Graphics& g)
     // The scope panel is now owned + painted by `waveDisplay` / `spectrumDisplay`
     // (dark radial-gradient background, grid, trace, ms/Hz axes, KICKR watermark).
     // The editor only reserves `scopeBounds` for them in resized().
+
+    // ---- Phase 3.3: audio-file drag highlight over the whole editor ----
+    if (fileDragActive)
+    {
+        auto hi = getLocalBounds().toFloat().reduced (sf (8));
+        g.setColour (pal::lowfam.withAlpha (0.55f));
+        g.drawRoundedRectangle (hi.reduced (2.0f), sf (42), sf (3));
+        g.setColour (pal::lowfam.withAlpha (0.08f));
+        g.fillRoundedRectangle (hi, sf (42));
+    }
 }

@@ -11,6 +11,7 @@
 #include "DSP/Analyzer.h"
 #include "Sampling/SampleLibrary.h"
 #include "Sampling/SampleBuffer.h"
+#include "Presets/PresetManager.h"
 
 /**
     KICKR — dedicated kick-design instrument: algorithmic synthesis +
@@ -78,6 +79,9 @@ public:
         + `AbstractFifo` write per block (see `processBlock`). */
     kickr::Analyzer& getAnalyzer() noexcept { return analyzer; }
 
+    /** PHASE 3.3 — factory + user presets, Randomize / Mutate (message thread only). */
+    kickr::PresetManager& getPresetManager() noexcept { return presetManager; }
+
     static constexpr int kStateVersion = 2;   // v2: SAMPLE group + currentSampleName
 
 private:
@@ -110,6 +114,14 @@ private:
 
     double currentSampleRate { 44100.0 };
     int    currentBlockSize  { 512 };
+
+    // Stage 3 Phase 3.3: presets + Randomize / Mutate. Reloads the sample layer through
+    // this processor's own `loadSampleByName` when a preset carries a `currentSampleName`.
+    kickr::PresetManager presetManager {
+        apvts, undoManager,
+        [this] (const juce::String& n) { loadSampleByName (n); },
+        [this] { return getCurrentSampleName(); }
+    };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KICKRAudioProcessor)
 };
