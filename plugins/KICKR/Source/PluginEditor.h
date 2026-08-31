@@ -11,6 +11,7 @@
 #include "UI/KickrKnob.h"
 #include "UI/WaveformDisplay.h"
 #include "UI/SpectrumDisplay.h"
+#include "UI/SampleWaveformView.h"
 
 class KICKRAudioProcessor;
 
@@ -122,6 +123,9 @@ private:
     juce::TextButton sampleNext { juce::String::fromUTF8 ("\xe2\x96\xba") };
     std::array<juce::Component*, 2> sampleToggles {};
     std::vector<juce::Component*>   sampleTweaks;
+    // Small static preview of the currently loaded sample file (user request 2026-08-31)
+    // — not the live scope; shows the raw file + the sampleStart/sampleEnd trim window.
+    kickr::SampleWaveformView sampleWaveform { proc.getValueTreeState() };
 
     // ---- macro modules ----
     std::array<juce::Label*, 4>     heroTitles {};

@@ -123,6 +123,7 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     sampleDropHint.setColour (juce::Label::textColourId, pal::inkDim);
     sampleDropHint.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (sampleDropHint);
+    addAndMakeVisible (sampleWaveform);
     // // Phase 3.3: full FileDragAndDropTarget + empty-bank / missing-file UI states + waveform
 
     samplePrev.setTooltip ("Previous sample in the bank");
@@ -569,7 +570,7 @@ void KICKRAudioProcessorEditor::updateSampleLabel()
 
     if (n.isNotEmpty() && lib.indexOfName (n) < 0)
     {
-        text = juce::String::fromUTF8 ("sample missing \xe2\x80\x94 ") + n;   // recall, file gone
+        text = "sample missing - " + n;   // recall, file gone
         col  = pal::red;
     }
     else if (n.isNotEmpty())
@@ -578,7 +579,7 @@ void KICKRAudioProcessorEditor::updateSampleLabel()
     }
     else if (lib.getCount() == 0)
     {
-        text = juce::String::fromUTF8 ("\xe2\x80\x94 drop a kick here \xe2\x80\x94");
+        text = "- drop a kick here -";
         col  = pal::inkDim;
     }
     else
@@ -590,6 +591,8 @@ void KICKRAudioProcessorEditor::updateSampleLabel()
 
     sampleNameLabel.setText (text, juce::dontSendNotification);
     sampleNameLabel.setColour (juce::Label::textColourId, col);
+
+    sampleWaveform.setSample (lib, n);
 }
 
 //==============================================================================
@@ -724,6 +727,12 @@ void KICKRAudioProcessorEditor::layoutSample (juce::Rectangle<int> a)
     samplePrev.setBounds (navRow.removeFromLeft (scaled (34)));
     navRow.removeFromLeft (scaled (4));
     sampleNext.setBounds (navRow.removeFromLeft (scaled (34)));
+
+    // Small static waveform preview fills the gap left between the name row and the
+    // prev/next nav row.
+    slot.removeFromTop (scaled (4));
+    slot.removeFromBottom (scaled (4));
+    sampleWaveform.setBounds (slot);
 
     placeRow (inner, sampleTweaks, scaled (5));
 }

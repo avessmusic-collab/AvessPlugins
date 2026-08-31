@@ -2597,6 +2597,19 @@ int main()
                              pe.getCurrentSampleName().toRawUTF8(),
                              pe.getValueTreeState().getRawParameterValue ("sampleEnable")->load());
                 check (ok, "dropped file is imported, selected, and turns the sample layer on");
+
+                // 2026-08-31: visual check that the small sample-strip waveform preview
+                // (SampleWaveformView) picks up the just-dropped file.
+                ed->setSize (1120, 819);
+                const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+                const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_sample_waveform.png");
+                if (auto os = png.createOutputStream())
+                {
+                    os->setPosition (0); os->truncate();
+                    juce::PNGImageFormat fmt;
+                    const bool wrote = fmt.writeImageToStream (snap, *os);
+                    std::printf ("  wrote %s : %s\n", png.getFullPathName().toRawUTF8(), wrote ? "ok" : "FAILED");
+                }
             }
             fx.deleteFile(); tmpS.deleteRecursively();
         }
