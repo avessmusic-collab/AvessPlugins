@@ -1,4 +1,5 @@
 #include "Sampling/SampleLibrary.h"
+#include "BinaryData.h"   // KICKR_FactorySamples (juce_add_binary_data) — 50 shipped kicks
 
 #include <algorithm>
 
@@ -137,11 +138,13 @@ namespace kickr
         }
 
         // Deduplicate the destination name: name.wav -> name-2.wav -> name-3.wav ...
+        // Also dedupe against the factory bank so a user import can never shadow one of
+        // the shipped samples (both would otherwise answer to the same bare name).
         const juce::String stem = src.getFileNameWithoutExtension();
         const juce::String ext  = src.getFileExtension();
 
         juce::File dest = folder.getChildFile (stem + ext);
-        for (int n = 2; dest.existsAsFile(); ++n)
+        for (int n = 2; dest.existsAsFile() || isFactoryName (dest.getFileName()); ++n)
             dest = folder.getChildFile (stem + "-" + juce::String (n) + ext);
 
         if (! src.copyFileTo (dest))
@@ -151,16 +154,117 @@ namespace kickr
         return dest.getFileName();
     }
 
+    namespace
+    {
+        // Find an embedded factory sample's bytes by its ORIGINAL filename (e.g.
+        // "Kick01.wav"). BinaryData::getNamedResource() itself keys off the SANITISED
+        // symbol name (e.g. "Kick01_wav"), not the original filename, so this does the
+        // one-time-per-call reverse lookup via the parallel originalFilenames table.
+        // 50 entries, message thread, not remotely hot — a linear scan is fine.
+        const char* findFactoryResource (const juce::String& bareName, int& sizeOut) noexcept
+        {
+            for (int i = 0; i < BinaryData::namedResourceListSize; ++i)
+            {
+                const char* symbol = BinaryData::namedResourceList[i];
+                const char* orig   = BinaryData::getNamedResourceOriginalFilename (symbol);
+                if (orig != nullptr && bareName.equalsIgnoreCase (orig))
+                    return BinaryData::getNamedResource (symbol, sizeOut);
+            }
+            return nullptr;
+        }
+    }
+
+    int SampleLibrary::getFactoryCount() noexcept
+    {
+        return BinaryData::namedResourceListSize;
+    }
+
+    juce::StringArray SampleLibrary::getFactoryNames()
+    {
+        juce::StringArray names;
+        for (int i = 0; i < BinaryData::namedResourceListSize; ++i)
+            if (const char* orig = BinaryData::getNamedResourceOriginalFilename (BinaryData::namedResourceList[i]))
+                names.add (orig);
+        names.sortNatural();   // Kick01 < Kick02 < ... < Kick10 < Kick11, despite inconsistent padding
+        return names;
+    }
+
+    bool SampleLibrary::isFactoryName (const juce::String& bareName)
+    {
+        return getFactoryNames().contains (bareName, true);   // ignoreCase
+    }
+
+    juce::StringArray SampleLibrary::getTotalNames() const
+    {
+        auto names = getFactoryNames();
+        names.addArray (getNames());
+        return names;
+    }
+
+    juce::String SampleLibrary::totalNameAt (int index) const
+    {
+        const auto factory = getFactoryNames();
+        if (index < 0)
+            return {};
+        if (index < factory.size())
+            return factory[index];
+        return nameAt (index - factory.size());
+    }
+
+    int SampleLibrary::indexOfNameTotal (const juce::String& bareName) const
+    {
+        const auto factory = getFactoryNames();
+        const int fi = factory.indexOf (bareName, true);   // ignoreCase overload
+        if (fi >= 0)
+            return fi;
+        const int ui = indexOfName (bareName);
+        return ui >= 0 ? factory.size() + ui : -1;
+    }
+
+    juce::String SampleLibrary::prevTotal()
+    {
+        const int total = getTotalCount();
+        if (total <= 0)
+            return {};
+        currentTotalIdx = (currentTotalIdx <= 0) ? total - 1 : currentTotalIdx - 1;
+        return currentTotalName();
+    }
+
+    juce::String SampleLibrary::nextTotal()
+    {
+        const int total = getTotalCount();
+        if (total <= 0)
+            return {};
+        currentTotalIdx = (currentTotalIdx + 1) % total;
+        return currentTotalName();
+    }
+
     std::unique_ptr<SampleBuffer> SampleLibrary::load (const juce::String& bareName)
     {
         if (bareName.isEmpty())
             return nullptr;
 
-        const juce::File file = folder.getChildFile (bareName);
-        if (! file.existsAsFile())
-            return nullptr;
+        std::unique_ptr<juce::AudioFormatReader> reader;
 
-        std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
+        // Disk (the user's own imports) first, then the embedded factory bank. The
+        // factory bytes are static data baked into the binary (BinaryData) — safe to
+        // reference from a non-owning MemoryInputStream for the program's whole lifetime,
+        // regardless of the reader/stream's own lifetime.
+        const juce::File file = folder.getChildFile (bareName);
+        if (file.existsAsFile())
+        {
+            reader.reset (formatManager.createReaderFor (file));
+        }
+        else
+        {
+            int size = 0;
+            if (const char* data = findFactoryResource (bareName, size))
+            {
+                auto stream = std::make_unique<juce::MemoryInputStream> (data, static_cast<size_t> (size), false);
+                reader.reset (formatManager.createReaderFor (std::move (stream)));
+            }
+        }
+
         if (reader == nullptr || reader->sampleRate <= 0.0)
             return nullptr;
 

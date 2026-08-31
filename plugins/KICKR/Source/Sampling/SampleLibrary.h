@@ -28,9 +28,22 @@ namespace kickr
           `name-2.wav`, `name-3.wav`) -> rescan -> return the new bare file name ("" on
           failure).
         - Decode: read the whole file (capped at 5 s) into an `AudioBuffer<float>`, keep
-          `sourceRate`, `rootNote = 24`. Synchronous — files are <= ~3.7 MB.
+          `sourceRate`, `rootNote = 60` (C3 — 2026-08-31, was C1). Synchronous — files are
+          <= ~3.7 MB.
 
-        No factory samples (AD-12): the bank is empty until the user drops files in.
+        **Factory bank (2026-08-31, supersedes the original AD-12 "zero samples" decision
+        — user-provided, user-owned content, not third-party licensed material):** 50 kick
+        samples embedded via `juce_add_binary_data` (`KICKR_FactorySamples` target,
+        `Source/FactorySamples`), decoded straight from memory — never touch disk,
+        always present even on a machine with an empty `~/Music/KICKR/Samples/`. The
+        EXISTING disk-only API above (`getCount`/`getNames`/`nameAt`/`indexOfName`/
+        `prev`/`next`) is UNCHANGED — it still means "your own imported files only" (kept
+        that way so nothing above breaks / needs to know factory samples exist). The
+        factory bank is a parallel set of accessors below; `getTotalXxx`/`xxxTotal` methods
+        present the COMBINED (factory-first, then user) list the UI actually browses.
+        `load(name)` transparently checks disk first, then the factory bank, so callers
+        that already just have a name (`PluginProcessor::loadSampleByName`,
+        `SampleWaveformView`) need no changes at all.
     */
     class SampleLibrary
     {
@@ -62,14 +75,39 @@ namespace kickr
 
         /** Validate + copy `src` into the managed folder. Returns the new bare file name,
             or "" if the file is unsupported / unreadable / too long / too many channels /
-            the copy failed. */
+            the copy failed (also fails if the (deduped) name would collide with a factory
+            sample name — dedupe checks the factory bank too). */
         juce::String importFile (const juce::File& src);
 
-        /** Decode a bank file to a `SampleBuffer` (message thread). nullptr if missing /
+        /** Decode a bank file to a `SampleBuffer` (message thread). Checks the user's disk
+            bank first, then the embedded factory bank. nullptr if the name is in neither /
             unreadable. */
         std::unique_ptr<SampleBuffer> load (const juce::String& bareName);
 
         const juce::File& getFolder() const noexcept { return folder; }
+
+        //====================================================================== factory bank
+        /** Number of embedded factory samples (fixed; never touches disk). */
+        static int         getFactoryCount() noexcept;
+        /** Original filenames of the embedded factory samples, naturally sorted
+            (Kick01 < Kick02 < ... < Kick10 < Kick11, regardless of zero-padding). */
+        static juce::StringArray getFactoryNames();
+        static bool         isFactoryName (const juce::String& bareName);
+
+        //=============================================================== combined (factory+user)
+        /** Total browsable count = factory + your own imports. What the UI shows. */
+        int                getTotalCount() const noexcept { return getFactoryCount() + getCount(); }
+        juce::StringArray  getTotalNames() const;
+        juce::String       totalNameAt (int index) const;
+        /** -1 if `bareName` is in neither bank. */
+        int                indexOfNameTotal (const juce::String& bareName) const;
+
+        juce::String currentTotalName() const { return totalNameAt (currentTotalIdx); }
+        /** Move the COMBINED-list index (independent of prev()/next()'s disk-only index)
+            and return the new current bare name ("" only if the total bank is empty, which
+            can't happen once the factory bank links correctly). */
+        juce::String prevTotal();
+        juce::String nextTotal();
 
     private:
         bool isSupported (const juce::File& f) const;
@@ -78,6 +116,7 @@ namespace kickr
         juce::AudioFormatManager  formatManager;
         juce::Array<juce::File>   files;
         int                       currentIdx { -1 };
+        int                       currentTotalIdx { 0 };   // combined-list index, see prevTotal/nextTotal
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SampleLibrary)
     };

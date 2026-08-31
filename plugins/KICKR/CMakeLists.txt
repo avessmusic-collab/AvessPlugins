@@ -131,13 +131,72 @@ target_compile_definitions(KICKR_Tests
 )
 
 # ---------------------------------------------------------------------------
-# Factory preset BinaryData — added in Stage 3 (Phase 3.3 — Preset system).
-# Source/Presets/ will hold *.kickrpreset (or generated *.xml) factory patches.
-#
-# juce_add_binary_data(KICKR_Presets
-#     SOURCES
-#         Source/Presets/Factory/Default.kickrpreset
-#         ...
-# )
-# target_link_libraries(KICKR PRIVATE KICKR_Presets)
+# NOTE: factory PRESETS (Phase 3.3) ended up as a code table in
+# Source/Presets/PresetManager.cpp, not BinaryData -- tiny param blobs are
+# easier to author/read as C++ than as generated resource files. BinaryData
+# IS used below for the factory SAMPLE bank, where the payload is genuinely
+# binary audio data.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Factory sample bank BinaryData — 50 shipped kick samples (user-provided,
+# 2026-08-31), embedded in the binary (NOT extracted to disk). SampleLibrary
+# reads them straight from memory via BinaryData::getNamedResource(), keyed
+# off BinaryData::originalFilenames -> zero disk I/O, always present even on
+# a machine with an empty/fresh ~/Music/KICKR/Samples/.
+juce_add_binary_data(KICKR_FactorySamples
+    SOURCES
+        Source/FactorySamples/Kick01.wav
+        Source/FactorySamples/Kick011.wav
+        Source/FactorySamples/Kick012.wav
+        Source/FactorySamples/Kick013.wav
+        Source/FactorySamples/Kick014.wav
+        Source/FactorySamples/Kick015.wav
+        Source/FactorySamples/Kick016.wav
+        Source/FactorySamples/Kick017.wav
+        Source/FactorySamples/Kick018.wav
+        Source/FactorySamples/Kick019.wav
+        Source/FactorySamples/Kick02.wav
+        Source/FactorySamples/Kick020.wav
+        Source/FactorySamples/Kick021.wav
+        Source/FactorySamples/Kick022.wav
+        Source/FactorySamples/Kick023.wav
+        Source/FactorySamples/Kick024.wav
+        Source/FactorySamples/Kick025.wav
+        Source/FactorySamples/Kick026.wav
+        Source/FactorySamples/Kick027.wav
+        Source/FactorySamples/Kick028.wav
+        Source/FactorySamples/Kick029.wav
+        Source/FactorySamples/Kick03.wav
+        Source/FactorySamples/Kick030.wav
+        Source/FactorySamples/Kick031.wav
+        Source/FactorySamples/Kick032.wav
+        Source/FactorySamples/Kick033.wav
+        Source/FactorySamples/Kick034.wav
+        Source/FactorySamples/Kick035.wav
+        Source/FactorySamples/Kick036.wav
+        Source/FactorySamples/Kick04.wav
+        Source/FactorySamples/Kick05.wav
+        Source/FactorySamples/Kick06.wav
+        Source/FactorySamples/Kick07.wav
+        Source/FactorySamples/Kick08.wav
+        Source/FactorySamples/Kick09.wav
+        Source/FactorySamples/Kick10.wav
+        Source/FactorySamples/Kick37.wav
+        Source/FactorySamples/Kick38.wav
+        Source/FactorySamples/Kick39.wav
+        Source/FactorySamples/Kick40.wav
+        Source/FactorySamples/Kick41.wav
+        Source/FactorySamples/Kick42.wav
+        Source/FactorySamples/Kick43.wav
+        Source/FactorySamples/Kick44.wav
+        Source/FactorySamples/Kick45.wav
+        Source/FactorySamples/Kick56.wav
+        Source/FactorySamples/Kick57.wav
+        Source/FactorySamples/Kick58.wav
+        Source/FactorySamples/Kick59.wav
+        Source/FactorySamples/Kick60.wav
+)
+
+target_link_libraries(KICKR PRIVATE KICKR_FactorySamples)
+target_link_libraries(KICKR_Tests PRIVATE KICKR_FactorySamples)

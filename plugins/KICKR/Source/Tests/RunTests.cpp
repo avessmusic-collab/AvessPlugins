@@ -2670,6 +2670,124 @@ int main()
 
     // ---------------------------------------------------------------------
     // Repo Stage 17 — profile & confirm the `oversampling` default (2026-08-31). Offline
+    // ---------------------------------------------------------------------
+    // Feature (2026-08-31, user-provided content): 50 shipped kick samples, embedded via
+    // BinaryData (KICKR_FactorySamples) so they're always present — never touch disk,
+    // work from a totally fresh/empty ~/Music/KICKR/Samples/.
+    std::printf ("\n[Feature] Factory sample bank (50 embedded kicks)\n");
+    {
+        check (kickr::SampleLibrary::getFactoryCount() == 50, "50 factory samples are linked in");
+
+        const auto factoryNames = kickr::SampleLibrary::getFactoryNames();
+        check (factoryNames.size() == 50, "getFactoryNames() returns all 50");
+        bool allWav = true, sortedOk = true;
+        for (int i = 0; i < factoryNames.size(); ++i)
+        {
+            if (! factoryNames[i].endsWithIgnoreCase (".wav")) allWav = false;
+            if (i > 0 && factoryNames[i - 1].compareNatural (factoryNames[i]) > 0) sortedOk = false;
+        }
+        check (allWav,    "every factory name ends in .wav");
+        check (sortedOk,  "factory names are naturally sorted (Kick01 < Kick02 < ... < Kick10)");
+        check (kickr::SampleLibrary::isFactoryName ("Kick01.wav"),  "isFactoryName recognises a real one");
+        check (! kickr::SampleLibrary::isFactoryName ("NotAKick.wav"), "isFactoryName rejects a bogus name");
+
+        // Decode a factory sample from a totally FRESH, empty temp folder — proves the
+        // in-memory path works with zero user content on disk.
+        const auto tmpBank6 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("kickr_test_factory_bank");
+        tmpBank6.deleteRecursively();
+        kickr::SampleLibrary lib (tmpBank6);
+        check (lib.getCount() == 0, "fresh temp folder has zero USER samples");
+        check (lib.getTotalCount() == 50, "but the TOTAL (factory+user) bank is 50");
+
+        auto sb = lib.load ("Kick01.wav");
+        check (sb != nullptr, "a factory sample decodes with no disk file present");
+        if (sb != nullptr)
+        {
+            check (sb->audio.getNumSamples() > 1000,          "factory sample has real audio content");
+            check (std::abs (sb->sourceRate - 44100.0) < 1.0, "factory sample sourceRate preserved (44.1 kHz)");
+            check (sb->rootNote == 60,                        "factory sample rootNote is C3, same as user imports");
+        }
+        check (lib.load ("DefinitelyNotShipped.wav") == nullptr, "a bogus name still returns nullptr");
+
+        // Combined navigation: cycle further than the total count and confirm it wraps
+        // cleanly through factory names without ever landing on an empty string.
+        bool allNamesNonEmpty = true;
+        juce::String lastName;
+        for (int i = 0; i < 55; ++i)
+        {
+            lastName = lib.nextTotal();
+            if (lastName.isEmpty()) allNamesNonEmpty = false;
+        }
+        check (allNamesNonEmpty, "prevTotal/nextTotal never return an empty name while the bank is non-empty");
+        check (kickr::SampleLibrary::isFactoryName (lastName) || lib.indexOfName (lastName) >= 0,
+               "every combined-nav name is either a real factory or a real user sample");
+
+        // Import dedupe: a user file whose name COLLIDES with a factory sample must NOT
+        // shadow it — gets deduped to "Kick01-2.wav" instead. Source lives OUTSIDE the
+        // managed folder (a sibling temp dir), exactly like a real drag-drop source file.
+        const int totalBefore = lib.getTotalCount();
+        const auto collisionSrcDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                          .getChildFile ("kickr_test_factory_collision_src");
+        collisionSrcDir.deleteRecursively(); collisionSrcDir.createDirectory();
+        const auto renamed = collisionSrcDir.getChildFile ("Kick01.wav");
+        writeSineWav (renamed, 120.0, 44100.0, 0.3, 1);
+        const auto importedName = lib.importFile (renamed);
+        std::printf ("  collision import: 'Kick01.wav' -> '%s'\n", importedName.toRawUTF8());
+        check (importedName.isNotEmpty() && importedName != "Kick01.wav",
+               "importing a file named like a factory sample is deduped, not shadowed");
+        check (lib.getTotalCount() == totalBefore + 1, "total count grows by exactly 1 after the deduped import");
+        collisionSrcDir.deleteRecursively();
+
+        // End-to-end: a completely fresh processor, no imports at all, loads and renders a
+        // FACTORY sample by name — the whole PluginProcessor -> SampleLibrary -> SamplePlayer
+        // -> KickVoice pipeline, exactly as a real drag-drop import would exercise it.
+        {
+            KICKRAudioProcessor pf;
+            pf.getSampleLibrary().setFolder (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                                  .getChildFile ("kickr_test_factory_e2e"));
+            pf.getSampleLibrary().getFolder().deleteRecursively();
+            pf.loadSampleByName ("Kick01.wav");
+            setP (pf, "sampleEnable", 1.0f); setP (pf, "synthEnable", 0.0f); setP (pf, "limiter", 0.0f);
+            const auto rf = kickr::tests::renderNote (pf, a1, vel, sr, 512, 0.6);
+            const auto sf = analyse (rf, sr);
+            std::printf ("  factory sample end-to-end: peak %.3f  finite %d  currentSampleName=%s\n",
+                         sf.peak, (int) sf.allFinite, pf.getCurrentSampleName().toRawUTF8());
+            check (sf.allFinite && sf.peak > 0.02f, "a factory sample renders real, finite audio end-to-end");
+            check (pf.getCurrentSampleName() == "Kick01.wav", "currentSampleName is the factory name, unmodified");
+            pf.getSampleLibrary().getFolder().deleteRecursively();
+        }
+
+        // Visual check: the SAMPLE strip + its waveform preview with a factory sample
+        // selected, on a completely fresh (no imports) install.
+        {
+            KICKRAudioProcessor pv;
+            pv.getSampleLibrary().setFolder (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                                  .getChildFile ("kickr_test_factory_snap"));
+            pv.getSampleLibrary().getFolder().deleteRecursively();
+            pv.prepareToPlay (48000.0, 512);
+            pv.loadSampleByName ("Kick01.wav");
+            setP (pv, "sampleEnable", 1.0f);
+            std::unique_ptr<juce::AudioProcessorEditor> edBase (pv.createEditor());
+            if (auto* edv = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get()))
+            {
+                edv->setSize (1120, 819);
+                const auto snap = edv->createComponentSnapshot (edv->getLocalBounds(), false, 1.0f);
+                const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_factory_bank.png");
+                if (auto os = png.createOutputStream())
+                {
+                    os->setPosition (0); os->truncate();
+                    juce::PNGImageFormat fmt;
+                    const bool wrote = fmt.writeImageToStream (snap, *os);
+                    std::printf ("  wrote %s : %s\n", png.getFullPathName().toRawUTF8(), wrote ? "ok" : "FAILED");
+                }
+            }
+            pv.getSampleLibrary().getFolder().deleteRecursively();
+        }
+
+        tmpBank6.deleteRecursively();
+    }
+
     // wall-clock proxy: no live audio device in this environment, so this measures render
     // cost the same way a CPU meter would infer it — audio-seconds produced per
     // wall-clock-second, for the realistic worst case (BOTH synth + sample layers active,

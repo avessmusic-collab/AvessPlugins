@@ -129,15 +129,17 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     samplePrev.setTooltip ("Previous sample in the bank");
     sampleNext.setTooltip ("Next sample in the bank");
 
+    // 2026-08-31: browse the COMBINED bank (50 shipped factory kicks + your own imports)
+    // via prevTotal()/nextTotal(), not the disk-only prev()/next().
     samplePrev.onClick = [this]
     {
-        const auto n = proc.getSampleLibrary().prev();
+        const auto n = proc.getSampleLibrary().prevTotal();
         if (n.isNotEmpty()) proc.loadSampleByName (n);
         updateSampleLabel();
     };
     sampleNext.onClick = [this]
     {
-        const auto n = proc.getSampleLibrary().next();
+        const auto n = proc.getSampleLibrary().nextTotal();
         if (n.isNotEmpty()) proc.loadSampleByName (n);
         updateSampleLabel();
     };
@@ -568,7 +570,10 @@ void KICKRAudioProcessorEditor::updateSampleLabel()
     juce::String text;
     juce::Colour col = pal::lowfam;
 
-    if (n.isNotEmpty() && lib.indexOfName (n) < 0)
+    // 2026-08-31: "missing" / "N in the bank" now consider the COMBINED bank (50 shipped
+    // factory kicks + your own imports) — indexOfNameTotal(), not the disk-only
+    // indexOfName(), so recalling a factory sample never wrongly reads as "missing".
+    if (n.isNotEmpty() && lib.indexOfNameTotal (n) < 0)
     {
         text = "sample missing - " + n;   // recall, file gone
         col  = pal::red;
@@ -577,15 +582,17 @@ void KICKRAudioProcessorEditor::updateSampleLabel()
     {
         text = n;
     }
-    else if (lib.getCount() == 0)
+    else if (lib.getTotalCount() == 0)
     {
+        // Defensive only — can't actually happen with the factory bank linked in, kept
+        // in case BinaryData ever fails to link (would mean 0 factory + 0 user samples).
         text = "- drop a kick here -";
         col  = pal::inkDim;
     }
     else
     {
-        text = juce::String::fromUTF8 ("\xe2\x97\x84 \xe2\x96\xba  ") + juce::String (lib.getCount())
-             + (lib.getCount() == 1 ? " kick in the bank" : " kicks in the bank");
+        text = juce::String::fromUTF8 ("\xe2\x97\x84 \xe2\x96\xba  ") + juce::String (lib.getTotalCount())
+             + (lib.getTotalCount() == 1 ? " kick in the bank" : " kicks in the bank");
         col  = pal::inkDim;
     }
 
