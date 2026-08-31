@@ -246,7 +246,7 @@ All components live under `Source/DSP/`. None allocate, lock, or touch the files
     2. `processBlock` at block start: if `pendingOs != currentOs`, ramp current block output to silence over ~64 samples, swap `currentOs = pendingOs`, `currentOs->reset()`, ramp back up next block.
     3. Call `AudioProcessor::setLatencySamples(...)` from the message-thread listener (never mid-block).
   - **Latency formula:** `setLatencySamples( (int) std::round(currentOs->getLatencyInSamples()) + kLimiterLookaheadSamples )` with `kLimiterLookaheadSamples = 0`. 1× → 0 samples.
-  - **Default (Open Question 1 — RESOLVED provisional): `2x` (choice index 1).** Rationale: monophonic single-voice load; polyphase-IIR at 2× pushes the `tanh`/`cubic`/`soft-clip` alias products from the moderate default `drive`/`bodyHarmonics` well below the noise floor, at roughly half the CPU of 4×. `foldback` and `bitcrush` at high `drive` genuinely benefit from 4×/8× and users can select it. Now that the **whole voice renders in the OS region** (AD-10) the CPU delta between factors is larger than in the waveshaper-only design — this makes the conservative `2x` default more important, and **8× should be documented as "high CPU".** **Confirmed at repo Stage 17 (Profile & optimize)** — move default to `4x` only if idle+active CPU headroom is comfortable across target hosts, and consider the AD-10 escape hatch (base-rate rendering of the pure-sine layers) if 4×/8× are too heavy.
+  - **Default (Open Question 1 — RESOLVED, LOCKED 2026-08-31): `2x` (choice index 1).** Rationale: monophonic single-voice load; polyphase-IIR at 2× pushes the `tanh`/`cubic`/`soft-clip` alias products from the moderate default `drive`/`bodyHarmonics` well below the noise floor, at roughly half the CPU of 4×. `foldback` and `bitcrush` at high `drive` genuinely benefit from 4×/8× and users can select it. Now that the **whole voice renders in the OS region** (AD-10) the CPU delta between factors is larger than in the waveshaper-only design — this makes the conservative `2x` default more important, and **8× should be documented as "high CPU".** **Confirmed at repo Stage 17 (2026-08-31)** — offline wall-clock profiling (`RunTests.cpp` "[Stage 17]", no live audio device in this environment) measured 18-36x real-time at 44.1/48 kHz for 2x, comfortable headroom on the dev machine; the AD-10 escape hatch was not needed.
 - **RT-safety:** no allocation in `processSamplesUp/Down`; the only unsafe op (construction) happens in `prepareToPlay` / message thread.
 
 ### DSPUtils
@@ -667,7 +667,7 @@ Every APVTS parameter → owning component + the variable/coefficient it drives.
 5. Distortion morph in isolation with the loudness-sweep test before wiring `driveMix`.
 6. Enable real OS factors (2×/4×/8×) + glitch-free switching + `fsOversampled` coefficient refresh, tested in 3 hosts; alias-spectrum test at `drive = 1` across factors.
 7. Analyzer + preset system + native UI (incl. `SampleBrowser` + drag-drop) in Stage 3, each behind its own checkpoint.
-8. Keep every fallback above documented; profile at repo Stage 17 to lock the `oversampling` default and decide whether the AD-10 escape hatch is needed.
+8. Keep every fallback above documented. ~~profile at repo Stage 17...~~ **Done 2026-08-31: 2x locked, escape hatch not needed** (see AD list above).
 
 ---
 
@@ -777,7 +777,7 @@ Per-stage figures scale ~linearly with the OS factor because nearly everything i
 - If these prove too high: apply the **AD-10 escape hatch** — render the pure-sine layers (sub, body pre-`bodyHarmonics`, tail osc, pre-filtered noise) at base rate, up-sample into the OS buffer, keep only `bodyHarmonics`/`tailDrive`/Tone/Transient/Waveshaper/limiter in-region. Recovers roughly the "layer generators" line at higher factors.
 - Hot paths: OS up/down filters, per-sample `exp`/`pow` in the pitch envelope (mitigate with per-block interpolation of `e(τ)`), `tanh` in `bodyHarmonics`/shaper/limiter (share one fast `tanh` approximation if profiling demands).
 - Buffer-size sensitivity: low (monophonic, block-agnostic); analyzer FIFO and OS buffers sized for worst-case block × max factor in `prepareToPlay`.
-- **Stage 17 profiling** confirms the default factor and whether the escape hatch is needed.
+- **Stage 17 profiling** — done 2026-08-31: 2x confirmed, escape hatch not needed.
 
 ### Denormal / NaN / Inf / DC
 - `juce::ScopedNoDenormals` at the top of `processBlock`.
@@ -836,6 +836,6 @@ Per-stage figures scale ~linearly with the OS factor because nearly everything i
 - **v2 SAMPLE engine (AD-11 / AD-12):** blendable 6th layer (`SamplePlayer`), not a mode switch; `synthEnable` on / `sampleEnable` off by default so v1 behaviour and states are unchanged. Managed library folder, drag-drop import, name-not-path references, in-RAM buffers with atomic hand-off. No factory samples.
 - **Oversampling boundary (AD-10, revised 2026-08-28 after review):** the whole voice + master chain (through the safety limiter) renders inside one OS region — NOT just the master waveshaper. Every nonlinearity (`bodyHarmonics`, `tailDrive`, master morph, `tanh` limiter) is oversampled by construction. Pure-sine layers don't need it but run in-region for uniformity; a documented Stage-17 escape hatch renders them at base rate if 4×/8× CPU is excessive. The earlier "band-limiting unnecessary because fundamental ≤ 1.5 kHz" reasoning was wrong and is retracted.
 - Two-stage pitch envelope is available as a Stage-2 tuning refinement but is **not** contractually required.
-- `oversampling` default `2x` is provisional — **repo Stage 17 profiling confirms 2× vs 4×**.
+- `oversampling` default `2x` — **LOCKED 2026-08-31, repo Stage 17 profiling** (18-36x real-time at 44.1/48 kHz).
 - Randomize/Mutate constraint tables (genre-aware bounds, correlations) are a Stage-3 deliverable, tuned by ear; not specified here beyond the exclusion list.
 - Skew factors from `parameter-spec.md` v1 are accepted as-is (all within the ±0.1 refinement allowance of putting the default near knob centre); no skew changes made in Stage 0.

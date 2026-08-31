@@ -340,7 +340,7 @@ The 6th layer. Plays **one** user-recorded kick from the managed bank, summed wi
 ### Oversampling ⚠️ CHOICE
 - **ID:** `oversampling` · **Choice** (`AudioParameterChoice`)
 - **Choices (index 0–3):** `["1x", "2x", "4x", "8x"]`
-- **Default index:** **1 (`"2x"`)** — provisional; Stage 17 CPU profiling confirms 2x vs 4x. **AD-10:** the OS region wraps the *entire* voice + master chain through the safety limiter (all layer oscillators/noise, `bodyHarmonics`, `tailDrive`, tone, transient, master morph, stereo, mix, gain, `tanh` limiter). Only the final DC blocker + analyzer taps are base-rate. `8×` = "high CPU".
+- **Default index:** **1 (`"2x"`)** — **LOCKED 2026-08-31** (repo Stage 17 CPU profiling: 18-36x real-time at 44.1/48 kHz, monophonic engine; see NOTES.md). **AD-10:** the OS region wraps the *entire* voice + master chain through the safety limiter (all layer oscillators/noise, `bodyHarmonics`, `tailDrive`, tone, transient, master morph, stereo, mix, gain, `tanh` limiter). Only the final DC blocker + analyzer taps are base-rate. `8×` = "high CPU".
 - **UI:** dropdown / segmented control, global strip.
 - **DSP:** `juce::dsp::Oversampling` (`numChannels = 2`, `filterHalfBandPolyphaseIIR`, `useIntegerLatency = true`), one pre-built object per factor at `prepareToPlay` (runtime rebuild is NOT audio-thread safe). Switching: ~64-sample fade → swap atomic pointer → `reset()` → audio-thread recompute of all in-region coefficients for the new `fsOversampled` → `setLatencySamples()` (message thread). Report total latency = `round(activeOs->getLatencyInSamples())` (limiter adds 0).
 
@@ -429,7 +429,7 @@ Undo/redo backed by `APVTS.undoManager` (attach an `UndoManager` to the APVTS). 
 
 ## Open Questions for Stage 0 (from research-notes §"Open questions")
 
-1. **Default oversampling** — 2× (provisional) vs 4× after CPU profiling.
+1. ~~Default oversampling — 2x (provisional) vs 4x after CPU profiling.~~ **Resolved 2026-08-31: 2x locked** (repo Stage 17 profiling — comfortable headroom at every factor; 2x already suppresses waveshaper/sampleCrush aliasing well).
 2. **Safety limiter** — confirm zero-latency soft-clip ceiling as default; spec the optional short-lookahead (+1–2 ms, reported) true-limiter mode and whether it's a `limiterMode` choice or hidden.
 3. **Distortion morph** — lock the 7-stage ordering; choose adaptive-RMS makeup (recommended) vs static per-curve gain tables.
 4. **Tone position** — pre-distortion (recommended) vs post vs switchable.
@@ -454,7 +454,7 @@ Stage 0 planning MAY refine skew factors (±0.1), resolve the Open Questions abo
 Stage 0 planning resolved the Open Questions and set internal DSP constants. **No automatable parameter was added, removed, renamed, re-ranged, or re-defaulted.** Skew factors are accepted as-is from v1 (all already place the default near knob centre within the ±0.1 allowance). Full rationale in `architecture.md` → *Architecture Decisions*; summary in `plan.md` → *Open Questions — RESOLVED*.
 
 **Open Question resolutions:**
-1. Default `oversampling` = **`2x`** (index 1) provisional; confirm at repo Stage 17 profiling.
+1. ~~Default `oversampling` = `2x` (index 1) provisional; confirm at repo Stage 17 profiling.~~ **Resolved 2026-08-31: confirmed at 2x.**
 2. Safety limiter (`limiter = on`) = **zero-latency soft-clip ceiling at −0.5 dBFS** (0 added latency). Short-lookahead true-limiter mode is **NOT in v1** (would require a new parameter + latency reporting → future spec version).
 3. Distortion `character` morph order = **`tanh → cubic → asymmetric → soft-clip → hard-clip → foldback → bitcrush`** (this file is authoritative; the creative-brief signal-flow ASCII lists a different order and is superseded). Equal-gain linear crossfade of adjacent curves. Loudness compensation = **adaptive short-window RMS makeup** seeded by a static per-curve prime table (static 2-D `curve×drive` LUT retained as fallback).
 4. `low`/`mid`/`high` tone = **fixed pre-distortion** (not switchable).

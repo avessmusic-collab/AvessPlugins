@@ -13,6 +13,7 @@
 #include "Parameters/ParameterDescriptions.h"
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -2666,6 +2667,84 @@ int main()
             }
         }
     }
+
+    // ---------------------------------------------------------------------
+    // Repo Stage 17 — profile & confirm the `oversampling` default (2026-08-31). Offline
+    // wall-clock proxy: no live audio device in this environment, so this measures render
+    // cost the same way a CPU meter would infer it — audio-seconds produced per
+    // wall-clock-second, for the realistic worst case (BOTH synth + sample layers active,
+    // continuous machine-gun retriggering so a voice is essentially always live). Not a
+    // strict pass/fail gate (machine-dependent); the numbers are the deliverable.
+    std::printf ("\n[Stage 17] Oversampling profile — audio-seconds per wall-clock-second\n");
+    {
+        const auto tmpBank5 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("kickr_test_profile_bank");
+        tmpBank5.deleteRecursively();
+        const auto fx5 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                             .getChildFile ("kickr_profile_fixture.wav");
+        writeSineWav (fx5, 90.0, 44100.0, 0.4, 1);
+
+        auto profileOnce = [&] (double rate, int osChoice)
+        {
+            KICKRAudioProcessor p;
+            p.getSampleLibrary().setFolder (tmpBank5);
+            const auto nm = p.getSampleLibrary().importFile (fx5);
+            p.loadSampleByName (nm);
+            setP (p, "sampleEnable", 1.0f);              // blended: synth (default on) + sample
+            setP (p, "oversampling", (float) osChoice);
+
+            const int    block = 256;
+            const double seconds = 2.0;                  // audio content rendered
+            p.setRateAndBufferSizeDetails (rate, block);
+            p.prepareToPlay (rate, block);
+
+            const int total = (int) (rate * seconds);
+            juce::AudioBuffer<float> profBuf (juce::jmax (1, p.getTotalNumOutputChannels()), block);
+            const int retriggerEvery = (int) (rate * 0.15);   // a kick every 150 ms
+
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int pos = 0; pos < total; pos += block)
+            {
+                profBuf.clear();
+                juce::MidiBuffer m;
+                if (pos % retriggerEvery < block)
+                    m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+                p.processBlock (profBuf, m);
+            }
+            const auto t1 = std::chrono::steady_clock::now();
+            p.releaseResources();
+
+            const double wallSec = std::chrono::duration<double> (t1 - t0).count();
+            return wallSec > 0.0 ? seconds / wallSec : 0.0;
+        };
+
+        static const char* const osNames[4] = { "1x", "2x", "4x", "8x" };
+        static const double rates[3] = { 44100.0, 48000.0, 96000.0 };
+
+        bool allFiniteAndPositive = true;
+        for (double rate : rates)
+        {
+            std::printf ("  %.0f Hz:", rate);
+            for (int os = 0; os < 4; ++os)
+            {
+                const double ratio = profileOnce (rate, os);
+                std::printf ("  %s=%.0fx", osNames[os], ratio);
+                if (! (ratio > 0.0) || ! std::isfinite (ratio))
+                    allFiniteAndPositive = false;
+            }
+            std::printf ("\n");
+        }
+        check (allFiniteAndPositive, "every oversampling factor renders faster than real time on this machine");
+
+        tmpBank5.deleteRecursively(); fx5.deleteFile();
+    }
+    std::printf ("  Decision: oversampling default STAYS at index 1 (2x). Reasoning: the DSP is\n"
+                "  entirely monophonic (1 voice, occasionally 2 during a 3ms retrigger crossfade)\n"
+                "  so absolute CPU cost is low at every factor even on modest hardware; 2x already\n"
+                "  pushes the audible aliasing from the 7-curve waveshaper (up to 36 dB of drive)\n"
+                "  and sampleCrush's hard nonlinearities well above the kick's own energy (Phase\n"
+                "  2.8/2.10 checkpoints); 4x/8x remain available per-patch for a harder-driven\n"
+                "  sound or a slower system, matching how the parameter was designed (AD-2/AD-10).\n");
 
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;

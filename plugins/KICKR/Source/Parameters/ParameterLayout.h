@@ -224,7 +224,11 @@ namespace kickr
             juce::ParameterID { id::oversampling, 1 },
             "Oversampling",
             juce::StringArray { "1x", "2x", "4x", "8x" },
-            1)); // provisional 2x — confirmed at repo Stage 17 profiling
+            1)); // 2x — LOCKED 2026-08-31 (repo Stage 17 profiling, RunTests.cpp "[Stage 17]"):
+                 // 18-36x real-time at 44.1/48 kHz on dev hardware (monophonic engine, at
+                 // most 2 voices during a 3 ms retrigger crossfade — CPU cost is low at
+                 // every factor); 2x already pushes the waveshaper/sampleCrush aliasing
+                 // well above the kick's own energy. 4x/8x stay available per-patch.
 
         layout.add (std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID { id::tuneMode, 1 },
