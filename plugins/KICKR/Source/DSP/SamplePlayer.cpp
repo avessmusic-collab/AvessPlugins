@@ -165,7 +165,14 @@ namespace kickr
         attackSamples = static_cast<int> (std::lround (
                             static_cast<double> (juce::jmax (0.0f, params.attackMs)) * 0.001 * fs));
         attackPos = 0;
-        if (attackSamples > 0)
+        // Fix (2026-08-31): `sampleAttack`'s raised-cosine RISES 0->1 like a normal fade-in,
+        // but renderSample() mirrors the envelope for reverse (1-env) so the OVERALL shape
+        // lines up with the reversed audio — applying that same mirror to the attack phase
+        // inverted it into a fade-OUT instead, with a discontinuity where it met the decay
+        // phase. Reverse already gets its 0->1 fade-in for free from the mirrored decay
+        // curve below (governed by sampleDecay), so skip the separate attack phase for
+        // reverse rather than fight it.
+        if (attackSamples > 0 && ! reverse)
         {
             attacking = true;
             env       = 0.0f;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 
@@ -175,7 +177,16 @@ namespace kickr
 
     private:
         double fsOversampled { 44100.0 };
-        bool   active        { false };
+
+        // Fix (2026-08-31): was a plain bool, written by the audio thread and read
+        // cross-thread by PluginProcessor::retireUnreferenced() (message thread, via
+        // KickEngine::anyVoiceActive()) with no synchronisation whatsoever — a data race
+        // (UB in the C++ memory model) that gates whether a retired SampleBuffer is safe
+        // to free. A stale/never-visible read could let the message thread free a buffer
+        // this voice's SamplePlayer still holds a raw pointer into. std::atomic (default
+        // seq_cst on this single flag, touched a few times per block/note, never per
+        // sample — no measurable cost) makes every write visible and well-defined.
+        std::atomic<bool> active { false };
 
         float  baseFrequencyHz { 55.0f };
         float  velLevel        { 1.0f };

@@ -39,12 +39,21 @@ namespace kickr::dsputils
         return std::exp2 (semitones / 12.0f);
     }
 
+    /** The "rising" half of an equal-power taper for x in [0, 1]: 0->1, sin-shaped.
+        Shared by equalPowerGains() below and anywhere only one side of a fade is needed
+        (e.g. OutputStage's processed<->silence Mix knob, which has no "other side" to
+        fade in — an instrument's output-only bus has no dry signal). */
+    inline float equalPowerRise (float x) noexcept
+    {
+        return std::sin (juce::jlimit (0.0f, 1.0f, x) * juce::MathConstants<float>::halfPi);
+    }
+
     /** Equal-power crossfade gains for x in [0, 1] (a: 1->0, b: 0->1). */
     inline void equalPowerGains (float x, float& a, float& b) noexcept
     {
         const float t = juce::jlimit (0.0f, 1.0f, x) * juce::MathConstants<float>::halfPi;
         a = std::cos (t);
-        b = std::sin (t);
+        b = equalPowerRise (x);
     }
 
     /** One-pole DC blocker (configurable pole radius R). */

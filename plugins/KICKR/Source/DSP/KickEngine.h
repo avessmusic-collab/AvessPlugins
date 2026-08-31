@@ -176,6 +176,18 @@ namespace kickr
         int    incomingVoice     { 1 };
         bool   fadeActive        { false };
         double theta             { 0.0 };   // crossfade position 0 -> 1
+
+        // Fix (2026-08-31): the 3 ms synth crossfade finishing does NOT mean the outgoing
+        // voice is done — its SamplePlayer can still be ringing for seconds (esp. reversed).
+        // The old code unconditionally reset()-ed the outgoing voice at theta>=1, force-
+        // killing a still-playing sample on essentially every ordinary retrigger. Now, if
+        // the outgoing voice is still isActive() (sample only, by then) when the fade ends,
+        // it's demoted to `retiringVoice` instead of reset: renderSegment keeps rendering
+        // + summing it (unscaled — its own gates/envelope already govern audibility) until
+        // it finishes on its own. Mutually exclusive with `fadeActive` (same "other" slot,
+        // one state at a time) — a 3rd trigger needing that same slot legitimately steals
+        // it (2 physical voices is a hard limit), same as it already stole a fading voice.
+        int    retiringVoice     { -1 };
         double retriggerThetaInc { 0.0 };   // 1 / (kRetriggerFadeMs * fsOversampled)
 
         // PHASE 2.10 — OS-factor-switch fade. On a pending change: this block's output is
@@ -316,7 +328,7 @@ namespace kickr
             float sampleFine      { 0.0f };
             bool  sampleMidiTrack { true };
             float sampleAttackMs  { 0.0f };
-            float sampleDecayMs   { 800.0f };
+            float sampleDecayMs   { 2200.0f };   // 2026-08-31: was 800 — see ParameterLayout.h note
             float sampleHPHz      { 20.0f };
             float sampleLPHz      { 20000.0f };
             float sampleCrush01   { 0.0f };

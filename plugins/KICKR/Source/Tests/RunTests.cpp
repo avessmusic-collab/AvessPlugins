@@ -1390,6 +1390,88 @@ int main()
         tmpBank3.deleteRecursively(); fx3.deleteFile();
     }
 
+    // Fix (2026-08-31, code review): the retrigger crossfade's completion (theta>=1, ~3 ms
+    // after ANY retrigger) unconditionally called the OUTGOING voice's reset() — including
+    // its SamplePlayer — regardless of whether the sample was still playing. This bypassed
+    // the KickVoice::renderStereo voice-life fix entirely: a normal 2-hit retrigger with a
+    // long sample killed the FIRST hit's sample ~3 ms after the second hit, every time.
+    // Fix: the outgoing voice is only reset if !isActive(); otherwise it's demoted to a
+    // `retiringVoice` that keeps rendering (unscaled) until its sample naturally finishes,
+    // or a 3rd trigger legitimately steals the slot (only 2 physical voices).
+    //
+    // Verified with two DIFFERENT-frequency long samples: bank-swap the loaded sample
+    // between two triggers (SamplePlayer captures its buffer pointer AT noteOn, so the
+    // first (outgoing) voice keeps reading the FIRST file even after the swap). If the old
+    // voice survives the crossfade, BOTH frequencies are present at a late time point; if
+    // it was killed (the bug), only the second one is.
+    {
+        std::printf ("\n[Fix] retrigger no longer kills a still-playing sample (voice-stealing)\n");
+
+        auto goertzelMag = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1, double hz)
+        {
+            const int i0 = (int) (t0 * s), i1 = (int) (t1 * s);
+            const float* x = b.getReadPointer (0);
+            const double w  = 2.0 * juce::MathConstants<double>::pi * hz / s;
+            const double cw = std::cos (w);
+            double s0 = 0.0, s1 = 0.0, s2 = 0.0;
+            for (int i = i0; i < i1 && i < b.getNumSamples(); ++i)
+            {
+                s0 = (double) x[i] + 2.0 * cw * s1 - s2;
+                s2 = s1; s1 = s0;
+            }
+            return std::sqrt (s1 * s1 + s2 * s2 - 2.0 * cw * s1 * s2) / (double) std::max (1, i1 - i0);
+        };
+
+        const auto tmpBank4 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("kickr_test_retrigger_bank");
+        tmpBank4.deleteRecursively();
+        const auto fxA = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_rt_a.wav");
+        const auto fxB = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_rt_b.wav");
+        writeSineWav (fxA, 90.0,  44100.0, 1.5, 1);   // long, well past any crossfade
+        writeSineWav (fxB, 400.0, 44100.0, 1.5, 1);   // well-separated frequency
+
+        KICKRAudioProcessor p;
+        p.getSampleLibrary().setFolder (tmpBank4);
+        const auto nameA = p.getSampleLibrary().importFile (fxA);
+        const auto nameB = p.getSampleLibrary().importFile (fxB);
+        p.loadSampleByName (nameA);
+        setP (p, "sampleEnable", 1.0f); setP (p, "synthEnable", 0.0f);
+        setP (p, "sampleMidiTrack", 0.0f); setP (p, "limiter", 0.0f);
+
+        p.setRateAndBufferSizeDetails (sr, 64);
+        p.prepareToPlay (sr, 64);
+        juce::AudioBuffer<float> out (juce::jmax (1, p.getTotalNumOutputChannels()), (int) (sr * 0.5));
+        out.clear();
+        juce::AudioBuffer<float> scratch (out.getNumChannels(), 64);
+        const int secondHitAt = (int) (sr * 0.05);   // retrigger 50 ms in — >> the 3 ms crossfade
+
+        for (int pos = 0; pos < out.getNumSamples();)
+        {
+            const int n = std::min (64, out.getNumSamples() - pos);
+            if (pos <= secondHitAt && pos + n > secondHitAt)
+                p.loadSampleByName (nameB);   // swap the bank BEFORE the 2nd trigger
+            juce::AudioBuffer<float> b (scratch.getArrayOfWritePointers(), out.getNumChannels(), n);
+            b.clear();
+            juce::MidiBuffer m;
+            if (pos == 0)                                       m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+            if (secondHitAt >= pos && secondHitAt < pos + n)     m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), secondHitAt - pos);
+            p.processBlock (b, m);
+            for (int ch = 0; ch < out.getNumChannels(); ++ch) out.copyFrom (ch, pos, b, ch, 0, n);
+            pos += n;
+        }
+        p.releaseResources();
+
+        // Late window: well past the 3 ms crossfade, well into both samples' long bodies.
+        const double magA = goertzelMag (out, sr, 0.30, 0.35, 90.0);
+        const double magB = goertzelMag (out, sr, 0.30, 0.35, 400.0);
+        std::printf ("  late window (300-350ms): 90Hz (voice A, pre-swap) mag %.4f   400Hz (voice B, post-swap) mag %.4f\n",
+                     magA, magB);
+        check (magB > 0.02, "the newly-triggered voice B is present (sanity check)");
+        check (magA > 0.02, "voice A's sample survives the retrigger crossfade instead of being force-reset");
+
+        tmpBank4.deleteRecursively(); fxA.deleteFile(); fxB.deleteFile();
+    }
+
     // ---------------------------------------------------------------------
     std::printf ("\n[Phase 2.8] Distortion morph (7-curve character morph + adaptive RMS makeup)\n");
 
@@ -2004,6 +2086,64 @@ int main()
         const double hi = hfRatio (kickr::tests::renderNote (pHi, a1, vel, sr, 512, 0.5), sr, 0.0, 0.3);
         std::printf ("  macroCrush=1, drive 0 vs 1: hfRatio %.4f / %.4f\n", lo, hi);
         check (hi > lo * 1.05, "macro is additive: `drive` still moves the sound under macroCrush=1");
+    }
+
+    // Fix (2026-08-31, code review): the 4 macro SmoothedValues were reset() against
+    // baseSampleRate (~1 tick per SAMPLE) but only ever ticked (getNextValue()) once per
+    // processBlock() call (~1 tick per BLOCK) — so the documented "~20 ms" ramp actually
+    // took ~20 ms worth of BLOCKS: at a typical 512-sample buffer, ~10 seconds for a
+    // macro move to reach its target. Step macroCrush mid-note and confirm the change is
+    // audible within ~40 ms, not only after several seconds.
+    //
+    // Isolated to a sustained signal (TAIL layer only, long decay, minimal envelope
+    // movement across the measurement window) so the comparison isn't confounded by the
+    // kick's own natural decay: compare the STEPPED render's post-step window against a
+    // CONTROL held at the target value from t=0 — at the SAME absolute time, so both
+    // share identical natural decay, isolating the macro's own convergence speed.
+    {
+        auto renderTail = [&] (bool doStep)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "bodyLevel", 0.0f); setP (p, "clickLevel", 0.0f);
+            setP (p, "subLevel", 0.0f);  setP (p, "noiseLevel", 0.0f);
+            setP (p, "tailLevel", 1.0f); setP (p, "tailLength", 2000.0f); setP (p, "tailDrive", 0.0f);
+            setP (p, "macroCrush", doStep ? 0.5f : 1.0f);   // control starts already at target
+            p.setRateAndBufferSizeDetails (sr, 64);
+            p.prepareToPlay (sr, 64);
+
+            juce::AudioBuffer<float> out (juce::jmax (1, p.getTotalNumOutputChannels()), (int) (sr * 0.2));
+            out.clear();
+            juce::AudioBuffer<float> scratch (out.getNumChannels(), 64);
+            const int stepAtSample = (int) (sr * 0.10);
+
+            for (int pos = 0; pos < out.getNumSamples();)
+            {
+                const int n = std::min (64, out.getNumSamples() - pos);
+                if (doStep && pos <= stepAtSample && pos + n > stepAtSample)
+                    setP (p, "macroCrush", 1.0f);   // step to the same target as the control
+                juce::AudioBuffer<float> b (scratch.getArrayOfWritePointers(), out.getNumChannels(), n);
+                b.clear();
+                juce::MidiBuffer m;
+                if (pos == 0) m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+                p.processBlock (b, m);
+                for (int ch = 0; ch < out.getNumChannels(); ++ch) out.copyFrom (ch, pos, b, ch, 0, n);
+                pos += n;
+            }
+            p.releaseResources();
+            return out;
+        };
+
+        const auto control = renderTail (false);   // macroCrush = 1.0 from t=0 (the eventual target)
+        const auto stepped = renderTail (true);    // macroCrush 0.5 -> 1.0 at t=100ms
+
+        // Window well after the step (~15-40 ms later) but still deep in the 2 s tail decay
+        // (negligible amplitude change there) -> isolates the macro's own convergence speed.
+        const double hfControl = hfRatio (control, sr, 0.115, 0.14);
+        const double hfStepped = hfRatio (stepped, sr, 0.115, 0.14);
+        std::printf ("  macroCrush step 0.5->1.0 @100ms, sustained tail: hfRatio control(=1 from t0) %.4f   stepped (~20ms after) %.4f\n",
+                     hfControl, hfStepped);
+        check (std::abs (hfStepped - hfControl) < std::abs (hfControl) * 0.35,
+               "macro step converges within ~20-40 ms (matches the already-at-target control), not several seconds");
     }
 
     // 7. Fast macro sweep is click-free. 8. Fast param automation is click-free.

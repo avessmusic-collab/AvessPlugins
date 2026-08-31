@@ -109,8 +109,9 @@ namespace kickr
         limiterOn   = limiterEnabled;
 
         outGain.setTargetValue (dsputils::dbToGain (juce::jlimit (-24.0f, 12.0f, outputDb)));
-        mixGain.setTargetValue (std::sin (juce::jlimit (0.0f, 1.0f, mix01)
-                                          * juce::MathConstants<float>::halfPi));
+        // Equal-power processed<->silence blend (dsputils::equalPowerRise — shared with the
+        // retrigger crossfade's formula so a future retune only needs one edit).
+        mixGain.setTargetValue (dsputils::equalPowerRise (mix01));
     }
 
     void OutputStage::processTone (float& l, float& r) noexcept

@@ -82,13 +82,23 @@ namespace kickr
         double currentSampleRate { 48000.0 };
 
         // ---- waveform: single buffer, streamed. The audio thread appends and publishes
-        //      `waveWritePos` (release); the message thread reads it (acquire) and draws
-        //      the stable [0, pos) prefix -> the kick sweeps in left->right as it plays,
-        //      ~one timer tick of latency instead of a full 341 ms buffer wait.
+        //      the write position; the message thread reads it and draws the stable
+        //      [0, pos) prefix -> the kick sweeps in left->right as it plays, ~one timer
+        //      tick of latency instead of a full 341 ms buffer wait.
+        //
+        //      Fix (2026-08-31): generation and write-position used to be two SEPARATE
+        //      atomics, each read independently in getWaveform(). armCapture() writes
+        //      writePos=0 then bumps generation as two separate stores; a message-thread
+        //      read landing between them could pair the OLD generation with the NEW
+        //      (reset) writePos — a torn, inconsistent snapshot (benign here — a one-
+        //      frame display glitch — but still a real race). Packed into ONE atomic
+        //      (generation in the high 32 bits, writePos in the low 32) so a single
+        //      load/store always yields a consistent pair.
         std::array<float, kWaveCaptureLen> waveBuffer {};
-        std::atomic<int>           waveWritePos   { 0 };   // valid-sample count, release-stored
-        std::atomic<std::uint32_t> waveGeneration { 0 };   // ++ on every armCapture()
-        bool                       captureFull    { true };    // audio-thread only; true = idle
+        std::atomic<std::uint64_t> waveState   { 0 };   // (generation << 32) | writePos
+        std::uint32_t              genShadow   { 0 };    // audio-thread-only mirror of the
+                                                          // current generation (single writer)
+        bool                       captureFull { true };    // audio-thread only; true = idle
 
         // ---- spectrum: AbstractFifo-guarded ring ------------------------------------
         juce::AbstractFifo               specFifo { kSpecFifoLen };

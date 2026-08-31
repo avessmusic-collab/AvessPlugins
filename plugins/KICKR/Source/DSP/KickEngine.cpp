@@ -73,8 +73,16 @@ namespace kickr
 
         const auto macroInit = [] (std::atomic<float>* p) noexcept
         { return p != nullptr ? p->load() : 0.5f; };
+        // Fix (2026-08-31): these smoothers are only ticked (getNextValue()) ONCE per
+        // processBlock() call — once per HOST BLOCK, not once per sample — but were
+        // reset() against `baseSampleRate` (i.e. calibrated as if ticked once per
+        // sample). That made the "~20 ms" ramp take ~20 ms worth of BLOCKS instead: at a
+        // typical 512-sample block, ~10 seconds for a macro knob move to actually reach
+        // its target, scaling with the host's buffer size. Calibrate against ticks/sec
+        // (block rate) instead, so the ramp actually completes in ~20 ms of audio time.
+        const double blockRateHz = baseSampleRate / static_cast<double> (maxBlockSize);
         for (auto* sm : { &macroPunchSm, &macroBodySm, &macroCrushSm, &macroTailSm })
-            sm->reset (baseSampleRate, 0.02);   // ~20 ms — click-free macro sweeps
+            sm->reset (blockRateHz, 0.02);   // ~20 ms — click-free macro sweeps
         macroPunchSm.setCurrentAndTargetValue (macroInit (pMacroPunch));
         macroBodySm .setCurrentAndTargetValue (macroInit (pMacroBody));
         macroCrushSm.setCurrentAndTargetValue (macroInit (pMacroCrush));
@@ -151,6 +159,7 @@ namespace kickr
         incomingVoice      = 1;
         fadeActive         = false;
         theta              = 0.0;
+        retiringVoice      = -1;
         switchFadeInSamples = 0;
 
         macroPunchSm.setCurrentAndTargetValue (macroPunchSm.getTargetValue());
@@ -245,6 +254,11 @@ namespace kickr
             // crossfade. The old voice keeps running phase-continuously; it is reset
             // only when theta reaches 1 (in renderSegment).
             incomingVoice = 1 - activeVoice;
+            // If that slot is a "retiring" voice (its synth crossfade already finished but
+            // its sample was still ringing), this new trigger legitimately steals it — only
+            // 2 physical voice slots exist. Clear the tracker so it isn't double-rendered.
+            if (incomingVoice == retiringVoice)
+                retiringVoice = -1;
             auto& incoming = voices[static_cast<size_t> (incomingVoice)];
             incoming.reset();
             triggerVoice (incoming, freqHz, note, velLevelGain, velClickGain, v01);
@@ -284,11 +298,15 @@ namespace kickr
         float* bL = voiceScratch[1].getWritePointer (0);
         float* bR = voiceScratch[1].getWritePointer (1);
 
-        const bool fading = fadeActive;
+        const bool fading   = fadeActive;
+        const bool retiring = (retiringVoice >= 0);   // mutually exclusive with `fading`
+                                                       // (same "other" slot, see KickEngine.h)
 
         voices[static_cast<size_t> (activeVoice)].renderStereo (aL, aR, upNum);
         if (fading)
             voices[static_cast<size_t> (incomingVoice)].renderStereo (bL, bR, upNum);
+        else if (retiring)
+            voices[static_cast<size_t> (retiringVoice)].renderStereo (bL, bR, upNum);
 
         // Voice mix (equal-power crossfade during a retrigger) -> Tone (PRE-distortion) ->
         // stereo-linked TransientShaper -> per-channel Waveshaper -> OutputStage
@@ -317,6 +335,13 @@ namespace kickr
                 th += retriggerThetaInc;
                 if (th > 1.0)
                     th = 1.0;
+            }
+            else if (retiring)
+            {
+                // A voice past its synth crossfade but still sample-ringing (fix above) —
+                // no fade shape needed, its own AD env / gates already govern audibility.
+                L = aL[i] + bL[i];
+                R = aR[i] + bR[i];
             }
             else
             {
@@ -352,11 +377,27 @@ namespace kickr
 
             if (theta >= 1.0)
             {
-                voices[static_cast<size_t> (activeVoice)].reset();   // free the outgoing voice
+                // Fix (2026-08-31): the synth crossfade finishing doesn't mean the outgoing
+                // voice is DONE — its sample can still be ringing (isActive() now covers
+                // that, KickVoice fix above). Only reset here if it's genuinely finished;
+                // otherwise demote it to `retiringVoice` so it keeps being rendered/summed
+                // (unscaled, see above) until it naturally ends — or a 3rd trigger steals
+                // the slot (handleNoteOn), which is the unavoidable 2-voice limit.
+                const auto oldIdx = static_cast<size_t> (activeVoice);
+                if (voices[oldIdx].isActive())
+                    retiringVoice = activeVoice;
+                else
+                    voices[oldIdx].reset();
+
                 activeVoice = incomingVoice;
                 fadeActive  = false;
                 theta       = 0.0;
             }
+        }
+        else if (retiring && ! voices[static_cast<size_t> (retiringVoice)].isActive())
+        {
+            voices[static_cast<size_t> (retiringVoice)].reset();
+            retiringVoice = -1;
         }
 
         oversampling.processSamplesDown (seg);
@@ -441,7 +482,7 @@ namespace kickr
         snap.sampleFine      = load (pSampleFine,      0.0f);
         snap.sampleMidiTrack = load (pSampleMidiTrack, 1.0f) > 0.5f;
         snap.sampleAttackMs  = load (pSampleAttack,    0.0f);
-        snap.sampleDecayMs   = load (pSampleDecay,     800.0f);
+        snap.sampleDecayMs   = load (pSampleDecay,     2200.0f);   // 2026-08-31: was 800
         snap.sampleHPHz      = load (pSampleHP,        20.0f);
         snap.sampleLPHz      = load (pSampleLP,        20000.0f);
         snap.sampleCrush01   = load (pSampleCrush,     0.0f);

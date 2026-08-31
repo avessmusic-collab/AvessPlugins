@@ -26,18 +26,19 @@ namespace kickr
         spectrumDb.fill (-120.0f);
 
         captureFull = true;
-        waveWritePos.store (0, std::memory_order_relaxed);
-        // leave waveGeneration as-is (a monotonically increasing tag)
+        waveState.store (static_cast<std::uint64_t> (genShadow) << 32, std::memory_order_relaxed);
+        // genShadow itself is left as-is (a monotonically increasing tag across prepare() calls)
     }
 
     //========================================================================== audio thread
     void Analyzer::armCapture() noexcept
     {
-        // New trigger: restart the streamed capture from sample 0. The generation bump
-        // (release) pairs with the acquire load in getWaveform().
-        waveWritePos.store (0, std::memory_order_relaxed);
+        // New trigger: restart the streamed capture from sample 0 AND bump the generation
+        // in one atomic store (see the waveState doc comment) so the message thread never
+        // observes a torn (generation, writePos) pair.
         captureFull = false;
-        waveGeneration.fetch_add (1, std::memory_order_release);
+        ++genShadow;
+        waveState.store (static_cast<std::uint64_t> (genShadow) << 32, std::memory_order_release);
     }
 
     void Analyzer::pushBlock (const float* left, const float* right, int numSamples) noexcept
@@ -46,17 +47,21 @@ namespace kickr
             return;
 
         // ---- (a) streamed one-kick waveform capture ---------------------------------
-        //  Single writer (this thread). Append, then publish the new length with a
-        //  release store so the message thread sees the samples before the count.
+        //  Single writer (this thread). Append, then publish the new length (packed with
+        //  the unchanged current generation, see waveState) with a release store so the
+        //  message thread sees the samples before the count.
         if (! captureFull)
         {
-            const int pos = waveWritePos.load (std::memory_order_relaxed);
-            const int n   = juce::jmin (numSamples, kWaveCaptureLen - pos);
+            const auto packed = waveState.load (std::memory_order_relaxed);
+            const int  pos    = static_cast<int> (packed & 0xffffffffu);
+            const int  n      = juce::jmin (numSamples, kWaveCaptureLen - pos);
 
             for (int i = 0; i < n; ++i)
                 waveBuffer[static_cast<size_t> (pos + i)] = 0.5f * (left[i] + right[i]);
 
-            waveWritePos.store (pos + n, std::memory_order_release);
+            waveState.store ((static_cast<std::uint64_t> (genShadow) << 32)
+                                  | static_cast<std::uint32_t> (pos + n),
+                             std::memory_order_release);
 
             if (pos + n >= kWaveCaptureLen)
                 captureFull = true;
@@ -79,11 +84,13 @@ namespace kickr
     int Analyzer::getWaveform (std::array<float, kWaveCaptureLen>& dst,
                                std::uint32_t& generation) const noexcept
     {
-        // acquire the generation first, then the length; the length's release store in
-        // pushBlock() ensures the [0, len) samples are visible.
-        generation = waveGeneration.load (std::memory_order_acquire);
+        // One packed acquire load -> generation and length always come from the SAME
+        // pushBlock()/armCapture() store, never a torn mix of two independent atomics
+        // (2026-08-31 fix). The release store ensures the [0, len) samples are visible too.
+        const auto packed = waveState.load (std::memory_order_acquire);
+        generation = static_cast<std::uint32_t> (packed >> 32);
         const int len = juce::jlimit (0, kWaveCaptureLen,
-                                      waveWritePos.load (std::memory_order_acquire));
+                                      static_cast<int> (packed & 0xffffffffu));
 
         for (int i = 0; i < len; ++i)
             dst[static_cast<size_t> (i)] = waveBuffer[static_cast<size_t> (i)];
