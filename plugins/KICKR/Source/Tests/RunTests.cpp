@@ -2133,6 +2133,20 @@ int main()
                 std::printf ("  wrote %s : %s (%dx%d)\n", png.getFullPathName().toRawUTF8(),
                              ok ? "ok" : "FAILED", snap.getWidth(), snap.getHeight());
             }
+
+            // Also render at the ACTUAL fixed runtime default (1120x819, 2026-08-31) so a
+            // size change here is caught visually, not just "doesn't assert" above.
+            ed->setSize (1120, 819);
+            const auto snapDefault = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+            const auto pngDefault  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_default_size.png");
+            if (auto os2 = pngDefault.createOutputStream())
+            {
+                os2->setPosition (0); os2->truncate();
+                juce::PNGImageFormat fmt2;
+                const bool ok2 = fmt2.writeImageToStream (snapDefault, *os2);
+                std::printf ("  wrote %s : %s (%dx%d)\n", pngDefault.getFullPathName().toRawUTF8(),
+                             ok2 ? "ok" : "FAILED", snapDefault.getWidth(), snapDefault.getHeight());
+            }
         }
     }
 

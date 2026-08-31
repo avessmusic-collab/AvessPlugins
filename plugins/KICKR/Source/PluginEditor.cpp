@@ -254,12 +254,14 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
 
     jassert (boundParamCount == 59);
 
-    // 2026-08-31 (user request — trial): locked to a fixed 1280x936 so the VST3 and AU
+    // 2026-08-31 (user request — trial): locked to a fixed size so the VST3 and AU
     // instances are guaranteed pixel-identical, with no host-remembered-size divergence
     // to test against. Was freely resizable (900x660..2000x1470, locked to the mockup's
     // 1600:1170 aspect) — revert to that block if this doesn't work out.
+    // 1120x819 = one clean step down from the first trial's 1280x936, exact 1600:1170
+    // aspect (both are 160:117 in whole units — 7 vs 8 — so no rounding/letterboxing).
     setResizable (false, false);
-    setSize (1280, 936);
+    setSize (1120, 819);
 }
 
 KICKRAudioProcessorEditor::~KICKRAudioProcessorEditor()
