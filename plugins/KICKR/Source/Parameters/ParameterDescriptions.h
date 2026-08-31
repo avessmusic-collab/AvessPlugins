@@ -66,7 +66,7 @@ namespace kickr
             { id::transientSustain, "Boosts (+) or reduces (-) the body right after the onset." },
             // ---- DISTORTION --------------------------------------------------------------------
             { id::drive,            "Master saturation amount." },
-            { id::character,        "Morphs the saturation curve from clean to aggressive / digital." },
+            { id::character,        "Morphs the saturation curve: Tanh, Cubic, Asym, Soft Clip, Hard Clip, Foldback, Bitcrush." },
             { id::driveMix,         "Blends the saturated signal back with the clean one." },
             // ---- TONE --------------------------------------------------------------------------
             { id::low,              "Low-shelf tone control (post-drive)." },

@@ -149,6 +149,25 @@ namespace kickr
         return juce::String (names[((midi % 12) + 12) % 12]) + juce::String (midi / 12 - 1);
     }
 
+    // Stage 3 Phase 3.4 (user request 2026-08-31): `character` morphs continuously through
+    // 7 named curves (Waveshaper.h, LOCKED order) — show which one(s), not a bare 0..1
+    // number. `seg = floor(character*6)` / `t` matches the DSP's own crossface math exactly.
+    inline juce::String characterCurveName (float character01) noexcept
+    {
+        // Short forms — this reads out in a small knob's one-line value box, so keep it
+        // tight (the full names live in the CHARACTR tooltip instead).
+        static const char* const names[7] =
+            { "Tanh", "Cubic", "Asym", "Soft", "Hard", "Fold", "Crush" };
+
+        const float c   = juce::jlimit (0.0f, 1.0f, character01) * 6.0f;
+        const int   seg = juce::jlimit (0, 5, (int) std::floor (c));
+        const float t   = c - (float) seg;
+
+        if (t < 0.08f) return names[seg];
+        if (t > 0.92f) return names[seg + 1];
+        return juce::String (names[seg]) + "/" + names[seg + 1];
+    }
+
     // Frequency (Hz) for a chromatic note name like "A1" / "C#2".
     inline float noteNameToHz (const juce::String& text)
     {
@@ -179,6 +198,12 @@ namespace kickr
                     .withLabel ({})
                     .withStringFromValueFunction ([] (float v, int) { return hzToNoteName (v); })
                     .withValueFromStringFunction ([] (const juce::String& t) { return noteNameToHz (t); });
+
+            // Character shows which of the 7 morph curves it's on/between, not a bare number.
+            if (juce::String (p.id) == id::character)
+                attrs = attrs
+                    .withLabel ({})
+                    .withStringFromValueFunction ([] (float v, int) { return characterCurveName (v); });
 
             layout.add (std::make_unique<juce::AudioParameterFloat>(
                 juce::ParameterID { p.id, 1 },

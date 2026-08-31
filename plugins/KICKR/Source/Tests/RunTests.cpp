@@ -2277,6 +2277,24 @@ int main()
                 check (missing == 0, "every parameter has a ParameterDescriptions.h entry");
             }
 
+            // 2026-08-31: `character` reads out as a curve name (Waveshaper.h's 7 LOCKED
+            // curves), not a bare 0..1 number — matches the DSP's own seg/t crossfade math.
+            if (auto* chr = pe.getValueTreeState().getParameter ("character"))
+            {
+                auto textAt = [&] (float v01) { return chr->getText (v01, 32); };
+                std::printf ("  character text: 0=%s  1/6=%s  ~0.10=%s  5/6=%s  1=%s\n",
+                             textAt (0.0f).toRawUTF8(), textAt (1.0f / 6.0f).toRawUTF8(),
+                             textAt (0.10f).toRawUTF8(), textAt (5.0f / 6.0f).toRawUTF8(),
+                             textAt (1.0f).toRawUTF8());
+                check (textAt (0.0f)  == "Tanh",   "character @ 0 reads as the pure Tanh curve");
+                check (textAt (1.0f)  == "Crush",  "character @ 1 reads as the pure Bitcrush curve");
+                check (textAt (5.0f / 6.0f) == "Fold", "character @ 5/6 reads as the pure Foldback curve");
+                check (textAt (0.10f).containsChar ('/'), "mid-blend shows both curve names (e.g. Tanh/Cubic)");
+
+                // Show the worst-case (longest) blended text in the snapshot below.
+                chr->setValueNotifyingHost (0.10f);
+            }
+
             // Software-render the editor to a PNG (no display needed) for visual review.
             ed->setSize (1600, 1170);
             const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.5f);
