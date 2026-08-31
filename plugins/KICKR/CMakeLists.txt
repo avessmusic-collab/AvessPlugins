@@ -147,34 +147,8 @@ target_compile_definitions(KICKR_Tests
 juce_add_binary_data(KICKR_FactorySamples
     SOURCES
         Source/FactorySamples/Kick01.wav
-        Source/FactorySamples/Kick011.wav
-        Source/FactorySamples/Kick012.wav
-        Source/FactorySamples/Kick013.wav
-        Source/FactorySamples/Kick014.wav
-        Source/FactorySamples/Kick015.wav
-        Source/FactorySamples/Kick016.wav
-        Source/FactorySamples/Kick017.wav
-        Source/FactorySamples/Kick018.wav
-        Source/FactorySamples/Kick019.wav
         Source/FactorySamples/Kick02.wav
-        Source/FactorySamples/Kick020.wav
-        Source/FactorySamples/Kick021.wav
-        Source/FactorySamples/Kick022.wav
-        Source/FactorySamples/Kick023.wav
-        Source/FactorySamples/Kick024.wav
-        Source/FactorySamples/Kick025.wav
-        Source/FactorySamples/Kick026.wav
-        Source/FactorySamples/Kick027.wav
-        Source/FactorySamples/Kick028.wav
-        Source/FactorySamples/Kick029.wav
         Source/FactorySamples/Kick03.wav
-        Source/FactorySamples/Kick030.wav
-        Source/FactorySamples/Kick031.wav
-        Source/FactorySamples/Kick032.wav
-        Source/FactorySamples/Kick033.wav
-        Source/FactorySamples/Kick034.wav
-        Source/FactorySamples/Kick035.wav
-        Source/FactorySamples/Kick036.wav
         Source/FactorySamples/Kick04.wav
         Source/FactorySamples/Kick05.wav
         Source/FactorySamples/Kick06.wav
@@ -182,6 +156,32 @@ juce_add_binary_data(KICKR_FactorySamples
         Source/FactorySamples/Kick08.wav
         Source/FactorySamples/Kick09.wav
         Source/FactorySamples/Kick10.wav
+        Source/FactorySamples/Kick11.wav
+        Source/FactorySamples/Kick12.wav
+        Source/FactorySamples/Kick13.wav
+        Source/FactorySamples/Kick14.wav
+        Source/FactorySamples/Kick15.wav
+        Source/FactorySamples/Kick16.wav
+        Source/FactorySamples/Kick17.wav
+        Source/FactorySamples/Kick18.wav
+        Source/FactorySamples/Kick19.wav
+        Source/FactorySamples/Kick20.wav
+        Source/FactorySamples/Kick21.wav
+        Source/FactorySamples/Kick22.wav
+        Source/FactorySamples/Kick23.wav
+        Source/FactorySamples/Kick24.wav
+        Source/FactorySamples/Kick25.wav
+        Source/FactorySamples/Kick26.wav
+        Source/FactorySamples/Kick27.wav
+        Source/FactorySamples/Kick28.wav
+        Source/FactorySamples/Kick29.wav
+        Source/FactorySamples/Kick30.wav
+        Source/FactorySamples/Kick31.wav
+        Source/FactorySamples/Kick32.wav
+        Source/FactorySamples/Kick33.wav
+        Source/FactorySamples/Kick34.wav
+        Source/FactorySamples/Kick35.wav
+        Source/FactorySamples/Kick36.wav
         Source/FactorySamples/Kick37.wav
         Source/FactorySamples/Kick38.wav
         Source/FactorySamples/Kick39.wav
@@ -191,11 +191,11 @@ juce_add_binary_data(KICKR_FactorySamples
         Source/FactorySamples/Kick43.wav
         Source/FactorySamples/Kick44.wav
         Source/FactorySamples/Kick45.wav
-        Source/FactorySamples/Kick56.wav
-        Source/FactorySamples/Kick57.wav
-        Source/FactorySamples/Kick58.wav
-        Source/FactorySamples/Kick59.wav
-        Source/FactorySamples/Kick60.wav
+        Source/FactorySamples/Kick46.wav
+        Source/FactorySamples/Kick47.wav
+        Source/FactorySamples/Kick48.wav
+        Source/FactorySamples/Kick49.wav
+        Source/FactorySamples/Kick50.wav
 )
 
 target_link_libraries(KICKR PRIVATE KICKR_FactorySamples)
