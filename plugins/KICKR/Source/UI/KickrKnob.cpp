@@ -1,5 +1,6 @@
 #include "UI/KickrKnob.h"
 #include "UI/KickrLookAndFeel.h"
+#include "Parameters/ParameterDescriptions.h"
 
 namespace kickr
 {
@@ -32,7 +33,9 @@ namespace kickr
         {
             const auto realDefault = (double) param->convertFrom0to1 (param->getDefaultValue());
             slider.setDoubleClickReturnValue (true, realDefault);
-            slider.setTooltip (param->getName (64)
+
+            const auto& desc = paramDescription (paramID);
+            slider.setTooltip ((desc.isNotEmpty() ? desc : param->getName (64))
                                + juce::String::fromUTF8 ("  \xe2\x80\x94  drag / wheel to adjust,"
                                                          " double-click to reset"));
         }
@@ -109,7 +112,8 @@ namespace kickr
 
         if (auto* p = apvts.getParameter (paramID))
         {
-            button.setTooltip (p->getName (64));
+            const auto& desc = paramDescription (paramID);
+            button.setTooltip (desc.isNotEmpty() ? desc : p->getName (64));
             attachment = std::make_unique<juce::ButtonParameterAttachment> (*p, button, apvts.undoManager);
         }
     }

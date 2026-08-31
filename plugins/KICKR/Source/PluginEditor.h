@@ -88,7 +88,8 @@ private:
     KICKRAudioProcessor& proc;
 
     kickr::KickrLookAndFeel lnf;
-    juce::TooltipWindow tooltip { this, 500 };
+    // 2026-08-31 (user request): hover tooltips now appear after 3 s, not 0.5 s.
+    juce::TooltipWindow tooltip { this, 3000 };
 
     std::vector<std::unique_ptr<kickr::KickrKnob>>   knobs;
     std::vector<std::unique_ptr<kickr::KickrToggle>> toggles;

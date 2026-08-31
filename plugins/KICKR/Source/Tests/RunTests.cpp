@@ -10,6 +10,7 @@
 #include "DSP/SamplePlayer.h"
 #include "DSP/Waveshaper.h"
 #include "Sampling/SampleLibrary.h"
+#include "Parameters/ParameterDescriptions.h"
 
 #include <array>
 #include <cmath>
@@ -2260,6 +2261,21 @@ int main()
             const int kids = Counter{} (ed.get());
             std::printf ("  editor child components (recursive): %d\n", kids);
             check (kids >= 59, "editor has at least 59 child controls");
+
+            // 2026-08-31: every APVTS parameter has a real hover description (not just its
+            // own on-screen caption echoed back) — catches a future param addition that
+            // forgot to add one to ParameterDescriptions.h.
+            {
+                int missing = 0;
+                for (auto* prm : pe.getParameters())
+                    if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (prm))
+                        if (kickr::paramDescription (rp->getParameterID()).isEmpty())
+                        {
+                            std::printf ("  missing hover description: %s\n", rp->getParameterID().toRawUTF8());
+                            ++missing;
+                        }
+                check (missing == 0, "every parameter has a ParameterDescriptions.h entry");
+            }
 
             // Software-render the editor to a PNG (no display needed) for visual review.
             ed->setSize (1600, 1170);

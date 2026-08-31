@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 
 #include "Parameters/ParameterIDs.h"
+#include "Parameters/ParameterDescriptions.h"
 
 namespace pal = kickr::palette;
 using KSize = kickr::KickrKnob::Size;
@@ -68,6 +69,8 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
         loadPresetAt ((i + 1) % juce::jmax (1, presetList.size()));
     };
 
+    undoButton.setTooltip   ("Undo the last preset load / Randomize / Mutate / parameter change");
+    redoButton.setTooltip   ("Redo");
     saveButton.setTooltip   ("Save the current patch as a user preset");
     randomButton.setTooltip ("Randomise the synth parameters (tuning / output / macros / sample untouched)");
     mutateButton.setTooltip ("Nudge every synth parameter a little — keeps the character");
@@ -117,6 +120,9 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     sampleDropHint.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (sampleDropHint);
     // // Phase 3.3: full FileDragAndDropTarget + empty-bank / missing-file UI states + waveform
+
+    samplePrev.setTooltip ("Previous sample in the bank");
+    sampleNext.setTooltip ("Next sample in the bank");
 
     samplePrev.onClick = [this]
     {
@@ -311,7 +317,8 @@ juce::ComboBox& KICKRAudioProcessorEditor::addCombo (juce::StringRef id, const j
 
     if (auto* prm = proc.getValueTreeState().getParameter (id))
     {
-        box->setTooltip (prm->getName (64));
+        const auto& desc = kickr::paramDescription (id);
+        box->setTooltip (desc.isNotEmpty() ? desc : prm->getName (64));
         comboAtts.push_back (std::make_unique<juce::ComboBoxParameterAttachment> (
             *prm, *box, proc.getValueTreeState().undoManager));
     }
