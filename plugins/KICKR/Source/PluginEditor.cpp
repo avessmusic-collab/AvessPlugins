@@ -12,7 +12,11 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     : AudioProcessorEditor (&p), proc (p)
 {
     setLookAndFeel (&lnf);
-    tooltip.setMillisecondsBeforeTipAppears (450);
+    // Delay itself is set on the `tooltip` member's constructor (PluginEditor.h) — this
+    // redundant, now-correctly-matching call is kept only so the two can't silently drift
+    // apart again the way they just did (this used to say 450, quietly overriding the
+    // header's 3000 the whole time the 3-second hover request was "done").
+    tooltip.setMillisecondsBeforeTipAppears (3000);
 
     // ---------------------------------------------------------------- analyzers
     // Added FIRST so the WAVE / SPECTRUM mode buttons (added below) sit on top.
@@ -73,7 +77,7 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     redoButton.setTooltip   ("Redo");
     saveButton.setTooltip   ("Save the current patch as a user preset");
     randomButton.setTooltip ("Randomise the synth parameters (tuning / output / macros / sample untouched)");
-    mutateButton.setTooltip ("Nudge every synth parameter a little — keeps the character");
+    mutateButton.setTooltip ("Nudge every synth parameter a little - keeps the character");
     abButton.setTooltip     ("Stash / compare two states");
     presetPrev.setTooltip   ("Previous preset");
     presetNext.setTooltip   ("Next preset");
@@ -92,7 +96,7 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     scopeWaveButton.setRadioGroupId (0x5c09e);
     scopeSpectrumButton.setRadioGroupId (0x5c09e);
     scopeWaveButton.setToggleState (true, juce::dontSendNotification);
-    scopeWaveButton.setTooltip ("Kick waveform — one capture per trigger");
+    scopeWaveButton.setTooltip ("Kick waveform - one capture per trigger");
     scopeSpectrumButton.setTooltip ("Live FFT spectrum");
 
     scopeWaveButton.onClick = [this]
@@ -385,7 +389,7 @@ void KICKRAudioProcessorEditor::loadPresetAt (int combinedIndex)
     updateUndoRedoState();
     syncPresetName();
     updateSampleLabel();
-    showNotice (ok ? "Loaded  " + name : "Preset not found — kept current");
+    showNotice (ok ? "Loaded  " + name : "Preset not found - kept current");
 }
 
 void KICKRAudioProcessorEditor::showPresetMenu()
@@ -402,7 +406,7 @@ void KICKRAudioProcessorEditor::showPresetMenu()
     if (user.getNumItems() > 0)
         menu.addSubMenu ("User", user);
     menu.addSeparator();
-    menu.addItem (1000, "Save As…");
+    menu.addItem (1000, "Save As...");
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetNameLabel),
                         [this] (int r)
@@ -471,7 +475,7 @@ void KICKRAudioProcessorEditor::doAB()
     }
     else
     {
-        showNotice (juce::String (abActive == 0 ? "A" : "B") + " stored — switch again to compare");
+        showNotice (juce::String (abActive == 0 ? "A" : "B") + " stored - switch again to compare");
         abActive = other;
     }
 }
@@ -518,7 +522,7 @@ void KICKRAudioProcessorEditor::importAudioFile (const juce::File& file)
     const auto name = proc.getSampleLibrary().importFile (file);
     if (name.isEmpty())
     {
-        showNotice ("Couldn't import — needs WAV/AIFF/FLAC/CAF, <= 5 s, <= 2 ch");
+        showNotice ("Couldn't import - needs WAV/AIFF/FLAC/CAF, <= 5 s, <= 2 ch");
         return;
     }
 

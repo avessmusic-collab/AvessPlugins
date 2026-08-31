@@ -7,20 +7,20 @@
 namespace kickr
 {
     /**
-        Stage 3 Phase 3.4 — one short, plain-language hover description per parameter
+        Stage 3 Phase 3.4 - one short, plain-language hover description per parameter
         (user request 2026-08-31: "make short descriptions of knobs and buttons if u
         hover mouse for longer than 3 seconds"). Purely UI sugar: `KickrKnob`/
         `KickrToggle`/`PluginEditor::addCombo` look a parameter's ID up here for its
         `setTooltip()` text instead of the bare `getName()` (which just repeats the
         knob's own on-screen caption). Falls back to `getName()` for anything not
-        listed here (there shouldn't be any — all 59 are covered).
+        listed here (there shouldn't be any - all 59 are covered).
     */
     inline const juce::String& paramDescription (juce::StringRef paramID)
     {
         static const std::map<juce::String, juce::String> table {
             // ---- PITCH ------------------------------------------------------------
-            { id::fundamental,      "Body pitch — also the MIDI-Pitch mode reference note." },
-            { id::pitchStart,       "Pitch envelope start, as a multiple of the fundamental — higher = sharper \"laser\" punch." },
+            { id::fundamental,      "Body pitch - also the MIDI-Pitch mode reference note." },
+            { id::pitchStart,       "Pitch envelope start, as a multiple of the fundamental - higher = sharper \"laser\" punch." },
             { id::pitchTime,        "Time for the pitch envelope to fall to the fundamental." },
             { id::pitchCurve,       "Pitch envelope shape: low = smooth sweep, high = sharp exponential snap." },
             // ---- BODY ---------------------------------------------------------------
@@ -29,7 +29,7 @@ namespace kickr
             { id::bodyHarmonics,    "Adds harmonic saturation to the body oscillator's own tone." },
             // ---- SUB ------------------------------------------------------------------
             { id::subLevel,         "Level of the independent sub-bass sine layer." },
-            { id::subFreq,          "Fixed frequency of the sub layer — doesn't follow the pitch envelope." },
+            { id::subFreq,          "Fixed frequency of the sub layer - doesn't follow the pitch envelope." },
             { id::subDecay,         "Decay time of the sub layer." },
             // ---- CLICK ----------------------------------------------------------------
             { id::clickLevel,       "Level of the synthesized transient click." },
@@ -55,15 +55,15 @@ namespace kickr
             { id::sampleReverse,    "Plays the sample backwards." },
             { id::sampleTune,       "Sample pitch, in semitones." },
             { id::sampleFine,       "Sample fine-tune, in cents." },
-            { id::sampleMidiTrack,  "Tracks incoming MIDI pitch — playing C3 triggers the sample unpitched." },
+            { id::sampleMidiTrack,  "Tracks incoming MIDI pitch - playing C3 triggers the sample unpitched." },
             { id::sampleAttack,     "Fade-in time of the sample layer." },
             { id::sampleDecay,      "Fade-out time of the sample layer (independent of the file's own length)." },
             { id::sampleHP,         "High-pass filter on the sample layer." },
             { id::sampleLP,         "Low-pass filter on the sample layer." },
             { id::sampleCrush,      "Bitcrush / sample-rate reduction on the sample layer." },
             // ---- TRANSIENT --------------------------------------------------------------------
-            { id::transientAttack,  "Sharpens (+) or softens (−) the very onset of the kick." },
-            { id::transientSustain, "Boosts (+) or reduces (−) the body right after the onset." },
+            { id::transientAttack,  "Sharpens (+) or softens (-) the very onset of the kick." },
+            { id::transientSustain, "Boosts (+) or reduces (-) the body right after the onset." },
             // ---- DISTORTION --------------------------------------------------------------------
             { id::drive,            "Master saturation amount." },
             { id::character,        "Morphs the saturation curve from clean to aggressive / digital." },
@@ -81,7 +81,7 @@ namespace kickr
             { id::mix,              "Blends the processed signal with silence (equal-power)." },
             { id::limiter,          "Safety soft-clip limiter on the final output." },
             // ---- GLOBAL --------------------------------------------------------------------------
-            { id::oversampling,     "Internal oversampling factor — higher = cleaner distortion, more CPU." },
+            { id::oversampling,     "Internal oversampling factor - higher = cleaner distortion, more CPU." },
             // ---- TUNING --------------------------------------------------------------------------
             { id::tuneMode,         "MIDI Pitch (note controls pitch) or Fixed Frequency (always plays at Fundamental)." },
             { id::tune,             "Global tuning offset, in semitones." },

@@ -36,8 +36,7 @@ namespace kickr
 
             const auto& desc = paramDescription (paramID);
             slider.setTooltip ((desc.isNotEmpty() ? desc : param->getName (64))
-                               + juce::String::fromUTF8 ("  \xe2\x80\x94  drag / wheel to adjust,"
-                                                         " double-click to reset"));
+                               + juce::String (" - drag / wheel to adjust, double-click to reset"));
         }
 
         slider.onValueChange = [this] { refreshReadout(); repaint(); };
