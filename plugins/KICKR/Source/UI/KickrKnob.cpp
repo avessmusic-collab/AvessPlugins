@@ -35,8 +35,7 @@ namespace kickr
             slider.setDoubleClickReturnValue (true, realDefault);
 
             const auto& desc = paramDescription (paramID);
-            slider.setTooltip ((desc.isNotEmpty() ? desc : param->getName (64))
-                               + juce::String (" - drag / wheel to adjust, double-click to reset"));
+            slider.setTooltip (desc.isNotEmpty() ? desc : param->getName (64));
         }
 
         slider.onValueChange = [this] { refreshReadout(); repaint(); };
