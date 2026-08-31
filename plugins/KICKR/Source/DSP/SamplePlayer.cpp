@@ -248,7 +248,19 @@ namespace kickr
                                                          static_cast<float> (remainOut) / static_cast<float> (fadeLen)));
         s *= g;
 
-        // 3. AD envelope — raised-cosine attack -> one-pole exponential decay.
+        // 3. AD envelope — raised-cosine attack -> one-pole exponential decay, in real
+        //    time from noteOn (voice age), NOT tied to read position.
+        //
+        //    Fix (2026-08-31, user report: "the sample doesn't play whole [when]
+        //    reversed"): a normal one-shot's loud content sits at its recorded START.
+        //    In reverse, that content is read LAST — but this envelope still decays
+        //    loud-to-quiet from t=0 regardless of direction, so by the time playback
+        //    reached it the envelope had already decayed it to silence (or the
+        //    envelope-floor early-finish below had already killed the whole voice).
+        //    For REVERSE, apply the MIRROR of the decay curve (rises 0->1 across
+        //    `sampleDecay`, then holds near 1) so the shape lines up with the
+        //    reversed audio instead of fighting it. `env` itself is left as the
+        //    un-mirrored decay curve — used by the floor check below.
         if (attacking)
         {
             const float x = static_cast<float> (attackPos) / static_cast<float> (juce::jmax (1, attackSamples));
@@ -264,7 +276,7 @@ namespace kickr
             env *= decayCoef;
         }
         dsputils::flushDenormal (env);
-        s *= env;
+        s *= reverse ? (1.0f - env) : env;
 
         // 4. HP then LP (bypassed at the range extremes).
         if (hpActive)
@@ -287,7 +299,11 @@ namespace kickr
         }
 
         // End the layer once a short decay has run out (window may be much longer).
-        if (! attacking && env < kFloorGain && sinceOn > fadeLen + attackSamples)
+        // NOT for reverse: there, `env` decaying toward the floor means the applied
+        // (mirrored) envelope is approaching FULL volume, not silence — the window
+        // boundary (`pastEnd`, checked every sample above) is the only correct
+        // end-of-playback signal for reverse.
+        if (! reverse && ! attacking && env < kFloorGain && sinceOn > fadeLen + attackSamples)
         {
             finished = true;
             env      = 0.0f;

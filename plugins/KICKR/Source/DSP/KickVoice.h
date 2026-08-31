@@ -73,8 +73,12 @@ namespace kickr
         `synthEnable == false` -> synthGate -> 0 ; `sampleEnable == false` (or no sample
         loaded) -> sampleGate -> 0 ; both on -> blended. The SamplePlayer carries its own
         `sampleLevel x velFactor` internally.
-        `SamplePlayer::isActive()` is deliberately NOT in `isActive()` (architecture) — the
-        synth envelopes govern voice lifetime; the sample just goes silent once it is done.
+        Voice lifetime (fixed 2026-08-31 — was synth-envelopes-only, which killed the voice
+        and force-reset the sample mid-playback as soon as the 5 SYNTH envelopes finished,
+        regardless of `synthEnable`/whether the sample was still actively playing): the
+        voice frees only once the 5 synth envelopes AND `sample.isActive()` are all done.
+        `sample.isActive()` is already false immediately for a disabled/unloaded sample
+        layer, so a synth-only voice frees exactly as before.
         `bodyHarmonics` lands in Phase 2.8+.
     */
     class KickVoice

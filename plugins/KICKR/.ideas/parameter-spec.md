@@ -219,9 +219,9 @@ The 6th layer. Plays **one** user-recorded kick from the managed bank, summed wi
 - **DSP:** AD-envelope attack applied to the sample layer (raised-cosine). 0 = the sample's own attack, untouched.
 
 ### Sample Decay
-- **ID:** `sampleDecay` · **Float** · **20.0 – 2000.0 ms** · **Default 800.0** · **Skew 0.4** · **Unit ms**
+- **ID:** `sampleDecay` · **Float** · **20.0 – 5500.0 ms** · **Default 2200.0** · **Skew 0.4** · **Unit ms**
 - **UI:** rotary knob, Sample module. Value `{v.0f} ms`.
-- **DSP:** AD-envelope exponential decay applied to the sample layer — tighten (short) or let it ring to the trim end (long). The envelope, the trim end, and the file end together bound playback length.
+- **DSP:** AD-envelope exponential decay applied to the sample layer — tighten (short) for a gated one-shot, or lengthen to let a long/reversed sample ring through to the trim end. The envelope, the trim end, and the file end together bound playback length. **2026-08-31 fix:** range/default raised from 20–2000 ms / 800 ms — the old max was silent (-100 dB, `SamplePlayer::kFloorGain`) by ~3.3 s and the default by ~1.3 s, well inside the 5 s import cap, so any longer sample was truncated before finishing — most audible on `sampleReverse`, where the loud transient sits at the temporal *end* of playback and got decayed to silence before it was ever heard. The new max reaches -100 dB at ~9.2 s (covers the full 5 s import range with margin); the new default reaches it at ~3.7 s. No factory preset is affected (all 17 are synth-only, none set `sample*` params).
 
 ### Sample HP
 - **ID:** `sampleHP` · **Float** · **20.0 – 2000.0 Hz** · **Default 20.0** · **Skew 0.4** · **Unit Hz**
@@ -490,7 +490,7 @@ Per user request, KICKR gains a sample-playback layer fed from a bank of the use
 - **New components** (`architecture.md`): `SamplePlayer` (in-region resample + AD env + HP/LP + crush, AD-10), `SampleLibrary` (managed-folder scan/watch/decode). Library folder: `~/Music/KICKR/Samples/`. Formats: WAV / AIFF / FLAC / CAF. Length cap ~5 s at session rate. Decode on message thread → atomic pointer hand-off to audio thread.
 - **No factory samples ship.** Factory presets are all synth-only.
 - **Randomize / Mutate** never touch the sample layer, the enable toggles, or the selection.
-- Open for Stage 2: per-sample root note (assumed C3 in v1, moved from C1 on 2026-08-31), resample interpolation order (`juce::Interpolators::Lagrange` vs WindowedSinc), whether `sampleDecay` max = "play to end" or a hard 2 s cap.
+- Open for Stage 2: per-sample root note (assumed C3 in v1, moved from C1 on 2026-08-31), resample interpolation order (`juce::Interpolators::Lagrange` vs WindowedSinc). ~~whether `sampleDecay` max = "play to end" or a hard 2 s cap~~ — **resolved 2026-08-31**: range/default raised (20-5500 ms / 2200 ms default) so decay can cover the full 5 s import range instead of hard-capping at ~3.3 s; see the Sample Decay entry above.
 
 ## Contract Rules (unchanged)
 

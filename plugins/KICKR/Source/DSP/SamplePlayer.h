@@ -38,9 +38,10 @@ namespace kickr
              `crush = 0` -> exactly bit-transparent (both skipped).
           6. `x sampleLevel x velFactor`.
 
-        `isActive()` is deliberately NOT folded into `KickVoice::isActive()` — the synth
-        amp env / other layers govern voice lifetime; the sample just contributes silence
-        once it is done (but it does stop reading past the buffer / window end).
+        `isActive()` — used by `KickVoice`'s internal voice-freeing check (fixed 2026-08-31:
+        it used to be ignored there, so the synth envelopes finishing killed the whole
+        voice — and force-`reset()` this player — out from under a still-playing sample).
+        Also stops reading past the buffer / trim-window end regardless.
 
         RT-safe: no alloc / lock / log / IO. Interpolator is stateless-per-call; both SVFs
         are prepared in `prepare`. The AD env + both SVF states are denormal-flushed each
@@ -63,7 +64,7 @@ namespace kickr
             float fineCents { 0.0f };
             bool  midiTrack { true };
             float attackMs  { 0.0f };
-            float decayMs   { 800.0f };
+            float decayMs   { 2200.0f };   // 2026-08-31: was 800 — see ParameterLayout.h note
             float hpHz      { 20.0f };    // 20 = off
             float lpHz      { 20000.0f }; // 20000 = off
             float crush01   { 0.0f };

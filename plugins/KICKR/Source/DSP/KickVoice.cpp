@@ -199,8 +199,17 @@ namespace kickr
             left[i]  = dsputils::sanitize (L);
             right[i] = dsputils::sanitize (R);
 
+            // Fix (2026-08-31, user report: "the sample doesn't play whole sometimes"):
+            // this used to ignore the sample layer entirely, so as soon as the 5 SYNTH
+            // envelopes finished (a few hundred ms by default — they run to completion
+            // regardless of synthEnable/synthGate) the whole voice was killed and
+            // sample.reset() forcibly cut off the sample mid-playback, even with
+            // synthEnable off and a multi-second sample still actively rendering. Now the
+            // voice only frees once the sample layer is ALSO done (sample.isActive() is
+            // already false immediately when the layer is disabled or has no buffer, so
+            // synth-only / no-sample voices free exactly as before).
             if (! ampEnv.isActive() && ! click.isActive() && ! sub.isActive()
-                && ! tail.isActive() && ! noise.isActive())
+                && ! tail.isActive() && ! noise.isActive() && ! sample.isActive())
             {
                 active = false;
                 sample.reset();   // PHASE 2.7b — drop the buffer pointer so it can be retired

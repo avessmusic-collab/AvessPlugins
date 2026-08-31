@@ -1330,6 +1330,66 @@ int main()
         }
     }
 
+    // Fix (2026-08-31, user report): "during sample reversal the sample doesn't play whole
+    // sometimes." Root cause: SamplePlayer's AD envelope decays in REAL TIME from noteOn
+    // (voice age) — loud at t=0, quiet later — regardless of read direction. A one-shot's
+    // loud content sits at its recorded START; in reverse that content is read LAST, so by
+    // the time playback reached it the envelope (and the envelope-floor early-finish) had
+    // already decayed/killed it. Forward mode hid this (the envelope's own shape matches a
+    // typical sample's natural loud-start/quiet-tail). Fix: for `sampleReverse`, apply the
+    // MIRROR of the decay curve (`1 - env`, rises across `sampleDecay` then holds near 1)
+    // and skip the envelope-floor early-finish (only the trim-window boundary ends
+    // reverse playback). A companion fix separately raised `sampleDecay`'s range/default
+    // (20-5500 ms / 2200, was 20-2000 / 800) since the old max couldn't reach the 5 s
+    // import cap even in forward mode.
+    {
+        std::printf ("\n[Fix] sample reversal — envelope mirrored, plays through in full\n");
+
+        const auto tmpBank3 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("kickr_test_decay_bank");
+        tmpBank3.deleteRecursively();
+        const auto fx3 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                             .getChildFile ("kickr_decay_fixture.wav");
+        writeSineWav (fx3, 150.0, 44100.0, 3.0, 1);   // 150 Hz, 3 s long
+
+        auto renderIt = [&] (bool reverse, float decayMs)
+        {
+            KICKRAudioProcessor p;
+            p.getSampleLibrary().setFolder (tmpBank3);
+            const auto nm = p.getSampleLibrary().importFile (fx3);
+            p.loadSampleByName (nm);
+            setP (p, "sampleEnable", 1.0f); setP (p, "synthEnable", 0.0f);
+            setP (p, "sampleReverse", reverse ? 1.0f : 0.0f);
+            setP (p, "sampleMidiTrack", 0.0f);   // ratio = 1, isolates the envelope shape
+            setP (p, "limiter", 0.0f);
+            setP (p, "sampleDecay", decayMs);
+            return kickr::tests::renderNote (p, a1, vel, sr, 512, 3.05);
+        };
+
+        // At the NEW default (2200 ms): reversed playback should be clearly audible right
+        // up to the end (the source's temporal start, now read last).
+        const auto revDefault = renderIt (true, 2200.0f);
+        const double tailDefault = rmsWindow (revDefault, sr, 2.85, 2.98);
+        std::printf ("  reverse @ decay 2200ms: tail RMS (2.85-2.98s) = %.4f\n", tailDefault);
+        check (tailDefault > 0.15, "long reversed sample is clearly audible right up to the end");
+
+        // Even a SHORT decay (was the primary failure mode pre-fix: short/default decay
+        // silently truncated the reversed transient) should still fade in and reach a loud
+        // tail — decay now only controls fade-IN speed for reverse, never a hard cutoff.
+        const auto revShort = renderIt (true, 100.0f);
+        const double tailShort = rmsWindow (revShort, sr, 2.85, 2.98);
+        std::printf ("  reverse @ decay 100ms:  tail RMS (2.85-2.98s) = %.4f\n", tailShort);
+        check (tailShort > 0.15, "even a short decay still reaches a loud tail in reverse (no truncation)");
+
+        // Forward mode is unaffected: onset (0-0.15s) stays loud immediately, as before.
+        const auto fwd = renderIt (false, 2200.0f);
+        const double onsetFwd = rmsWindow (fwd, sr, 0.0, 0.15);
+        std::printf ("  forward @ decay 2200ms: onset RMS (0-0.15s) = %.4f\n", onsetFwd);
+        check (onsetFwd > 0.15, "forward playback still front-loads its onset (unaffected by the reverse fix)");
+
+        tmpBank3.deleteRecursively(); fx3.deleteFile();
+    }
+
     // ---------------------------------------------------------------------
     std::printf ("\n[Phase 2.8] Distortion morph (7-curve character morph + adaptive RMS makeup)\n");
 

@@ -87,7 +87,18 @@ namespace kickr
         { id::sampleTune,       "Sample Tune",         -24.0f,    24.0f,   1.0f,   1.0f,    0.0f,  "st" },
         { id::sampleFine,       "Sample Fine",        -100.0f,   100.0f,   1.0f,   1.0f,    0.0f,  "ct" },
         { id::sampleAttack,     "Sample Attack",         0.0f,   200.0f,   0.1f,   0.35f,   0.0f,  "ms" },
-        { id::sampleDecay,      "Sample Decay",         20.0f,  2000.0f,   1.0f,   0.4f,  800.0f,  "ms" },
+        // 2026-08-31 (user bug report — "sample doesn't play whole, especially reversed"):
+        // sampleDecay reaches its -60 dB point AT its own value in ms and is fully silent
+        // (SamplePlayer::kFloorGain, -100 dB) at ~1.667x that — so the OLD 800 ms default /
+        // 2000 ms max silenced ANY sample past ~1.3 s / 3.3 s respectively, well short of
+        // the 5 s import cap (kMaxSampleSeconds). Reverse made this obvious: the loud
+        // transient sits at the temporal END of reversed playback and was routinely
+        // decayed to silence before ever being heard. Resolves the parameter-spec's own
+        // long-open "sampleDecay max = play-to-end vs hard cap" question in favour of
+        // covering the full import range, with a default generous enough that a typical
+        // one-shot/riser plays out by default (no factory preset touches sampleDecay —
+        // all 17 are synth-only — so this has zero effect on any of them).
+        { id::sampleDecay,      "Sample Decay",         20.0f,  5500.0f,   1.0f,   0.4f, 2200.0f,  "ms" },
         { id::sampleHP,         "Sample HP",            20.0f,  2000.0f,   1.0f,   0.4f,   20.0f,  "Hz" }, // 20 = Off
         { id::sampleLP,         "Sample LP",           200.0f, 20000.0f,   1.0f,   0.4f, 20000.0f, "Hz" }, // 20000 = Off
         { id::sampleCrush,      "Sample Crush",          0.0f,     1.0f,   0.001f, 1.0f,    0.0f,  ""   },

@@ -496,7 +496,7 @@ Every APVTS parameter → owning component + the variable/coefficient it drives.
 | 53 | `sampleFine` | Float | −100…+100 ct / 0 | lin centre | SamplePlayer | resample ratio `·2^(fine/1200)`. |
 | 54 | `sampleMidiTrack` | Bool | Off/On / **On** | — | SamplePlayer | On ⇒ ratio also `·2^((note−rootNote)/12)`, rootNote=60 (C3) — C3 plays the sample unpitched (2026-08-31). |
 | 55 | `sampleAttack` | Float | 0–200 ms / 0 | 0.35 | SamplePlayer AD env | raised-cosine attack. |
-| 56 | `sampleDecay` | Float | 20–2000 ms / 800 | 0.4 | SamplePlayer AD env | `expDecayCoef(sampleDecay, fsOS)`. |
+| 56 | `sampleDecay` | Float | 20–5500 ms / 2200 | 0.4 | SamplePlayer AD env | `expDecayCoef(sampleDecay, fsOS)`. Range/default raised 2026-08-31 — old max was silent by ~3.3 s, inside the 5 s import cap. |
 | 57 | `sampleHP` | Float | 20–2000 Hz / 20 | 0.4 | SamplePlayer filter (pre-sum, in-region) | SVF HP; bypass at 20. |
 | 58 | `sampleLP` | Float | 200–20000 Hz / 20000 | 0.4 | SamplePlayer filter (pre-sum, in-region) | SVF LP; bypass at 20000. Lightly scaled by velocity. |
 | 59 | `sampleCrush` | Float | 0–1 / 0.0 | lin | SamplePlayer crusher (NONLINEAR — in-region) | bits `lerp(16,4)`, S&H `lerp(1,16)`. |
