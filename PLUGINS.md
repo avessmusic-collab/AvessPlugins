@@ -35,7 +35,7 @@
 | DrumRoulette | 📦 Installed | 1.0.0 | Instrument (Drum Sampler) | 2025-11-12 |
 | Scatter | ✅ Working | 1.0.0 | Audio Effect (Granular Delay) | 2025-11-14 |
 | AutoClip | 📦 Installed | 1.0.1 | Audio Effect (Hard Clipper) | 2025-11-15 |
-| MinimalKick | 🚧 Stage 5 | - | Synth | 2025-11-13 |
+| MinimalKick | 🗑️ Archived | - | Synth | 2026-08-31 |
 | Drum808 | 📦 Installed | 1.0.0 | Synth (Drum Instrument) | 2025-11-13 |
 | LushPad | 📦 Installed | 1.0.0 | Synth (Instrument) | 2025-11-13 |
 | Words | 💡 Ideated | - | Utility (MIDI Sequencer) | 2025-11-13 |

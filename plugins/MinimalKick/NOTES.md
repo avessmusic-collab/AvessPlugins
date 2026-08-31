@@ -1,7 +1,7 @@
 # MinimalKick Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 5
+- **Current Status:** 🗑️ Archived (2026-08-31)
 - **Version:** N/A
 - **Type:** Synth
 - **Complexity:** 5.0 (Complex - phased implementation)
@@ -20,6 +20,7 @@
 - **2025-11-13 (Stage 4):** DSP complete - All 3 phases finished (core synthesis + pitch envelope + saturation)
 - **2025-11-13 (Stage 5 Phase 5.1):** WebView layout complete - All 5 knobs rendering (730×280px, vintage hardware aesthetic)
 - **2025-11-13 (Stage 5 Phase 5.2):** Parameter binding complete - All 5 parameters bound with bidirectional sync (UI ↔ DSP)
+- **2026-08-31: Archived.** Superseded by KICKR (repo Stage 18), a full-scope kick synth+sampler covering and exceeding this plugin's territory (5 params here vs. KICKR's 59 — sine+pitch-envelope core, plus click/sub/tail/noise layers, a user-sample layer, 7-curve morphing distortion, full stereo/tone chain, presets, Randomize/Mutate). Left at Stage 5 (WebView UI, DSP complete) — never reached Stage 6 validation/install. Code is untouched and still builds; this is a status change only, per plan.md's own Stage 18 checklist ("on KICKR reaching Working, archive MinimalKick").
 
 ## Known Issues
 
