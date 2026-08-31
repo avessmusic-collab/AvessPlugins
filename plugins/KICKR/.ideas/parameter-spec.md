@@ -211,7 +211,7 @@ The 6th layer. Plays **one** user-recorded kick from the managed bank, summed wi
 ### Sample MIDI Track ⚠️ BOOL
 - **ID:** `sampleMidiTrack` · **Bool** (`AudioParameterBool`) · **Default `true`**
 - **UI:** toggle, Sample module.
-- **DSP:** `true` → playback rate scales with the incoming note relative to an assumed root of **C1 (MIDI 24)** (Stage 2 may expose a per-sample root later; not in v1). `false` → sample plays at its native pitch regardless of note (note still triggers). `sampleTune`/`sampleFine` apply in both modes.
+- **DSP:** `true` → playback rate scales with the incoming note relative to an assumed root of **C3 (MIDI 60)** — moved from the original C1 on 2026-08-31 so that playing C3 triggers the sample unpitched (Stage 2 may expose a per-sample root later; not in v1). `false` → sample plays at its native pitch regardless of note (note still triggers). `sampleTune`/`sampleFine` apply in both modes.
 
 ### Sample Attack
 - **ID:** `sampleAttack` · **Float** · **0.0 – 200.0 ms** · **Default 0.0** · **Skew 0.35** · **Unit ms**
@@ -490,7 +490,7 @@ Per user request, KICKR gains a sample-playback layer fed from a bank of the use
 - **New components** (`architecture.md`): `SamplePlayer` (in-region resample + AD env + HP/LP + crush, AD-10), `SampleLibrary` (managed-folder scan/watch/decode). Library folder: `~/Music/KICKR/Samples/`. Formats: WAV / AIFF / FLAC / CAF. Length cap ~5 s at session rate. Decode on message thread → atomic pointer hand-off to audio thread.
 - **No factory samples ship.** Factory presets are all synth-only.
 - **Randomize / Mutate** never touch the sample layer, the enable toggles, or the selection.
-- Open for Stage 2: per-sample root note (assumed C1 in v1), resample interpolation order (`juce::Interpolators::Lagrange` vs WindowedSinc), whether `sampleDecay` max = "play to end" or a hard 2 s cap.
+- Open for Stage 2: per-sample root note (assumed C3 in v1, moved from C1 on 2026-08-31), resample interpolation order (`juce::Interpolators::Lagrange` vs WindowedSinc), whether `sampleDecay` max = "play to end" or a hard 2 s cap.
 
 ## Contract Rules (unchanged)
 

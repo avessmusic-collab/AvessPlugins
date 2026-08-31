@@ -169,7 +169,10 @@ namespace kickr
 
         if (snap.tuneMode == 0)   // MIDI Pitch
         {
-            const auto noteHz = 440.0f * std::exp2 (static_cast<float> (noteNumber - 69) / 12.0f);
+            // kMidiPitchRecentreSemitones (-24 = 2 octaves): see the constant's doc —
+            // recentres concert pitch so a "C3" trigger is a proper low kick, not 261 Hz.
+            const auto noteHz = 440.0f * std::exp2 ((static_cast<float> (noteNumber - 69)
+                                                     + kMidiPitchRecentreSemitones) / 12.0f);
             // AD-6: `fundamental` is a global semitone offset 12*log2(fundamental/55)
             //       -> multiplicative ratio (fundamental / 55).
             baseHz = noteHz * (snap.fundamental / 55.0f);

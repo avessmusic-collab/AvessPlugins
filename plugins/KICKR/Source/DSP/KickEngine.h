@@ -140,6 +140,15 @@ namespace kickr
         static constexpr double kRetriggerFadeMs   = 3.0;   // equal-power crossfade length
         static constexpr int    kSwitchFadeSamples = 64;     // OS-factor-switch fade (base rate)
 
+        // 2026-08-31 (user request): in MIDI Pitch mode, plain concert pitch (the
+        // un-recentred formula) puts MIDI 60 / "C3" — Ableton's middle C, and a common
+        // default note for drum-rack patterns — at 261.63 Hz: a treble tone, not a kick.
+        // Recentre the whole note->Hz mapping 2 octaves down so C3 lands at a genuinely
+        // low, usable kick pitch; every other note shifts the same 2 octaves, preserving
+        // relative tracking. Fixed Frequency mode and `fundamental`'s own AD-6 offset are
+        // untouched. Test note `a1` was bumped 33->57 to compensate (still => 55 Hz).
+        static constexpr float kMidiPitchRecentreSemitones = -24.0f;
+
         /** PHASE 2.10 — fan `updateOversampledRate` out to every in-region component and
             recompute `retriggerThetaInc` for the new `fsOversampled`. Coefficient-only. */
         void updateInRegionRate (double newFsOversampled);

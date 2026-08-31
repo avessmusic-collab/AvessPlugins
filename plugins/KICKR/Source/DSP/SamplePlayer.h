@@ -111,8 +111,8 @@ namespace kickr
         int    nSrc      { 0 };
         int    nSrcCh    { 1 };
         double srcRate   { 44100.0 };
-        int    rootNote  { 24 };
-        int    noteNum   { 24 };
+        int    rootNote  { 60 };   // C3 — overwritten from the buffer's own rootNote on noteOn
+        int    noteNum   { 60 };
         float  velFactor { 1.0f };
 
         // Derived per block / on noteOn.

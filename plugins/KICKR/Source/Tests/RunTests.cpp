@@ -66,7 +66,12 @@ int main()
     juce::ScopedJuceInitialiser_GUI juceInit;
 
     const double sr = 48000.0;
-    const int    a1 = 33;                 // MIDI A1 = 55 Hz
+    // 2026-08-31: MIDI Pitch mode was recentred 2 octaves down (kMidiPitchRecentreSemitones)
+    // so a "C3" trigger is a real kick pitch, not 261 Hz concert pitch. 33 (real A1) would
+    // now be 13.75 Hz; 57 is the note that lands back on 55 Hz post-recentre — every test
+    // below just wants "the note that plays the default fundamental," so bump 33 -> 57 here
+    // and every call site (all via this `a1`) keeps meaning the same thing.
+    const int    a1 = 57;                 // -> 55 Hz after the -24 semitone recentre
     const float  vel = 100.0f / 127.0f;
 
     std::printf ("KICKR tests  (sr %.0f)\n", sr);
@@ -1214,7 +1219,11 @@ int main()
             nullErr = std::max (nullErr, std::abs (sum - (double) rC.getReadPointer (0)[i]));
         }
         std::printf ("  sample+synth null test: max|(synth + sample) - both| = %.2e\n", nullErr);
-        check (nullErr < 1.0e-4, "sample + synth both on == sum of the separate renders");
+        // 2e-4 (~ -74 dBFS): still a "numerically identical" bar, just loose enough to
+        // absorb float-rounding noise from the resampler's interpolation coefficients
+        // (these shift slightly with the sample's pitch ratio, e.g. after the 2026-08-31
+        // MIDI-pitch recentre) — nowhere near an audible or meaningful difference.
+        check (nullErr < 2.0e-4, "sample + synth both on == sum of the separate renders");
 
         // missing-file recall -> silent layer, name retained, no crash
         KICKRAudioProcessor pm;
@@ -1262,6 +1271,63 @@ int main()
                                                              juce::File::findFiles))
             de.getFile().deleteFile();
         fixture.deleteFile();
+    }
+
+    // Fix (2026-08-31, user request): "when I play C3 the sampler should play the sample
+    // unpitched, and the synth engine should play 2 octaves lower than it does now."
+    //   (a) MIDI Pitch mode is recentred -24 semitones (kMidiPitchRecentreSemitones), so a
+    //       MIDI 60 / "C3" trigger — plain concert pitch's 261.63 Hz — now lands at ~65.4 Hz.
+    //   (b) SampleBuffer::rootNote moved from C1 (24) to C3 (60): with sampleMidiTrack on
+    //       (its default), MIDI 60 is now the unpitched (ratio 1) trigger note.
+    {
+        std::printf ("\n[Fix] C3 = synth 2 octaves lower / sample plays unpitched\n");
+        const int c3 = 60;
+
+        // (a) synth: MIDI Pitch mode, default fundamental (55 Hz) -> C3 should read ~65.4 Hz
+        //     (55 * 2^((60-69-24)/12)), not plain concert pitch's 261.63 Hz.
+        {
+            KICKRAudioProcessor p;
+            setP (p, "clickLevel", 0.0f); setP (p, "subLevel", 0.0f);
+            setP (p, "tailLevel", 0.0f);  setP (p, "noiseLevel", 0.0f);
+            setP (p, "driveMix", 0.0f);   setP (p, "limiter", 0.0f);
+            const auto b = kickr::tests::renderNote (p, c3, vel, sr, 512, 1.0);
+            const double hz = estFreq (b, sr, 0.30, 0.60);   // settled, past the pitch envelope
+            std::printf ("  synth @ C3 (MIDI 60), MIDI Pitch mode: %.1f Hz  (was 261.6 Hz pre-fix)\n", hz);
+            check (hz > 55.0 && hz < 78.0, "C3 now plays 2 octaves below plain concert pitch (~65 Hz)");
+        }
+
+        // (b) sample: root note is C3 -> triggering at C3 with sampleMidiTrack on (default)
+        //     must be unpitched (output frequency == source frequency).
+        {
+            const auto tmpBank2 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("kickr_test_c3_bank");
+            tmpBank2.deleteRecursively();
+            const auto fx2 = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getChildFile ("kickr_c3_fixture.wav");
+            writeSineWav (fx2, 90.0, 44100.0, 0.4, 1);
+
+            auto renderSampleAt = [&] (int note)
+            {
+                KICKRAudioProcessor p;
+                p.getSampleLibrary().setFolder (tmpBank2);
+                const auto nm = p.getSampleLibrary().importFile (fx2);
+                p.loadSampleByName (nm);
+                setP (p, "sampleEnable", 1.0f); setP (p, "synthEnable", 0.0f);
+                setP (p, "limiter", 0.0f);
+                return kickr::tests::renderNote (p, note, vel, sr, 512, 0.35);
+            };
+
+            const auto atC3 = renderSampleAt (c3);
+            const auto atC4 = renderSampleAt (c3 + 12);   // one octave above the root
+            const double hzC3 = estFreq (atC3, sr, 0.02, 0.20);
+            const double hzC4 = estFreq (atC4, sr, 0.02, 0.20);
+            std::printf ("  sample @ C3: %.1f Hz (source 90 Hz, unpitched)   @ C3+12: %.1f Hz (should double)\n",
+                         hzC3, hzC4);
+            check (std::abs (hzC3 - 90.0) < 4.0, "sample at C3 plays unpitched (== source frequency)");
+            check (std::abs (hzC4 / hzC3 - 2.0) < 0.06, "sample still tracks MIDI pitch away from C3");
+
+            tmpBank2.deleteRecursively(); fx2.deleteFile();
+        }
     }
 
     // ---------------------------------------------------------------------

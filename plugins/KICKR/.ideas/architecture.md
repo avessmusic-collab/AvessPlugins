@@ -61,7 +61,7 @@ All components live under `Source/DSP/`. None allocate, lock, or touch the files
 - **Purpose:** Play one user sample as the 6th layer.
 - **Parameters Affected:** `sampleEnable`, `sampleLevel`, `sampleStart`, `sampleEnd`, `sampleReverse`, `sampleTune`, `sampleFine`, `sampleMidiTrack`, `sampleAttack`, `sampleDecay`, `sampleHP`, `sampleLP`, `sampleCrush`, `velSensitivity`; `macroBody` (offsets `sampleLevel`).
 - **Configuration:**
-  - **Buffer:** the audio thread holds `std::atomic<const SampleBuffer*> current` where `SampleBuffer` = `{ juce::AudioBuffer<float> audio; double sourceRate; int rootNote = 24; }`. The processor owns the object; `SampleLibrary`/preset-load build a new one on the message thread and publish the pointer. SamplePlayer never allocates, never copies the buffer.
+  - **Buffer:** the audio thread holds `std::atomic<const SampleBuffer*> current` where `SampleBuffer` = `{ juce::AudioBuffer<float> audio; double sourceRate; int rootNote = 60; }` (C3, MIDI 60 — Ableton's middle C; see the 2026-08-31 note below). The processor owns the object; `SampleLibrary`/preset-load build a new one on the message thread and publish the pointer. SamplePlayer never allocates, never copies the buffer.
   - **Read rate:** `ratio = (sourceRate / fsOversampled) · 2^((tuneEff + fineEff/100 + midiOffset)/12)` where `midiOffset = sampleMidiTrack ? (noteNumber − rootNote) : 0`. Fractional read position advanced by `ratio` per output sample (negative if `sampleReverse`).
   - **Trim:** read position clamped to `[sampleStart·N, sampleEnd·N]`; ~1 ms raised-cosine fade at both ends and on `noteOn`. When the position passes the end (or the buffer end), the layer outputs silence for the rest of the voice.
   - **AD envelope:** `sampleAttack` raised-cosine up, `sampleDecay` exponential down (`DSPUtils::expDecayCoef`), multiplied onto the resampled signal.
@@ -370,7 +370,7 @@ base rate:
 
 **Decode + hand-off (`SampleLibrary` → audio thread):**
 - Read whole file → `AudioBuffer<float>` (worst case ≈ 3.7 MB). Small enough for a synchronous message-thread read; a `juce::TimeSliceThread` is the fallback if large files stutter the UI.
-- Wrap in `SampleBuffer { audio, sourceRate, rootNote=24 }`, `std::unique_ptr` owned by the processor.
+- Wrap in `SampleBuffer { audio, sourceRate, rootNote=60 }` (C3), `std::unique_ptr` owned by the processor.
 - Publish: `pendingSample.store(newPtr)`. `processBlock` at block start moves `pending → current` (plain pointer swap, no delete). The **previous** `current` is pushed to a `retired` list and freed on the message thread after `≥ 1` block with no active voice referencing it (or in the next `prepareToPlay`). A voice that already grabbed a buffer pointer at `noteOn` keeps using it until it ends — so a mid-note swap is safe.
 
 **Missing sample on recall:** `currentSampleName` set but not in `Samples/` → `current = nullptr`, sample layer silent, non-modal `SampleBrowser` notice, name retained.
@@ -494,7 +494,7 @@ Every APVTS parameter → owning component + the variable/coefficient it drives.
 | 51 | `sampleReverse` | Bool | Off/On / Off | — | SamplePlayer | negative read increment over `[start,end]`. |
 | 52 | `sampleTune` | Float | −24…+24 st / 0 | lin centre | SamplePlayer | resample ratio `·2^(tune/12)`. |
 | 53 | `sampleFine` | Float | −100…+100 ct / 0 | lin centre | SamplePlayer | resample ratio `·2^(fine/1200)`. |
-| 54 | `sampleMidiTrack` | Bool | Off/On / **On** | — | SamplePlayer | On ⇒ ratio also `·2^((note−rootNote)/12)`, rootNote=24. |
+| 54 | `sampleMidiTrack` | Bool | Off/On / **On** | — | SamplePlayer | On ⇒ ratio also `·2^((note−rootNote)/12)`, rootNote=60 (C3) — C3 plays the sample unpitched (2026-08-31). |
 | 55 | `sampleAttack` | Float | 0–200 ms / 0 | 0.35 | SamplePlayer AD env | raised-cosine attack. |
 | 56 | `sampleDecay` | Float | 20–2000 ms / 800 | 0.4 | SamplePlayer AD env | `expDecayCoef(sampleDecay, fsOS)`. |
 | 57 | `sampleHP` | Float | 20–2000 Hz / 20 | 0.4 | SamplePlayer filter (pre-sum, in-region) | SVF HP; bypass at 20. |
@@ -644,7 +644,7 @@ Every APVTS parameter → owning component + the variable/coefficient it drives.
 **Complexity:** MEDIUM · **Risk Level:** MEDIUM
 - Risk factors: (a) audio-thread must never touch the filesystem or allocate — sample decode + buffer lifetime is the classic place plugins get this wrong; (b) a buffer swapped mid-note could be freed while a voice reads it; (c) arbitrary-ratio resampling quality (aliasing on downward pitch, artefacts on extreme `sampleTune`); (d) preset recall when the referenced file is absent; (e) `sampleCrush` aliasing if not oversampled; (f) drag-drop of huge/odd files.
 - Alternatives: (1) in-RAM buffer + atomic pointer hand-off, voice grabs the pointer at `noteOn` and holds it, previous buffer retired on the message thread once unreferenced [chosen]; (2) disk streaming with a `BufferingAudioSource` (rejected — kicks are ≤ 5 s, adds latency + a reader thread); (3) reference-counted `shared_ptr` read on the audio thread (rejected — atomic refcount churn, and `shared_ptr` copy is not guaranteed wait-free on all platforms).
-- Fallback architectures: restrict formats to WAV/AIFF only; drop folder-watching (rescan on browse); if `Interpolators::WindowedSinc` is too costly at 8× OS, use `Lagrange`; if `sampleMidiTrack` root handling is contentious, ship it fixed at C1 and defer per-sample root.
+- Fallback architectures: restrict formats to WAV/AIFF only; drop folder-watching (rescan on browse); if `Interpolators::WindowedSinc` is too costly at 8× OS, use `Lagrange`; if `sampleMidiTrack` root handling is contentious, ship it fixed (C3, 2026-08-31) and defer per-sample root.
 - Mitigation: hard 5 s length cap + channel/format validation before copy; `noteOn` captures `const SampleBuffer*` once; a retired-buffer list drained on the message thread after a no-active-voice block; `sampleCrush` inside the OS region; offline tests — resample a known sine at ±12 st and assert frequency/level, round-trip a preset with a present and an absent sample, machine-gun-trigger while hot-swapping the buffer and assert no glitch/crash, assert zero audio-thread allocation with the sample layer active.
 
 ### Native UI scope (custom LookAndFeel + 6+ custom components, resizable)
@@ -718,6 +718,8 @@ Every APVTS parameter → owning component + the variable/coefficient it drives.
 **Alternatives:** ignored-fallback (rejected: `macroBody` fundamental target would be dead in MIDI mode; knob feels broken); additive Hz offset (rejected: not musical).
 **Tradeoffs:** automation of `fundamental` in MIDI mode is a relative transpose, not an absolute pitch — documented in the tooltip.
 
+**2026-08-31 addendum — MIDI-pitch recentre (user request):** plain concert pitch (the formula above with no further offset) puts MIDI 60 / "C3" — Ableton's middle C, and a common default note for drum-rack patterns — at 261.63 Hz, a treble tone rather than a kick. `KickEngine::kMidiPitchRecentreSemitones = -24` (2 octaves) is subtracted from `noteNumber - 69` before the concert-pitch formula, so the *entire* MIDI Pitch mapping is shifted 2 octaves down uniformly (relative tracking, `tune`/`fineTune`, and the `fundamental` ratio above are all unaffected — only the concert-pitch reference moves). C3 now lands at ~65 Hz. Fixed Frequency mode is untouched. Paired with the AD-11 sample `rootNote` moving to C3 (below), C3 is now the natural "kick" trigger note: synth plays low, sample plays unpitched.
+
 ### AD-7: `mix` = processed↔silence equal-power blend (Open Q 10)
 **Decision:** Keep `mix` automatable (locked contract) but define it as an equal-power fade between the processed output and silence, since an instrument has no audio input / dry path.
 **Rationale:** cannot remove the parameter; a real dry/wet is impossible with an output-only bus; a smooth fade is the only sensible meaning and is useful for automated mutes/fades.
@@ -745,7 +747,7 @@ Every APVTS parameter → owning component + the variable/coefficient it drives.
   - *Reference files by absolute path* (rejected: breaks on moved projects / shared sessions).
   - *Stream from disk* (rejected: kicks are ≤ 5 s; in-RAM is simpler and removes all disk I/O from playback).
   - *`AudioParameterChoice` for sample selection* (rejected: the bank is user-populated and variable-size; a fixed choice list can't represent it — state property + browser instead).
-**Tradeoffs:** +14 params (breaking `parameter-spec` bump to v2), a new file-format dependency, and the SamplePlayer's per-sample resampling is the one component that scales with OS factor without a base-rate escape hatch. `sampleMidiTrack` assumes a fixed root (C1) in v1 — a per-sample root is deferred. No multisampling / velocity layers in v1.
+**Tradeoffs:** +14 params (breaking `parameter-spec` bump to v2), a new file-format dependency, and the SamplePlayer's per-sample resampling is the one component that scales with OS factor without a base-rate escape hatch. `sampleMidiTrack` assumes a fixed root (C3, MIDI 60 — moved from the original C1 on 2026-08-31 so C3 plays a dropped sample unpitched) in v1 — a per-sample root is deferred. No multisampling / velocity layers in v1.
 
 ### AD-12: No factory samples; bank starts empty
 **Decision:** ship zero samples; every factory preset is synth-only (`sampleEnable` off). The user's own recordings are the only bank content.

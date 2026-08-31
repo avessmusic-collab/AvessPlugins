@@ -178,7 +178,7 @@ namespace kickr
         reader->read (&sb->audio, 0, static_cast<int> (lenToRead), 0, true, numCh > 1);
 
         sb->sourceRate = reader->sampleRate;
-        sb->rootNote   = 24;   // C1 (AD-11, v1)
+        sb->rootNote   = 60;   // C3 (MIDI 60, Ableton's middle C) -> unpitched trigger note (AD-11, v1)
 
         return sb;
     }

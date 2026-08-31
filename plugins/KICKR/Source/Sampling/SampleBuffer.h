@@ -13,7 +13,9 @@ namespace kickr
         - `sourceRate` : the file's native sample rate — SamplePlayer does the rate
                          conversion to `fsOversampled`, it never resamples the file here.
         - `rootNote`   : MIDI note the sample is considered to be "at" for `sampleMidiTrack`
-                         (fixed at C1 = 24 in v1 — a per-sample root is deferred).
+                         — the note that plays it back unpitched (fixed at C3 = 60, MIDI's
+                         middle C and Ableton's default note name for it, in v1; a
+                         per-sample root is deferred).
 
         Shared header so SamplePlayer and PluginProcessor both see the exact type.
     */
@@ -21,7 +23,7 @@ namespace kickr
     {
         juce::AudioBuffer<float> audio;
         double                   sourceRate { 44100.0 };
-        int                      rootNote   { 24 };   // C1
+        int                      rootNote   { 60 };   // C3 (MIDI 60) — unpitched trigger note
     };
 
     /** Hard length cap for an importable / decodable sample (architecture.md AD-11). */
