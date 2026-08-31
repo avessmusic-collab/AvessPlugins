@@ -353,6 +353,59 @@ int main()
         check (tailRms < 0.01,               "voices free after the last hit (no leak / stuck voice)");
     }
 
+    // Fix (2026-08-31): a retriggered click must play at the same level as an isolated
+    // one. The old crossfade scaled the INCOMING voice by a ramping gNew (0 -> 1 over
+    // 3 ms), which swallowed the click's sharp transient on every fast retrigger while
+    // an isolated hit (no fade active) got it at full level -> an audible, tempo-locked
+    // "sometimes there's a click" inconsistency. Now only the outgoing voice fades.
+    {
+        auto onsetRms = [] (const juce::AudioBuffer<float>& b, double s, int onsetSample)
+        {
+            const int i0 = onsetSample;
+            const int i1 = std::min (b.getNumSamples(), onsetSample + (int) (0.003 * s));
+            const float* x = b.getReadPointer (0);
+            double sq = 0.0;
+            for (int i = i0; i < i1; ++i) sq += (double) x[i] * x[i];
+            return std::sqrt (sq / std::max (1, i1 - i0));
+        };
+
+        KICKRAudioProcessor pIso, pRt;
+        // isolated hit: nothing ringing, no crossfade active.
+        const auto isoR = kickr::tests::renderNote (pIso, a1, vel, sr, 512, 0.05);
+        const double isoRms = onsetRms (isoR, sr, 0);
+
+        // retrigger: 2nd hit at 40 ms, well inside the default 400 ms body decay -> the
+        // crossfade is active for the 2nd onset.
+        pRt.setRateAndBufferSizeDetails (sr, 512);
+        pRt.prepareToPlay (sr, 512);
+        const int total = (int) (0.10 * sr);
+        juce::AudioBuffer<float> rtOut (juce::jmax (1, pRt.getTotalNumOutputChannels()), total);
+        rtOut.clear();
+        const int secondOnset = (int) (0.040 * sr);
+        {
+            juce::AudioBuffer<float> scratch (rtOut.getNumChannels(), 512);
+            for (int pos = 0; pos < total;)
+            {
+                const int n = std::min (512, total - pos);
+                juce::AudioBuffer<float> blk (scratch.getArrayOfWritePointers(), rtOut.getNumChannels(), n);
+                blk.clear();
+                juce::MidiBuffer m;
+                if (pos == 0)                                m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+                if (secondOnset >= pos && secondOnset < pos + n)
+                    m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), secondOnset - pos);
+                pRt.processBlock (blk, m);
+                for (int ch = 0; ch < rtOut.getNumChannels(); ++ch)
+                    rtOut.copyFrom (ch, pos, blk, ch, 0, n);
+                pos += n;
+            }
+        }
+        const double rtRms = onsetRms (rtOut, sr, secondOnset);
+
+        std::printf ("  click consistency: isolated onset RMS %.4f   retriggered (40ms) onset RMS %.4f   ratio %.2f\n",
+                     isoRms, rtRms, rtRms / std::max (1.0e-9, isoRms));
+        check (rtRms > isoRms * 0.75, "retriggered click is as loud as an isolated click (no crossfade swallow)");
+    }
+
     // transientAttack: +1 sharpens the onset, -1 softens it
     {
         KICKRAudioProcessor pPos, pMid, pNeg;

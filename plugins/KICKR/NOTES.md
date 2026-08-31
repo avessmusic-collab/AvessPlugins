@@ -180,6 +180,7 @@
 
 ## Known Issues
 
+- **Fixed 2026-08-31 — retriggered click was inconsistent ("plays like a rhythm").** User report: sometimes a hit had a click, sometimes not, sometimes quieter, forming a tempo-locked pattern that shouldn't exist. Root cause in `KickEngine::renderSegment`'s 2-voice retrigger crossfade (Phase 2.3): the INCOMING voice was scaled by a ramping `gNew = sin(θ·π/2)` (0→1 over the 3 ms fade), so a fast retrigger's click transient (a ~0.05–0.18 ms sharp impulse) landed during that ramp and came out quiet-to-silent, while an isolated hit (nothing ringing, no crossfade active) played the click at full level — the inconsistency tracked retrigger timing 1:1. Fix: only the OUTGOING voice fades (`L = gOld·old + new`, no `gNew` on the incoming voice) — the incoming voice already starts from a clean silent state (fresh phase / envelopes / a freshly-armed click), so there is nothing to smooth on its side; the sum stays continuous. New regression test: an isolated onset vs. a 40 ms retrigger onset must have comparable click energy (`KICKR_Tests`, 193/193 PASS). pluginval strictness 10 SUCCESS.
 - **Phase 2.8 — `character`-sweep loudness compensation:** the adaptive RMS makeup holds the integrated-RMS spread across a full `character` 0→1 sweep to ~2.8 dB (within the architecture's ±1.5 dB / 3 dB tolerance, but not tight). Re-tune the `kCurveMakeup[7]` prime table and the makeup-smoother time constant at repo Stage 17 (profiling) once the whole chain is in place.
 
 ## Additional Notes

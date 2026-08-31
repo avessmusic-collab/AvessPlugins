@@ -135,19 +135,21 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     auto& sampleTog = addToggle (kickr::id::sampleEnable, "SAMPLE", pal::red);
     sampleToggles = { &synthTog, &sampleTog };
 
+    // All the sample-layer tweak controls share the SAMPLE toggle's red accent — one
+    // consistent colour identifying "this knob belongs to the sample engine".
     sampleTweaks = {
-        &addKnob   (kickr::id::sampleLevel,     "LEVEL",  pal::red,     false, KSize::Small),
-        &addKnob   (kickr::id::sampleStart,     "START",  pal::lowfam,  false, KSize::Small),
-        &addKnob   (kickr::id::sampleEnd,       "END",    pal::lowfam,  false, KSize::Small),
-        &addToggle (kickr::id::sampleReverse,   "REV",    pal::lowfam),
-        &addKnob   (kickr::id::sampleTune,      "TUNE",   pal::lowfam,  true,  KSize::Small),
-        &addKnob   (kickr::id::sampleFine,      "FINE",   pal::lowfam,  true,  KSize::Small),
-        &addToggle (kickr::id::sampleMidiTrack, "TRK",    pal::lowfam),
-        &addKnob   (kickr::id::sampleAttack,    "ATTACK", pal::magenta, false, KSize::Small),
-        &addKnob   (kickr::id::sampleDecay,     "DECAY",  pal::magenta, false, KSize::Small),
-        &addKnob   (kickr::id::sampleHP,        "HP",     pal::violet,  false, KSize::Small),
-        &addKnob   (kickr::id::sampleLP,        "LP",     pal::violet,  false, KSize::Small),
-        &addKnob   (kickr::id::sampleCrush,     "CRUSH",  pal::red,     false, KSize::Small),
+        &addKnob   (kickr::id::sampleLevel,     "LEVEL",  pal::red, false, KSize::Small),
+        &addKnob   (kickr::id::sampleStart,     "START",  pal::red, false, KSize::Small),
+        &addKnob   (kickr::id::sampleEnd,       "END",    pal::red, false, KSize::Small),
+        &addToggle (kickr::id::sampleReverse,   "REV",    pal::red),
+        &addKnob   (kickr::id::sampleTune,      "TUNE",   pal::red, true,  KSize::Small),
+        &addKnob   (kickr::id::sampleFine,      "FINE",   pal::red, true,  KSize::Small),
+        &addToggle (kickr::id::sampleMidiTrack, "TRK",    pal::red),
+        &addKnob   (kickr::id::sampleAttack,    "ATTACK", pal::red, false, KSize::Small),
+        &addKnob   (kickr::id::sampleDecay,     "DECAY",  pal::red, false, KSize::Small),
+        &addKnob   (kickr::id::sampleHP,        "HP",     pal::red, false, KSize::Small),
+        &addKnob   (kickr::id::sampleLP,        "LP",     pal::red, false, KSize::Small),
+        &addKnob   (kickr::id::sampleCrush,     "CRUSH",  pal::red, false, KSize::Small),
     };
 
     // ---------------------------------------------------------------- macro modules

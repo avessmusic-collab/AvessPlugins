@@ -299,10 +299,17 @@ namespace kickr
 
             if (fading)
             {
-                float gOld = 1.0f, gNew = 0.0f;
-                dsputils::equalPowerGains (static_cast<float> (th), gOld, gNew);
-                L = gOld * aL[i] + gNew * bL[i];
-                R = gOld * aR[i] + gNew * bR[i];
+                // Only the OUTGOING voice fades — the incoming voice starts from a clean
+                // silent state (fresh phase / fresh envelopes / a freshly-armed click) so
+                // there is nothing to smooth on its side. Attenuating it with a ramping
+                // gNew (the old equal-power scheme) swallowed the click's sharp transient
+                // for the whole fade window, so a fast retrigger's click came out quiet or
+                // silent while an isolated hit (no fade active) played it at full level —
+                // an audible, tempo-locked inconsistency ("sometimes there's a click").
+                float gOld = 1.0f, gNewUnused = 0.0f;
+                dsputils::equalPowerGains (static_cast<float> (th), gOld, gNewUnused);
+                L = gOld * aL[i] + bL[i];
+                R = gOld * aR[i] + bR[i];
 
                 th += retriggerThetaInc;
                 if (th > 1.0)
