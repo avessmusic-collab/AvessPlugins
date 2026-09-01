@@ -168,6 +168,16 @@ namespace kickr
         return juce::String (names[seg]) + "/" + names[seg + 1];
     }
 
+    // 2026-09-01 (user request): `subFreq` reads out as a note name WITH the Hz value in
+    // parentheses right beside it, e.g. "E1 (40.0 Hz)" — unlike `fundamental` (note name
+    // alone, Hz only in the tooltip), the user specifically wants both in the one string
+    // here since the SUB engine-strip knob doesn't have `fundamental`'s big secondary
+    // display space.
+    inline juce::String hzToNoteNameWithHz (float hz)
+    {
+        return hzToNoteName (hz) + " (" + juce::String (hz, 1) + " Hz)";
+    }
+
     // Frequency (Hz) for a chromatic note name like "A1" / "C#2".
     inline float noteNameToHz (const juce::String& text)
     {
@@ -204,6 +214,14 @@ namespace kickr
                 attrs = attrs
                     .withLabel ({})
                     .withStringFromValueFunction ([] (float v, int) { return characterCurveName (v); });
+
+            // Sub Frequency reads out as a note name WITH the Hz alongside it, e.g.
+            // "E1 (40.0 Hz)" — user request 2026-09-01.
+            if (juce::String (p.id) == id::subFreq)
+                attrs = attrs
+                    .withLabel ({})
+                    .withStringFromValueFunction ([] (float v, int) { return hzToNoteNameWithHz (v); })
+                    .withValueFromStringFunction ([] (const juce::String& t) { return noteNameToHz (t); });
 
             layout.add (std::make_unique<juce::AudioParameterFloat>(
                 juce::ParameterID { p.id, 1 },

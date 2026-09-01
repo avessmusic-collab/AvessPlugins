@@ -2296,6 +2296,19 @@ int main()
                 chr->setValueNotifyingHost (0.10f);
             }
 
+            // 2026-09-01 (user request): `subFreq` reads out as a note name WITH the Hz
+            // value alongside it, e.g. "E1 (40.0 Hz)" — not raw Hz alone, and not a bare
+            // note name either (unlike `fundamental`, which is note-only).
+            if (auto* sf = pe.getValueTreeState().getParameter ("subFreq"))
+            {
+                const auto text40 = sf->getText (sf->convertTo0to1 (40.0f), 32);
+                std::printf ("  subFreq text @ 40 Hz: %s\n", text40.toRawUTF8());
+                check (text40.startsWith ("D#1"),       "subFreq @ 40 Hz reads out with the correct note (D#1)");
+                check (text40.contains ("40.0 Hz"),     "subFreq text includes the Hz value");
+                check (text40.contains ("(") && text40.contains (")"),
+                       "subFreq's Hz value is parenthesised, next to the note name");
+            }
+
             // Software-render the editor to a PNG (no display needed) for visual review.
             ed->setSize (1600, 1170);
             const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.5f);
