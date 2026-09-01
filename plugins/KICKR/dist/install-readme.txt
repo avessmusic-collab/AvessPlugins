@@ -48,6 +48,3 @@ you want a complete removal.
 COMPATIBILITY:
 - macOS 14.6 or later recommended
 - Built for your Mac architecture
-
-SUPPORT:
-For questions or issues, contact TÂCHES.

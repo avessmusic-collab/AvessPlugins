@@ -4,9 +4,13 @@ cmake_minimum_required(VERSION 3.15)
 # Synth (IS_SYNTH), MIDI-triggered, output-only stereo bus, native JUCE UI (no WebView).
 # JUCE is added once at the repo-root CMakeLists.txt; this file is auto-globbed.
 
+# 2026-09-01 (user request — de-brand): COMPANY_NAME / PLUGIN_MANUFACTURER_CODE were
+# "PluginFreedom" / "Plgf" (this repo's internal dev name). Set to a neutral placeholder
+# for now, no third-party or repo-tooling attribution baked into the shipped plugin —
+# the user will supply their own company name/code here later.
 juce_add_plugin(KICKR
-    COMPANY_NAME "PluginFreedom"
-    PLUGIN_MANUFACTURER_CODE Plgf
+    COMPANY_NAME "KICKR"
+    PLUGIN_MANUFACTURER_CODE Manu
     PLUGIN_CODE Kckr
     FORMATS VST3 AU Standalone
     PRODUCT_NAME "KICKR"
