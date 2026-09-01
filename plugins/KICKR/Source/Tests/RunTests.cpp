@@ -2882,6 +2882,96 @@ int main()
         }
     }
 
+    // ---------------------------------------------------------------------
+    // Trial follow-up (2026-09-01, user request — "test all knobs, at random times press
+    // shift, to slow movement, move back and forth if you detect any anomalies fix them"):
+    // no live mouse in this environment, so this drives every float knob's REAL
+    // KickrSlider through a synthetic drag using JUCE's own MouseEvent — same code path
+    // Slider::mouseDown/mouseDrag actually run under a live mouse, just constructed by
+    // hand instead of by the OS. Each knob gets: drag up (normal speed) -> toggle Shift
+    // ON at a STANDSTILL (no mouse movement — isolates the toggle itself) -> continue
+    // (fine speed) -> reverse direction -> toggle Shift OFF at a standstill -> continue
+    // (normal speed) -> reverse again. The critical assertion: value must not change at
+    // either standstill toggle (mouse didn't move, so nothing should move on screen).
+    std::printf ("\n[Fix] Shift-drag fine-adjust: no snap-back, across every real knob\n");
+    {
+        auto makeEvt = [] (juce::Component& target, juce::Point<float> pos, bool shiftDown,
+                           juce::Point<float> downPos)
+        {
+            return juce::MouseEvent (
+                juce::Desktop::getInstance().getMainMouseSource(),
+                pos,
+                juce::ModifierKeys (shiftDown ? juce::ModifierKeys::shiftModifier : 0),
+                juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation,
+                juce::MouseInputSource::defaultRotation, juce::MouseInputSource::defaultTiltX,
+                juce::MouseInputSource::defaultTiltY,
+                &target, &target, juce::Time::getCurrentTime(),
+                downPos, juce::Time::getCurrentTime(), 1, true);
+        };
+
+        KICKRAudioProcessor pk;
+        int tested = 0, anomalies = 0;
+
+        for (auto* prm : pk.getParameters())
+        {
+            if (dynamic_cast<juce::AudioParameterFloat*> (prm) == nullptr)
+                continue;   // only float knobs use KickrSlider (Bool -> KickrToggle, Choice -> ComboBox)
+            auto* fp = dynamic_cast<juce::RangedAudioParameter*> (prm);   // public getDefaultValue()/getNormalisableRange()
+            if (fp == nullptr)
+                continue;
+
+            const auto& fr = fp->getNormalisableRange();
+            kickr::KickrSlider s;
+            s.setNormalisableRange (juce::NormalisableRange<double> (
+                (double) fr.start, (double) fr.end, (double) fr.interval, (double) fr.skew));
+            s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+            s.setBounds (0, 0, 60, 60);
+            s.setValue (fp->convertFrom0to1 (fp->getDefaultValue()), juce::dontSendNotification);
+
+            juce::Point<float> pos (30.0f, 200.0f);
+            const auto downPos = pos;
+            s.mouseDown (makeEvt (s, pos, false, downPos));
+
+            auto dragTo = [&] (float dy, bool shift)
+            {
+                pos = juce::Point<float> (pos.x, pos.y + dy);
+                s.mouseDrag (makeEvt (s, pos, shift, downPos));
+                return s.getValue();
+            };
+
+            dragTo (-40.0f, false);
+            const double before1 = s.getValue();
+            const double atToggle1 = dragTo (0.0f, true);        // toggle ON, standstill
+            dragTo (-20.0f, true);
+            dragTo (15.0f, true);                                 // reverse, still fine
+            const double before2 = s.getValue();
+            const double atToggle2 = dragTo (0.0f, false);        // toggle OFF, standstill
+            dragTo (-25.0f, false);
+            dragTo (30.0f, false);                                // reverse again
+            s.mouseUp (makeEvt (s, pos, false, downPos));
+
+            const auto& r = fp->getNormalisableRange();
+            const double tol = juce::jmax (1.0e-6, (double) (r.end - r.start) * 1.0e-4);
+            if (std::abs (atToggle1 - before1) > tol)
+            {
+                std::printf ("  ANOMALY (shift ON):  %s  before=%.6f  atToggle=%.6f\n",
+                             fp->getParameterID().toRawUTF8(), before1, atToggle1);
+                ++anomalies;
+            }
+            if (std::abs (atToggle2 - before2) > tol)
+            {
+                std::printf ("  ANOMALY (shift OFF): %s  before=%.6f  atToggle=%.6f\n",
+                             fp->getParameterID().toRawUTF8(), before2, atToggle2);
+                ++anomalies;
+            }
+            ++tested;
+        }
+
+        std::printf ("  tested %d float knobs (their real ranges/skews) for shift-toggle continuity\n", tested);
+        check (tested >= 50, "exercised (essentially) all float knobs, not a token few");
+        check (anomalies == 0, "no snap-back/jump at any shift toggle, any knob, either direction");
+    }
+
     // wall-clock proxy: no live audio device in this environment, so this measures render
     // cost the same way a CPU meter would infer it — audio-seconds produced per
     // wall-clock-second, for the realistic worst case (BOTH synth + sample layers active,
