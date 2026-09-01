@@ -1,0 +1,923 @@
+# v1 UI Design Specification
+# Generated: 2026-09-01
+# Plugin: CORRUPTR
+#
+# STRUCTURE: single continuous scrolling page (no tabs). window.height below
+# represents TOTAL SCROLLABLE CONTENT height, not the visible viewport.
+# The plugin window is fixed at viewport_height (visible area); content
+# scrolls internally beyond that. All layout-validation.md hard rules
+# (bounds containment, no overlap, minimum control sizes, minimum spacing)
+# are enforced against the full content height below, per ui-design-agent
+# instructions for scrolling pages.
+#
+# Visual theme is a literal reuse of the "ELYSIUM" reference screenshot's
+# structural language (dark top bar w/ diagonal stripe + wide-tracking
+# wordmark, light gradient panels with soft shadows, 3D geometric hero
+# icons above big knobs, dark accent cards with colored dot indicators +
+# mini graphs + chevrons) re-skinned with a distortion/glitch-appropriate
+# color system rather than ELYSIUM's pastel palette.
+
+window:
+  width: 1200
+  height: 2220          # total scrollable content height
+  viewport_height: 800  # visible plugin frame height (JUCE setSize)
+  resizable: false
+  scrollable: true       # internal vertical scroll beyond viewport_height
+
+colors:
+  # Top bar (dark, ELYSIUM-derived)
+  topBarBackground: "#141416"
+  topBarStripeAccent: "#232327"
+  topBarBorder: "#050506"
+  topBarText: "#f4f5f7"
+  topBarTextMuted: "#8a8d96"
+
+  # Light gradient panels (ELYSIUM-derived, main content surfaces)
+  panelGradientStart: "#eef1f6"
+  panelGradientEnd: "#dbe0e8"
+  panelShadow: "rgba(20, 22, 32, 0.18)"
+  panelInnerShadow: "rgba(255, 255, 255, 0.6)"
+  panelText: "#2b2f38"
+  panelTextMuted: "#6b7280"
+  panelDivider: "rgba(20, 22, 32, 0.08)"
+
+  # Dark accent cards (glitch engine / filter+eq / feedback+delay)
+  cardBackground: "#1a1b1f"
+  cardBackgroundAlt: "#1f2025"
+  cardBorder: "#2a2b30"
+  cardText: "#e8eaed"
+  cardTextMuted: "#6b6e78"
+
+  # Distortion-specific accent gradients (macro hero panels / node icons)
+  accentDamageStart: "#ff4d4d"
+  accentDamageEnd: "#ff8a3d"
+  accentCrushStart: "#a855f7"
+  accentCrushEnd: "#ec4899"
+  accentGlitchStart: "#06b6d4"
+  accentGlitchEnd: "#22d3ee"
+  accentChaosStart: "#a3e635"
+  accentChaosEnd: "#facc15"
+
+  # Card dot indicators
+  dotGlitchEngine: "#22d3ee"
+  dotFilterEQ: "#a855f7"
+  dotFeedbackDelay: "#ff8a3d"
+
+  # Performance pad colors
+  perfKill: "#ff4d4d"
+  perfGlitch: "#22d3ee"
+  perfDestroy: "#ff8a3d"
+  perfFreeze: "#60a5fa"
+  perfReverse: "#a855f7"
+  perfStutter: "#ec4899"
+  perfChaos: "#facc15"
+
+  # Preset color-tag dots (top bar, decorative)
+  presetTagColors: ["#ff4d4d", "#ec4899", "#a855f7", "#22d3ee", "#a3e635", "#facc15", "#ff8a3d", "#60a5fa"]
+
+typography:
+  header: "'Space Grotesk', 'Inter', system-ui, sans-serif"
+  body: "'Inter', system-ui, sans-serif"
+  mono: "'JetBrains Mono', 'Courier New', monospace"
+  size:
+    wordmark: "22px"
+    sectionTitle: "26px"
+    cardTitle: "12px"
+    label: "11px"
+    value: "13px"
+    small: "10px"
+
+layout:
+  type: custom
+  scroll_direction: vertical
+  sections:
+    - id: top_bar
+      y: 0
+      height: 64
+      description: "Sticky dark top bar: wordmark, preset search/browser, save/random/undo/redo/A-B, quality mode, meters, preset tag dots"
+    - id: distortion_graph
+      y: 94
+      height: 378
+      description: "Hero section - signature visual identity. Modular routing graph: INPUT -> SATURATION -> WAVESHAPER -> FILTER -> BITCRUSH -> GLITCH -> PITCH -> OUTPUT, with per-node compact controls, bypass toggles, and animated modulation link lines"
+    - id: xy_pad_macros
+      y: 502
+      height: 340
+      description: "Large XY performance pad (X=Damage, Y=Glitch, glide/inertia) + 4 hero macro knobs: DAMAGE, CRUSH, GLITCH, CHAOS"
+    - id: accent_cards
+      y: 872
+      height: 300
+      description: "3 dark accent cards: GLITCH ENGINE, FILTER & EQ, FEEDBACK + DELAY"
+    - id: sequencer
+      y: 1202
+      height: 192
+      description: "Host-synced 16-step rhythmic sequencer with rate selector and pattern control buttons"
+    - id: mod_matrix
+      y: 1424
+      height: 320
+      description: "4 LFO mini-panels + compact source x destination modulation matrix grid"
+    - id: performance_macros
+      y: 1774
+      height: 230
+      description: "7 performance trigger pads + 4 remaining macro knobs: RHYTHM, MOVEMENT, WIDTH, MIX"
+    - id: output
+      y: 2034
+      height: 150
+      description: "Output limiter style, input/output gain, master mix, final meters"
+
+# ---------------------------------------------------------------------------
+# CONTROLS (all bindable/interactive elements - parameter-bound or UI action)
+# All positions in pixels from top-left (0,0) of the full scrollable content.
+# id = snake_case control identifier (HTML element id / mockup identity)
+# parameter = camelCase APVTS parameter id (matches parameter-spec-draft.md
+#             where one exists; flagged "NEW" where it does not yet exist)
+# action = non-parameter UI action (host-side / preset-browser chrome)
+# ---------------------------------------------------------------------------
+controls:
+
+  # ===== TOP BAR (y 0-64) =====
+  - id: preset_search
+    type: combo
+    label: "Search"
+    action: search_presets
+    position: { x: 20, y: 16 }
+    size: { width: 200, height: 32 }
+    note: "Preset browser search/filter field, not an APVTS parameter"
+
+  - id: save_button
+    type: button
+    label: "Save"
+    action: save_preset
+    position: { x: 460, y: 16 }
+    size: { width: 70, height: 32 }
+
+  - id: random_button
+    type: button
+    label: "Random"
+    action: randomize_all
+    position: { x: 540, y: 16 }
+    size: { width: 70, height: 32 }
+
+  - id: undo_button
+    type: button
+    label: "Undo"
+    action: undo
+    position: { x: 620, y: 16 }
+    size: { width: 60, height: 32 }
+
+  - id: redo_button
+    type: button
+    label: "Redo"
+    action: redo
+    position: { x: 690, y: 16 }
+    size: { width: 60, height: 32 }
+
+  - id: ab_toggle
+    type: toggle
+    label: "A/B"
+    action: toggle_ab
+    position: { x: 760, y: 16 }
+    size: { width: 60, height: 32 }
+
+  - id: quality_mode
+    type: combo
+    label: "Quality"
+    parameter: qualityMode
+    parameter_type: choice
+    choices: ["ECO", "NORMAL", "HIGH", "EXTREME", "AUTO"]
+    default: "NORMAL"
+    position: { x: 840, y: 16 }
+    size: { width: 110, height: 32 }
+
+  # ===== DISTORTION GRAPH (y 94-472) — hero signal-flow visualization =====
+  # Node icons (INPUT / SATURATION / WAVESHAPER / FILTER / BITCRUSH / GLITCH
+  # / PITCH / OUTPUT) and connecting modulation-link lines are decorative,
+  # see special_elements.distortion_graph_nodes below. Interactive controls:
+
+  - id: node_algorithm_select
+    type: combo
+    label: "Algorithm"
+    parameter: distortionAlgorithm
+    parameter_type: choice
+    choices: ["Saturation", "Soft Clip", "Hard Clip", "Tube", "Diode", "Fuzz", "Digital Distortion", "Bitcrusher", "Sample Rate Reducer", "Wavefolder", "Ring-Mod", "Foldback"]
+    default: "Saturation"
+    position: { x: 156, y: 380 }
+    size: { width: 160, height: 26 }
+    note: "Compact algorithm selector docked under SATURATION node"
+
+  - id: node_drive
+    type: knob
+    label: "Drive"
+    parameter: drive
+    range: [0.0, 40.0]
+    unit: "dB"
+    default: 6.0
+    decimals: 1
+    position: { x: 208, y: 312 }
+    size: { width: 55, height: 55 }
+    note: "Compact overview knob on SATURATION node"
+
+  - id: node_fold
+    type: knob
+    label: "Fold"
+    parameter: fold
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 354, y: 312 }
+    size: { width: 55, height: 55 }
+    note: "Compact overview knob on WAVEFOLDER node"
+
+  - id: node_filter_cutoff
+    type: knob
+    label: "Cutoff"
+    parameter: filterCutoff
+    range: [20.0, 20000.0]
+    unit: "Hz"
+    default: 20000.0
+    decimals: 0
+    skew: 0.3
+    position: { x: 500, y: 312 }
+    size: { width: 55, height: 55 }
+    note: "Mirrors filter_cutoff in FILTER & EQ card - same parameter, compact overview control"
+
+  - id: node_bit_depth
+    type: knob
+    label: "Bits"
+    parameter: bitDepth
+    range: [1.0, 16.0]
+    unit: "bit"
+    default: 16.0
+    decimals: 0
+    position: { x: 645, y: 312 }
+    size: { width: 55, height: 55 }
+    note: "Compact overview knob on BITCRUSH node"
+
+  - id: node_glitch_probability
+    type: knob
+    label: "Prob"
+    parameter: glitchProbability
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 791, y: 312 }
+    size: { width: 55, height: 55 }
+    note: "Mirrors glitch_probability in GLITCH ENGINE card - same parameter, compact overview control"
+
+  - id: node_bypass_saturation
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassSaturation
+    parameter_type: bool
+    default: false
+    position: { x: 186, y: 420 }
+    size: { width: 44, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  - id: node_bypass_waveshaper
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassWaveshaper
+    parameter_type: bool
+    default: false
+    position: { x: 332, y: 420 }
+    size: { width: 44, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  - id: node_bypass_filter
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassFilter
+    parameter_type: bool
+    default: false
+    position: { x: 478, y: 420 }
+    size: { width: 44, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  - id: node_bypass_bitcrush
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassBitcrush
+    parameter_type: bool
+    default: false
+    position: { x: 623, y: 420 }
+    size: { width: 44, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  - id: node_bypass_glitch
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassGlitch
+    parameter_type: bool
+    default: false
+    position: { x: 769, y: 420 }
+    size: { width: 44, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  # PITCH node intentionally has no bound control - Pitch/Frequency FX is
+  # POST-MVP per architecture.md. Node rendered as a visual "coming soon"
+  # placeholder (see special_elements) to preserve the full aspirational
+  # routing graph requested for CORRUPTR's visual identity.
+
+  # ===== XY PAD + 4 MACRO KNOBS (y 502-842) =====
+
+  - id: xy_pad
+    type: xy-pad
+    label: "XY Performance Pad"
+    parameter: xyPadX_xyPadY
+    position: { x: 30, y: 542 }
+    size: { width: 340, height: 300 }
+    note: "Binds xyPadX (horizontal, default macroDamage) and xyPadY (vertical, default macroGlitch). Glide/inertia via xyPadSmoothing (80ms default)."
+
+  - id: macro_damage
+    type: knob
+    label: "Damage"
+    parameter: macroDamage
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 443, y: 642 }
+    size: { width: 90, height: 90 }
+    style: hero
+
+  - id: macro_crush
+    type: knob
+    label: "Crush"
+    parameter: macroCrush
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 638, y: 642 }
+    size: { width: 90, height: 90 }
+    style: hero
+
+  - id: macro_glitch
+    type: knob
+    label: "Glitch"
+    parameter: macroGlitch
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 833, y: 642 }
+    size: { width: 90, height: 90 }
+    style: hero
+
+  - id: macro_chaos
+    type: knob
+    label: "Chaos"
+    parameter: macroChaos
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 1028, y: 642 }
+    size: { width: 90, height: 90 }
+    style: hero
+
+  # ===== 3 DARK ACCENT CARDS (y 872-1172) =====
+
+  # -- Card 1: GLITCH ENGINE (x 30-396) --
+  - id: glitch_mode
+    type: combo
+    label: "Mode"
+    parameter: glitchMode
+    parameter_type: choice
+    choices: ["Off", "Stutter", "Repeat", "Reverse", "Buffer Repeat", "Freeze", "Slice", "Random Slice", "Micro Loop", "Granular Repeat", "Tape Stop", "Tape Start", "Retrigger", "Silence", "Noise Burst", "Bitcrush Burst", "Pitch Jump", "Random Repeat"]
+    default: "Off"
+    position: { x: 46, y: 1006 }
+    size: { width: 140, height: 28 }
+
+  - id: glitch_buffer_length
+    type: combo
+    label: "Buffer"
+    parameter: glitchBufferLength
+    parameter_type: choice
+    choices: ["1/64", "1/32", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"]
+    default: "1/16"
+    position: { x: 196, y: 1006 }
+    size: { width: 140, height: 28 }
+
+  - id: glitch_probability_detail
+    type: knob
+    label: "Probability"
+    parameter: glitchProbability
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 46, y: 1054 }
+    size: { width: 70, height: 70 }
+    note: "Same parameter as node_glitch_probability overview control in Distortion Graph"
+
+  # -- Card 2: FILTER & EQ (x 416-782) --
+  - id: filter_type
+    type: combo
+    label: "Type"
+    parameter: filterType
+    parameter_type: choice
+    choices: ["LP", "HP", "BP", "Notch", "Comb", "Resonant LP", "Resonant HP"]
+    default: "LP"
+    position: { x: 432, y: 1006 }
+    size: { width: 140, height: 28 }
+
+  - id: filter_cutoff_detail
+    type: knob
+    label: "Cutoff"
+    parameter: filterCutoff
+    range: [20.0, 20000.0]
+    unit: "Hz"
+    default: 20000.0
+    decimals: 0
+    skew: 0.3
+    position: { x: 596, y: 1006 }
+    size: { width: 80, height: 80 }
+    note: "Same parameter as node_filter_cutoff overview control in Distortion Graph"
+
+  - id: filter_resonance
+    type: knob
+    label: "Resonance"
+    parameter: filterResonance
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 698, y: 1006 }
+    size: { width: 70, height: 70 }
+
+  # -- Card 3: FEEDBACK + DELAY (x 802-1168) --
+  - id: feedback_amount
+    type: knob
+    label: "Feedback"
+    parameter: feedbackAmount
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 818, y: 1006 }
+    size: { width: 80, height: 80 }
+    note: "Internally soft-clamped - cannot reach true unity/runaway"
+
+  - id: feedback_damping
+    type: knob
+    label: "Damping"
+    parameter: feedbackDamping
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    position: { x: 912, y: 1006 }
+    size: { width: 80, height: 80 }
+
+  - id: micro_delay_time
+    type: knob
+    label: "Delay"
+    parameter: microDelayTime
+    range: [0.1, 50.0]
+    unit: "ms"
+    default: 10.0
+    decimals: 1
+    position: { x: 1006, y: 1006 }
+    size: { width: 80, height: 80 }
+    note: "NEW - not yet in parameter-spec-draft.md (feedback-loop micro delay time), reconcile in Stage 0/1"
+
+  # ===== RHYTHMIC SEQUENCER (y 1202-1394) =====
+  # 16-step grid itself is a special_element (per-step visual bars); the
+  # step values are a data array, not exposed as 16 separate controls here.
+
+  - id: sequencer_rate
+    type: combo
+    label: "Rate"
+    parameter: sequencerRate
+    parameter_type: choice
+    choices: ["1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T"]
+    default: "1/16"
+    position: { x: 30, y: 1362 }
+    size: { width: 150, height: 32 }
+
+  - id: sequencer_steps
+    type: combo
+    label: "Steps"
+    parameter: sequencerSteps
+    parameter_type: choice
+    choices: ["16", "32"]
+    default: "16"
+    position: { x: 200, y: 1362 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_random
+    type: button
+    label: "Random"
+    action: randomize_pattern
+    position: { x: 330, y: 1362 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_mutate
+    type: button
+    label: "Mutate"
+    action: mutate_pattern
+    position: { x: 440, y: 1362 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_reverse
+    type: button
+    label: "Reverse"
+    action: reverse_pattern
+    position: { x: 550, y: 1362 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_mirror
+    type: button
+    label: "Mirror"
+    action: mirror_pattern
+    position: { x: 660, y: 1362 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_shift
+    type: button
+    label: "Shift"
+    action: shift_pattern
+    position: { x: 770, y: 1362 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_clear
+    type: button
+    label: "Clear"
+    action: clear_pattern
+    position: { x: 880, y: 1362 }
+    size: { width: 100, height: 32 }
+
+  # ===== MODULATION MATRIX (y 1424-1744) =====
+
+  - id: lfo1_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo1Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 40, y: 1464 }
+    size: { width: 70, height: 70 }
+  - id: lfo1_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo1Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 120, y: 1464 }
+    size: { width: 120, height: 28 }
+  - id: lfo1_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo1Sync
+    parameter_type: bool
+    default: false
+    position: { x: 120, y: 1502 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo2_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo2Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 330, y: 1464 }
+    size: { width: 70, height: 70 }
+  - id: lfo2_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo2Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 410, y: 1464 }
+    size: { width: 120, height: 28 }
+  - id: lfo2_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo2Sync
+    parameter_type: bool
+    default: false
+    position: { x: 410, y: 1502 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo3_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo3Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 620, y: 1464 }
+    size: { width: 70, height: 70 }
+  - id: lfo3_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo3Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 700, y: 1464 }
+    size: { width: 120, height: 28 }
+  - id: lfo3_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo3Sync
+    parameter_type: bool
+    default: false
+    position: { x: 700, y: 1502 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo4_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo4Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 910, y: 1464 }
+    size: { width: 70, height: 70 }
+  - id: lfo4_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo4Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 990, y: 1464 }
+    size: { width: 120, height: 28 }
+  - id: lfo4_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo4Sync
+    parameter_type: bool
+    default: false
+    position: { x: 990, y: 1502 }
+    size: { width: 44, height: 24 }
+
+  # ===== PERFORMANCE MODE + REMAINING MACROS (y 1774-2004) =====
+
+  - id: perf_kill
+    type: toggle
+    label: "Kill"
+    parameter: performanceKill
+    parameter_type: bool
+    default: false
+    position: { x: 30, y: 1814 }
+    size: { width: 150, height: 90 }
+    style: performance-pad
+
+  - id: perf_glitch
+    type: toggle
+    label: "Glitch"
+    parameter: performanceGlitch
+    parameter_type: bool
+    default: false
+    position: { x: 195, y: 1814 }
+    size: { width: 150, height: 90 }
+    style: performance-pad
+
+  - id: perf_destroy
+    type: toggle
+    label: "Destroy"
+    parameter: performanceDestroy
+    parameter_type: bool
+    default: false
+    position: { x: 360, y: 1814 }
+    size: { width: 150, height: 90 }
+    style: performance-pad
+
+  - id: perf_freeze
+    type: toggle
+    label: "Freeze"
+    parameter: performanceFreeze
+    parameter_type: bool
+    default: false
+    position: { x: 525, y: 1814 }
+    size: { width: 150, height: 90 }
+    style: performance-pad
+
+  - id: perf_reverse
+    type: toggle
+    label: "Reverse"
+    parameter: performanceReverse
+    parameter_type: bool
+    default: false
+    position: { x: 690, y: 1814 }
+    size: { width: 150, height: 90 }
+    style: performance-pad
+
+  - id: perf_stutter
+    type: toggle
+    label: "Stutter"
+    parameter: performanceStutter
+    parameter_type: bool
+    default: false
+    position: { x: 855, y: 1814 }
+    size: { width: 150, height: 90 }
+    style: performance-pad
+
+  - id: perf_chaos
+    type: toggle
+    label: "Chaos"
+    parameter: performanceChaos
+    parameter_type: bool
+    default: false
+    position: { x: 1020, y: 1814 }
+    size: { width: 150, height: 90 }
+    style: performance-pad
+
+  - id: macro_rhythm
+    type: knob
+    label: "Rhythm"
+    parameter: macroRhythm
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 400, y: 1934 }
+    size: { width: 70, height: 70 }
+
+  - id: macro_movement
+    type: knob
+    label: "Movement"
+    parameter: macroMovement
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 510, y: 1934 }
+    size: { width: 70, height: 70 }
+
+  - id: macro_width
+    type: knob
+    label: "Width"
+    parameter: macroWidth
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    position: { x: 620, y: 1934 }
+    size: { width: 70, height: 70 }
+
+  - id: macro_mix
+    type: knob
+    label: "Mix"
+    parameter: macroMix
+    range: [0.0, 200.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 730, y: 1934 }
+    size: { width: 70, height: 70 }
+
+  # ===== OUTPUT SECTION (y 2034-2184) =====
+
+  - id: output_limiter_style
+    type: combo
+    label: "Limiter"
+    parameter: outputLimiterStyle
+    parameter_type: choice
+    choices: ["Transparent", "Colored"]
+    default: "Transparent"
+    position: { x: 30, y: 2074 }
+    size: { width: 150, height: 32 }
+
+  - id: input_gain
+    type: knob
+    label: "Input"
+    parameter: inputGain
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    position: { x: 220, y: 2074 }
+    size: { width: 80, height: 80 }
+
+  - id: output_gain
+    type: knob
+    label: "Output"
+    parameter: outputGain
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    position: { x: 340, y: 2074 }
+    size: { width: 80, height: 80 }
+
+  - id: master_mix
+    type: knob
+    label: "Mix"
+    parameter: mix
+    range: [0.0, 200.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 460, y: 2074 }
+    size: { width: 90, height: 90 }
+    style: hero
+
+special_elements:
+  - id: input_meter_topbar
+    type: level-meter
+    data_source: "input_level"
+    position: { x: 950, y: 16 }
+    size: { width: 25, height: 32 }
+    range: [-60, 6]
+    orientation: vertical
+
+  - id: output_meter_topbar
+    type: level-meter
+    data_source: "output_level"
+    position: { x: 1015, y: 16 }
+    size: { width: 25, height: 32 }
+    range: [-60, 6]
+    orientation: vertical
+
+  - id: preset_tag_dots
+    type: decorative
+    layer: decorative
+    description: "8 small colored preset-category dots, top-right of top bar"
+    position: { x: 1060, y: 26 }
+    size: { width: 110, height: 12 }
+
+  - id: distortion_graph_nodes
+    type: routing-graph
+    layer: decorative
+    description: "8 nodes (INPUT, SATURATION, WAVESHAPER, FILTER, BITCRUSH, GLITCH, PITCH, OUTPUT) rendered as extruded 3D geometric icons with SVG connector lines carrying animated modulation-link pulses between them. PITCH node rendered as a muted 'POST-MVP' placeholder with no bound control."
+    position: { x: 90, y: 134 }
+    size: { width: 1020, height: 170 }
+
+  - id: step_grid
+    type: step-sequencer-visual
+    layer: decorative
+    description: "16 (or 32) per-step visual intensity bars, tempo-synced highlight animation on playhead"
+    position: { x: 30, y: 1242 }
+    size: { width: 1140, height: 100 }
+    steps: 16
+
+  - id: mod_matrix_grid
+    type: matrix-grid
+    layer: decorative
+    description: "Source rows (LFO1-4, Envelope, Audio Level, Sequencer, Random, MIDI CC, Macros) x destination columns (Drive, Mix, Filter, Bit Depth, Sample Rate, Fold, Feedback, Glitch Probability, Glitch Size, Pitch, Pan, Width) with amount dots at intersections"
+    position: { x: 30, y: 1564 }
+    size: { width: 1140, height: 180 }
+
+  - id: glitch_engine_mini_graph
+    type: buffer-visualization
+    layer: decorative
+    position: { x: 46, y: 922 }
+    size: { width: 334, height: 70 }
+
+  - id: filter_eq_mini_graph
+    type: frequency-response-graph
+    layer: decorative
+    position: { x: 432, y: 922 }
+    size: { width: 334, height: 70 }
+
+  - id: feedback_delay_mini_graph
+    type: feedback-loop-diagram
+    layer: decorative
+    position: { x: 818, y: 922 }
+    size: { width: 334, height: 70 }
+
+  - id: xy_pad_trail_dot
+    type: decorative
+    layer: decorative
+    description: "Soft trailing glide dot showing XY pad inertia toward target position"
+    position: { x: 30, y: 542 }
+    size: { width: 340, height: 300 }
+
+  - id: output_input_meter
+    type: level-meter
+    data_source: "input_level"
+    position: { x: 650, y: 2074 }
+    size: { width: 30, height: 110 }
+    range: [-60, 6]
+    orientation: vertical
+
+  - id: output_output_meter
+    type: level-meter
+    data_source: "output_level"
+    position: { x: 700, y: 2074 }
+    size: { width: 30, height: 110 }
+    range: [-60, 6]
+    orientation: vertical
+
+notes:
+  - All positions in pixels from top-left (0,0) of the total scrollable content area (window.height = 2220px), not the visible viewport (viewport_height = 800px).
+  - Parameter IDs (camelCase) match plugins/CORRUPTR/.ideas/parameter-spec-draft.md exactly where a parameter already exists there.
+  - Controls marked "NEW" in their note field are not yet in parameter-spec-draft.md and should be reconciled during Stage 0/1 planning: graphBypassSaturation, graphBypassWaveshaper, graphBypassFilter, graphBypassBitcrush, graphBypassGlitch, microDelayTime.
+  - The Distortion Graph's literal 6-stage node sequence (SATURATION -> WAVESHAPER -> FILTER -> BITCRUSH -> GLITCH -> PITCH) is the aspirational full-vision routing from creative-brief.md; the current MVP-reconciled architecture.md implements distortion as a single selectable algorithm rather than simultaneous always-on stages, and Pitch/Frequency FX is POST-MVP. This is intentional for the mockup's visual-identity goal per explicit design direction; PITCH is rendered as a non-interactive placeholder node for that reason.
+  - node_drive/node_fold/node_bit_depth/node_glitch_probability/node_filter_cutoff are compact "overview" controls on their respective Distortion Graph nodes; filter_cutoff_detail and glitch_probability_detail in the accent cards below bind to the SAME parameters (filterCutoff, glitchProbability) as a more detailed secondary control - both are valid simultaneous bindings to one APVTS parameter, a common pattern in professional plugin UIs (overview + detail views).
+  - Controls automatically generate parameter bindings via WebSliderRelay (knob/xy-pad), WebToggleButtonRelay (toggle), WebComboBoxRelay (combo). Buttons/toggles with an "action" field (not "parameter") are UI-only and communicate via native function calls, not parameter relays.
+  - Special elements (distortion_graph_nodes, step_grid, mod_matrix_grid, mini graphs, meters) are visual/data-driven and may need custom C++/OpenGL or Canvas implementation in Stage 3.
