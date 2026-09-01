@@ -1,0 +1,1824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CORRUPTR UI Mockup v2</title>
+<style>
+  :root{
+    --top-bar-bg: #18181b;
+    --top-bar-stripe: #28282c;
+    --top-bar-border: #000000;
+    --top-bar-text: #f5f5f7;
+    --top-bar-text-muted: #86868c;
+
+    --panel-start: #fbfcfe;
+    --panel-end: #d9e1ee;
+    --panel-shadow: rgba(15,20,35,0.14);
+    --panel-inner: rgba(255,255,255,0.8);
+    --panel-text: #1c1e24;
+    --panel-text-muted: #6b7280;
+    --panel-divider: rgba(15,20,35,0.10);
+
+    --panel-label: #9aa1af;
+    --panel-title: #454a56;
+    --panel-value: #1c1e24;
+
+    --card-bg: #141417;
+    --card-bg-alt: #1a1b1f;
+    --card-border: #26272c;
+    --card-text: #eceef1;
+    --card-text-muted: #75777f;
+
+    --damage-1: #ff4d4d; --damage-2: #ff8a3d;
+    --crush-1: #a855f7;  --crush-2: #ec4899;
+    --glitch-1: #06b6d4; --glitch-2: #22d3ee;
+    --chaos-1: #a3e635;  --chaos-2: #facc15;
+
+    --dot-glitch: #22d3ee;
+    --dot-filter: #a855f7;
+    --dot-feedback: #ff8a3d;
+
+    --font-header: 'Space Grotesk', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-body: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  }
+
+  /* ===== WebView-safe foundation (Rule 1/2) ===== */
+  html, body{
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  *, *::before, *::after{
+    box-sizing: border-box;
+  }
+  body{
+    background: #000;
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== Native app feel (Rule 3) ===== */
+  body{
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-touch-callout: none;
+    cursor: default;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type="text"]{
+    user-select: text;
+    cursor: text;
+  }
+
+  /* ===== Test-only preview frame (Rule 10) ===== */
+  body{
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow: auto;
+  }
+  .plugin-frame{
+    width: 1200px;      /* FIXED - from v2-ui.yaml window.width */
+    height: 800px;       /* FIXED - viewport_height from v2-ui.yaml */
+    border: 2px solid #3a3a40;
+    border-radius: 6px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+    background: var(--panel-start);
+  }
+  .plugin-frame::-webkit-scrollbar{ width: 10px; }
+  .plugin-frame::-webkit-scrollbar-track{ background: #101012; }
+  .plugin-frame::-webkit-scrollbar-thumb{ background: #3a3a40; border-radius: 5px; }
+
+  .container{
+    width: 100%;
+    min-height: 100%;
+  }
+
+  .frame-caption{
+    color: #6b6e78;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-align: center;
+    margin-top: 12px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ===== TOP BAR (ELYSIUM-literal: near-black, diagonal pinstripe, wide-tracked wordmark) ===== */
+  .top-bar{
+    position: sticky;
+    top: 0;
+    z-index: 500;
+    height: 64px;
+    background: var(--top-bar-bg);
+    border-bottom: 1px solid var(--top-bar-border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 14px;
+    background-image: repeating-linear-gradient(
+      -35deg,
+      var(--top-bar-stripe) 0px,
+      var(--top-bar-stripe) 2px,
+      transparent 2px,
+      transparent 24px
+    );
+    background-position: right center;
+    background-size: 66% 100%;
+    background-repeat: no-repeat;
+  }
+  .search-field{
+    width: 200px;
+    height: 32px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    flex: 0 0 auto;
+  }
+  .search-field svg{ opacity: 0.5; flex-shrink: 0; }
+  .search-field input{
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--top-bar-text);
+    font-family: var(--font-body);
+    font-size: 11px;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    width: 100%;
+  }
+  .search-field input::placeholder{ color: var(--top-bar-text-muted); }
+
+  /* ELYSIUM-literal numbered page-indicator pills (NEW v2, decorative nav) */
+  .page-pills{ display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+  .page-pill{
+    width: 26px; height: 26px;
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--top-bar-text-muted);
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+  .page-pill:hover:not(.active){ background: rgba(255,255,255,0.12); }
+  .page-pill.active{ background: #ffffff; color: #17181b; border-color: #ffffff; }
+
+  .wordmark{
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    font-family: var(--font-header);
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: 14px;
+    color: var(--top-bar-text);
+    pointer-events: none;
+    text-shadow: 0 0 26px rgba(236, 72, 153, 0.22);
+  }
+
+  .top-bar-spacer{ flex: 1; }
+
+  .icon-btn{
+    height: 32px;
+    min-width: 60px;
+    padding: 0 12px;
+    border-radius: 7px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    color: var(--top-bar-text);
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.06s ease;
+  }
+  .icon-btn:hover{ background: rgba(255,255,255,0.12); }
+  .icon-btn:active{ transform: scale(0.96); }
+
+  .ab-toggle{ position: relative; }
+  .ab-toggle.on{ background: linear-gradient(135deg, var(--glitch-1), var(--glitch-2)); border-color: transparent; color: #06121a; }
+
+  select.topbar-select{
+    height: 32px;
+    min-width: 110px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 7px;
+    color: var(--top-bar-text);
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    padding: 0 10px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .meter-pair{ display: flex; gap: 4px; align-items: center; }
+  .meter-vertical{
+    width: 6px;
+    height: 32px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+  .meter-vertical .fill{
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 38%;
+    background: linear-gradient(180deg, var(--damage-1), var(--chaos-2), var(--glitch-2));
+    border-radius: 3px;
+  }
+
+  .preset-dots{ display: flex; gap: 5px; }
+  .preset-dots span{
+    width: 6px; height: 6px; border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* ===== SECTION SCAFFOLDING ===== */
+  .section{
+    padding: 30px 30px;
+  }
+  .section-panel{
+    background: linear-gradient(160deg, var(--panel-start), var(--panel-end));
+    border-radius: 18px;
+    box-shadow: 0 18px 40px var(--panel-shadow), inset 0 1px 0 var(--panel-inner);
+    padding: 24px 15px 30px;
+    position: relative;
+    overflow: hidden;
+  }
+  .section-title{
+    font-family: var(--font-header);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 3px;
+    color: var(--panel-title);
+    text-align: center;
+    margin: 4px 0 20px;
+  }
+  .section-subtitle{
+    font-family: var(--font-body);
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--panel-label);
+    text-align: center;
+    margin-top: -14px;
+    margin-bottom: 22px;
+  }
+
+  /* ===================================================================
+     KNOBS v2 - thin ring track + filled value arc + radial pointer line
+     (ELYSIUM-literal minimal/technical knob language, replacing v1's
+     chunky skeuomorphic ball-knob). Rule 8/9 compliant: the .knob-body
+     layer (containing only the pointer) rotates; the track ring and
+     arc stay visually fixed as a unit, only the arc's fill sweep changes.
+     =================================================================== */
+  .knob-wrap{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .knob{
+    position: relative;
+    border-radius: 50%;
+    cursor: ns-resize;
+    flex-shrink: 0;
+    --knob-accent: var(--panel-value);
+  }
+  .knob.on-dark{ --knob-accent: #e4e6ea; }
+  .knob.accent-damage{ --knob-accent: #e8452f; }
+  .knob.accent-crush{ --knob-accent: #a855f7; }
+  .knob.accent-glitch{ --knob-accent: #0891b2; }
+  .knob.accent-chaos{ --knob-accent: #b45309; }
+  .knob.on-dark.accent-damage{ --knob-accent: var(--damage-2); }
+  .knob.on-dark.accent-crush{ --knob-accent: var(--crush-1); }
+  .knob.on-dark.accent-glitch{ --knob-accent: var(--glitch-2); }
+  .knob.on-dark.accent-chaos{ --knob-accent: var(--chaos-2); }
+
+  .knob-track{
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2.5px solid rgba(20,22,32,0.10);
+  }
+  .knob.on-dark .knob-track{ border-color: rgba(255,255,255,0.13); }
+
+  .knob-arc{
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      from -135deg,
+      var(--knob-accent) 0deg,
+      var(--knob-accent) var(--arc-deg, 0deg),
+      transparent var(--arc-deg, 0deg) 270deg,
+      transparent 270deg 360deg
+    );
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+  }
+
+  .knob-body{
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    transform-origin: center center;
+    transition: transform 40ms linear;
+  }
+  .knob-body::before{
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 6px; height: 6px;
+    margin: -3px;
+    border-radius: 50%;
+    background: var(--knob-accent);
+    opacity: 0.85;
+  }
+  .knob-indicator{
+    position: absolute;
+    top: 9%;
+    left: 50%;
+    width: 2px;
+    height: 33%;
+    background: var(--knob-accent);
+    border-radius: 1px;
+    transform: translateX(-50%);
+  }
+
+  .knob-label{
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--panel-text-muted);
+  }
+  .knob-wrap.on-dark .knob-label{ color: var(--card-text-muted); }
+  .knob-value{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--panel-value);
+  }
+  .knob-wrap.on-dark .knob-value{ color: var(--card-text); }
+
+  /* ===== TOGGLES ===== */
+  .toggle{
+    width: 44px;
+    height: 24px;
+    border-radius: 12px;
+    background: rgba(20,22,32,0.15);
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s ease;
+  }
+  .toggle::after{
+    content: '';
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    transition: transform 0.15s ease;
+  }
+  .toggle.on{ background: linear-gradient(90deg, var(--glitch-1), var(--glitch-2)); }
+  .toggle.on::after{ transform: translateX(20px); }
+  .toggle-row{ display: flex; align-items: center; gap: 8px; }
+  .toggle-row .toggle-label{
+    font-family: var(--font-body); font-size: 9px; font-weight: 700;
+    letter-spacing: 1px; text-transform: uppercase; color: var(--panel-text-muted);
+  }
+  .on-dark .toggle-row .toggle-label{ color: var(--card-text-muted); }
+
+  /* ===== COMBOS ===== */
+  .combo-wrap{ display: flex; flex-direction: column; gap: 4px; }
+  .combo-label{
+    font-family: var(--font-body); font-size: 9px; font-weight: 700;
+    letter-spacing: 1.2px; text-transform: uppercase; color: var(--panel-text-muted);
+  }
+  select.combo{
+    height: 28px;
+    background: rgba(255,255,255,0.55);
+    border: 1px solid rgba(20,22,32,0.12);
+    border-radius: 6px;
+    padding: 0 8px;
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--panel-value);
+    cursor: pointer;
+    outline: none;
+  }
+  .on-dark select.combo{
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.1);
+    color: var(--card-text);
+  }
+  .on-dark .combo-label{ color: var(--card-text-muted); }
+
+  /* ===== BUTTONS ===== */
+  .action-btn{
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 7px;
+    background: rgba(20,22,32,0.06);
+    border: 1px solid rgba(20,22,32,0.12);
+    color: var(--panel-value);
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.06s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .action-btn:hover{ background: rgba(20,22,32,0.12); }
+  .action-btn:active{ transform: scale(0.96); }
+
+  /* ===================================================================
+     ISO-ICONS v2 - glassy pseudo-3D gradient-washed icons (ELYSIUM-literal
+     rendering style) used on Distortion Graph nodes and the 4 macro hero
+     panels. Each icon = 1-2 layered "face" divs with gradient + specular
+     highlight overlay, plus a soft blurred drop-shadow ellipse beneath.
+     =================================================================== */
+  .iso-icon{ position: relative; }
+  .iso-icon .face-a, .iso-icon .face-b{ position: absolute; }
+  .iso-icon-shadow{
+    border-radius: 50%;
+    background: radial-gradient(ellipse at center, rgba(20,22,32,0.28), transparent 72%);
+    filter: blur(1.5px);
+  }
+
+  /* wedge (folded triangular card) */
+  .iso-damage .face-a{ inset: 6% 4% 10% 4%; clip-path: polygon(50% 0%, 100% 100%, 0% 100%); border-radius: 3px;
+    background: linear-gradient(135deg, var(--damage-2), var(--damage-1)); box-shadow: inset 0 2px 4px rgba(255,255,255,0.35); }
+  .iso-damage .face-b{ left: 50%; top: 6%; width: 50%; height: 84%; clip-path: polygon(0 0, 100% 100%, 0 100%);
+    background: linear-gradient(135deg, rgba(255,255,255,0.42), rgba(255,255,255,0)); }
+
+  /* cylinder */
+  .iso-crush .face-a{ inset: 18% 12% 4% 12%; border-radius: 6px 6px 18px 18px;
+    background: linear-gradient(180deg, var(--crush-2), var(--crush-1)); box-shadow: inset 0 2px 4px rgba(255,255,255,0.3); }
+  .iso-crush .face-b{ left: 12%; right: 12%; top: 4%; height: 26%; border-radius: 50%;
+    background: linear-gradient(180deg, #ffffff, var(--crush-2)); opacity: 0.95; }
+
+  /* cuboid */
+  .iso-glitch .face-a{ inset: 8% 6% 6% 6%; border-radius: 10px;
+    background: linear-gradient(160deg, var(--glitch-2), var(--glitch-1)); box-shadow: inset 0 2px 5px rgba(255,255,255,0.35); }
+  .iso-glitch .face-b{ inset: 8% 6% 62% 6%; border-radius: 10px 10px 0 0;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0)); }
+
+  /* tilted cuboid */
+  .iso-chaos .face-a{ inset: 10% 8% 8% 8%; border-radius: 8px; transform: rotate(-3deg);
+    background: linear-gradient(150deg, var(--chaos-1), var(--chaos-2)); box-shadow: inset 0 2px 5px rgba(255,255,255,0.4); }
+  .iso-chaos .face-b{ inset: 10% 8% 58% 8%; border-radius: 8px 8px 0 0; transform: rotate(-3deg);
+    background: linear-gradient(180deg, rgba(255,255,255,0.55), rgba(255,255,255,0)); }
+
+  /* neutral/other graph-node cuboids share the same generic "cuboid" faces */
+  .iso-neutral .face-a, .iso-saturation .face-a, .iso-waveshaper .face-a, .iso-filter .face-a, .iso-bitcrush .face-a, .iso-pitch .face-a{
+    inset: 8% 6% 6% 6%; border-radius: 9px; box-shadow: inset 0 2px 4px rgba(255,255,255,0.35);
+  }
+  .iso-neutral .face-b, .iso-saturation .face-b, .iso-waveshaper .face-b, .iso-filter .face-b, .iso-bitcrush .face-b, .iso-pitch .face-b{
+    inset: 8% 6% 58% 6%; border-radius: 9px 9px 0 0; background: linear-gradient(180deg, rgba(255,255,255,0.5), rgba(255,255,255,0));
+  }
+  .iso-neutral .face-a{ background: linear-gradient(160deg, #d7dbe3, #a7adba); }
+  .iso-saturation .face-a{ background: linear-gradient(160deg, var(--damage-1), var(--damage-2)); }
+  .iso-waveshaper .face-a{ background: linear-gradient(160deg, var(--crush-1), var(--crush-2)); }
+  .iso-filter .face-a{ background: linear-gradient(160deg, #60a5fa, #38bdf8); }
+  .iso-bitcrush .face-a{ background: linear-gradient(160deg, #ec4899, #a855f7); }
+  .iso-pitch .face-a{ background: linear-gradient(160deg, #6b7280, #9aa1af); opacity: 0.5; }
+  .iso-pitch .face-b{ opacity: 0.5; }
+
+  /* ===== DISTORTION GRAPH ===== */
+  .graph-nodes{
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 0 8px;
+    position: relative;
+    z-index: 2;
+  }
+  .graph-svg{
+    position: absolute;
+    top: 44px;
+    left: 0;
+    width: 100%;
+    height: 40px;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .mod-link{
+    stroke: url(#linkGradient);
+    stroke-width: 2;
+    fill: none;
+    stroke-dasharray: 6 5;
+    animation: dashflow 1.6s linear infinite;
+    opacity: 0.75;
+  }
+  @keyframes dashflow{ to{ stroke-dashoffset: -33; } }
+
+  .node{
+    width: 108px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .node-icon{
+    width: 54px;
+    height: 54px;
+    position: relative;
+    margin-bottom: 4px;
+  }
+  .node-icon-shadow{ width: 60%; height: 7px; margin: 0 auto; }
+
+  .node-title{
+    font-family: var(--font-body);
+    font-size: 9.5px;
+    font-weight: 800;
+    letter-spacing: 1.3px;
+    color: var(--panel-title);
+  }
+  .node-post-mvp{
+    font-size: 7px;
+    letter-spacing: 1px;
+    color: var(--panel-label);
+    text-transform: uppercase;
+  }
+  .node-control-row{
+    margin-top: 178px;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 8px;
+  }
+  .node-slot{ width: 108px; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .node-slot .knob{ width: 55px; height: 55px; }
+  .algo-select-slot{
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    margin-top: 14px;
+  }
+
+  /* ===== XY PAD ===== */
+  .xy-macros-grid{
+    display: flex;
+    gap: 20px;
+    align-items: stretch;
+  }
+  .xy-pad-frame{
+    width: 340px;
+    height: 300px;
+    background: linear-gradient(150deg, #2a2d38, #14151a);
+    border-radius: 16px;
+    position: relative;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.5), 0 12px 26px rgba(20,22,32,0.3);
+    overflow: hidden;
+    cursor: crosshair;
+    flex-shrink: 0;
+  }
+  .xy-pad-frame .grid-line{
+    position: absolute;
+    background: rgba(255,255,255,0.06);
+  }
+  .xy-axis-label{
+    position: absolute;
+    font-family: var(--font-body);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+  }
+  .xy-dot-trail{
+    position: absolute;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(34,211,238,0.35), rgba(34,211,238,0));
+    transform: translate(-50%, 50%);
+    transition: left 260ms cubic-bezier(.2,.7,.3,1), bottom 260ms cubic-bezier(.2,.7,.3,1);
+    pointer-events: none;
+  }
+  .xy-dot{
+    position: absolute;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff, var(--glitch-1));
+    box-shadow: 0 0 12px rgba(34,211,238,0.8);
+    transform: translate(-50%, 50%);
+    pointer-events: none;
+  }
+
+  /* ELYSIUM-literal 4-panel hero macro row: label / iso-icon / value readout / title / knob,
+     divided by thin vertical hairlines */
+  .macro-hero-row{
+    flex: 1;
+    display: flex;
+    background: rgba(255,255,255,0.28);
+    border-radius: 14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+    overflow: hidden;
+  }
+  .macro-panel{
+    flex: 1;
+    padding: 16px 8px 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .macro-panel:not(:first-child){ border-left: 1px solid var(--panel-divider); }
+  .macro-label{
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--panel-label);
+    margin-bottom: 12px;
+  }
+  .macro-icon{ width: 68px; height: 68px; position: relative; margin-bottom: 6px; }
+  .macro-icon-shadow{ width: 58%; height: 8px; margin: 2px auto 10px; }
+  .macro-readout{
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--panel-value);
+    margin-bottom: 12px;
+  }
+  .macro-panel .knob{ width: 90px; height: 90px; }
+  .macro-panel .macro-name{
+    margin-bottom: 14px;
+    font-family: var(--font-header);
+    font-weight: 700;
+    font-size: 19px;
+    letter-spacing: 2.5px;
+    color: var(--panel-title);
+  }
+
+  /* ===== DARK ACCENT CARDS ===== */
+  .card-row{ display: flex; gap: 20px; }
+  .accent-card{
+    flex: 1;
+    background: linear-gradient(165deg, var(--card-bg-alt), var(--card-bg));
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 14px 16px 18px;
+  }
+  .card-header{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .card-dot{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .card-title{
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    color: var(--card-text);
+    text-transform: uppercase;
+  }
+  .card-subtitle{
+    font-size: 10px;
+    color: var(--card-text-muted);
+    margin-right: auto;
+  }
+  .card-chevrons{ display: flex; gap: 4px; color: var(--card-text-muted); font-size: 12px; }
+  .card-chevrons span{ cursor: pointer; }
+  .mini-graph{
+    height: 70px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.03);
+    margin-bottom: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .mini-graph svg{ width: 100%; height: 100%; }
+  .card-controls-row{ display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; flex-wrap: wrap; }
+  .card-knobs-row{ display: flex; gap: 14px; }
+
+  /* ===== SEQUENCER ===== */
+  .step-grid{
+    display: flex;
+    gap: 6px;
+    align-items: flex-end;
+    height: 100px;
+    padding: 0 4px 4px;
+    margin-bottom: 20px;
+  }
+  .step-bar{
+    flex: 1;
+    background: linear-gradient(180deg, rgba(20,22,32,0.06), rgba(20,22,32,0.14));
+    border-radius: 4px;
+    position: relative;
+  }
+  .step-bar .fill{
+    position: absolute; bottom: 0; left: 0; right: 0;
+    border-radius: 4px;
+    background: linear-gradient(180deg, var(--glitch-2), var(--glitch-1));
+  }
+  .step-bar.beat{ background: linear-gradient(180deg, rgba(20,22,32,0.10), rgba(20,22,32,0.20)); }
+  .step-bar.playhead .fill{ box-shadow: 0 0 12px rgba(34,211,238,0.7); }
+  .seq-controls-row{
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  /* ===== MOD MATRIX ===== */
+  .lfo-panel-row{ display: flex; gap: 20px; margin-bottom: 24px; }
+  .lfo-panel{
+    flex: 1;
+    background: rgba(255,255,255,0.35);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+  }
+  .lfo-panel .knob{ width: 70px; height: 70px; }
+  .lfo-panel-label{
+    font-family: var(--font-header);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    color: var(--panel-title);
+    margin-bottom: 8px;
+  }
+  .lfo-controls-col{ display: flex; flex-direction: column; gap: 10px; }
+
+  .matrix-grid{
+    background: rgba(20,22,32,0.04);
+    border-radius: 12px;
+    padding: 14px 16px;
+    overflow-x: auto;
+  }
+  table.matrix-table{ border-collapse: collapse; width: 100%; }
+  table.matrix-table th, table.matrix-table td{
+    text-align: center;
+    padding: 6px 4px;
+  }
+  table.matrix-table th{
+    font-family: var(--font-body);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: var(--panel-label);
+    text-transform: uppercase;
+  }
+  table.matrix-table td.row-label{
+    font-family: var(--font-body);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--panel-title);
+    text-align: left;
+    text-transform: uppercase;
+  }
+  .matrix-dot{
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+    background: rgba(20,22,32,0.10);
+  }
+  .matrix-dot.active{ background: linear-gradient(135deg, var(--glitch-1), var(--crush-1)); box-shadow: 0 0 6px rgba(168,85,247,0.5); }
+
+  /* ===== PERFORMANCE MODE ===== */
+  .perf-pad-row{ display: flex; gap: 15px; margin-bottom: 24px; }
+  .perf-pad{
+    flex: 1;
+    height: 90px;
+    border-radius: 14px;
+    border: none;
+    cursor: pointer;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    padding: 12px;
+    font-family: var(--font-header);
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 1.5px;
+    color: #fff;
+    text-transform: uppercase;
+    box-shadow: 0 10px 22px rgba(20,22,32,0.25), inset 0 1px 0 rgba(255,255,255,0.25);
+    transition: transform 0.06s ease, box-shadow 0.15s ease;
+    overflow: hidden;
+  }
+  .perf-pad::before{
+    content:'';
+    position: absolute; inset: 0;
+    background: linear-gradient(160deg, rgba(255,255,255,0.28), rgba(255,255,255,0) 55%);
+  }
+  .perf-pad:active{ transform: scale(0.97); }
+  .perf-pad.on{ box-shadow: 0 0 0 3px rgba(255,255,255,0.6), 0 10px 26px rgba(20,22,32,0.35); }
+  .perf-pad span{ position: relative; z-index: 2; }
+
+  .macro-small-row{ display: flex; gap: 40px; justify-content: center; }
+  .macro-small-row .knob{ width: 70px; height: 70px; }
+
+  /* ===== OUTPUT ===== */
+  .output-row{ display: flex; gap: 40px; align-items: flex-end; justify-content: center; }
+  .output-meters{ display: flex; gap: 8px; align-items: flex-end; }
+  .meter-tall{
+    width: 30px; height: 110px;
+    background: rgba(20,22,32,0.08);
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+  }
+  .meter-tall .fill{
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(180deg, var(--damage-1), var(--chaos-2), var(--glitch-2));
+    border-radius: 6px;
+  }
+  .meter-tall-label{
+    font-family: var(--font-body); font-size: 8px; font-weight: 700;
+    letter-spacing: 1px; color: var(--panel-text-muted); text-align: center; margin-top: 6px;
+  }
+
+  /* ===== DEBUG MONITOR (Rule 11, test-only) ===== */
+  .debug-monitor{
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(0,0,0,0.85);
+    color: #0f0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 8px 12px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    min-width: 190px;
+    pointer-events: none;
+    z-index: 10000;
+  }
+  .debug-label{ color: #666; font-size: 9px; margin-bottom: 4px; letter-spacing: 1px; }
+  .debug-param{ font-weight: bold; color: #0f0; }
+  .debug-value{ color: #fff; margin-top: 2px; word-break: break-all; }
+  .debug-normalized{ color: #888; font-size: 10px; }
+</style>
+</head>
+<body>
+
+  <div class="plugin-frame" id="pluginFrame">
+    <div class="container">
+
+      <!-- ============ TOP BAR ============ -->
+      <div class="top-bar">
+        <div class="search-field">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8a8d96" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="preset_search" placeholder="Search presets…" />
+        </div>
+
+        <div class="page-pills" id="pagePills">
+          <div class="page-pill active" data-target="0">1</div>
+          <div class="page-pill" data-target="502">2</div>
+          <div class="page-pill" data-target="1202">3</div>
+          <div class="page-pill" data-target="1774">4</div>
+        </div>
+
+        <div class="wordmark">CORRUPTR</div>
+
+        <div class="top-bar-spacer"></div>
+
+        <div class="icon-btn action-btn" data-action="save_preset" id="save_button">Save</div>
+        <div class="icon-btn action-btn" data-action="randomize_all" id="random_button">Random</div>
+        <div class="icon-btn action-btn" data-action="undo" id="undo_button">Undo</div>
+        <div class="icon-btn action-btn" data-action="redo" id="redo_button">Redo</div>
+        <div class="icon-btn ab-toggle toggle" data-param="abCompareState" data-default="false" id="ab_toggle">A/B</div>
+
+        <select class="topbar-select combo" id="quality_mode" data-param="qualityMode">
+          <option>ECO</option>
+          <option selected>NORMAL</option>
+          <option>HIGH</option>
+          <option>EXTREME</option>
+          <option>AUTO</option>
+        </select>
+
+        <div class="meter-pair">
+          <div class="meter-vertical"><div class="fill" id="input_meter_topbar"></div></div>
+          <div class="meter-vertical"><div class="fill" id="output_meter_topbar"></div></div>
+        </div>
+
+        <div class="preset-dots">
+          <span style="background:#ec4899"></span><span style="background:#d946ef"></span><span style="background:#a855f7"></span>
+          <span style="background:#6366f1"></span><span style="background:#22d3ee"></span><span style="background:#22c55e"></span>
+          <span style="background:#eab308"></span><span style="background:#f97316"></span>
+        </div>
+      </div>
+
+      <!-- ============ SECTION 1: DISTORTION GRAPH ============ -->
+      <div class="section">
+        <div class="section-panel">
+          <div class="section-title">DISTORTION GRAPH</div>
+          <div class="section-subtitle">Modular Signal Routing &middot; Every Module Independently Bypassable</div>
+
+          <div style="position:relative;">
+            <svg class="graph-svg" viewBox="0 0 1140 40" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="linkGradient" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stop-color="#ff4d4d"/>
+                  <stop offset="30%" stop-color="#a855f7"/>
+                  <stop offset="55%" stop-color="#60a5fa"/>
+                  <stop offset="75%" stop-color="#ec4899"/>
+                  <stop offset="100%" stop-color="#22d3ee"/>
+                </linearGradient>
+              </defs>
+              <path class="mod-link" d="M54,20 L285.7,20 M285.7,20 L431.4,20 M431.4,20 L577.1,20 M577.1,20 L722.9,20 M722.9,20 L868.6,20 M868.6,20 L1014.3,20 M1014.3,20 L1150,20" />
+            </svg>
+
+            <div class="graph-nodes">
+              <div class="node">
+                <div class="node-icon iso-icon iso-neutral"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">INPUT</div>
+              </div>
+              <div class="node">
+                <div class="node-icon iso-icon iso-saturation"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">SATURATION</div>
+              </div>
+              <div class="node">
+                <div class="node-icon iso-icon iso-waveshaper"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">WAVESHAPER</div>
+              </div>
+              <div class="node">
+                <div class="node-icon iso-icon iso-filter"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">FILTER</div>
+              </div>
+              <div class="node">
+                <div class="node-icon iso-icon iso-bitcrush"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">BITCRUSH</div>
+              </div>
+              <div class="node">
+                <div class="node-icon iso-icon iso-glitch"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">GLITCH</div>
+              </div>
+              <div class="node">
+                <div class="node-icon iso-icon iso-pitch"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">PITCH</div><div class="node-post-mvp">post-MVP</div>
+              </div>
+              <div class="node">
+                <div class="node-icon iso-icon iso-neutral"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="node-icon-shadow iso-icon-shadow"></div>
+                <div class="node-title">OUTPUT</div>
+              </div>
+            </div>
+
+            <div class="node-control-row">
+              <div class="node-slot"></div>
+              <div class="node-slot">
+                <div class="knob-wrap">
+                  <div class="knob accent-damage" id="node_drive" data-param="drive" data-min="0" data-max="40" data-default="6" data-unit="dB" data-decimals="1" style="width:55px;height:55px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-label">Drive</div>
+                  <div class="knob-value" data-value-for="drive">6.0 dB</div>
+                </div>
+                <div class="algo-select-slot">
+                  <select class="combo" id="node_algorithm_select" data-param="distortionAlgorithm" style="width:160px;">
+                    <option selected>Saturation</option><option>Soft Clip</option><option>Hard Clip</option><option>Tube</option>
+                    <option>Diode</option><option>Fuzz</option><option>Digital Distortion</option><option>Bitcrusher</option>
+                    <option>Sample Rate Reducer</option><option>Wavefolder</option><option>Ring-Mod</option><option>Foldback</option>
+                  </select>
+                </div>
+                <div class="toggle-row" style="margin-top:10px;">
+                  <div class="toggle" id="node_bypass_saturation" data-param="graphBypassSaturation" data-default="false"></div>
+                  <span class="toggle-label">Bypass</span>
+                </div>
+              </div>
+              <div class="node-slot">
+                <div class="knob-wrap">
+                  <div class="knob accent-crush" id="node_fold" data-param="fold" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:55px;height:55px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-label">Fold</div>
+                  <div class="knob-value" data-value-for="fold">0 %</div>
+                </div>
+                <div class="toggle-row" style="margin-top:10px;">
+                  <div class="toggle" id="node_bypass_waveshaper" data-param="graphBypassWaveshaper" data-default="false"></div>
+                  <span class="toggle-label">Bypass</span>
+                </div>
+              </div>
+              <div class="node-slot">
+                <div class="knob-wrap">
+                  <div class="knob" id="node_filter_cutoff" data-param="filterCutoff" data-min="20" data-max="20000" data-default="20000" data-unit="Hz" data-decimals="0" style="width:55px;height:55px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-label">Cutoff</div>
+                  <div class="knob-value" data-value-for="filterCutoff">20000 Hz</div>
+                </div>
+                <div class="toggle-row" style="margin-top:10px;">
+                  <div class="toggle" id="node_bypass_filter" data-param="graphBypassFilter" data-default="false"></div>
+                  <span class="toggle-label">Bypass</span>
+                </div>
+              </div>
+              <div class="node-slot">
+                <div class="knob-wrap">
+                  <div class="knob accent-glitch" id="node_bit_depth" data-param="bitDepth" data-min="1" data-max="16" data-default="16" data-unit="bit" data-decimals="0" style="width:55px;height:55px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-label">Bits</div>
+                  <div class="knob-value" data-value-for="bitDepth">16 bit</div>
+                </div>
+                <div class="toggle-row" style="margin-top:10px;">
+                  <div class="toggle" id="node_bypass_bitcrush" data-param="graphBypassBitcrush" data-default="false"></div>
+                  <span class="toggle-label">Bypass</span>
+                </div>
+              </div>
+              <div class="node-slot">
+                <div class="knob-wrap">
+                  <div class="knob accent-glitch" id="node_glitch_probability" data-param="glitchProbability" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:55px;height:55px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-label">Prob</div>
+                  <div class="knob-value" data-value-for="glitchProbability">0 %</div>
+                </div>
+                <div class="toggle-row" style="margin-top:10px;">
+                  <div class="toggle" id="node_bypass_glitch" data-param="graphBypassGlitch" data-default="false"></div>
+                  <span class="toggle-label">Bypass</span>
+                </div>
+              </div>
+              <div class="node-slot"></div>
+              <div class="node-slot"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SECTION 2: XY PAD + MACROS ============ -->
+      <div class="section">
+        <div class="section-panel">
+          <div class="section-title">PERFORMANCE MACROS</div>
+          <div class="section-subtitle">XY Pad glides with inertia &middot; X = Damage &middot; Y = Glitch</div>
+
+          <div class="xy-macros-grid">
+            <div class="xy-pad-frame" id="xy_pad">
+              <div class="grid-line" style="left:50%; top:0; bottom:0; width:1px;"></div>
+              <div class="grid-line" style="top:50%; left:0; right:0; height:1px;"></div>
+              <div class="xy-axis-label" style="bottom:10px; right:12px;">Damage &rarr;</div>
+              <div class="xy-axis-label" style="top:10px; left:12px; writing-mode:vertical-rl;">Glitch &uarr;</div>
+              <div class="xy-dot-trail" id="xy_trail" style="left:38%; bottom:32%;"></div>
+              <div class="xy-dot" id="xy_dot" style="left:38%; bottom:32%;"></div>
+            </div>
+
+            <div class="macro-hero-row">
+              <div class="macro-panel">
+                <div class="macro-label">Intensity</div>
+                <div class="macro-icon iso-icon iso-damage"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="macro-icon-shadow iso-icon-shadow"></div>
+                <div class="macro-readout" data-value-for="macroDamage">0 %</div>
+                <div class="macro-name">DAMAGE</div>
+                <div class="knob-wrap">
+                  <div class="knob accent-damage" id="macro_damage" data-param="macroDamage" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:90px;height:90px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroDamage">0 %</div>
+                </div>
+              </div>
+              <div class="macro-panel">
+                <div class="macro-label">Reduction</div>
+                <div class="macro-icon iso-icon iso-crush"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="macro-icon-shadow iso-icon-shadow"></div>
+                <div class="macro-readout" data-value-for="macroCrush">0 %</div>
+                <div class="macro-name">CRUSH</div>
+                <div class="knob-wrap">
+                  <div class="knob accent-crush" id="macro_crush" data-param="macroCrush" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:90px;height:90px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroCrush">0 %</div>
+                </div>
+              </div>
+              <div class="macro-panel">
+                <div class="macro-label">Artifact</div>
+                <div class="macro-icon iso-icon iso-glitch"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="macro-icon-shadow iso-icon-shadow"></div>
+                <div class="macro-readout" data-value-for="macroGlitch">0 %</div>
+                <div class="macro-name">GLITCH</div>
+                <div class="knob-wrap">
+                  <div class="knob accent-glitch" id="macro_glitch" data-param="macroGlitch" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:90px;height:90px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroGlitch">0 %</div>
+                </div>
+              </div>
+              <div class="macro-panel">
+                <div class="macro-label">Entropy</div>
+                <div class="macro-icon iso-icon iso-chaos"><div class="face-a"></div><div class="face-b"></div></div>
+                <div class="macro-icon-shadow iso-icon-shadow"></div>
+                <div class="macro-readout" data-value-for="macroChaos">0 %</div>
+                <div class="macro-name">CHAOS</div>
+                <div class="knob-wrap">
+                  <div class="knob accent-chaos" id="macro_chaos" data-param="macroChaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:90px;height:90px;">
+                    <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroChaos">0 %</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SECTION 3: 3 DARK ACCENT CARDS ============ -->
+      <div class="section">
+        <div class="card-row">
+
+          <div class="accent-card on-dark">
+            <div class="card-header">
+              <span class="card-dot" style="background:var(--dot-glitch)"></span>
+              <span class="card-title">Glitch Engine</span>
+              <span class="card-subtitle" id="glitch_mode_subtitle">Off</span>
+              <span class="card-chevrons"><span>&lsaquo;</span><span>&rsaquo;</span></span>
+            </div>
+            <div class="mini-graph">
+              <svg viewBox="0 0 320 70" preserveAspectRatio="none">
+                <line x1="90" y1="14" x2="90" y2="64" stroke="rgba(255,255,255,0.12)" stroke-dasharray="2 3"/>
+                <line x1="150" y1="34" x2="150" y2="64" stroke="rgba(255,255,255,0.12)" stroke-dasharray="2 3"/>
+                <line x1="260" y1="34" x2="260" y2="64" stroke="rgba(255,255,255,0.12)" stroke-dasharray="2 3"/>
+                <polyline points="10,60 90,14 150,34 260,34 300,60" fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="90" cy="14" r="4" fill="#22d3ee"/>
+                <circle cx="150" cy="34" r="4" fill="#22d3ee"/>
+                <circle cx="260" cy="34" r="4" fill="#22d3ee"/>
+              </svg>
+            </div>
+            <div class="card-controls-row">
+              <div class="combo-wrap">
+                <span class="combo-label">Mode</span>
+                <select class="combo" id="glitch_mode" data-param="glitchMode" style="width:140px;">
+                  <option selected>Off</option><option>Stutter</option><option>Repeat</option><option>Reverse</option>
+                  <option>Buffer Repeat</option><option>Freeze</option><option>Slice</option><option>Random Slice</option>
+                  <option>Micro Loop</option><option>Granular Repeat</option><option>Tape Stop</option><option>Tape Start</option>
+                  <option>Retrigger</option><option>Silence</option><option>Noise Burst</option><option>Bitcrush Burst</option>
+                  <option>Pitch Jump</option><option>Random Repeat</option>
+                </select>
+              </div>
+              <div class="combo-wrap">
+                <span class="combo-label">Buffer</span>
+                <select class="combo" id="glitch_buffer_length" data-param="glitchBufferLength" style="width:140px;">
+                  <option>1/64</option><option>1/32</option><option selected>1/16</option><option>1/8</option>
+                  <option>1/4</option><option>1/2</option><option>1 bar</option><option>2 bars</option><option>4 bars</option>
+                </select>
+              </div>
+            </div>
+            <div class="card-knobs-row">
+              <div class="knob-wrap on-dark">
+                <div class="knob accent-glitch on-dark" id="glitch_probability_detail" data-param="glitchProbability" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:70px;height:70px;">
+                  <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                </div>
+                <div class="knob-label">Probability</div>
+                <div class="knob-value"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="accent-card on-dark">
+            <div class="card-header">
+              <span class="card-dot" style="background:var(--dot-filter)"></span>
+              <span class="card-title">Filter &amp; EQ</span>
+              <span class="card-subtitle" id="filter_type_subtitle">LP</span>
+              <span class="card-chevrons"><span>&lsaquo;</span><span>&rsaquo;</span></span>
+            </div>
+            <div class="mini-graph">
+              <svg viewBox="0 0 320 70" preserveAspectRatio="none">
+                <line x1="0" y1="10" x2="320" y2="10" stroke="rgba(255,255,255,0.06)"/>
+                <line x1="0" y1="35" x2="320" y2="35" stroke="rgba(255,255,255,0.06)"/>
+                <line x1="0" y1="60" x2="320" y2="60" stroke="rgba(255,255,255,0.06)"/>
+                <polyline points="4,55 60,55 90,50 130,15 190,15 240,50 280,55 316,55" fill="none" stroke="#a855f7" stroke-width="2.5"/>
+                <text x="4" y="9" font-size="7" fill="rgba(255,255,255,0.32)" font-family="monospace">12</text>
+                <text x="4" y="33" font-size="7" fill="rgba(255,255,255,0.32)" font-family="monospace">0</text>
+                <text x="4" y="68" font-size="7" fill="rgba(255,255,255,0.32)" font-family="monospace">-12</text>
+                <text x="55" y="68" font-size="7" fill="rgba(255,255,255,0.32)" font-family="monospace">100</text>
+                <text x="182" y="68" font-size="7" fill="rgba(255,255,255,0.32)" font-family="monospace">1K</text>
+                <text x="296" y="68" font-size="7" fill="rgba(255,255,255,0.32)" font-family="monospace">10K</text>
+              </svg>
+            </div>
+            <div class="card-controls-row">
+              <div class="combo-wrap">
+                <span class="combo-label">Type</span>
+                <select class="combo" id="filter_type" data-param="filterType" style="width:140px;">
+                  <option selected>LP</option><option>HP</option><option>BP</option><option>Notch</option>
+                  <option>Comb</option><option>Resonant LP</option><option>Resonant HP</option>
+                </select>
+              </div>
+            </div>
+            <div class="card-knobs-row">
+              <div class="knob-wrap on-dark">
+                <div class="knob on-dark" id="filter_cutoff_detail" data-param="filterCutoff" data-min="20" data-max="20000" data-default="20000" data-unit="Hz" data-decimals="0" style="width:80px;height:80px;">
+                  <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                </div>
+                <div class="knob-label">Cutoff</div>
+                <div class="knob-value"></div>
+              </div>
+              <div class="knob-wrap on-dark">
+                <div class="knob on-dark" id="filter_resonance" data-param="filterResonance" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:70px;height:70px;">
+                  <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                </div>
+                <div class="knob-label">Resonance</div>
+                <div class="knob-value"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="accent-card on-dark">
+            <div class="card-header">
+              <span class="card-dot" style="background:var(--dot-feedback)"></span>
+              <span class="card-title">Feedback + Delay</span>
+              <span class="card-subtitle">Loop Safe-Limited</span>
+              <span class="card-chevrons"><span>&lsaquo;</span><span>&rsaquo;</span></span>
+            </div>
+            <div class="mini-graph">
+              <svg viewBox="0 0 320 70" preserveAspectRatio="none">
+                <path d="M20,35 h60 a20,20 0 0 1 20,20 v0 a20,20 0 0 1 -20,20 h-40 a20,20 0 0 1 -20,-20 v-40 a20,20 0 0 1 20,-20 h180 a20,20 0 0 1 20,20 v20" fill="none" stroke="#ff8a3d" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="card-knobs-row">
+              <div class="knob-wrap on-dark">
+                <div class="knob on-dark" id="feedback_amount" data-param="feedbackAmount" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:80px;height:80px;">
+                  <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                </div>
+                <div class="knob-label">Feedback</div>
+                <div class="knob-value"></div>
+              </div>
+              <div class="knob-wrap on-dark">
+                <div class="knob on-dark" id="feedback_damping" data-param="feedbackDamping" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" style="width:80px;height:80px;">
+                  <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                </div>
+                <div class="knob-label">Damping</div>
+                <div class="knob-value"></div>
+              </div>
+              <div class="knob-wrap on-dark">
+                <div class="knob on-dark" id="micro_delay_time" data-param="microDelayTime" data-min="0.1" data-max="50" data-default="10" data-unit="ms" data-decimals="1" style="width:80px;height:80px;">
+                  <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+                </div>
+                <div class="knob-label">Delay</div>
+                <div class="knob-value"></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ============ SECTION 4: RHYTHMIC SEQUENCER ============ -->
+      <div class="section">
+        <div class="section-panel">
+          <div class="section-title">RHYTHMIC SEQUENCER</div>
+          <div class="section-subtitle">Host-Synced &middot; 16 Steps &middot; Drives Drive / Mix / Filter / Bits / SRR / Glitch / Volume / Pan / Pitch / Gate</div>
+
+          <div class="step-grid" id="step_grid"></div>
+
+          <div class="seq-controls-row">
+            <div class="combo-wrap">
+              <span class="combo-label">Rate</span>
+              <select class="combo" id="sequencer_rate" data-param="sequencerRate" style="width:150px;">
+                <option>1/4</option><option>1/8</option><option selected>1/16</option><option>1/32</option>
+                <option>1/4T</option><option>1/8T</option><option>1/16T</option>
+              </select>
+            </div>
+            <div class="combo-wrap">
+              <span class="combo-label">Steps</span>
+              <select class="combo" id="sequencer_steps" data-param="sequencerSteps" style="width:100px;">
+                <option selected>16</option><option>32</option>
+              </select>
+            </div>
+            <div class="action-btn" data-action="randomize_pattern" id="seq_random" style="width:100px;">Random</div>
+            <div class="action-btn" data-action="mutate_pattern" id="seq_mutate" style="width:100px;">Mutate</div>
+            <div class="action-btn" data-action="reverse_pattern" id="seq_reverse" style="width:100px;">Reverse</div>
+            <div class="action-btn" data-action="mirror_pattern" id="seq_mirror" style="width:100px;">Mirror</div>
+            <div class="action-btn" data-action="shift_pattern" id="seq_shift" style="width:100px;">Shift</div>
+            <div class="action-btn" data-action="clear_pattern" id="seq_clear" style="width:100px;">Clear</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SECTION 5: MODULATION MATRIX ============ -->
+      <div class="section">
+        <div class="section-panel">
+          <div class="section-title">MODULATION MATRIX</div>
+          <div class="section-subtitle">4 Free LFOs &middot; Any Source &rarr; Any Destination</div>
+
+          <div class="lfo-panel-row" id="lfoPanelRow"></div>
+
+          <div class="matrix-grid">
+            <table class="matrix-table" id="matrixTable"></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SECTION 6: PERFORMANCE MODE + MACROS ============ -->
+      <div class="section">
+        <div class="section-panel">
+          <div class="section-title">PERFORMANCE MODE</div>
+          <div class="section-subtitle">MIDI-Triggerable &middot; Live Destruction Pads</div>
+
+          <div class="perf-pad-row">
+            <button class="perf-pad" id="perf_kill" data-param="performanceKill" data-default="false" style="background:linear-gradient(155deg,var(--damage-1),#7a1f1f);"><span>Kill</span></button>
+            <button class="perf-pad" id="perf_glitch" data-param="performanceGlitch" data-default="false" style="background:linear-gradient(155deg,var(--glitch-2),#0b5566);"><span>Glitch</span></button>
+            <button class="perf-pad" id="perf_destroy" data-param="performanceDestroy" data-default="false" style="background:linear-gradient(155deg,var(--damage-2),#7a3d10);"><span>Destroy</span></button>
+            <button class="perf-pad" id="perf_freeze" data-param="performanceFreeze" data-default="false" style="background:linear-gradient(155deg,#60a5fa,#1e3a5f);"><span>Freeze</span></button>
+            <button class="perf-pad" id="perf_reverse" data-param="performanceReverse" data-default="false" style="background:linear-gradient(155deg,var(--crush-1),#4c1d6b);"><span>Reverse</span></button>
+            <button class="perf-pad" id="perf_stutter" data-param="performanceStutter" data-default="false" style="background:linear-gradient(155deg,var(--crush-2),#6b1d4c);"><span>Stutter</span></button>
+            <button class="perf-pad" id="perf_chaos" data-param="performanceChaos" data-default="false" style="background:linear-gradient(155deg,var(--chaos-2),#7a5d10);"><span>Chaos</span></button>
+          </div>
+
+          <div class="macro-small-row">
+            <div class="knob-wrap">
+              <div class="knob" id="macro_rhythm" data-param="macroRhythm" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:70px;height:70px;">
+                <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+              </div>
+              <div class="knob-label">Rhythm</div>
+              <div class="knob-value" data-value-for="macroRhythm">0 %</div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="macro_movement" data-param="macroMovement" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:70px;height:70px;">
+                <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+              </div>
+              <div class="knob-label">Movement</div>
+              <div class="knob-value" data-value-for="macroMovement">0 %</div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="macro_width" data-param="macroWidth" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" style="width:70px;height:70px;">
+                <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+              </div>
+              <div class="knob-label">Width</div>
+              <div class="knob-value" data-value-for="macroWidth">50 %</div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="macro_mix" data-param="macroMix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:70px;height:70px;">
+                <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+              </div>
+              <div class="knob-label">Mix</div>
+              <div class="knob-value" data-value-for="macroMix">100 %</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ SECTION 7: OUTPUT ============ -->
+      <div class="section" style="padding-bottom: 50px;">
+        <div class="section-panel">
+          <div class="section-title">OUTPUT</div>
+
+          <div class="output-row">
+            <div class="combo-wrap">
+              <span class="combo-label">Limiter</span>
+              <select class="combo" id="output_limiter_style" data-param="outputLimiterStyle" style="width:150px;">
+                <option selected>Transparent</option><option>Colored</option>
+              </select>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="input_gain" data-param="inputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:80px;height:80px;">
+                <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+              </div>
+              <div class="knob-label">Input</div>
+              <div class="knob-value" data-value-for="inputGain">0.0 dB</div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="output_gain" data-param="outputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:80px;height:80px;">
+                <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+              </div>
+              <div class="knob-label">Output</div>
+              <div class="knob-value" data-value-for="outputGain">0.0 dB</div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob accent-glitch" id="master_mix" data-param="mix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:90px;height:90px;">
+                <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+              </div>
+              <div class="knob-label">Mix</div>
+              <div class="knob-value" data-value-for="mix">100 %</div>
+            </div>
+            <div class="output-meters">
+              <div><div class="meter-tall" id="output_input_meter"><div class="fill" style="height:32%;"></div></div><div class="meter-tall-label">IN</div></div>
+              <div><div class="meter-tall" id="output_output_meter"><div class="fill" style="height:44%;"></div></div><div class="meter-tall-label">OUT</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="frame-caption">CORRUPTR v2 &middot; ELYSIUM-literal restyle &middot; 1200 &times; 800 visible frame &middot; 2220px scrollable content &middot; scroll to explore all 8 sections</div>
+
+  <div class="debug-monitor">
+    <div class="debug-label">PARAMETER MONITOR</div>
+    <div class="debug-param" id="debugParam">&mdash;</div>
+    <div class="debug-value" id="debugValue">&mdash;</div>
+    <div class="debug-normalized" id="debugNormalized">&mdash;</div>
+  </div>
+
+<script>
+  // ===================================================================
+  // Mock JUCE backend (browser-only stand-in for window.__JUCE__ bridge)
+  // ===================================================================
+  const __state = {};
+  function stateFor(id){
+    if(!__state[id]) __state[id] = { norm: 0.5, listeners: [] };
+    return __state[id];
+  }
+  window.Juce = {
+    getSliderState(id){
+      const s = stateFor(id);
+      return {
+        getNormalisedValue(){ return s.norm; },
+        setNormalisedValue(v){ s.norm = v; s.listeners.forEach(fn => fn(v)); },
+        valueChangedEvent: { addListener(fn){ s.listeners.push(fn); console.log(`Listener added for slider ${id}`); } }
+      };
+    },
+    getToggleState(id){
+      const s = stateFor(id);
+      return {
+        getValue(){ return !!s.norm; },
+        setValue(v){ s.norm = v ? 1 : 0; s.listeners.forEach(fn => fn(v)); },
+        valueChangedEvent: { addListener(fn){ s.listeners.push(fn); console.log(`Listener added for toggle ${id}`); } }
+      };
+    },
+    getComboBoxState(id){
+      const s = stateFor(id);
+      return {
+        getChoiceIndex(){ return s.norm; },
+        setChoiceIndex(i){ s.norm = i; s.listeners.forEach(fn => fn(i)); },
+        valueChangedEvent: { addListener(fn){ s.listeners.push(fn); console.log(`Listener added for combo ${id}`); } }
+      };
+    }
+  };
+
+  // ===== Native app feel (Rule 3) =====
+  document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+  document.addEventListener("dragstart", (e) => { e.preventDefault(); });
+
+  // ===== Debug monitor =====
+  function updateDebugMonitor(param, value, normalized){
+    document.getElementById('debugParam').textContent = param;
+    document.getElementById('debugValue').textContent = String(value);
+    document.getElementById('debugNormalized').textContent =
+      (typeof normalized === 'number') ? `${(normalized*100).toFixed(1)}%` : String(normalized);
+  }
+
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+  function clamp01(v){ return clamp(v,0,1); }
+  function normFromValue(v,min,max){ return (v-min)/(max-min); }
+  function valueFromNorm(n,min,max){ return min + n*(max-min); }
+  function degFromNorm(n){ return -135 + n*270; }
+
+  // ===================================================================
+  // Generic KNOB binding (Rule 8/9: rotate .knob-body pointer layer; track
+  // ring stays fixed; .knob-arc's conic-gradient sweep reflects the value
+  // via the --arc-deg custom property, same 0deg..270deg range as rotation)
+  // ===================================================================
+  document.querySelectorAll('.knob[data-param]').forEach(knob => {
+    const param = knob.dataset.param;
+    const min = parseFloat(knob.dataset.min);
+    const max = parseFloat(knob.dataset.max);
+    const decimals = parseInt(knob.dataset.decimals || "1");
+    const unit = knob.dataset.unit || "";
+    let value = parseFloat(knob.dataset.default);
+
+    const body = knob.querySelector('.knob-body');
+    const arc = knob.querySelector('.knob-arc');
+    const wrap = knob.closest('.knob-wrap') || knob.closest('.node-slot') || knob.closest('.macro-panel') || knob.closest('.lfo-panel');
+    const valueEl = wrap ? wrap.querySelector('.knob-value') : null;
+    const state = Juce.getSliderState(param);
+
+    function render(){
+      const n = clamp01(normFromValue(value, min, max));
+      body.style.transform = `rotate(${degFromNorm(n)}deg)`;
+      arc.style.setProperty('--arc-deg', `${n*270}deg`);
+      const text = `${value.toFixed(decimals)}${unit ? (' ' + unit) : ''}`;
+      if(valueEl) valueEl.textContent = text;
+      document.querySelectorAll(`[data-value-for="${param}"]`).forEach(el => { if(el !== valueEl) el.textContent = text; });
+    }
+    render();
+    state.setNormalisedValue(normFromValue(value, min, max));
+
+    let dragging = false, startY = 0, startVal = 0;
+    knob.addEventListener('mousedown', e => {
+      dragging = true; startY = e.clientY; startVal = value;
+      document.body.style.cursor = 'ns-resize';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => {
+      if(!dragging) return;
+      const dy = startY - e.clientY;
+      const range = max - min;
+      value = clamp(startVal + dy * (range / 200), min, max);
+      render();
+      const n = normFromValue(value, min, max);
+      state.setNormalisedValue(n);
+      updateDebugMonitor(param, `${value.toFixed(decimals)}${unit}`, n);
+    });
+    window.addEventListener('mouseup', () => { dragging = false; document.body.style.cursor = 'default'; });
+
+    state.valueChangedEvent.addListener(n => {
+      value = valueFromNorm(n, min, max);
+      render();
+    });
+  });
+
+  // ===================================================================
+  // Generic TOGGLE binding
+  // ===================================================================
+  document.querySelectorAll('.toggle[data-param]').forEach(t => {
+    const param = t.dataset.param;
+    let on = t.dataset.default === "true";
+    const state = Juce.getToggleState(param);
+    function render(){ t.classList.toggle('on', on); }
+    render();
+    t.addEventListener('click', () => {
+      on = !on; render();
+      state.setValue(on);
+      updateDebugMonitor(param, on, on ? 1 : 0);
+    });
+    state.valueChangedEvent.addListener(v => { on = !!v; render(); });
+  });
+
+  document.querySelectorAll('.perf-pad[data-param]').forEach(p => {
+    const param = p.dataset.param;
+    let on = p.dataset.default === "true";
+    const state = Juce.getToggleState(param);
+    function render(){ p.classList.toggle('on', on); }
+    render();
+    p.addEventListener('mousedown', () => {
+      on = !on; render();
+      state.setValue(on);
+      updateDebugMonitor(param, on, on ? 1 : 0);
+    });
+  });
+
+  // ===================================================================
+  // Generic COMBO binding
+  // ===================================================================
+  document.querySelectorAll('select[data-param]').forEach(sel => {
+    const param = sel.dataset.param;
+    const state = Juce.getComboBoxState(param);
+    state.setChoiceIndex(sel.selectedIndex);
+    sel.addEventListener('change', () => {
+      state.setChoiceIndex(sel.selectedIndex);
+      updateDebugMonitor(param, sel.value, sel.selectedIndex / Math.max(1, sel.options.length - 1));
+      if(param === 'glitchMode'){ document.getElementById('glitch_mode_subtitle').textContent = sel.value; }
+      if(param === 'filterType'){ document.getElementById('filter_type_subtitle').textContent = sel.value; }
+    });
+  });
+
+  // ===================================================================
+  // Generic ACTION BUTTON binding
+  // ===================================================================
+  document.querySelectorAll('.action-btn[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      console.log(`Action triggered: ${btn.dataset.action}`);
+      updateDebugMonitor(btn.dataset.action, 'triggered', '—');
+    });
+  });
+
+  // preset_search field -> action: search_presets (YAML control id: preset_search)
+  document.getElementById('preset_search').addEventListener('input', (e) => {
+    console.log(`Action triggered: search_presets ("${e.target.value}")`);
+    updateDebugMonitor('search_presets', e.target.value || '(empty)', '—');
+  });
+
+  // ===================================================================
+  // NEW v2: page-indicator pills - decorative smooth-scroll nav
+  // (special_elements.page_indicator_pills, not an APVTS parameter)
+  // ===================================================================
+  (function(){
+    const frame = document.getElementById('pluginFrame');
+    const pills = Array.from(document.querySelectorAll('.page-pill'));
+    const targets = pills.map(p => parseInt(p.dataset.target, 10));
+
+    pills.forEach((pill, i) => {
+      pill.addEventListener('click', () => {
+        frame.scrollTo({ top: targets[i], behavior: 'smooth' });
+      });
+    });
+
+    frame.addEventListener('scroll', () => {
+      const y = frame.scrollTop;
+      let activeIndex = 0;
+      for(let i = 0; i < targets.length; i++){
+        if(y >= targets[i] - 40) activeIndex = i;
+      }
+      pills.forEach((p, i) => p.classList.toggle('active', i === activeIndex));
+    });
+  })();
+
+  // ===================================================================
+  // XY PAD (glide/inertia via delayed trailing dot, per creative-brief.md)
+  // ===================================================================
+  (function(){
+    const pad = document.getElementById('xy_pad');
+    const dot = document.getElementById('xy_dot');
+    const trail = document.getElementById('xy_trail');
+    const xState = Juce.getSliderState('xyPadX');
+    const yState = Juce.getSliderState('xyPadY');
+    let dragging = false;
+    let trailTimer = null;
+
+    function setFromClient(clientX, clientY){
+      const rect = pad.getBoundingClientRect();
+      const xN = clamp01((clientX - rect.left) / rect.width);
+      const yN = clamp01(1 - (clientY - rect.top) / rect.height);
+      dot.style.left = (xN * 100) + '%';
+      dot.style.bottom = (yN * 100) + '%';
+      xState.setNormalisedValue(xN);
+      yState.setNormalisedValue(yN);
+      updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
+      clearTimeout(trailTimer);
+      trailTimer = setTimeout(() => {
+        trail.style.left = dot.style.left;
+        trail.style.bottom = dot.style.bottom;
+      }, 90); // simulated glide/inertia lag (xyPadSmoothing default 80ms)
+    }
+    pad.addEventListener('mousedown', e => { dragging = true; setFromClient(e.clientX, e.clientY); });
+    window.addEventListener('mousemove', e => { if(dragging) setFromClient(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+  })();
+
+  // ===================================================================
+  // 16-STEP SEQUENCER visual (decorative special_element)
+  // ===================================================================
+  (function(){
+    const grid = document.getElementById('step_grid');
+    const heights = [70,35,55,20,85,30,60,25,90,40,55,20,75,30,50,15];
+    for(let i = 0; i < 16; i++){
+      const step = document.createElement('div');
+      step.className = 'step-bar' + (i % 4 === 0 ? ' beat' : '') + (i === 0 ? ' playhead' : '');
+      const fill = document.createElement('div');
+      fill.className = 'fill';
+      fill.style.height = heights[i] + '%';
+      step.appendChild(fill);
+      grid.appendChild(step);
+    }
+  })();
+
+  // ===================================================================
+  // 4 LFO mini-panels
+  // ===================================================================
+  (function(){
+    const row = document.getElementById('lfoPanelRow');
+    for(let i = 1; i <= 4; i++){
+      const panel = document.createElement('div');
+      panel.className = 'lfo-panel';
+      panel.innerHTML = `
+        <div class="knob-wrap">
+          <div class="knob" id="lfo${i}_rate" data-param="lfo${i}Rate" data-min="0.01" data-max="20" data-default="1" data-unit="Hz" data-decimals="2" style="width:70px;height:70px;">
+            <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+          </div>
+          <div class="knob-value" data-value-for="lfo${i}Rate">1.00 Hz</div>
+        </div>
+        <div class="lfo-controls-col">
+          <div class="lfo-panel-label">LFO ${i}</div>
+          <div class="combo-wrap">
+            <select class="combo" id="lfo${i}_shape" data-param="lfo${i}Shape" style="width:120px;">
+              <option selected>Sine</option><option>Triangle</option><option>Saw</option><option>Reverse Saw</option>
+              <option>Square</option><option>S&amp;H</option><option>Random</option><option>Smooth Random</option><option>Random Walk</option>
+            </select>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle" id="lfo${i}_sync" data-param="lfo${i}Sync" data-default="false"></div>
+            <span class="toggle-label">Sync</span>
+          </div>
+        </div>`;
+      row.appendChild(panel);
+    }
+
+    // re-bind newly injected knob/toggle/combo controls (they were added after initial querySelectorAll pass)
+    bindDynamicControls(row);
+  })();
+
+  // ===================================================================
+  // Modulation matrix grid (decorative special_element)
+  // ===================================================================
+  (function(){
+    const sources = ['LFO 1','LFO 2','LFO 3','LFO 4','Envelope','Sequencer','Random'];
+    const destinations = ['Drive','Filter','Bits','Fold','Feedback','Gl.Prob','Pitch','Width'];
+    const activeCells = new Set(['0-0','0-1','1-2','2-5','3-6','4-0','5-3','6-4','2-1','3-4']);
+    const table = document.getElementById('matrixTable');
+    let thead = '<tr><th></th>' + destinations.map(d => `<th>${d}</th>`).join('') + '</tr>';
+    let rows = sources.map((s, r) => {
+      const cells = destinations.map((d, c) =>
+        `<td><span class="matrix-dot${activeCells.has(r+'-'+c) ? ' active' : ''}"></span></td>`
+      ).join('');
+      return `<tr><td class="row-label">${s}</td>${cells}</tr>`;
+    }).join('');
+    table.innerHTML = thead + rows;
+  })();
+
+  // ===================================================================
+  // Helper: bind dynamically-injected knob/toggle/combo controls
+  // (mirrors the generic binders above; used for JS-templated sections)
+  // ===================================================================
+  function bindDynamicControls(scope){
+    scope.querySelectorAll('.knob[data-param]:not([data-bound])').forEach(knob => {
+      knob.setAttribute('data-bound', '1');
+      const param = knob.dataset.param;
+      const min = parseFloat(knob.dataset.min);
+      const max = parseFloat(knob.dataset.max);
+      const decimals = parseInt(knob.dataset.decimals || "1");
+      const unit = knob.dataset.unit || "";
+      let value = parseFloat(knob.dataset.default);
+      const body = knob.querySelector('.knob-body');
+      const arc = knob.querySelector('.knob-arc');
+      const wrap = knob.closest('.knob-wrap');
+      const valueEl = wrap ? wrap.querySelector('.knob-value') : null;
+      const state = Juce.getSliderState(param);
+
+      function render(){
+        const n = clamp01(normFromValue(value, min, max));
+        body.style.transform = `rotate(${degFromNorm(n)}deg)`;
+        arc.style.setProperty('--arc-deg', `${n*270}deg`);
+        const text = `${value.toFixed(decimals)}${unit ? (' ' + unit) : ''}`;
+        if(valueEl) valueEl.textContent = text;
+        document.querySelectorAll(`[data-value-for="${param}"]`).forEach(el => { if(el !== valueEl) el.textContent = text; });
+      }
+      render();
+      state.setNormalisedValue(normFromValue(value, min, max));
+
+      let dragging = false, startY = 0, startVal = 0;
+      knob.addEventListener('mousedown', e => {
+        dragging = true; startY = e.clientY; startVal = value;
+        document.body.style.cursor = 'ns-resize';
+        e.preventDefault();
+      });
+      window.addEventListener('mousemove', e => {
+        if(!dragging) return;
+        const dy = startY - e.clientY;
+        value = clamp(startVal + dy * ((max - min) / 200), min, max);
+        render();
+        const n = normFromValue(value, min, max);
+        state.setNormalisedValue(n);
+        updateDebugMonitor(param, `${value.toFixed(decimals)}${unit}`, n);
+      });
+      window.addEventListener('mouseup', () => { dragging = false; document.body.style.cursor = 'default'; });
+      state.valueChangedEvent.addListener(n => { value = valueFromNorm(n, min, max); render(); });
+    });
+
+    scope.querySelectorAll('.toggle[data-param]:not([data-bound])').forEach(t => {
+      t.setAttribute('data-bound', '1');
+      const param = t.dataset.param;
+      let on = t.dataset.default === "true";
+      const state = Juce.getToggleState(param);
+      function render(){ t.classList.toggle('on', on); }
+      render();
+      t.addEventListener('click', () => {
+        on = !on; render();
+        state.setValue(on);
+        updateDebugMonitor(param, on, on ? 1 : 0);
+      });
+      state.valueChangedEvent.addListener(v => { on = !!v; render(); });
+    });
+
+    scope.querySelectorAll('select[data-param]:not([data-bound])').forEach(sel => {
+      sel.setAttribute('data-bound', '1');
+      const param = sel.dataset.param;
+      const state = Juce.getComboBoxState(param);
+      state.setChoiceIndex(sel.selectedIndex);
+      sel.addEventListener('change', () => {
+        state.setChoiceIndex(sel.selectedIndex);
+        updateDebugMonitor(param, sel.value, sel.selectedIndex / Math.max(1, sel.options.length - 1));
+      });
+    });
+  }
+
+  console.log('CORRUPTR v2 mockup loaded — ELYSIUM-literal restyle, 67 bindable controls active. Scroll the frame to explore all 8 sections.');
+</script>
+</body>
+</html>
