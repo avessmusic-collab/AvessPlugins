@@ -43,6 +43,7 @@
 | AngelGrain | 📦 Installed | 1.0.0 | Audio Effect (Granular Delay) | 2025-11-19 |
 | Transitionist | 📦 Installed | 1.0.0 | Audio Effect (Transition Chain) | 2026-08-26 |
 | KICKR | 📦 Installed | 1.0.0 | Synth (Kick Instrument + Sampler) | 2026-08-31 |
+| CORRUPTR | 💡 Ideated (Draft Params) | - | Audio Effect (Multi-Distortion/Glitch) | 2026-09-01 |
 
 **For detailed plugin information (lifecycle timeline, known issues, parameters, etc.), see:**
 `plugins/[PluginName]/NOTES.md`
