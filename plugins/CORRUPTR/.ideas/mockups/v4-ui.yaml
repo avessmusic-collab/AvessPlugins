@@ -1,0 +1,1090 @@
+# v4 UI Design Specification
+# Generated: 2026-09-01
+# Plugin: CORRUPTR
+#
+# v4 CHANGE SUMMARY — user instruction: "make it in this style" with an
+# uploaded reference screenshot of a monochrome modular hardware "channel
+# strip" plugin (raised white unit, vertical modules divided by hairlines,
+# near-black icon tiles w/ chevron-cycle mode selection + dot-count
+# indicators, thin-ring knobs, dashed-tick faders w/ pill dB readouts, ADV
+# toggle per module, one center "master" module with a big LEVEL knob +
+# IN/OUT faders, near-zero color except a single accent line inside the
+# frequency-response graph). v1/v2/v3's ELYSIUM-dark-tech-bar / glassy-neon
+# / hero-disc visual direction is FULLY SCRAPPED per explicit user
+# instruction — nothing from those versions' palette, icon language, or
+# panel concepts is reused here. ONLY the 67 parameter/action bindings from
+# v2-ui.yaml are carried forward (same ids, same parameters, same
+# ranges/choices/defaults) — every control's position, size, and in several
+# cases its visual "type" (e.g. knob -> vertical/horizontal fader) has been
+# redesigned from scratch to fit the new modular channel-strip language and
+# module grouping described below.
+#
+# STRUCTURE: single continuous scrolling page (no tabs), matching v1-v3's
+# precedent. window.height is TOTAL SCROLLABLE CONTENT height; the plugin
+# window is fixed at viewport_height (visible area) and content scrolls
+# internally. All layout-validation.md hard rules (bounds containment, no
+# overlap, minimum control sizes, minimum spacing) are enforced against the
+# full content height below.
+#
+# MODULE MAP (new for v4 — replaces v1-v3's "Distortion Graph hero /
+# accent-card / macro-panel" sectioning entirely):
+#   MAIN CHANNEL-STRIP UNIT (one raised white bar, y 94-604):
+#     DISTORTION | BITCRUSH | GLITCH | CENTER MASTER | FILTER & EQ | FEEDBACK+DELAY
+#   SECOND UNIT (one raised white bar, y 644-1032):
+#     MACROS | PERFORMANCE | XY PAD
+#   SEQUENCER strip (y 1072-1260)
+#   MOD MATRIX strip (y 1300-1610)
+# Each processing module follows the reference's per-module anatomy:
+#   1) icon-button row (power/bypass, menu, undo — decorative except the
+#      power icon, which IS the module's bound bypass toggle where one
+#      exists among the 67 controls)
+#   2) near-black icon tile w/ white glow-icon, chevrons either side (only
+#      on modules bound to a real choice/algorithm parameter), bold caps
+#      label, dot-count row (choice count)
+#   3) module controls (thin-ring knobs / dashed-tick faders w/ pill dB
+#      readout / dashed horizontal sliders w/ numeric readout)
+#   4) "ADV" caps label + pill toggle (only on modules that actually have
+#      an advanced/secondary control to reveal — Distortion, Glitch,
+#      Filter & EQ, Macros; Bitcrush/Feedback+Delay/Performance have no
+#      spare 67-control to reveal so their ADV pill is omitted; Center
+#      Master has no ADV pill at all, matching the reference exactly)
+#
+# Overview+detail dual-binding pairs from v2 (same parameter bound twice —
+# an established, intentional pattern per v2's own notes) are now used as
+# BASE control + ADV-revealed "fine" control within the SAME module:
+#   filterCutoff:      filter_cutoff_detail (base knob) + node_filter_cutoff (ADV fine knob)
+#   glitchProbability:  glitch_probability_detail (base knob) + node_glitch_probability (ADV fine knob)
+
+window:
+  width: 1200
+  height: 1650          # total scrollable content height
+  viewport_height: 800  # visible plugin frame height (JUCE setSize)
+  resizable: false
+  scrollable: true       # internal vertical scroll beyond viewport_height
+
+colors:
+  # Page background (light neutral gray, outside the raised white units)
+  pageBackground: "#e4e4e7"
+
+  # Raised white/near-white module-unit surface (soft-UI / skeuomorphic-lite)
+  unitSurfaceStart: "#ffffff"
+  unitSurfaceEnd: "#f2f2f4"
+  unitShadowOuter: "rgba(20, 20, 24, 0.16)"
+  unitShadowInsetLight: "rgba(255, 255, 255, 0.9)"
+  unitBorder: "rgba(0, 0, 0, 0.06)"
+  moduleDivider: "rgba(0, 0, 0, 0.08)"
+
+  # Near-black icon tile (album-art-style mode/algorithm display)
+  tileBackground: "#151517"
+  tileBackgroundGlow: "rgba(255, 255, 255, 0.14)"
+  tileIcon: "#ffffff"
+  tileLabel: "#ffffff"
+  tileDotActive: "#ffffff"
+  tileDotInactive: "#55555a"
+  tileChevron: "#8e8e93"
+
+  # Text hierarchy on white module surfaces
+  textPrimary: "#1c1c1e"
+  textSecondary: "#8e8e93"
+  textTertiary: "#c7c7cc"
+  readoutPillBg: "#ececee"
+  readoutPillText: "#1c1c1e"
+
+  # Controls (near-monochrome — thin ring knobs, dashed-tick faders)
+  knobTrack: "rgba(0, 0, 0, 0.12)"
+  knobFill: "#1c1c1e"
+  knobPointer: "#1c1c1e"
+  faderTrack: "rgba(0, 0, 0, 0.10)"
+  faderTick: "rgba(0, 0, 0, 0.18)"
+  faderThumb: "#1c1c1e"
+  toggleTrackOff: "#d1d1d6"
+  toggleTrackOn: "#1c1c1e"
+  toggleThumb: "#ffffff"
+  advPillTrackOff: "#e2e2e5"
+  advPillTrackOn: "#1c1c1e"
+
+  # The SOLE color accent in the entire UI — thin plotted curve inside the
+  # Filter & EQ frequency-response graph. Nothing else in the interface
+  # carries hue.
+  accentGraphLine: "#3a6df0"
+  graphCardBg: "#f7f7f8"
+  graphGrid: "rgba(0, 0, 0, 0.08)"
+  graphAxisText: "#a1a1a6"
+
+  # Performance trigger buttons (still monochrome — state shown via fill,
+  # not color, consistent with the reference's near-grayscale palette)
+  perfButtonOff: "#f2f2f4"
+  perfButtonOn: "#1c1c1e"
+  perfButtonTextOff: "#1c1c1e"
+  perfButtonTextOn: "#ffffff"
+
+typography:
+  header: "'Inter', -apple-system, 'Segoe UI', sans-serif"
+  body: "'Inter', -apple-system, 'Segoe UI', sans-serif"
+  mono: "'SF Mono', 'JetBrains Mono', 'Courier New', monospace"
+  size:
+    wordmark: "17px"
+    tileLabel: "12px"
+    label: "9px"
+    value: "11px"
+    readoutPill: "10px"
+    small: "9px"
+  notes:
+    - "Tile labels: bold, uppercase, ~2px letter-spacing, white on near-black tile."
+    - "Module control labels: uppercase, ~1px letter-spacing, textSecondary, 9-10px — deliberately small/technical per reference."
+    - "Pill dB/value readouts: mono font, textPrimary, inside a pale rounded pill (readoutPillBg), positioned above the fader thumb."
+    - "No decorative display fonts anywhere — the reference's minimalism comes from restraint, not typographic flourish."
+
+layout:
+  type: custom
+  scroll_direction: vertical
+  sections:
+    - id: top_bar
+      y: 0
+      height: 64
+      description: "Minimal light-surface top bar (same monochrome material as the modules below, not a separate dark bar): wordmark, preset search, save/random/undo/redo, A/B, quality mode combo, input/output meters, small monochrome preset-tag dots."
+    - id: main_channel_strip
+      y: 94
+      height: 510
+      description: "One continuous raised white rounded-rect unit containing 6 vertical modules divided by hairline separators: DISTORTION, BITCRUSH, GLITCH, CENTER MASTER (no icon tile - big LEVEL knob + IN/OUT faders + LIMITER combo), FILTER & EQ, FEEDBACK+DELAY. Each flanking module follows the reference's icon-buttons/icon-tile/controls/ADV anatomy."
+    - id: macros_performance_xy
+      y: 644
+      height: 388
+      description: "Second raised white unit: MACROS module (4 base knobs, ADV reveals 4 more), PERFORMANCE module (7 square trigger buttons in a 4+3 grid), and a wide XY Performance Pad module with subtle grid background and circular glide handle."
+    - id: sequencer
+      y: 1072
+      height: 188
+      description: "Full-width monochrome card: rate/steps combos, 6 pattern-action buttons, 16-step visual grid with tempo-synced playhead."
+    - id: mod_matrix
+      y: 1300
+      height: 310
+      description: "Full-width monochrome card: 4 LFO mini-panels (rate knob + shape combo + sync toggle) above a compact source x destination modulation matrix grid."
+
+# ---------------------------------------------------------------------------
+# CONTROLS — all 67 ids/parameters/actions identical to v2-ui.yaml. Position,
+# size, and (where noted) visual "type" have been redesigned for the v4
+# monochrome channel-strip module language. "module" = which v4 module this
+# control lives in (metadata for HTML generation, not a schema requirement).
+# ---------------------------------------------------------------------------
+controls:
+
+  # ===== TOP BAR (y 0-64) =====
+  - id: preset_search
+    type: combo
+    label: "Search"
+    action: search_presets
+    module: top_bar
+    position: { x: 20, y: 16 }
+    size: { width: 200, height: 32 }
+    note: "Preset browser search/filter field, not an APVTS parameter"
+
+  - id: save_button
+    type: button
+    label: "Save"
+    action: save_preset
+    module: top_bar
+    position: { x: 460, y: 16 }
+    size: { width: 70, height: 32 }
+
+  - id: random_button
+    type: button
+    label: "Random"
+    action: randomize_all
+    module: top_bar
+    position: { x: 540, y: 16 }
+    size: { width: 70, height: 32 }
+
+  - id: undo_button
+    type: button
+    label: "Undo"
+    action: undo
+    module: top_bar
+    position: { x: 620, y: 16 }
+    size: { width: 60, height: 32 }
+
+  - id: redo_button
+    type: button
+    label: "Redo"
+    action: redo
+    module: top_bar
+    position: { x: 690, y: 16 }
+    size: { width: 60, height: 32 }
+
+  - id: ab_toggle
+    type: toggle
+    label: "A/B"
+    parameter: abCompareState
+    parameter_type: bool
+    default: false
+    module: top_bar
+    position: { x: 760, y: 16 }
+    size: { width: 60, height: 32 }
+    note: "UI-only A/B compare state, not host-automatable"
+
+  - id: quality_mode
+    type: combo
+    label: "Quality"
+    parameter: qualityMode
+    parameter_type: choice
+    choices: ["ECO", "NORMAL", "HIGH", "EXTREME", "AUTO"]
+    default: "NORMAL"
+    module: top_bar
+    position: { x: 840, y: 16 }
+    size: { width: 110, height: 32 }
+
+  # ===== DISTORTION module (x 30-215) =====
+  - id: node_bypass_saturation
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassSaturation
+    parameter_type: bool
+    default: false
+    module: distortion
+    render: power-icon
+    position: { x: 40, y: 114 }
+    size: { width: 24, height: 24 }
+    note: "Rendered as the module's top-left power/bypass icon-button. NEW - reconcile in Stage 0/1."
+
+  - id: node_algorithm_select
+    type: combo
+    label: "Algorithm"
+    parameter: distortionAlgorithm
+    parameter_type: choice
+    choices: ["Saturation", "Soft Clip", "Hard Clip", "Tube", "Diode", "Fuzz", "Digital Distortion", "Bitcrusher", "Sample Rate Reducer", "Wavefolder", "Ring-Mod", "Foldback"]
+    default: "Saturation"
+    module: distortion
+    render: icon-tile-cycle
+    position: { x: 40, y: 150 }
+    size: { width: 165, height: 120 }
+    note: "Near-black icon tile w/ chevrons + 12-dot indicator (condensed) cycling the 12 distortion algorithms"
+
+  - id: node_drive
+    type: slider
+    orientation: vertical
+    label: "Drive"
+    parameter: drive
+    range: [0.0, 40.0]
+    unit: "dB"
+    default: 6.0
+    decimals: 1
+    module: distortion
+    render: dashed-fader
+    position: { x: 105, y: 286 }
+    size: { width: 36, height: 140 }
+
+  - id: node_fold
+    type: knob
+    label: "Fold"
+    parameter: fold
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: distortion
+    render: ring-knob
+    position: { x: 88, y: 438 }
+    size: { width: 70, height: 70 }
+
+  - id: node_bypass_waveshaper
+    type: toggle
+    label: "Fold Bypass"
+    parameter: graphBypassWaveshaper
+    parameter_type: bool
+    default: false
+    module: distortion
+    render: inline-toggle
+    position: { x: 101, y: 520 }
+    size: { width: 44, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1. Revealed under ADV."
+
+  # ===== BITCRUSH module (x 225-340) =====
+  - id: node_bypass_bitcrush
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassBitcrush
+    parameter_type: bool
+    default: false
+    module: bitcrush
+    render: power-icon
+    position: { x: 235, y: 114 }
+    size: { width: 24, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1."
+
+  - id: node_bit_depth
+    type: knob
+    label: "Bits"
+    parameter: bitDepth
+    range: [1.0, 16.0]
+    unit: "bit"
+    default: 16.0
+    decimals: 0
+    module: bitcrush
+    render: ring-knob
+    position: { x: 248, y: 286 }
+    size: { width: 70, height: 70 }
+
+  # ===== GLITCH module (x 350-535) =====
+  - id: node_bypass_glitch
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassGlitch
+    parameter_type: bool
+    default: false
+    module: glitch
+    render: power-icon
+    position: { x: 360, y: 114 }
+    size: { width: 24, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1."
+
+  - id: glitch_mode
+    type: combo
+    label: "Mode"
+    parameter: glitchMode
+    parameter_type: choice
+    choices: ["Off", "Stutter", "Repeat", "Reverse", "Buffer Repeat", "Freeze", "Slice", "Random Slice", "Micro Loop", "Granular Repeat", "Tape Stop", "Tape Start", "Retrigger", "Silence", "Noise Burst", "Bitcrush Burst", "Pitch Jump", "Random Repeat"]
+    default: "Off"
+    module: glitch
+    render: icon-tile-cycle
+    position: { x: 360, y: 150 }
+    size: { width: 165, height: 120 }
+    note: "Near-black icon tile w/ chevrons + condensed 18-choice dot indicator"
+
+  - id: glitch_buffer_length
+    type: combo
+    label: "Buffer"
+    parameter: glitchBufferLength
+    parameter_type: choice
+    choices: ["1/64", "1/32", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"]
+    default: "1/16"
+    module: glitch
+    render: dashed-horizontal-select
+    position: { x: 365, y: 286 }
+    size: { width: 155, height: 30 }
+    note: "Rendered as a dashed-tick horizontal slider w/ numeric-style readout, snapping across 9 musical divisions"
+
+  - id: glitch_probability_detail
+    type: knob
+    label: "Probability"
+    parameter: glitchProbability
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: glitch
+    render: ring-knob
+    position: { x: 408, y: 328 }
+    size: { width: 70, height: 70 }
+
+  - id: node_glitch_probability
+    type: knob
+    label: "Prob Fine"
+    parameter: glitchProbability
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: glitch
+    render: ring-knob
+    position: { x: 408, y: 410 }
+    size: { width: 70, height: 70 }
+    note: "Same parameter as glitch_probability_detail (dual-binding, moves in sync) - revealed under ADV as a fine-adjust mirror, common pattern in pro plugin UIs"
+
+  # ===== CENTER MASTER module (x 545-750, no icon tile, no ADV) =====
+  - id: master_mix
+    type: knob
+    label: "Level"
+    parameter: mix
+    range: [0.0, 200.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    module: center_master
+    render: hero-ring-knob
+    position: { x: 585, y: 150 }
+    size: { width: 125, height: 125 }
+    style: hero
+    note: "Master dry/wet Mix parameter rendered as the center module's big LEVEL knob, matching the reference's center-module composition"
+
+  - id: output_limiter_style
+    type: combo
+    label: "Limiter"
+    parameter: outputLimiterStyle
+    parameter_type: choice
+    choices: ["Transparent", "Colored"]
+    default: "Transparent"
+    module: center_master
+    position: { x: 593, y: 289 }
+    size: { width: 110, height: 28 }
+
+  - id: input_gain
+    type: slider
+    orientation: vertical
+    label: "In"
+    parameter: inputGain
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    module: center_master
+    render: dashed-fader
+    position: { x: 602, y: 333 }
+    size: { width: 36, height: 205 }
+
+  - id: output_gain
+    type: slider
+    orientation: vertical
+    label: "Out"
+    parameter: outputGain
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    module: center_master
+    render: dashed-fader
+    position: { x: 658, y: 333 }
+    size: { width: 36, height: 205 }
+
+  # ===== FILTER & EQ module (x 760-955) =====
+  - id: node_bypass_filter
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassFilter
+    parameter_type: bool
+    default: false
+    module: filter_eq
+    render: power-icon
+    position: { x: 770, y: 114 }
+    size: { width: 24, height: 24 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1."
+
+  - id: filter_type
+    type: combo
+    label: "Type"
+    parameter: filterType
+    parameter_type: choice
+    choices: ["LP", "HP", "BP", "Notch", "Comb", "Resonant LP", "Resonant HP"]
+    default: "LP"
+    module: filter_eq
+    render: icon-tile-cycle
+    position: { x: 770, y: 150 }
+    size: { width: 175, height: 120 }
+    note: "Near-black icon tile w/ chevrons + 7-dot indicator cycling filter topology"
+
+  - id: filter_cutoff_detail
+    type: knob
+    label: "Cutoff"
+    parameter: filterCutoff
+    range: [20.0, 20000.0]
+    unit: "Hz"
+    default: 20000.0
+    decimals: 0
+    skew: 0.3
+    module: filter_eq
+    render: ring-knob
+    position: { x: 783, y: 382 }
+    size: { width: 70, height: 70 }
+
+  - id: filter_resonance
+    type: knob
+    label: "Resonance"
+    parameter: filterResonance
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: filter_eq
+    render: ring-knob
+    position: { x: 863, y: 382 }
+    size: { width: 70, height: 70 }
+
+  - id: node_filter_cutoff
+    type: knob
+    label: "Cutoff Fine"
+    parameter: filterCutoff
+    range: [20.0, 20000.0]
+    unit: "Hz"
+    default: 20000.0
+    decimals: 0
+    skew: 0.3
+    module: filter_eq
+    render: ring-knob
+    position: { x: 823, y: 468 }
+    size: { width: 70, height: 70 }
+    note: "Same parameter as filter_cutoff_detail (dual-binding, moves in sync) - revealed under ADV as a fine-adjust mirror"
+
+  # ===== FEEDBACK + DELAY module (x 965-1155, no icon tile, no ADV) =====
+  - id: feedback_amount
+    type: slider
+    orientation: vertical
+    label: "Feedback"
+    parameter: feedbackAmount
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: feedback_delay
+    render: dashed-fader
+    position: { x: 1042, y: 286 }
+    size: { width: 36, height: 140 }
+    note: "Internally soft-clamped - cannot reach true unity/runaway"
+
+  - id: feedback_damping
+    type: knob
+    label: "Damping"
+    parameter: feedbackDamping
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    module: feedback_delay
+    render: ring-knob
+    position: { x: 1025, y: 438 }
+    size: { width: 70, height: 70 }
+
+  - id: micro_delay_time
+    type: slider
+    orientation: horizontal
+    label: "Delay"
+    parameter: microDelayTime
+    range: [0.1, 50.0]
+    unit: "ms"
+    default: 10.0
+    decimals: 1
+    module: feedback_delay
+    render: dashed-horizontal-select
+    position: { x: 985, y: 520 }
+    size: { width: 150, height: 30 }
+    note: "NEW - not yet in parameter-spec-draft.md (feedback-loop micro delay time), reconcile in Stage 0/1"
+
+  # ===== MACROS module (x 30-330, second unit) =====
+  - id: macro_damage
+    type: knob
+    label: "Damage"
+    parameter: macroDamage
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 45, y: 836 }
+    size: { width: 60, height: 60 }
+
+  - id: macro_crush
+    type: knob
+    label: "Crush"
+    parameter: macroCrush
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 115, y: 836 }
+    size: { width: 60, height: 60 }
+
+  - id: macro_glitch
+    type: knob
+    label: "Glitch"
+    parameter: macroGlitch
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 185, y: 836 }
+    size: { width: 60, height: 60 }
+
+  - id: macro_chaos
+    type: knob
+    label: "Chaos"
+    parameter: macroChaos
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 255, y: 836 }
+    size: { width: 60, height: 60 }
+
+  - id: macro_rhythm
+    type: knob
+    label: "Rhythm"
+    parameter: macroRhythm
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 45, y: 912 }
+    size: { width: 60, height: 60 }
+    note: "Revealed under ADV"
+
+  - id: macro_movement
+    type: knob
+    label: "Movement"
+    parameter: macroMovement
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 115, y: 912 }
+    size: { width: 60, height: 60 }
+    note: "Revealed under ADV"
+
+  - id: macro_width
+    type: knob
+    label: "Width"
+    parameter: macroWidth
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 185, y: 912 }
+    size: { width: 60, height: 60 }
+    note: "Revealed under ADV"
+
+  - id: macro_mix
+    type: knob
+    label: "Mix"
+    parameter: macroMix
+    range: [0.0, 200.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    module: macros
+    render: ring-knob
+    position: { x: 255, y: 912 }
+    size: { width: 60, height: 60 }
+    note: "Revealed under ADV"
+
+  # ===== PERFORMANCE module (x 350-780, second unit) =====
+  - id: perf_kill
+    type: toggle
+    label: "Kill"
+    parameter: performanceKill
+    parameter_type: bool
+    default: false
+    module: performance
+    render: perf-button
+    position: { x: 370, y: 836 }
+    size: { width: 90, height: 44 }
+    style: performance-pad
+
+  - id: perf_glitch
+    type: toggle
+    label: "Glitch"
+    parameter: performanceGlitch
+    parameter_type: bool
+    default: false
+    module: performance
+    render: perf-button
+    position: { x: 470, y: 836 }
+    size: { width: 90, height: 44 }
+    style: performance-pad
+
+  - id: perf_destroy
+    type: toggle
+    label: "Destroy"
+    parameter: performanceDestroy
+    parameter_type: bool
+    default: false
+    module: performance
+    render: perf-button
+    position: { x: 570, y: 836 }
+    size: { width: 90, height: 44 }
+    style: performance-pad
+
+  - id: perf_freeze
+    type: toggle
+    label: "Freeze"
+    parameter: performanceFreeze
+    parameter_type: bool
+    default: false
+    module: performance
+    render: perf-button
+    position: { x: 670, y: 836 }
+    size: { width: 90, height: 44 }
+    style: performance-pad
+
+  - id: perf_reverse
+    type: toggle
+    label: "Reverse"
+    parameter: performanceReverse
+    parameter_type: bool
+    default: false
+    module: performance
+    render: perf-button
+    position: { x: 420, y: 890 }
+    size: { width: 90, height: 44 }
+    style: performance-pad
+
+  - id: perf_stutter
+    type: toggle
+    label: "Stutter"
+    parameter: performanceStutter
+    parameter_type: bool
+    default: false
+    module: performance
+    render: perf-button
+    position: { x: 520, y: 890 }
+    size: { width: 90, height: 44 }
+    style: performance-pad
+
+  - id: perf_chaos
+    type: toggle
+    label: "Chaos"
+    parameter: performanceChaos
+    parameter_type: bool
+    default: false
+    module: performance
+    render: perf-button
+    position: { x: 620, y: 890 }
+    size: { width: 90, height: 44 }
+    style: performance-pad
+
+  # ===== XY PAD module (x 800-1140, second unit) =====
+  - id: xy_pad
+    type: xy-pad
+    label: "XY Performance Pad"
+    parameter: xyPadX_xyPadY
+    module: xy_pad
+    render: minimal-grid-pad
+    position: { x: 808, y: 664 }
+    size: { width: 340, height: 340 }
+    note: "Binds xyPadX (horizontal, default macroDamage) and xyPadY (vertical, default macroGlitch). Glide/inertia via xyPadSmoothing (80ms default). Rendered in the same white/minimal material w/ subtle grid background and a small circular glide handle."
+
+  # ===== SEQUENCER (y 1072-1260) =====
+  - id: sequencer_rate
+    type: combo
+    label: "Rate"
+    parameter: sequencerRate
+    parameter_type: choice
+    choices: ["1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T"]
+    default: "1/16"
+    module: sequencer
+    position: { x: 30, y: 1092 }
+    size: { width: 150, height: 32 }
+
+  - id: sequencer_steps
+    type: combo
+    label: "Steps"
+    parameter: sequencerSteps
+    parameter_type: choice
+    choices: ["16", "32"]
+    default: "16"
+    module: sequencer
+    position: { x: 200, y: 1092 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_random
+    type: button
+    label: "Random"
+    action: randomize_pattern
+    module: sequencer
+    position: { x: 330, y: 1092 }
+    size: { width: 110, height: 32 }
+
+  - id: seq_mutate
+    type: button
+    label: "Mutate"
+    action: mutate_pattern
+    module: sequencer
+    position: { x: 450, y: 1092 }
+    size: { width: 110, height: 32 }
+
+  - id: seq_reverse
+    type: button
+    label: "Reverse"
+    action: reverse_pattern
+    module: sequencer
+    position: { x: 570, y: 1092 }
+    size: { width: 110, height: 32 }
+
+  - id: seq_mirror
+    type: button
+    label: "Mirror"
+    action: mirror_pattern
+    module: sequencer
+    position: { x: 690, y: 1092 }
+    size: { width: 110, height: 32 }
+
+  - id: seq_shift
+    type: button
+    label: "Shift"
+    action: shift_pattern
+    module: sequencer
+    position: { x: 810, y: 1092 }
+    size: { width: 110, height: 32 }
+
+  - id: seq_clear
+    type: button
+    label: "Clear"
+    action: clear_pattern
+    module: sequencer
+    position: { x: 930, y: 1092 }
+    size: { width: 110, height: 32 }
+
+  # ===== MOD MATRIX (y 1300-1610) =====
+  - id: lfo1_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo1Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    module: mod_matrix
+    render: ring-knob
+    position: { x: 40, y: 1320 }
+    size: { width: 70, height: 70 }
+  - id: lfo1_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo1Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    module: mod_matrix
+    position: { x: 120, y: 1320 }
+    size: { width: 120, height: 28 }
+  - id: lfo1_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo1Sync
+    parameter_type: bool
+    default: false
+    module: mod_matrix
+    position: { x: 120, y: 1360 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo2_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo2Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    module: mod_matrix
+    render: ring-knob
+    position: { x: 325, y: 1320 }
+    size: { width: 70, height: 70 }
+  - id: lfo2_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo2Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    module: mod_matrix
+    position: { x: 405, y: 1320 }
+    size: { width: 120, height: 28 }
+  - id: lfo2_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo2Sync
+    parameter_type: bool
+    default: false
+    module: mod_matrix
+    position: { x: 405, y: 1360 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo3_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo3Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    module: mod_matrix
+    render: ring-knob
+    position: { x: 610, y: 1320 }
+    size: { width: 70, height: 70 }
+  - id: lfo3_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo3Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    module: mod_matrix
+    position: { x: 690, y: 1320 }
+    size: { width: 120, height: 28 }
+  - id: lfo3_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo3Sync
+    parameter_type: bool
+    default: false
+    module: mod_matrix
+    position: { x: 690, y: 1360 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo4_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo4Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    module: mod_matrix
+    render: ring-knob
+    position: { x: 895, y: 1320 }
+    size: { width: 70, height: 70 }
+  - id: lfo4_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo4Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    module: mod_matrix
+    position: { x: 975, y: 1320 }
+    size: { width: 120, height: 28 }
+  - id: lfo4_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo4Sync
+    parameter_type: bool
+    default: false
+    module: mod_matrix
+    position: { x: 975, y: 1360 }
+    size: { width: 44, height: 24 }
+
+special_elements:
+  - id: wordmark
+    type: decorative
+    layer: decorative
+    description: "CORRUPTR wordmark, bold uppercase, ~3px letter-spacing, textPrimary, centered in the empty top-bar space between the preset search field and the Save button"
+    position: { x: 260, y: 18 }
+    size: { width: 180, height: 28 }
+
+  - id: input_meter_topbar
+    type: level-meter
+    layer: decorative
+    data_source: "input_level"
+    position: { x: 965, y: 16 }
+    size: { width: 25, height: 32 }
+    range: [-60, 6]
+    orientation: vertical
+
+  - id: output_meter_topbar
+    type: level-meter
+    layer: decorative
+    data_source: "output_level"
+    position: { x: 1020, y: 16 }
+    size: { width: 25, height: 32 }
+    range: [-60, 6]
+    orientation: vertical
+
+  - id: preset_tag_dots
+    type: decorative
+    layer: decorative
+    description: "8 small monochrome preset-category dots (grayscale, not colored - v4 palette departure from v2's rainbow row), top-right of top bar"
+    position: { x: 1065, y: 26 }
+    size: { width: 110, height: 12 }
+
+  - id: module_chrome_icons
+    type: decorative
+    layer: decorative
+    description: "Per flanking-module icon-button row decoration: a 3x2 dot-grid 'menu' icon (center) and a curved undo/reset arrow icon (right) alongside the power/bypass icon-button, repeated identically across all 6 modules in the main channel-strip unit (Distortion, Bitcrush, Glitch, Filter & EQ share this row w/ a bound power icon; Center Master and Feedback+Delay show the same row with a decorative, non-bound power icon). Thin dark-gray line-icon style, ~20px, no fill."
+    position: { x: 30, y: 114 }
+    size: { width: 1125, height: 24 }
+
+  - id: adv_toggle_distortion
+    type: decorative
+    layer: decorative
+    description: "'ADV' caps label + pill toggle at the bottom of the Distortion module - reveals node_bypass_waveshaper (Fold Bypass toggle)"
+    position: { x: 71, y: 560 }
+    size: { width: 60, height: 24 }
+
+  - id: adv_toggle_glitch
+    type: decorative
+    layer: decorative
+    description: "'ADV' caps label + pill toggle at the bottom of the Glitch module - reveals node_glitch_probability (Prob Fine knob)"
+    position: { x: 411, y: 560 }
+    size: { width: 60, height: 24 }
+
+  - id: adv_toggle_filter_eq
+    type: decorative
+    layer: decorative
+    description: "'ADV' caps label + pill toggle at the bottom of the Filter & EQ module - reveals node_filter_cutoff (Cutoff Fine knob)"
+    position: { x: 826, y: 560 }
+    size: { width: 60, height: 24 }
+
+  - id: adv_toggle_macros
+    type: decorative
+    layer: decorative
+    description: "'ADV' caps label + pill toggle at the bottom of the Macros module - reveals macro_rhythm/macro_movement/macro_width/macro_mix (second knob row)"
+    position: { x: 150, y: 988 }
+    size: { width: 60, height: 24 }
+
+  - id: bitcrush_tile_static
+    type: decorative
+    layer: decorative
+    description: "Bitcrush module has no discrete algorithm/mode parameter among the 67 controls - its icon tile is a static (non-cycling) near-black tile: pixel/digital glow-icon, 'BITCRUSH' caps label, no chevrons, no dot row"
+    position: { x: 235, y: 150 }
+    size: { width: 95, height: 120 }
+
+  - id: feedback_delay_tile_static
+    type: decorative
+    layer: decorative
+    description: "Feedback+Delay module's static icon tile: feedback-loop glow-icon, 'FEEDBACK' caps label, no chevrons/dots (no discrete mode parameter)"
+    position: { x: 975, y: 150 }
+    size: { width: 170, height: 120 }
+
+  - id: macros_tile_static
+    type: decorative
+    layer: decorative
+    description: "Macros module's static icon tile: sparkle/asterisk glow-icon, 'MACROS' caps label, decorative page-count dots (no bound choice parameter)"
+    position: { x: 45, y: 700 }
+    size: { width: 270, height: 120 }
+
+  - id: performance_tile_static
+    type: decorative
+    layer: decorative
+    description: "Performance module's static icon tile: lightning-bolt glow-icon, 'PERFORMANCE' caps label"
+    position: { x: 365, y: 700 }
+    size: { width: 400, height: 120 }
+
+  - id: filter_eq_mini_graph
+    type: frequency-response-graph
+    layer: decorative
+    description: "Light card (graphCardBg) with dB range axis labels (left, e.g. +12/0/-12) and Hz range axis labels (bottom, e.g. 100Hz/500Hz/2kHz/10kHz), grid lines, and a single thin plotted curve in accentGraphLine - the ONLY color accent in the entire UI"
+    position: { x: 775, y: 286 }
+    size: { width: 165, height: 80 }
+
+  - id: step_grid
+    type: step-sequencer-visual
+    layer: decorative
+    description: "16 (or 32) per-step visual intensity bars in the same monochrome dark/light toggle-block styling, tempo-synced playhead highlight"
+    position: { x: 30, y: 1140 }
+    size: { width: 1125, height: 100 }
+    steps: 16
+
+  - id: mod_matrix_grid
+    type: matrix-grid
+    layer: decorative
+    description: "Source rows (LFO1-4, Envelope, Audio Level, Sequencer, Random, MIDI CC, Macros) x destination columns (Drive, Mix, Filter, Bit Depth, Sample Rate, Fold, Feedback, Glitch Probability, Glitch Size, Pitch, Pan, Width) with amount dots at intersections, same monochrome material"
+    position: { x: 30, y: 1410 }
+    size: { width: 1125, height: 180 }
+
+notes:
+  - "All 67 control ids/parameters/actions are identical to v2-ui.yaml (same parameter names, ranges, choices, defaults). Position, size, and (for node_drive, feedback_amount, input_gain, output_gain, glitch_buffer_length, micro_delay_time) visual control TYPE were redesigned from scratch for the v4 monochrome modular channel-strip style - this is a presentation-layer + module-regrouping restyle, not a parameter contract change."
+  - "v1/v2/v3's near-black pinstriped top bar, light gradient hero panels, glassy pseudo-3D iso-icons, and dark accent cards are entirely scrapped per explicit user instruction to match the new uploaded reference image. Nothing from those versions' color palette or icon language is reused."
+  - "The v2 'overview + detail' dual-parameter-binding pattern (same parameter bound to two different controls) is preserved but re-purposed as 'base control (always visible) + ADV-revealed fine-adjust mirror (same module)': filterCutoff via filter_cutoff_detail/node_filter_cutoff, glitchProbability via glitch_probability_detail/node_glitch_probability."
+  - "5 module-bypass toggles (graphBypassSaturation/Waveshaper/Filter/Bitcrush/Glitch) are still NEW - not yet in parameter-spec-draft.md, reconcile in Stage 0/1, same as flagged in v1/v2/v3."
+  - "microDelayTime is still NEW - not yet in parameter-spec-draft.md, reconcile in Stage 0/1, same as flagged in v1/v2/v3."
+  - "Controls automatically generate parameter bindings via WebSliderRelay (knob/slider/xy-pad), WebToggleButtonRelay (toggle), WebComboBoxRelay (combo). Buttons/toggles with an 'action' field (not 'parameter') are UI-only and communicate via native function calls, not parameter relays."
+  - "Special elements (module_chrome_icons, static tiles, ADV pills, mini graph, step grid, mod matrix grid, meters) are visual/decorative and may need custom C++/Canvas implementation in Stage 3; ADV pills are functionally interactive (show/hide) in the test HTML via JS class toggling even though marked layer:decorative (not parameter-bound)."
+  - "Two v2 decorative output-section level meters (output_input_meter/output_output_meter) were dropped in v4 - consolidated into the top-bar meters only, reducing visual clutter to match the reference's minimal top-bar-only metering approach. v2's page_indicator_pills and rainbow preset_tag_dots were also dropped/de-hued - v4 has no page-nav pills and preset_tag_dots is now monochrome."
