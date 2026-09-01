@@ -1697,12 +1697,14 @@ int main()
                "doubled note-on on a flam does not hard-cut the outgoing voice (no extra slew spike vs the plain flam)");
     }
 
-    // 2026-09-01 (user request) — "Morph" knob: body oscillator waveform morph,
-    // sine -> triangle -> saw -> square. Isolates the body layer exactly like the
+    // 2026-09-01 (user request) — "Morph" knob v2: CZ-style phase-skew of the body sine,
+    // ATTACK-ONLY (the skew decays back to a pure sine with a 40 ms time constant after
+    // each trigger — v1's sine->square crossfade was "too strong" for the user precisely
+    // because it buzzed on the tail). Isolates the body layer exactly like the
     // oversampling pitch/decay checks above (fixed frequency, steady pitch, every other
     // layer silenced, distortion/limiter bypassed) so the harmonic content measured is
     // purely the body oscillator's own waveform shape.
-    std::printf ("\n[Fix] Morph knob reshapes the body oscillator's waveform\n");
+    std::printf ("\n[Fix] Morph knob skews the attack, tail stays a clean sine\n");
     {
         auto goertzelMagM = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1, double hz)
         {
@@ -1737,93 +1739,114 @@ int main()
             return kickr::tests::renderNote (p, a1, vel, sr, 512, 0.8);
         };
 
-        const auto sineOut   = renderIsolatedBody (0.0f);
-        const auto squareOut = renderIsolatedBody (1.0f);
+        // Harmonic content = (h2 + h3) / fundamental via Goertzel. ATTACK window = the
+        // first ~40 ms (where the shape envelope is strong); TAIL window = 300-500 ms
+        // (~7+ decay time constants later — the v2 guarantee is that the tail is a clean
+        // sine no matter where the knob sits).
+        auto harmonicRatio = [&] (const juce::AudioBuffer<float>& b, double t0, double t1)
+        {
+            const double fund = goertzelMagM (b, sr, t0, t1, 100.0);
+            const double h2   = goertzelMagM (b, sr, t0, t1, 200.0);
+            const double h3   = goertzelMagM (b, sr, t0, t1, 300.0);
+            return (h2 + h3) / std::max (1.0e-9, fund);
+        };
 
-        const double sineFund    = goertzelMagM (sineOut,   sr, 0.10, 0.50, 100.0);
-        const double sine3rd     = goertzelMagM (sineOut,   sr, 0.10, 0.50, 300.0);
-        const double squareFund  = goertzelMagM (squareOut, sr, 0.10, 0.50, 100.0);
-        const double square3rd   = goertzelMagM (squareOut, sr, 0.10, 0.50, 300.0);
+        const auto sineOut = renderIsolatedBody (0.0f);
+        const auto fullOut = renderIsolatedBody (1.0f);
+        const auto midOut  = renderIsolatedBody (0.5f);
 
-        std::printf ("  morph=0 (sine):   fundamental %.4f  3rd harmonic %.4f  (ratio %.3f)\n",
-                     sineFund, sine3rd, sine3rd / std::max (1.0e-9, sineFund));
-        std::printf ("  morph=1 (square): fundamental %.4f  3rd harmonic %.4f  (ratio %.3f)\n",
-                     squareFund, square3rd, square3rd / std::max (1.0e-9, squareFund));
+        const double sineAtk = harmonicRatio (sineOut, 0.003, 0.043);
+        const double fullAtk = harmonicRatio (fullOut, 0.003, 0.043);
+        const double midAtk  = harmonicRatio (midOut,  0.003, 0.043);
+        const double sineTail = harmonicRatio (sineOut, 0.30, 0.50);
+        const double fullTail = harmonicRatio (fullOut, 0.30, 0.50);
 
-        check (sine3rd / std::max (1.0e-9, sineFund) < 0.02,
-               "morph=0 is a clean sine (no meaningful 3rd harmonic) — default matches pre-morph behaviour exactly");
-        check (square3rd / std::max (1.0e-9, squareFund) > 0.15,
-               "morph=1 (square) has strong 3rd-harmonic content, unlike a sine");
+        std::printf ("  attack window (3-43ms) (h2+h3)/fund:  morph=0 %.3f   morph=0.5 %.3f   morph=1 %.3f\n",
+                     sineAtk, midAtk, fullAtk);
+        std::printf ("  tail window (300-500ms) (h2+h3)/fund: morph=0 %.3f   morph=1 %.3f\n",
+                     sineTail, fullTail);
 
-        // A mid-morph value must land strictly between the two extremes (monotonic,
-        // continuous crossfade — not a hard switch).
-        const auto midOut   = renderIsolatedBody (0.5f);
-        const double mid3rd = goertzelMagM (midOut, sr, 0.10, 0.50, 300.0);
-        const double midFund = goertzelMagM (midOut, sr, 0.10, 0.50, 100.0);
-        const double midRatio = mid3rd / std::max (1.0e-9, midFund);
-        std::printf ("  morph=0.5 (saw):  3rd-harmonic ratio %.3f\n", midRatio);
-        check (midRatio > sine3rd / std::max (1.0e-9, sineFund),
-               "morph=0.5 has more 3rd-harmonic content than pure sine (continuous morph, not a step)");
+        check (sineAtk < 0.03,
+               "morph=0 attack is a clean sine — default matches pre-morph behaviour exactly");
+        check (fullAtk > sineAtk * 3.0 && fullAtk > 0.08,
+               "morph=1 adds clear harmonic content to the ATTACK (phase-skew is audible)");
+        check (midAtk > sineAtk && midAtk < fullAtk,
+               "morph=0.5 lands between 0 and 1 (continuous, monotonic control)");
+        check (fullTail < 0.05,
+               "morph=1 TAIL is still a clean sine — the attack-only envelope has fully relaxed");
 
         // 2026-09-01 bug-scan: an instantaneous morph change mid-note (a DAW automation
-        // jump, or a fast knob grab) must not click. Every other per-block level/shape
-        // control in the engine is smoothed; this checks morph is too. Sine->triangle
-        // region only (0 -> 0.3), where neither shape has any steps of its own, so any
-        // slew spike at the step instant can only come from the morph switch itself.
+        // jump, or a fast knob grab) must not click. v2 note: the step has to land inside
+        // the ATTACK window (the shape envelope decays with a 40 ms time constant, so a
+        // late step does nothing), and the fair control is a render with morph AT the
+        // target from t = 0 — the skewed waveform legitimately has more slew than a sine,
+        // so "stepped vs always-on" isolates the smoother's job from the shape's own slope.
         {
-            KICKRAudioProcessor p;
-            setP (p, "tuneMode",       1.0f);
-            setP (p, "fundamental",  100.0f);
-            setP (p, "pitchStart",     1.0f);
-            setP (p, "bodyDecay",   2000.0f);
-            setP (p, "bodyHarmonics",  0.0f);
-            setP (p, "subLevel",       0.0f);
-            setP (p, "clickLevel",     0.0f);
-            setP (p, "tailLevel",      0.0f);
-            setP (p, "noiseLevel",     0.0f);
-            setP (p, "driveMix",       0.0f);
-            setP (p, "limiter",        0.0f);
-            setP (p, "morph",          0.0f);
-
             const int block = 64;
-            const int total = (int) (sr * 0.4);
-            // 9664 = block boundary at 20.133 periods of 100 Hz: phase ~0.13 into the cycle,
-            // where sine (0.74) and triangle (0.53) differ most. (9600 would land exactly
-            // on phase 0, where both shapes are 0 and the switch is invisible.)
-            const int stepAt = 9664;
-            p.setRateAndBufferSizeDetails (sr, block);
-            p.prepareToPlay (sr, block);
-            juce::AudioBuffer<float> out (juce::jmax (1, p.getTotalNumOutputChannels()), total);
-            out.clear();
-            juce::AudioBuffer<float> sc (out.getNumChannels(), block);
-            bool stepped = false;
-            for (int pos = 0; pos < total;)
-            {
-                const int n = std::min (block, total - pos);
-                if (! stepped && pos >= stepAt) { setP (p, "morph", 0.3f); stepped = true; }
-                juce::AudioBuffer<float> b (sc.getArrayOfWritePointers(), out.getNumChannels(), n);
-                b.clear();
-                juce::MidiBuffer midi;
-                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
-                p.processBlock (b, midi);
-                for (int ch = 0; ch < out.getNumChannels(); ++ch) out.copyFrom (ch, pos, b, ch, 0, n);
-                pos += n;
-            }
-            p.releaseResources();
+            const int total = (int) (sr * 0.05);
+            // 448 = block boundary 9.33 ms in: shape env ~0.79, late-cycle phase where the
+            // warped and straight phase maps differ strongly.
+            const int stepAt = 448;
 
-            auto slewIn = [&] (double t0, double t1)
+            auto renderStep = [&] (int stepSample)
             {
-                const int i0 = std::max (1, (int) (t0 * sr)), i1 = std::min (total, (int) (t1 * sr));
-                const float* x = out.getReadPointer (0);
+                KICKRAudioProcessor p;
+                setP (p, "tuneMode",       1.0f);
+                setP (p, "fundamental",  100.0f);
+                setP (p, "pitchStart",     1.0f);
+                setP (p, "bodyDecay",   2000.0f);
+                setP (p, "bodyHarmonics",  0.0f);
+                setP (p, "subLevel",       0.0f);
+                setP (p, "clickLevel",     0.0f);
+                setP (p, "tailLevel",      0.0f);
+                setP (p, "noiseLevel",     0.0f);
+                setP (p, "driveMix",       0.0f);
+                setP (p, "limiter",        0.0f);
+                setP (p, "morph",          stepSample < 0 ? 1.0f : 0.0f);
+
+                p.setRateAndBufferSizeDetails (sr, block);
+                p.prepareToPlay (sr, block);
+                juce::AudioBuffer<float> o (juce::jmax (1, p.getTotalNumOutputChannels()), total);
+                o.clear();
+                juce::AudioBuffer<float> sc (o.getNumChannels(), block);
+                bool steppedNow = false;
+                for (int pos = 0; pos < total;)
+                {
+                    const int n = std::min (block, total - pos);
+                    if (stepSample >= 0 && ! steppedNow && pos >= stepSample)
+                    {
+                        setP (p, "morph", 1.0f);
+                        steppedNow = true;
+                    }
+                    juce::AudioBuffer<float> b (sc.getArrayOfWritePointers(), o.getNumChannels(), n);
+                    b.clear();
+                    juce::MidiBuffer midi;
+                    if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+                    p.processBlock (b, midi);
+                    for (int ch = 0; ch < o.getNumChannels(); ++ch) o.copyFrom (ch, pos, b, ch, 0, n);
+                    pos += n;
+                }
+                p.releaseResources();
+                return o;
+            };
+            auto slewIn = [&] (const juce::AudioBuffer<float>& b, double t0, double t1)
+            {
+                const int i0 = std::max (1, (int) (t0 * sr)), i1 = std::min (b.getNumSamples(), (int) (t1 * sr));
+                const float* x = b.getReadPointer (0);
                 float m = 0.0f;
                 for (int i = i0; i < i1; ++i) m = std::max (m, std::abs (x[i] - x[i - 1]));
                 return m;
             };
-            const float steady = slewIn (0.10, 0.19);
-            const float atStep = slewIn (0.199, 0.206);
-            std::printf ("  morph step 0->0.3 @200ms: steady-state maxSlew %.4f   maxSlew at the step %.4f   ratio %.2f\n",
-                         steady, atStep, atStep / std::max (1.0e-6f, steady));
-            check (atStep < steady * 2.0f, "instant morph automation jump is smoothed — no slew spike / click at the step");
+
+            const auto steppedBuf  = renderStep (stepAt);
+            const auto alwaysOnBuf = renderStep (-1);
+            const float preStepSine = slewIn (steppedBuf,  0.003,  0.009);   // pure sine before the jump
+            const float atStep      = slewIn (steppedBuf,  0.0092, 0.0135); // the jump + 10 ms smoothing ramp
+            const float ctrl        = slewIn (alwaysOnBuf, 0.0092, 0.0135); // same window, morph=1 from t=0
+            std::printf ("  morph step 0->1 @9.3ms: pre-step sine slew %.4f   at-step %.4f   always-on control %.4f   step/control %.2f\n",
+                         preStepSine, atStep, ctrl, atStep / std::max (1.0e-6f, ctrl));
+            check (atStep < ctrl * 1.3f,
+                   "instant morph automation jump is smoothed — no slew beyond the skewed waveform's own slope");
         }
     }
 

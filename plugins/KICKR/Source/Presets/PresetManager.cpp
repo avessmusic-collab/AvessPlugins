@@ -94,7 +94,7 @@ namespace kickr
             { pid::bodyLevel,         0.70f,   1.0f },
             { pid::bodyDecay,       120.0f,  700.0f },
             { pid::bodyHarmonics,     0.0f,    0.40f },
-            { pid::morph,             0.0f,    0.50f },   // 2026-09-01: sine..triangle..early saw — the gentler half, like `character`/`bodyHarmonics` above
+            { pid::morph,             0.0f,    0.60f },   // 2026-09-01 v2: attack-only phase-skew — gentle by design, so Randomize can reach a bit further
             { pid::subLevel,          0.20f,   0.80f },
             { pid::subFreq,          30.0f,   55.0f },
             { pid::subDecay,        100.0f,  500.0f },

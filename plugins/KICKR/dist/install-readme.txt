@@ -30,8 +30,9 @@ PLUGIN INFO:
 - Formats: VST3, AU (choose one or both during install)
 - Parameters: 60 (Pitch, Body incl. the MORPH knob, Sub, Click, Tail, Noise,
   Sample, Distortion, Tone, Stereo, Output, Tuning, 4 Macros)
-- MORPH (big knob, left of the scope): morphs the body oscillator's waveform
-  sine -> triangle -> saw -> square. 0 = pure sine (the classic KICKR sound).
+- MORPH (big knob, left of the scope): skews the body waveform toward a soft
+  saw ON THE ATTACK only — the tail always relaxes back to a clean sine.
+  0 = pure sine (the classic KICKR sound).
 - Strictly monophonic: a new note always cuts the previous one instantly
   (0.75 ms declick), no overlapping hits, no stuck tails.
 - Includes: 50 built-in factory kick samples, 17 factory presets
