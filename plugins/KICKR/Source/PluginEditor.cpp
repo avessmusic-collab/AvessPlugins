@@ -13,10 +13,11 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
 {
     setLookAndFeel (&lnf);
     // Delay itself is set on the `tooltip` member's constructor (PluginEditor.h) — this
-    // redundant, now-correctly-matching call is kept only so the two can't silently drift
-    // apart again the way they just did (this used to say 450, quietly overriding the
-    // header's 3000 the whole time the 3-second hover request was "done").
-    tooltip.setMillisecondsBeforeTipAppears (3000);
+    // redundant, matching call is kept only so the two can't silently drift apart again
+    // the way they once did (this used to say 450, quietly overriding the header's 3000
+    // the whole time the 3-second hover request was "done"). Both now read the same
+    // constant: 1.5 s (2026-09-01 user request, down from 3 s).
+    tooltip.setMillisecondsBeforeTipAppears (kTooltipDelayMs);
 
     // ---------------------------------------------------------------- analyzers
     // Added FIRST so the WAVE / SPECTRUM mode buttons (added below) sit on top.

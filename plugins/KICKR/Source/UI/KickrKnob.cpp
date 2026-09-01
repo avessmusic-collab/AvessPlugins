@@ -1,3 +1,5 @@
+#include <cmath>
+
 #include "UI/KickrKnob.h"
 #include "UI/KickrLookAndFeel.h"
 #include "Parameters/ParameterDescriptions.h"
@@ -45,6 +47,7 @@ namespace kickr
         captionLabel.setJustificationType (juce::Justification::centred);
         captionLabel.setInterceptsMouseClicks (false, false);
         captionLabel.setColour (juce::Label::textColourId, palette::inkDim);
+        captionLabel.setBorderSize (juce::BorderSize<int> (0, 2, 0, 2));   // band height == font em-box, no slack
         addAndMakeVisible (captionLabel);
 
         if (param != nullptr)
@@ -66,34 +69,55 @@ namespace kickr
             readoutText << " " << unit;
     }
 
+    // 2026-09-01 (user: "make so the letters and numbers dont touch, make the numbers
+    // a bit smaller"): the caption / readout bands used to be a fraction of the
+    // component height (h/7 and h/6, clamped to >= 11 px) with NO gap between them,
+    // while the fonts were fixed per `Size`. On the ~83 px-tall hero knobs the Large
+    // caption font (12 * 1.12 = 13.4 px) overflowed its 11 px band and the readout
+    // (14 px) filled its band edge-to-edge, so "0.500" collided with "MACRO", "A1"
+    // with "NOTE". Both bands are now sized FROM their font (em-box height, rounded
+    // up) with a fixed gap between them, the readout base size is trimmed ~10%
+    // (captions keep their size — only the numbers shrink), and the caption label's
+    // default 1 px top/bottom border is removed so its text really does sit inside
+    // its band. Band totals stay within ~2 px of the old ones, so knob diameters are
+    // essentially unchanged.
+    float KickrKnob::captionFontPx() const
+    {
+        const float base = knobSize == Size::Large ? 12.0f
+                         : knobSize == Size::Small ? 8.5f : 10.0f;
+        return base * KickrLookAndFeel::kTextSizeBoost;
+    }
+
+    float KickrKnob::readoutFontPx() const
+    {
+        const float base = knobSize == Size::Large ? 11.0f
+                         : knobSize == Size::Small ? 8.5f : 9.5f;
+        return base * KickrLookAndFeel::kTextSizeBoost;
+    }
+
+    int KickrKnob::captionBandHeight() const { return (int) std::ceil (captionFontPx()); }
+    int KickrKnob::readoutBandHeight() const { return (int) std::ceil (readoutFontPx()); }
+
     void KickrKnob::resized()
     {
         auto r = getLocalBounds();
 
-        const int readoutH = juce::jlimit (11, 22, r.getHeight() / 6);
-        const int captionH = juce::jlimit (11, 20, r.getHeight() / 7);
-
-        r.removeFromBottom (readoutH);
-        captionLabel.setBounds (r.removeFromBottom (captionH));
+        r.removeFromBottom (readoutBandHeight() + kCaptionReadoutGap);
+        captionLabel.setBounds (r.removeFromBottom (captionBandHeight()));
 
         const int d = juce::jmax (8, juce::jmin (r.getWidth(), r.getHeight()));
         slider.setBounds (r.withSizeKeepingCentre (d, d));
 
-        const float capFs = knobSize == Size::Large ? 12.0f
-                          : knobSize == Size::Small ? 8.5f : 10.0f;
-        captionLabel.setFont (KickrLookAndFeel::microFont (capFs));
+        // microFont() applies kTextSizeBoost itself — hand it the un-boosted size.
+        captionLabel.setFont (KickrLookAndFeel::microFont (captionFontPx() / KickrLookAndFeel::kTextSizeBoost));
     }
 
     void KickrKnob::paint (juce::Graphics& g)
     {
-        const int readoutH = juce::jlimit (11, 22, getHeight() / 6);
-        const auto area = getLocalBounds().removeFromBottom (readoutH);
-
-        const float fs = (knobSize == Size::Large ? 12.5f
-                       : knobSize == Size::Small ? 9.0f : 10.5f) * KickrLookAndFeel::kTextSizeBoost;
+        const auto area = getLocalBounds().removeFromBottom (readoutBandHeight());
 
         g.setColour (isEnabled() ? palette::inkHi : palette::inkDim.withAlpha (0.5f));
-        g.setFont (juce::Font (juce::FontOptions (fs)));
+        g.setFont (juce::Font (juce::FontOptions (readoutFontPx())));
         g.drawText (readoutText, area, juce::Justification::centred, false);
     }
 

@@ -97,6 +97,15 @@ namespace kickr
     private:
         void refreshReadout();
 
+        float captionFontPx() const;      // boosted (final) px sizes, fixed per `Size`
+        float readoutFontPx() const;
+        int   captionBandHeight() const;  // == ceil (font px): the bands are font-driven
+        int   readoutBandHeight() const;
+
+        /** Vertical gap between the caption band and the value-readout band, so a
+            caption's baseline and the readout's cap-height never touch (2026-09-01). */
+        static constexpr int kCaptionReadoutGap = 2;
+
         KickrSlider slider;
         juce::Label  captionLabel;
         juce::String readoutText;
