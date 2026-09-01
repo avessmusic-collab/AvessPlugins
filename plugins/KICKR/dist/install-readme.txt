@@ -30,7 +30,9 @@ PLUGIN INFO:
 - Includes: 50 built-in factory kick samples, 17 factory presets
 - Description: a commercial-grade kick-drum design instrument - algorithmic
   synthesis blendable with a sample layer, 7-curve morphing distortion,
-  real-time waveform/spectrum analyzer, Randomize/Mutate/Undo.
+  real-time waveform/spectrum analyzer (sample-accurate onset - the scope
+  always starts at the note-on, at any retrigger speed), Randomize/Mutate/
+  Undo.
 
 UNINSTALLATION:
 To remove KICKR:
