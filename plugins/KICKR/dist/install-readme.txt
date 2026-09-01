@@ -32,7 +32,8 @@ PLUGIN INFO:
   synthesis blendable with a sample layer, 7-curve morphing distortion,
   real-time waveform/spectrum analyzer (sample-accurate onset - the scope
   always starts at the note-on, at any retrigger speed), Randomize/Mutate/
-  Undo.
+  Undo. Hold Shift while dragging any knob for a smooth 5x finer micro-
+  adjust. Sub Frequency reads out as a note + Hz, e.g. "D#1 (40.0 Hz)".
 
 UNINSTALLATION:
 To remove KICKR:
