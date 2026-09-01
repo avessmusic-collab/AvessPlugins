@@ -112,6 +112,12 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
         waveDisplay.setVisible (! spectrum);
     };
 
+    // 2026-09-01 (user request) — Morph: a big knob in the scope panel's carved-out left
+    // 1/6 that morphs the body oscillator's waveform (sine -> triangle -> saw -> square).
+    // Default 0.0 (pure sine) so existing presets/factory sounds are unaffected unless
+    // this knob is moved. Approved from an unbound layout mockup before wiring to DSP.
+    morphKnob = &addKnob (kickr::id::morph, "MORPH", pal::violet, false, KSize::Large);
+
     // ---------------------------------------------------------------- sample strip
     sampleNameLabel.setJustificationType (juce::Justification::centredLeft);
     sampleNameLabel.setColour (juce::Label::textColourId, pal::lowfam);
@@ -164,6 +170,22 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
         &addKnob   (kickr::id::sampleLP,        "LP",     pal::red, false, KSize::Small),
         &addKnob   (kickr::id::sampleCrush,     "CRUSH",  pal::red, false, KSize::Small),
     };
+
+    // 2026-09-01 (user request): "when sample is disabled the sampler controlling
+    // knobs turn gray until you turn sampler on again." sampleEnable itself (and the
+    // synth toggle) stay always interactive; only the tweak controls grey out.
+    if (auto* sampleEnableParam = proc.getValueTreeState().getParameter (kickr::id::sampleEnable))
+    {
+        sampleEnableWatcher = std::make_unique<juce::ParameterAttachment> (
+            *sampleEnableParam,
+            [this] (float value)
+            {
+                const bool on = value >= 0.5f;
+                for (auto* c : sampleTweaks)
+                    if (c != nullptr) c->setEnabled (on);
+            });
+        sampleEnableWatcher->sendInitialUpdate();
+    }
 
     // ---------------------------------------------------------------- macro modules
     heroTitles[0] = &addSectionLabel ("PUNCH", pal::red);
@@ -265,15 +287,14 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     updateUndoRedoState();
     updateSampleLabel();
 
-    jassert (boundParamCount == 59);
+    jassert (boundParamCount == 60);   // 2026-09-01: 59 + morph
 
-    // 2026-08-31 (user request — trial): locked to a fixed size so the VST3 and AU
-    // instances are guaranteed pixel-identical, with no host-remembered-size divergence
-    // to test against. Was freely resizable (900x660..2000x1470, locked to the mockup's
-    // 1600:1170 aspect) — revert to that block if this doesn't work out.
-    // 1120x819 = one clean step down from the first trial's 1280x936, exact 1600:1170
-    // aspect (both are 160:117 in whole units — 7 vs 8 — so no rounding/letterboxing).
-    setResizable (false, false);
+    // 2026-09-01: reverted the 2026-08-31 fixed-size trial — resizable again, with a
+    // bottom-right corner drag handle. Aspect-locked to the mockup's 1600:1170 ratio so
+    // the layout (which scales entirely from getWidth()/1600 in resized()) never distorts.
+    setResizable (true, true);
+    setResizeLimits (900, 660, 2000, 1470);
+    getConstrainer()->setFixedAspectRatio (1600.0 / 1170.0);
     setSize (1120, 819);
 }
 
@@ -661,6 +682,12 @@ void KICKRAudioProcessorEditor::resized()
     content.removeFromBottom (gap);
     auto heroes = content;
 
+    // 2026-09-01 (user request) — carve ~1/6 off the scope panel's left edge for the
+    // Morph knob, without changing the panel's own outer size.
+    auto morphSlot = scope.removeFromLeft (scope.getWidth() / 6);
+    scope.removeFromLeft (gap);
+    layoutMorph (morphSlot);
+
     scopeBounds  = scope;
     sampleBounds = sample;
     engineBounds = engine;
@@ -694,6 +721,12 @@ void KICKRAudioProcessorEditor::layoutHeader (juce::Rectangle<int> a)
     presetNext.setBounds (pill.removeFromRight (scaled (26)));
     presetNameLabel.setBounds (pill);
     presetNameLabel.setFont (kickr::KickrLookAndFeel::titleFont ((float) scaled (11)));
+}
+
+void KICKRAudioProcessorEditor::layoutMorph (juce::Rectangle<int> a)
+{
+    if (morphKnob != nullptr)
+        morphKnob->setBounds (a.reduced (scaled (8)));
 }
 
 void KICKRAudioProcessorEditor::layoutScope (juce::Rectangle<int> a)

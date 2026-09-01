@@ -37,6 +37,13 @@ namespace kickr
         smoothedGain = 1.0f;   // unity until the first block sets a target
     }
 
+    void TransientShaper::resetFollowers() noexcept
+    {
+        fastEnv = 0.0f;
+        slowEnv = 0.0f;
+        // smoothedGain deliberately untouched — see header.
+    }
+
     void TransientShaper::updateOversampledRate (double newFsOversampled) noexcept
     {
         fs = juce::jmax (1.0, newFsOversampled);

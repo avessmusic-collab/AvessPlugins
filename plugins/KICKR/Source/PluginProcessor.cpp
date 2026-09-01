@@ -13,6 +13,15 @@ KICKRAudioProcessor::KICKRAudioProcessor()
 
     // PHASE 3.3 — first instantiation with no restored session shows as "Default".
     presetManager.markDefaultIfUnnamed();
+
+    // 2026-09-01 (user request): a brand-new instance shows the first factory kick already
+    // loaded in the SAMPLE strip (name + waveform preview visible), even though `sampleEnable`
+    // itself still defaults to off — so switching SAMPLE on immediately has something to play
+    // instead of an empty bank. prepareToPlay() already loads `currentSampleName` if it's
+    // non-empty (see below); this just seeds that name before the first prepareToPlay.
+    const auto factoryNames = kickr::SampleLibrary::getFactoryNames();
+    if (! factoryNames.isEmpty())
+        currentSampleName = factoryNames[0];
 }
 
 KICKRAudioProcessor::~KICKRAudioProcessor()

@@ -161,7 +161,7 @@ namespace kickr
         const int    ay    = juce::roundToInt (r.getBottom() - 13.0f * s);
 
         g.setColour (pal::ink.withAlpha (0.34f));
-        g.setFont (juce::Font (juce::FontOptions (8.0f * s)));
+        g.setFont (juce::Font (juce::FontOptions (8.0f * s * KickrLookAndFeel::kTextSizeBoost)));
         g.drawText ("0 ms", juce::roundToInt (r.getX()), ay, aw, ah,
                     juce::Justification::left, false);
         g.drawText (juce::String (juce::roundToInt (durMs * 0.5)),

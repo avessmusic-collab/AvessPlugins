@@ -34,12 +34,19 @@ namespace kickr
         per block, velocity-scaled effective `pitchStart` fed to `KickVoice::setPitchParams`.
 
         PHASE 2.3: owns `std::array<KickVoice, 2>` + `activeVoice`. A note-on while the
-        active voice is still ringing triggers the OTHER voice and starts a
-        `kRetriggerFadeMs = 3 ms` equal-power crossfade (both voices render, phase-
-        continuous; the old voice is `reset()` only once theta reaches 1). A third note
-        mid-fade snaps the fade to done first, so never more than 2 voices are live.
-        `TransientShaper` runs on the summed mono signal right after the voice mix,
-        still inside the OS region (AD-10). Params live: `transientAttack`, `transientSustain`.
+        active voice is still ringing triggers the OTHER voice immediately at full level
+        (no fade-in — new note takes priority instantly) while the old voice is force-
+        silenced via a `kDeclickFadeMs = 0.75 ms` fade-out, then unconditionally
+        `reset()` the instant that fade completes — regardless of whether any of its
+        layers (body/click/sub/tail/noise/sample) would otherwise still be ringing. This
+        is a hard, strictly-monophonic voice steal: there is never more than ~0.75 ms of
+        genuine overlap between two notes, and no layer is ever allowed to linger past
+        that (2026-09-01 user request — previously a 3 ms EQUAL-POWER crossfade let the
+        outgoing voice's sample tail continue ringing indefinitely in the background as a
+        "retiring voice"; see CHANGELOG). A third note mid-fade snaps the fade to done
+        first, so never more than 2 voices are live. `TransientShaper` runs on the summed
+        mono signal right after the voice mix, still inside the OS region (AD-10). Params
+        live: `transientAttack`, `transientSustain`.
 
         PHASE 2.4: `clickLevel` / `clickTone` / `clickTime` / `clickPitch` snapshot per
         block and forwarded to every voice's `ClickGenerator` via `setClickParams`. The
@@ -137,7 +144,7 @@ namespace kickr
         }
 
     private:
-        static constexpr double kRetriggerFadeMs   = 3.0;   // equal-power crossfade length
+        static constexpr double kDeclickFadeMs     = 0.75;  // outgoing-voice fade-out length (hard steal, no crossfade)
         static constexpr int    kSwitchFadeSamples = 64;     // OS-factor-switch fade (base rate)
 
         // 2026-08-31 (user request): in MIDI Pitch mode, plain concert pitch (the
@@ -150,7 +157,7 @@ namespace kickr
         static constexpr float kMidiPitchRecentreSemitones = -24.0f;
 
         /** PHASE 2.10 — fan `updateOversampledRate` out to every in-region component and
-            recompute `retriggerThetaInc` for the new `fsOversampled`. Coefficient-only. */
+            recompute `declickThetaInc` for the new `fsOversampled`. Coefficient-only. */
         void updateInRegionRate (double newFsOversampled);
 
         void renderSegment (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
@@ -170,25 +177,25 @@ namespace kickr
 
         OversamplingProcessor oversampling;
 
-        // PHASE 2.3: two voices + click-free equal-power retrigger crossfade.
+        // PHASE 2.3, redesigned 2026-09-01: two voices + a hard, strictly-monophonic
+        // voice steal. `fadeActive` tracks a short kDeclickFadeMs fade-OUT applied only to
+        // the outgoing (`activeVoice`) signal; the incoming voice always plays at full
+        // level from sample 0, no fade-in — the new note takes priority immediately.
         std::array<KickVoice, 2> voices;
         int    activeVoice       { 0 };
         int    incomingVoice     { 1 };
         bool   fadeActive        { false };
-        double theta             { 0.0 };   // crossfade position 0 -> 1
+        double theta             { 0.0 };   // declick-fade position 0 -> 1
 
-        // Fix (2026-08-31): the 3 ms synth crossfade finishing does NOT mean the outgoing
-        // voice is done — its SamplePlayer can still be ringing for seconds (esp. reversed).
-        // The old code unconditionally reset()-ed the outgoing voice at theta>=1, force-
-        // killing a still-playing sample on essentially every ordinary retrigger. Now, if
-        // the outgoing voice is still isActive() (sample only, by then) when the fade ends,
-        // it's demoted to `retiringVoice` instead of reset: renderSegment keeps rendering
-        // + summing it (unscaled — its own gates/envelope already govern audibility) until
-        // it finishes on its own. Mutually exclusive with `fadeActive` (same "other" slot,
-        // one state at a time) — a 3rd trigger needing that same slot legitimately steals
-        // it (2 physical voices is a hard limit), same as it already stole a fading voice.
-        int    retiringVoice     { -1 };
-        double retriggerThetaInc { 0.0 };   // 1 / (kRetriggerFadeMs * fsOversampled)
+        // 2026-09-01 (user request): previously, once the fade finished, the outgoing
+        // voice was only reset() if it had already fallen silent on its own — otherwise it
+        // was demoted to a "retiring voice" and kept ringing (unscaled) in the background
+        // until its own tail/sample finished naturally, sometimes for seconds. That let two
+        // notes be audible at once, which is exactly what strict mono voice-stealing must
+        // never do. Now the outgoing voice is unconditionally reset() the instant theta
+        // reaches 1 — every layer (body/click/sub/tail/noise/sample) is force-silenced,
+        // no exceptions. `retiringVoice` no longer exists.
+        double declickThetaInc   { 0.0 };   // 1 / (kDeclickFadeMs * fsOversampled)
 
         // PHASE 2.10 — OS-factor-switch fade. On a pending change: this block's output is
         // ramped to silence over the last kSwitchFadeSamples, the factor is swapped +
@@ -225,6 +232,7 @@ namespace kickr
         std::atomic<float>* pMid         { nullptr };
         std::atomic<float>* pHigh        { nullptr };
         std::atomic<float>* pBodyWidth   { nullptr };   // PHASE 2.9 — STEREO
+        std::atomic<float>* pMorph       { nullptr };   // 2026-09-01 — body waveform morph
         std::atomic<float>* pClickWidth  { nullptr };
         std::atomic<float>* pOutputWidth { nullptr };
         std::atomic<float>* pOutput      { nullptr };   // PHASE 2.9 — OUTPUT
@@ -295,6 +303,7 @@ namespace kickr
             float midDb        { 0.0f };
             float highDb       { 0.0f };
             float bodyWidth01  { 0.0f };     // PHASE 2.9 — STEREO
+            float morph01      { 0.0f };     // 2026-09-01 — body waveform morph (0 = pure sine)
             float clickWidth01 { 0.3f };
             float outputWidth01 { 0.5f };
             float outputDb     { 0.0f };     // PHASE 2.9 — OUTPUT (bipolar dB, -24..+12)

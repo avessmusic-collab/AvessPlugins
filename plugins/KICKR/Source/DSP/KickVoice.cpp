@@ -88,6 +88,11 @@ namespace kickr
         bodyWidthAmt = juce::jlimit (0.0f, 1.0f, bodyWidth01);
     }
 
+    void KickVoice::setMorph (float morph01) noexcept
+    {
+        body.setMorph (morph01);
+    }
+
     void KickVoice::setSubParams (float subLevel, float subFreqHz, float subDecayMs) noexcept
     {
         sub.setParams (subLevel, subFreqHz, subDecayMs);
@@ -133,7 +138,7 @@ namespace kickr
         sample.noteOn (sampleBuf, noteNumber, sampleVelFactor);   // capture the buffer for the voice's life
 
         // Start at the current body-level / gate targets — no fade-in on the first hit.
-        // (Retrigger level continuity is Phase 2.3's crossfade concern.)
+        // (Retrigger level continuity is KickEngine's declick-fade concern.)
         bodyLevel.setCurrentAndTargetValue (bodyLevel.getTargetValue());
         synthGate.setCurrentAndTargetValue  (synthGate.getTargetValue());
         sampleGate.setCurrentAndTargetValue (sampleGate.getTargetValue());

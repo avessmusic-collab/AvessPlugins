@@ -67,6 +67,12 @@ namespace kickr
 
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
+        // NOTE (bug-scan 2026-09-01): there was briefly a per-note-on `resetFilterState()`
+        // that cleared only `crossover` (to suppress its few-ms LF ring-down of a just-killed
+        // voice). Removed — code-review CONFIRMED the reset itself stepped the outgoing
+        // voice's LF tail by up to its full amplitude on the one sample the new note can't
+        // yet mask. Filters are reset only by reset() (full engine reset); nothing in this
+        // class is touched per note-on. See KickEngine::handleNoteOn.
 
         /** PHASE 2.10 — OS factor changed: recompute the tone biquad coefficients
             (in-place — IIR state is KEPT), the DC-blocker pole, and the mix/out gain

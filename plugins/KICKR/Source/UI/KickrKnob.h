@@ -92,6 +92,7 @@ namespace kickr
 
         void resized() override;
         void paint (juce::Graphics&) override;
+        void enablementChanged() override;
 
     private:
         void refreshReadout();

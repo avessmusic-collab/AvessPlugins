@@ -3,8 +3,11 @@ KICKR v1.0.0 - Installation Instructions
 
 INSTALLATION:
 1. Double-click "KICKR.pkg"
-2. Follow the installation prompts
-3. The installer will copy KICKR to your system folders:
+2. On the "Installation Type" screen, choose which format(s) to install —
+   VST3, Audio Unit (AU), or both (both are checked by default). Click
+   "Customize" if that screen doesn't appear automatically.
+3. Follow the remaining installation prompts
+4. The installer copies your selected format(s) to:
    - VST3: ~/Library/Audio/Plug-Ins/VST3/KICKR.vst3
    - AU: ~/Library/Audio/Plug-Ins/Components/KICKR.component
 
@@ -20,13 +23,17 @@ To bypass Gatekeeper:
 4. Scroll down and click "Open Anyway" next to the KICKR warning
 5. Confirm you want to open it
 
-You only need to do this once per plugin format (VST3 and AU).
+You only need to do this once per plugin format you installed.
 
 PLUGIN INFO:
 - Version: 1.0.0
-- Formats: VST3, AU
-- Parameters: 59 (Pitch, Body, Sub, Click, Tail, Noise, Sample, Distortion,
-  Tone, Stereo, Output, Tuning, 4 Macros)
+- Formats: VST3, AU (choose one or both during install)
+- Parameters: 60 (Pitch, Body incl. the MORPH knob, Sub, Click, Tail, Noise,
+  Sample, Distortion, Tone, Stereo, Output, Tuning, 4 Macros)
+- MORPH (big knob, left of the scope): morphs the body oscillator's waveform
+  sine -> triangle -> saw -> square. 0 = pure sine (the classic KICKR sound).
+- Strictly monophonic: a new note always cuts the previous one instantly
+  (0.75 ms declick), no overlapping hits, no stuck tails.
 - Includes: 50 built-in factory kick samples, 17 factory presets
 - Description: a commercial-grade kick-drum design instrument - algorithmic
   synthesis blendable with a sample layer, 7-curve morphing distortion,

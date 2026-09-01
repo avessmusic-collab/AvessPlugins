@@ -31,6 +31,7 @@ namespace kickr
         pMid              = apvts.getRawParameterValue (id::mid);
         pHigh             = apvts.getRawParameterValue (id::high);
         pBodyWidth        = apvts.getRawParameterValue (id::bodyWidth);
+        pMorph            = apvts.getRawParameterValue (id::morph);
         pClickWidth       = apvts.getRawParameterValue (id::clickWidth);
         pOutputWidth      = apvts.getRawParameterValue (id::outputWidth);
         pOutput           = apvts.getRawParameterValue (id::output);
@@ -108,7 +109,7 @@ namespace kickr
         outputStage.prepare (fsOversampled);     // PHASE 2.9 — tone / crossover / limiter vs fsOversampled
 
         // 1 / (fade length in oversampled samples). Recomputed on every OS factor change.
-        retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
+        declickThetaInc = 1.0 / juce::jmax (1.0, kDeclickFadeMs * 0.001 * fsOversampled);
 
         scratch.setSize (OversamplingProcessor::kNumChannels, maxBlockSize, false, false, true);
         scratch.clear();
@@ -140,7 +141,7 @@ namespace kickr
         waveshaperR.updateOversampledRate (fsOversampled);
         outputStage.updateOversampledRate (fsOversampled);
 
-        retriggerThetaInc = 1.0 / juce::jmax (1.0, kRetriggerFadeMs * 0.001 * fsOversampled);
+        declickThetaInc = 1.0 / juce::jmax (1.0, kDeclickFadeMs * 0.001 * fsOversampled);
     }
 
     void KickEngine::reset()
@@ -159,7 +160,6 @@ namespace kickr
         incomingVoice      = 1;
         fadeActive         = false;
         theta              = 0.0;
-        retiringVoice      = -1;
         switchFadeInSamples = 0;
 
         macroPunchSm.setCurrentAndTargetValue (macroPunchSm.getTargetValue());
@@ -236,10 +236,51 @@ namespace kickr
 
         lastVel01 = v01;
 
-        // A third trigger mid-fade: snap the current crossfade to done first (free the
-        // outgoing voice, promote the incoming one) so we never have > 2 voices live.
+        // 2026-09-01 (user request): "the transient of the kick shifts if i rapid fire them
+        // or change notes". The per-voice oscillators/envelopes were already fully
+        // monophonic (hard voice-steal above), but TransientShaper's attack/release
+        // envelope followers kept running continuously across notes: residual follower
+        // energy from the previous hit changed how quickly the new hit's transient region
+        // was detected — an audible, retrigger-speed-dependent shift in attack character.
+        // Resetting the FOLLOWERS on every note-on (not just steals) makes every hit's
+        // transient detection start from an identical clean state. Only the followers: the
+        // applied-gain smoother is left continuous (bug-scan 2026-09-01, code-review
+        // CONFIRMED — snapping it to unity was a one-sample step of up to 6 dB on a still-
+        // loud tail whenever Sustain/Attack were non-zero).
+        //
+        // Deliberately NOT reset here (bug-scan 2026-09-01, code-review CONFIRMED):
+        // OutputStage's crossover. An earlier version reset it too, to suppress the filter's
+        // few-ms low-frequency ring-down of the just-killed voice, but the reset itself
+        // stepped the OUTGOING voice's LF tail by up to its full amplitude (the filter's
+        // steady-state vs cold output differ by its own memory) at the one sample where the
+        // new note is still at phase 0 and can't mask it — a click, bought only a ~3-point
+        // reduction in ring-down, and cost the click layer ~2.6 dB of onset. Also not reset:
+        // the tone biquads / DC blocker / mix+out gain smoothers / Waveshaper's adaptive RMS
+        // makeup (see NOTES.md for each).
+        transientShaper.resetFollowers();
+
+        // A third trigger while the previous declick fade is still running.
         if (fadeActive)
         {
+            if (theta <= 0.0)
+            {
+                // Bug-scan 2026-09-01 (code-review CONFIRMED): the 3rd hit landed on the SAME
+                // sample as the 2nd (a doubled note on a flam — ordinary DAW MIDI). No
+                // renderSegment ran between them, so the incoming voice hasn't produced a
+                // single sample yet and the outgoing one is still at FULL gain (gOld = 1).
+                // Bare-resetting the outgoing voice here (the old behaviour) was a one-sample
+                // cut of a loud voice — a click. Instead: re-arm the still-silent incoming
+                // slot with the new note and leave the outgoing fade exactly as it is, so no
+                // voice that has made a sound is ever cut without its 0.75 ms ramp.
+                auto& incoming = voices[static_cast<size_t> (incomingVoice)];
+                incoming.reset();
+                triggerVoice (incoming, freqHz, note, velLevelGain, velClickGain, v01);
+                return;
+            }
+
+            // Mid-fade (0 < theta < 1): three hits inside one 0.75 ms window with the middle
+            // one already audible. Snap the fade to done (free the outgoing voice, promote the
+            // incoming one) so we never have > 2 voices live — the documented 2-slot limit.
             voices[static_cast<size_t> (activeVoice)].reset();
             activeVoice = incomingVoice;
             fadeActive  = false;
@@ -250,15 +291,12 @@ namespace kickr
 
         if (active.isActive())
         {
-            // Retrigger while ringing -> start the other voice + a 3 ms equal-power
-            // crossfade. The old voice keeps running phase-continuously; it is reset
-            // only when theta reaches 1 (in renderSegment).
+            // Retrigger while ringing -> the new note starts in the other voice slot
+            // IMMEDIATELY at full level (no fade-in — it takes priority instantly), while
+            // the old voice gets a short kDeclickFadeMs fade-out and is then unconditionally
+            // reset() the moment that fade completes (in renderSegment) — every layer,
+            // no exceptions, so nothing ever lingers audibly past the two notes overlapping.
             incomingVoice = 1 - activeVoice;
-            // If that slot is a "retiring" voice (its synth crossfade already finished but
-            // its sample was still ringing), this new trigger legitimately steals it — only
-            // 2 physical voice slots exist. Clear the tracker so it isn't double-rendered.
-            if (incomingVoice == retiringVoice)
-                retiringVoice = -1;
             auto& incoming = voices[static_cast<size_t> (incomingVoice)];
             incoming.reset();
             triggerVoice (incoming, freqHz, note, velLevelGain, velClickGain, v01);
@@ -298,19 +336,16 @@ namespace kickr
         float* bL = voiceScratch[1].getWritePointer (0);
         float* bR = voiceScratch[1].getWritePointer (1);
 
-        const bool fading   = fadeActive;
-        const bool retiring = (retiringVoice >= 0);   // mutually exclusive with `fading`
-                                                       // (same "other" slot, see KickEngine.h)
+        const bool fading = fadeActive;
 
         voices[static_cast<size_t> (activeVoice)].renderStereo (aL, aR, upNum);
         if (fading)
             voices[static_cast<size_t> (incomingVoice)].renderStereo (bL, bR, upNum);
-        else if (retiring)
-            voices[static_cast<size_t> (retiringVoice)].renderStereo (bL, bR, upNum);
 
-        // Voice mix (equal-power crossfade during a retrigger) -> Tone (PRE-distortion) ->
-        // stereo-linked TransientShaper -> per-channel Waveshaper -> OutputStage
-        // (crossover / width / mix / gain / limiter). Everything in-region (AD-10).
+        // Voice mix (hard steal: outgoing fades out over kDeclickFadeMs, incoming plays at
+        // full level from sample 0, no fade-in) -> Tone (PRE-distortion) -> stereo-linked
+        // TransientShaper -> per-channel Waveshaper -> OutputStage (crossover / width / mix
+        // / gain / limiter). Everything in-region (AD-10).
         double th = theta;
 
         for (int i = 0; i < upNum; ++i)
@@ -327,21 +362,16 @@ namespace kickr
                 // for the whole fade window, so a fast retrigger's click came out quiet or
                 // silent while an isolated hit (no fade active) played it at full level —
                 // an audible, tempo-locked inconsistency ("sometimes there's a click").
-                float gOld = 1.0f, gNewUnused = 0.0f;
-                dsputils::equalPowerGains (static_cast<float> (th), gOld, gNewUnused);
+                // One-sided cosine fall 1 -> 0 (numerically identical to the gOld half of the
+                // former equalPowerGains() call; the gNew half has been unused since the
+                // incoming voice stopped being faded in).
+                const float gOld = std::cos (static_cast<float> (th) * juce::MathConstants<float>::halfPi);
                 L = gOld * aL[i] + bL[i];
                 R = gOld * aR[i] + bR[i];
 
-                th += retriggerThetaInc;
+                th += declickThetaInc;
                 if (th > 1.0)
                     th = 1.0;
-            }
-            else if (retiring)
-            {
-                // A voice past its synth crossfade but still sample-ringing (fix above) —
-                // no fade shape needed, its own AD env / gates already govern audibility.
-                L = aL[i] + bL[i];
-                R = aR[i] + bR[i];
             }
             else
             {
@@ -377,27 +407,17 @@ namespace kickr
 
             if (theta >= 1.0)
             {
-                // Fix (2026-08-31): the synth crossfade finishing doesn't mean the outgoing
-                // voice is DONE — its sample can still be ringing (isActive() now covers
-                // that, KickVoice fix above). Only reset here if it's genuinely finished;
-                // otherwise demote it to `retiringVoice` so it keeps being rendered/summed
-                // (unscaled, see above) until it naturally ends — or a 3rd trigger steals
-                // the slot (handleNoteOn), which is the unavoidable 2-voice limit.
-                const auto oldIdx = static_cast<size_t> (activeVoice);
-                if (voices[oldIdx].isActive())
-                    retiringVoice = activeVoice;
-                else
-                    voices[oldIdx].reset();
+                // 2026-09-01 (user request — strict mono voice-steal): unconditionally
+                // reset() the outgoing voice the instant its declick fade completes, no
+                // matter whether any of its layers (body/click/sub/tail/noise/sample) would
+                // otherwise still be ringing. By this point its output gain has already
+                // ramped to ~0 via gOld above, so the hard reset itself is inaudible.
+                voices[static_cast<size_t> (activeVoice)].reset();
 
                 activeVoice = incomingVoice;
                 fadeActive  = false;
                 theta       = 0.0;
             }
-        }
-        else if (retiring && ! voices[static_cast<size_t> (retiringVoice)].isActive())
-        {
-            voices[static_cast<size_t> (retiringVoice)].reset();
-            retiringVoice = -1;
         }
 
         oversampling.processSamplesDown (seg);
@@ -449,6 +469,7 @@ namespace kickr
         snap.midDb        = load (pMid,  0.0f);
         snap.highDb       = load (pHigh, 0.0f);
         snap.bodyWidth01  = load (pBodyWidth,   0.0f);   // PHASE 2.9 — STEREO
+        snap.morph01      = load (pMorph,       0.0f);   // 2026-09-01 — body waveform morph
         snap.clickWidth01 = load (pClickWidth,  0.3f);
         snap.outputWidth01 = load (pOutputWidth, 0.5f);
         snap.outputDb     = load (pOutput, 0.0f);        // PHASE 2.9 — OUTPUT
@@ -561,6 +582,7 @@ namespace kickr
             v.setClickParams (snap.clickLevel, snap.clickToneHz, snap.clickTimeMs,
                               snap.clickPitchHz, snap.clickWidth01);   // PHASE 2.9 — clickWidth
             v.setBodyWidth (snap.bodyWidth01);                          // PHASE 2.9 — bodyWidth
+            v.setMorph (snap.morph01);                                  // 2026-09-01 — body waveform morph
             v.setSubParams (snap.subLevel, snap.subFreqHz, snap.subDecayMs);
             v.setTailParams (snap.tailLevel, snap.tailLengthMs, snap.tailTone01, snap.tailDrive01);
             v.setNoiseParams (snap.noiseLevel, snap.noiseDecayMs, snap.noiseTone01, snap.noiseType);
@@ -594,7 +616,7 @@ namespace kickr
                 renderSegment (buffer, pos, evPos - pos);
 
             pos = evPos;
-            handleNoteOn (message);   // Phase 2.3: 2-voice 3 ms equal-power retrigger crossfade
+            handleNoteOn (message);   // hard voice-steal: incoming at full level from sample 0, outgoing gets a 0.75 ms declick then reset()
         }
 
         if (pos < numSamples)

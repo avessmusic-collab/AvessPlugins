@@ -25,9 +25,11 @@ namespace kickr
         Monophonic; `noteOff()` is ignored (the kick runs to completion).
         Renders the body layer x `bodyLevel` x velocity-scaled level.
 
-        PHASE 2.3: KickEngine owns `std::array<KickVoice, 2>` and equal-power crossfades
-        between them on retrigger, so it renders each voice into its own scratch buffer
-        (via `renderStereo` since Phase 2.9) and mixes with the fade gains.
+        PHASE 2.3 (redesigned 2026-09-01): KickEngine owns `std::array<KickVoice, 2>`. On a
+        retrigger the incoming voice plays at full level from sample 0 while the outgoing
+        one gets a 0.75 ms declick fade-out and is then reset() — a hard, strictly-mono
+        voice steal, not a crossfade. Each voice renders into its own scratch buffer (via
+        `renderStereo` since Phase 2.9) and the engine applies the fade gain to the outgoing one.
 
         PHASE 2.4: aggregates a per-voice `ClickGenerator` (3-part synthesised click).
         The click is summed with the body BEFORE the voice's mono output — it carries its
@@ -117,6 +119,9 @@ namespace kickr
 
         /** PHASE 2.9 — per-block: body-path stereo decorrelation amount (`bodyWidth` 0..1). */
         void setBodyWidth (float bodyWidth01) noexcept;
+
+        /** 2026-09-01 — per-block: body oscillator waveform morph, 0 (sine) .. 1 (square). */
+        void setMorph (float morph01) noexcept;
 
         /**
             Per-block: forward the SUB-group snapshot to the SubOscillator

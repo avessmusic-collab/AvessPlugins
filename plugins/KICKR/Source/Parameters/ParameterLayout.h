@@ -10,9 +10,9 @@
 /**
     Table-driven APVTS parameter layout for KICKR.
 
-    59 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
-    "Parameter Mapping"):
-        - 51 juce::AudioParameterFloat   (41 v1 core + 10 v2 SAMPLE)
+    60 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
+    "Parameter Mapping", plus `morph` added 2026-09-01 — see NOTES.md):
+        - 52 juce::AudioParameterFloat   (41 v1 core + 10 v2 SAMPLE + 1 `morph`)
         -  3 juce::AudioParameterChoice  (noiseType, oversampling, tuneMode)
         -  5 juce::AudioParameterBool    (limiter, synthEnable, sampleEnable,
                                           sampleReverse, sampleMidiTrack)
@@ -45,8 +45,9 @@ namespace kickr
         const char* unitLabel;     // "" when unitless
     };
 
-    // 51 float parameters, grouped exactly as parameter-spec.md (41 v1 core + 10 v2 SAMPLE).
-    inline constexpr std::array<FloatParamSpec, 51> kFloatParams { {
+    // 52 float parameters, grouped exactly as parameter-spec.md (41 v1 core + 10 v2 SAMPLE
+    // + 1 `morph`, added 2026-09-01, not in the original locked spec — see NOTES.md).
+    inline constexpr std::array<FloatParamSpec, 52> kFloatParams { {
         // ---- PITCH ----
         { id::fundamental,      "Fundamental",          25.0f,   150.0f,   0.1f,   0.5f,   55.0f,  ""   }, // shown as a note (A1); see createParameterLayout special case
         { id::pitchStart,       "Pitch Start",           1.0f,    10.0f,   0.01f,  0.6f,    4.0f,  "x"  },
@@ -57,6 +58,7 @@ namespace kickr
         { id::bodyLevel,        "Body Level",            0.0f,     1.0f,   0.001f, 1.0f,    1.0f,  ""   },
         { id::bodyDecay,        "Body Decay",           20.0f,  2000.0f,   1.0f,   0.4f,  400.0f,  "ms" },
         { id::bodyHarmonics,    "Body Harmonics",        0.0f,     1.0f,   0.001f, 1.0f,    0.15f, ""   },
+        { id::morph,            "Morph",                 0.0f,     1.0f,   0.001f, 1.0f,    0.0f,  ""   }, // 0 = pure sine (default; matches pre-morph behaviour)
 
         // ---- SUB ----
         { id::subLevel,         "Sub Level",             0.0f,     1.0f,   0.001f, 1.0f,    0.5f,  ""   },

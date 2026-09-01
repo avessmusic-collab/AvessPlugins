@@ -3,8 +3,10 @@
 /**
     Single source of truth for every KICKR APVTS parameter ID string.
 
-    59 automatable parameters: 51 Float, 3 Choice (noiseType, oversampling, tuneMode),
+    60 automatable parameters: 52 Float, 3 Choice (noiseType, oversampling, tuneMode),
     5 Bool (limiter, synthEnable, sampleEnable, sampleReverse, sampleMidiTrack).
+    `morph` added 2026-09-01 (body oscillator waveform morph — not in the original v2
+    parameter-spec.md; see plugins/KICKR/NOTES.md for the addition).
     Randomize / Mutate / Save / sample-bank-browse / sample-drag-drop are UI actions,
     NOT parameters. Sample selection is the state property `currentSampleName`.
 
@@ -24,6 +26,7 @@ namespace kickr::id
     inline constexpr auto bodyLevel        = "bodyLevel";
     inline constexpr auto bodyDecay        = "bodyDecay";
     inline constexpr auto bodyHarmonics    = "bodyHarmonics";
+    inline constexpr auto morph            = "morph";   // 2026-09-01: body osc waveform morph (sine->tri->saw->square)
 
     // ---- SUB --------------------------------------------------------------- -
     inline constexpr auto subLevel         = "subLevel";

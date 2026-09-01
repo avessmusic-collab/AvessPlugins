@@ -40,6 +40,14 @@ namespace kickr
         void prepare (double fsOversampled) noexcept;
         void reset() noexcept;
 
+        /** 2026-09-01 — called by KickEngine on EVERY note-on: clears only the fast/slow
+            envelope followers so each hit's transient detection starts from an identical
+            clean state (fixes retrigger-speed-dependent attack character). Deliberately
+            leaves `smoothedGain` continuous — reset() snaps it to unity, which on a note-on
+            was a one-sample step of up to kMaxGainDb on a still-loud tail whenever
+            Sustain/Attack were non-zero (bug-scan 2026-09-01). */
+        void resetFollowers() noexcept;
+
         /** PHASE 2.10 — OS factor changed: recompute the five one-pole time-constants for
             the new rate. Follower + smoothed-gain state are KEPT. Coefficient-only. */
         void updateOversampledRate (double newFsOversampled) noexcept;

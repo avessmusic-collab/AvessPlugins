@@ -73,5 +73,12 @@ namespace kickr
         static juce::Font titleFont (float heightPx);
         /** Regular tracked caps for control captions / micro labels. */
         static juce::Font microFont (float heightPx);
+
+        /** 2026-09-01 (user request): "numbers and letters appear small" — a small,
+            uniform size boost applied everywhere text is drawn (titleFont/microFont/
+            combo box font here, plus KickrKnob's readout and the analyzer axis labels,
+            which draw fonts directly rather than through these helpers). One constant
+            so every text element grows by the same modest amount. */
+        static constexpr float kTextSizeBoost = 1.12f;
     };
 }

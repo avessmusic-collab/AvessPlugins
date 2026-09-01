@@ -38,13 +38,13 @@ namespace kickr
 
     juce::Font KickrLookAndFeel::titleFont (float heightPx)
     {
-        return juce::Font (juce::FontOptions (juce::jmax (7.0f, heightPx), juce::Font::bold))
+        return juce::Font (juce::FontOptions (juce::jmax (7.0f, heightPx * kTextSizeBoost), juce::Font::bold))
                    .withExtraKerningFactor (0.18f);
     }
 
     juce::Font KickrLookAndFeel::microFont (float heightPx)
     {
-        return juce::Font (juce::FontOptions (juce::jmax (7.0f, heightPx)))
+        return juce::Font (juce::FontOptions (juce::jmax (7.0f, heightPx * kTextSizeBoost)))
                    .withExtraKerningFactor (0.09f);
     }
 
@@ -58,7 +58,8 @@ namespace kickr
             return;
 
         const auto centre = area.getCentre();
-        const auto accent = slider.findColour (juce::Slider::rotarySliderFillColourId);
+        const auto accent = slider.isEnabled() ? slider.findColour (juce::Slider::rotarySliderFillColourId)
+                                                : palette::inkDim.withAlpha (0.45f);
         const float capR  = outerR * 0.80f;
         const float arcR  = outerR * 0.93f;
         const float arcW  = juce::jmax (1.5f, outerR * 0.07f);
@@ -125,18 +126,20 @@ namespace kickr
 
         auto b = button.getLocalBounds().toFloat().reduced (1.5f);
         const bool on = button.getToggleState();
+        const bool enabled = button.isEnabled();
         const auto accent = button.findColour (juce::ToggleButton::tickColourId);
         const float r = juce::jmin (b.getHeight() * 0.5f, 9.0f);
 
-        g.setColour (on ? accent.withAlpha (0.16f) : palette::panelLo);
+        g.setColour (on && enabled ? accent.withAlpha (0.16f) : palette::panelLo);
         g.fillRoundedRectangle (b, r);
 
-        g.setColour (on ? accent.withAlpha (0.90f)
-                        : (shouldDrawButtonAsHighlighted ? palette::ink.withAlpha (0.5f)
-                                                         : palette::panelEdge));
+        g.setColour (! enabled ? palette::inkDim.withAlpha (0.35f)
+                    : on ? accent.withAlpha (0.90f)
+                    : (shouldDrawButtonAsHighlighted ? palette::ink.withAlpha (0.5f)
+                                                     : palette::panelEdge));
         g.drawRoundedRectangle (b, r, 1.2f);
 
-        g.setColour (on ? palette::inkHi : palette::inkDim);
+        g.setColour (! enabled ? palette::inkDim.withAlpha (0.5f) : (on ? palette::inkHi : palette::inkDim));
         g.setFont (microFont (juce::jmin (b.getHeight() * 0.5f, 11.0f)));
         g.drawText (button.getButtonText(), b, juce::Justification::centred, false);
     }
@@ -167,7 +170,7 @@ namespace kickr
     juce::Font KickrLookAndFeel::getComboBoxFont (juce::ComboBox& box)
     {
         return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                              juce::jlimit (9.0f, 15.0f, (float) box.getHeight() * 0.5f),
+                                              juce::jlimit (9.0f, 15.0f, (float) box.getHeight() * 0.5f) * kTextSizeBoost,
                                               juce::Font::plain))
                    .withExtraKerningFactor (0.04f);
     }

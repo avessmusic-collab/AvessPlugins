@@ -27,6 +27,7 @@ namespace kickr
             { id::bodyLevel,        "Level of the sine body oscillator." },
             { id::bodyDecay,        "Decay time of the body's amplitude envelope." },
             { id::bodyHarmonics,    "Adds harmonic saturation to the body oscillator's own tone." },
+            { id::morph,            "Morphs the body oscillator's waveform: sine -> triangle -> saw -> square." },
             // ---- SUB ------------------------------------------------------------------
             { id::subLevel,         "Level of the independent sub-bass sine layer." },
             { id::subFreq,          "Fixed frequency of the sub layer - doesn't follow the pitch envelope." },

@@ -89,12 +89,19 @@ namespace kickr
         const int readoutH = juce::jlimit (11, 22, getHeight() / 6);
         const auto area = getLocalBounds().removeFromBottom (readoutH);
 
-        const float fs = knobSize == Size::Large ? 12.5f
-                       : knobSize == Size::Small ? 9.0f : 10.5f;
+        const float fs = (knobSize == Size::Large ? 12.5f
+                       : knobSize == Size::Small ? 9.0f : 10.5f) * KickrLookAndFeel::kTextSizeBoost;
 
-        g.setColour (palette::inkHi);
+        g.setColour (isEnabled() ? palette::inkHi : palette::inkDim.withAlpha (0.5f));
         g.setFont (juce::Font (juce::FontOptions (fs)));
         g.drawText (readoutText, area, juce::Justification::centred, false);
+    }
+
+    void KickrKnob::enablementChanged()
+    {
+        captionLabel.setColour (juce::Label::textColourId,
+                                isEnabled() ? palette::inkDim : palette::inkDim.withAlpha (0.4f));
+        repaint();
     }
 
     //==============================================================================

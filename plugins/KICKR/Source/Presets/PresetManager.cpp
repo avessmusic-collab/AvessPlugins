@@ -86,7 +86,7 @@ namespace kickr
 
         // Musically sensible sub-ranges for Randomize (NOT the full param range).
         struct RandRange { const char* id; float lo; float hi; };
-        const std::array<RandRange, 32> kRandRanges { {
+        const std::array<RandRange, 33> kRandRanges { {
             { pid::fundamental,      35.0f,   70.0f },
             { pid::pitchStart,        2.0f,    8.0f },
             { pid::pitchTime,        20.0f,  120.0f },
@@ -94,6 +94,7 @@ namespace kickr
             { pid::bodyLevel,         0.70f,   1.0f },
             { pid::bodyDecay,       120.0f,  700.0f },
             { pid::bodyHarmonics,     0.0f,    0.40f },
+            { pid::morph,             0.0f,    0.50f },   // 2026-09-01: sine..triangle..early saw — the gentler half, like `character`/`bodyHarmonics` above
             { pid::subLevel,          0.20f,   0.80f },
             { pid::subFreq,          30.0f,   55.0f },
             { pid::subDecay,        100.0f,  500.0f },
@@ -274,7 +275,12 @@ namespace kickr
 
         ns.setProperty ("currentPresetName", f.name, nullptr);
         ns.setProperty ("currentPresetPath", juce::String(), nullptr);
-        ns.setProperty ("currentSampleName", juce::String(), nullptr);   // synth-only
+        // Factory presets are synth-only in SOUND (sampleEnable written 0 above), but they
+        // keep whatever kick is currently loaded in the SAMPLE strip rather than clearing it
+        // (bug-scan 2026-09-01, code-review CONFIRMED: writing "" here undid the fresh-
+        // instance "first factory kick preloaded, section off" seeding the moment any factory
+        // preset was loaded — the strip fell back to "N kicks in the bank" with nothing armed).
+        ns.setProperty ("currentSampleName", getSampleName ? getSampleName() : juce::String(), nullptr);
 
         applyStateUndoable (std::move (ns), juce::String ("Preset: ") + f.name);
     }

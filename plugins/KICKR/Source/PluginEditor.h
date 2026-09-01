@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <vector>
@@ -21,7 +22,7 @@ class KICKRAudioProcessor;
     Mirrors the approved v2 mockup (`plugins/KICKR/.ideas/mockups/v1-ui-concept.html`):
     soft slate-grey chassis + recessed faceplate, header, an oscilloscope PLACEHOLDER
     (real analyzer is Phase 3.2), the SAMPLE strip, four PUNCH/BODY/CRUSH/TAIL macro
-    modules and a 7-cell engine strip. Every one of the 59 APVTS parameters is bound
+    modules and a 7-cell engine strip. Every one of the 60 APVTS parameters is bound
     exactly once via SliderAttachment / ButtonAttachment / ComboBoxAttachment.
 
     Resizable, fixed 1600:1170 aspect; all layout scales from getLocalBounds() through a
@@ -50,6 +51,16 @@ public:
     /** Test hook — run the drop path for one file. */
     void importDroppedFileForTest (const juce::File& f) { importAudioFile (f); }
 
+    /** Test hook — how many of the sample-tweak controls currently report enabled
+        (via the real Component::isEnabled() chain, not a mirrored flag). Should be
+        0 while sampleEnable is off and sampleTweaksCountForTest() once it's on. */
+    int countEnabledSampleTweaksForTest() const noexcept
+    {
+        return (int) std::count_if (sampleTweaks.begin(), sampleTweaks.end(),
+                                    [] (juce::Component* c) { return c != nullptr && c->isEnabled(); });
+    }
+    int sampleTweaksCountForTest() const noexcept { return (int) sampleTweaks.size(); }
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
@@ -77,6 +88,7 @@ private:
     void layoutSample (juce::Rectangle<int>);
     void layoutHeroes (juce::Rectangle<int>);
     void layoutEngine (juce::Rectangle<int>);
+    void layoutMorph (juce::Rectangle<int>);   // 2026-09-01 — Morph knob, left of the scope panel
 
     void updateSampleLabel();
     void updateUndoRedoState();
@@ -117,12 +129,19 @@ private:
     kickr::WaveformDisplay waveDisplay     { proc.getAnalyzer() };
     kickr::SpectrumDisplay spectrumDisplay { proc.getAnalyzer() };
 
+    // 2026-09-01 (user request) — Morph: body oscillator waveform morph, left of the scope.
+    kickr::KickrKnob* morphKnob { nullptr };
+
     // ---- sample strip ----
     juce::Label      sampleNameLabel, sampleDropHint;
     juce::TextButton samplePrev { juce::String::fromUTF8 ("\xe2\x97\x84") };
     juce::TextButton sampleNext { juce::String::fromUTF8 ("\xe2\x96\xba") };
     std::array<juce::Component*, 2> sampleToggles {};
     std::vector<juce::Component*>   sampleTweaks;
+    // 2026-09-01 (user request): grey out + disable sampleTweaks while sampleEnable is
+    // off. juce::ParameterAttachment marshals both UI clicks and host automation to the
+    // message thread for us, so the callback can touch components directly (no timer).
+    std::unique_ptr<juce::ParameterAttachment> sampleEnableWatcher;
     // Small static preview of the currently loaded sample file (user request 2026-08-31)
     // — not the live scope; shows the raw file + the sampleStart/sampleEnd trim window.
     kickr::SampleWaveformView sampleWaveform { proc.getValueTreeState() };

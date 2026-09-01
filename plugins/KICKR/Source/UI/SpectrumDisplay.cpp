@@ -150,7 +150,7 @@ namespace kickr
 
         // ---- axis labels ----------------------------------------------
         g.setColour (pal::ink.withAlpha (0.32f));
-        g.setFont (juce::Font (juce::FontOptions (8.0f * s)));
+        g.setFont (juce::Font (juce::FontOptions (8.0f * s * KickrLookAndFeel::kTextSizeBoost)));
         const int lh = juce::roundToInt (12.0f * s);
         const int lw = juce::roundToInt (44.0f * s);
         const int ly = juce::roundToInt (r.getBottom() - 13.0f * s);

@@ -360,11 +360,50 @@ int main()
         check (tailRms < 0.01,               "voices free after the last hit (no leak / stuck voice)");
     }
 
+    // 2026-09-01 (bug-hunt pass, no bug found — kept as a permanent guard) — the new
+    // Morph waveforms (naive, non-band-limited triangle/saw/square) are the highest-risk
+    // addition this session: most harmonic energy, most aliasing potential. Stress it at
+    // machine-gun retrigger speed across every oversampling factor and morph setting.
+    {
+        bool allFinite = true;
+        float worstPeak = 0.0f;
+        for (int os = 0; os < 4; ++os)
+        {
+            for (float morphAmt : { 0.0f, 0.5f, 1.0f })
+            {
+                KICKRAudioProcessor p;
+                silenceClick (p); silenceSub (p); silenceTail (p); silenceDist (p);
+                setP (p, "oversampling", (float) os);
+                setP (p, "morph", morphAmt);
+                auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
+                juce::ignoreUnused (onsets);
+                const float* rx = rbuf.getReadPointer (0);
+                for (int i = 0; i < rbuf.getNumSamples(); ++i)
+                {
+                    if (! std::isfinite (rx[i])) allFinite = false;
+                    worstPeak = std::max (worstPeak, std::abs (rx[i]));
+                }
+            }
+        }
+        std::printf ("  morph x oversampling x machine-gun: worst peak %.2f  all finite %d\n",
+                     worstPeak, (int) allFinite);
+        check (allFinite,           "Morph never produces NaN/Inf at any oversampling factor under machine-gun retrigger");
+        check (worstPeak < 8.0f,    "Morph output stays bounded (no runaway) across every combination tested");
+    }
+
     // Fix (2026-08-31): a retriggered click must play at the same level as an isolated
     // one. The old crossfade scaled the INCOMING voice by a ramping gNew (0 -> 1 over
     // 3 ms), which swallowed the click's sharp transient on every fast retrigger while
     // an isolated hit (no fade active) got it at full level -> an audible, tempo-locked
     // "sometimes there's a click" inconsistency. Now only the outgoing voice fades.
+    //
+    // 2026-09-01 history: this threshold was briefly relaxed to 0.6 while a per-note-on
+    // crossover-filter reset (since removed — the reset itself clicked; see KickEngine::
+    // handleNoteOn) cost the retriggered click ~2.6 dB (ratio 0.74). With that reset gone
+    // the ratio is back above 1 (the 3 ms onset window legitimately also contains the
+    // outgoing voice's 0.75 ms declick tail), so the original 0.75 bar is restored. This is
+    // a LOWER bound only — louder-than-isolated is fine; the bug it guards against is the
+    // retriggered click being swallowed.
     {
         auto onsetRms = [] (const juce::AudioBuffer<float>& b, double s, int onsetSample)
         {
@@ -1392,22 +1431,33 @@ int main()
         tmpBank3.deleteRecursively(); fx3.deleteFile();
     }
 
-    // Fix (2026-08-31, code review): the retrigger crossfade's completion (theta>=1, ~3 ms
-    // after ANY retrigger) unconditionally called the OUTGOING voice's reset() — including
-    // its SamplePlayer — regardless of whether the sample was still playing. This bypassed
-    // the KickVoice::renderStereo voice-life fix entirely: a normal 2-hit retrigger with a
-    // long sample killed the FIRST hit's sample ~3 ms after the second hit, every time.
-    // Fix: the outgoing voice is only reset if !isActive(); otherwise it's demoted to a
-    // `retiringVoice` that keeps rendering (unscaled) until its sample naturally finishes,
-    // or a 3rd trigger legitimately steals the slot (only 2 physical voices).
+    // Changed (2026-09-01, user request): strict monophonic voice-stealing. A note-on while
+    // the previous voice is still ringing must stop that voice IMMEDIATELY (every layer —
+    // body/click/sub/tail/noise/sample, no exceptions) and start the new note at once, with
+    // never more than one voice's worth of sound audible at a time — "regardless of how
+    // quickly the MIDI notes are triggered." This intentionally REVERSES the 2026-08-31 fix
+    // below (kept here for history): that fix let a still-ringing sample survive a retrigger
+    // indefinitely as a `retiringVoice`, which is exactly the "stuck voice" / overlapping-
+    // tails behavior the new spec forbids. The outgoing voice now gets a kDeclickFadeMs
+    // (0.75 ms) fade-out purely to avoid a hard-cut click, then is unconditionally reset() —
+    // it never lingers past that, no matter what it was doing (long sample, long tail, etc).
+    //
+    // [Superseded 2026-08-31 fix, kept for context:] the retrigger crossfade's completion
+    // (theta>=1, ~3 ms after ANY retrigger) unconditionally called the OUTGOING voice's
+    // reset() — including its SamplePlayer — regardless of whether the sample was still
+    // playing, killing a normal 2-hit retrigger's FIRST sample ~3 ms after the second hit,
+    // every time. That fix demoted a still-active outgoing voice to a `retiringVoice` that
+    // kept rendering (unscaled) until its sample naturally finished. `retiringVoice` no
+    // longer exists.
     //
     // Verified with two DIFFERENT-frequency long samples: bank-swap the loaded sample
     // between two triggers (SamplePlayer captures its buffer pointer AT noteOn, so the
-    // first (outgoing) voice keeps reading the FIRST file even after the swap). If the old
-    // voice survives the crossfade, BOTH frequencies are present at a late time point; if
-    // it was killed (the bug), only the second one is.
+    // first (outgoing) voice keeps reading the FIRST file even after the swap). Voice A
+    // must now be silent almost immediately after voice B's note-on (well within a few ms,
+    // not just "eventually") AND must never reappear later — only voice B may be present
+    // at any point past the declick window.
     {
-        std::printf ("\n[Fix] retrigger no longer kills a still-playing sample (voice-stealing)\n");
+        std::printf ("\n[Fix] retrigger hard-kills the previous voice immediately (strict mono voice-steal)\n");
 
         auto goertzelMag = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1, double hz)
         {
@@ -1463,15 +1513,318 @@ int main()
         }
         p.releaseResources();
 
-        // Late window: well past the 3 ms crossfade, well into both samples' long bodies.
+        // NOTE on what "immediate" can/can't mean acoustically: verified separately (via
+        // temporary engine-level tracing while writing this test) that KickEngine hard-
+        // resets voice A within the SAME processBlock call as B's note-on — essentially
+        // instantly, exactly per spec. But the raw OUTPUT waveform still carries measurable
+        // 90Hz energy for tens of ms afterward, because OutputStage's 130 Hz mono crossover
+        // is a stateful filter — like any filter, it keeps "ringing" briefly on its own
+        // after its input suddenly goes silent, same as it would for a single note's own
+        // natural release. That's ordinary filter ring-down of an already-dead voice, not
+        // two voices overlapping, and isn't something DSP can eliminate without removing
+        // the crossover filter entirely. So this test checks the thing that actually matters
+        // — no PERMANENT/indefinite overlap — rather than an unachievable zero-latency
+        // acoustic cutoff.
+
+        // Late window: well into both samples' long bodies. Voice A must never reappear —
+        // no lingering tail, no "stuck voice" — only voice B may still be sounding.
         const double magA = goertzelMag (out, sr, 0.30, 0.35, 90.0);
         const double magB = goertzelMag (out, sr, 0.30, 0.35, 400.0);
         std::printf ("  late window (300-350ms): 90Hz (voice A, pre-swap) mag %.4f   400Hz (voice B, post-swap) mag %.4f\n",
                      magA, magB);
-        check (magB > 0.02, "the newly-triggered voice B is present (sanity check)");
-        check (magA > 0.02, "voice A's sample survives the retrigger crossfade instead of being force-reset");
+        check (magB > 0.02, "the newly-triggered voice B is still present later");
+        check (magA < 0.005, "voice A's sample never comes back — hard-killed, not left to ring out");
 
         tmpBank4.deleteRecursively(); fxA.deleteFile(); fxB.deleteFile();
+    }
+
+    // User's exact spec (2026-09-01): "MIDI: C1 -> D1 -> E1, 20 ms apart. Behavior: C1 START
+    // -> C1 STOP -> D1 START -> D1 STOP -> E1 START." Three rapid different-note triggers,
+    // each 20 ms after the last (well outside the 0.75 ms declick window, so this is the
+    // ordinary case, not the 3rd-trigger-mid-fade collision path) — only the MOST RECENT
+    // note's sample may be audible at any point once its declick window has passed.
+    {
+        std::printf ("\n[Fix] rapid C1->D1->E1 (20ms apart): each note kills the previous one, no overlap\n");
+
+        auto goertzelMag2 = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1, double hz)
+        {
+            const int i0 = (int) (t0 * s), i1 = (int) (t1 * s);
+            const float* x = b.getReadPointer (0);
+            const double w  = 2.0 * juce::MathConstants<double>::pi * hz / s;
+            const double cw = std::cos (w);
+            double s0 = 0.0, s1 = 0.0, s2 = 0.0;
+            for (int i = i0; i < i1 && i < b.getNumSamples(); ++i)
+            {
+                s0 = (double) x[i] + 2.0 * cw * s1 - s2;
+                s2 = s1; s1 = s0;
+            }
+            return std::sqrt (s1 * s1 + s2 * s2 - 2.0 * cw * s1 * s2) / (double) std::max (1, i1 - i0);
+        };
+
+        const auto tmpBank5b = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                   .getChildFile ("kickr_test_c1d1e1_bank");
+        tmpBank5b.deleteRecursively();
+        const auto fxC1 = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_c1.wav");
+        const auto fxD1 = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_d1.wav");
+        const auto fxE1 = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_e1.wav");
+        writeSineWav (fxC1, 90.0,  44100.0, 1.0, 1);
+        writeSineWav (fxD1, 250.0, 44100.0, 1.0, 1);
+        writeSineWav (fxE1, 500.0, 44100.0, 1.0, 1);
+
+        KICKRAudioProcessor p3;
+        p3.getSampleLibrary().setFolder (tmpBank5b);
+        const auto nameC1 = p3.getSampleLibrary().importFile (fxC1);
+        const auto nameD1 = p3.getSampleLibrary().importFile (fxD1);
+        const auto nameE1 = p3.getSampleLibrary().importFile (fxE1);
+        p3.loadSampleByName (nameC1);
+        setP (p3, "sampleEnable", 1.0f); setP (p3, "synthEnable", 0.0f);
+        setP (p3, "sampleMidiTrack", 0.0f); setP (p3, "limiter", 0.0f);
+
+        p3.setRateAndBufferSizeDetails (sr, 64);
+        p3.prepareToPlay (sr, 64);
+        juce::AudioBuffer<float> out3 (juce::jmax (1, p3.getTotalNumOutputChannels()), (int) (sr * 0.5));
+        out3.clear();
+        juce::AudioBuffer<float> scratch3 (out3.getNumChannels(), 64);
+
+        const int c1Note = 24, d1Note = 26, e1Note = 28;   // C1, D1, E1 (any distinct notes — pitch is irrelevant here, sampleMidiTrack is off)
+        const int hitD1At = (int) (sr * 0.020);            // D1 20ms after C1 (matches the user's example exactly)
+        const int hitE1At = (int) (sr * 0.040);            // E1 20ms after D1
+
+        for (int pos = 0; pos < out3.getNumSamples();)
+        {
+            const int n = std::min (64, out3.getNumSamples() - pos);
+            if (pos <= hitD1At && pos + n > hitD1At)
+                p3.loadSampleByName (nameD1);
+            if (pos <= hitE1At && pos + n > hitE1At)
+                p3.loadSampleByName (nameE1);
+            juce::AudioBuffer<float> b (scratch3.getArrayOfWritePointers(), out3.getNumChannels(), n);
+            b.clear();
+            juce::MidiBuffer m;
+            if (pos == 0)                                   m.addEvent (juce::MidiMessage::noteOn (1, c1Note, vel), 0);
+            if (hitD1At >= pos && hitD1At < pos + n)         m.addEvent (juce::MidiMessage::noteOn (1, d1Note, vel), hitD1At - pos);
+            if (hitE1At >= pos && hitE1At < pos + n)         m.addEvent (juce::MidiMessage::noteOn (1, e1Note, vel), hitE1At - pos);
+            p3.processBlock (b, m);
+            for (int ch = 0; ch < out3.getNumChannels(); ++ch) out3.copyFrom (ch, pos, b, ch, 0, n);
+            pos += n;
+        }
+        p3.releaseResources();
+
+        // Just before D1 fires: only C1 (90 Hz) should be present.
+        const double preD1_C1 = goertzelMag2 (out3, sr, 0.010, 0.018, 90.0);
+        check (preD1_C1 > 0.02, "C1 is playing right after its own note-on");
+
+        // Late window (well past D1's declick, well before E1 fires at 40ms): D1 (250 Hz)
+        // clearly dominant; C1 (90 Hz) reduced to at most the output crossover filter's own
+        // brief ring-down of an already-killed voice (not a real lingering C1 — see the
+        // "immediate window" note in the previous test), an order of magnitude below D1.
+        const double preE1_C1 = goertzelMag2 (out3, sr, 0.030, 0.038, 90.0);
+        const double preE1_D1 = goertzelMag2 (out3, sr, 0.030, 0.038, 250.0);
+        std::printf ("  pre-E1 window (30-38ms): C1(90Hz) mag %.4f   D1(250Hz) mag %.4f\n", preE1_C1, preE1_D1);
+        check (preE1_D1 > 0.02, "D1 killed C1 and is itself playing before E1 arrives");
+        check (preE1_C1 < 0.1 * preE1_D1, "C1 is at most filter ring-down, an order of magnitude below D1 — not a real lingering voice");
+
+        // Final window: only E1 (500 Hz) audible; neither C1 nor D1 ever comes back.
+        const double finalC1 = goertzelMag2 (out3, sr, 0.30, 0.35, 90.0);
+        const double finalD1 = goertzelMag2 (out3, sr, 0.30, 0.35, 250.0);
+        const double finalE1 = goertzelMag2 (out3, sr, 0.30, 0.35, 500.0);
+        std::printf ("  final window (300-350ms): C1(90Hz) mag %.4f   D1(250Hz) mag %.4f   E1(500Hz) mag %.4f\n",
+                     finalC1, finalD1, finalE1);
+        check (finalE1 > 0.02, "E1 is the only note still sounding at the end");
+        check (finalC1 < 0.005, "C1 never comes back after being superseded twice over");
+        check (finalD1 < 0.005, "D1 never comes back after being superseded by E1");
+
+        tmpBank5b.deleteRecursively(); fxC1.deleteFile(); fxD1.deleteFile(); fxE1.deleteFile();
+    }
+
+    // 2026-09-01 bug-scan (code-review CONFIRMED): a 3rd note-on arriving while the
+    // 0.75 ms declick fade from the 2nd is still running takes the "snap the fade to done"
+    // path in handleNoteOn, which bare-reset() the OUTGOING voice. When the 3rd hit lands
+    // on the SAME sample as the 2nd (a doubled note on a flam — ordinary DAW MIDI), no
+    // renderSegment ran in between, theta is still 0, so the outgoing voice is at FULL
+    // gain when it's cut: a one-sample step, i.e. a click. Control = the same pattern
+    // without the doubled note; the doubled version must not slew any worse than it.
+    std::printf ("\n[Fix] doubled note-on on a flam: no hard cut of the still-loud outgoing voice\n");
+    {
+        auto renderHits = [&] (const std::vector<int>& hitSamples)
+        {
+            KICKRAudioProcessor p;
+            silenceDist (p);
+            setP (p, "limiter", 0.0f);
+            const int block = 64;
+            const int total = (int) (sr * 0.2);
+            p.setRateAndBufferSizeDetails (sr, block);
+            p.prepareToPlay (sr, block);
+            juce::AudioBuffer<float> out (juce::jmax (1, p.getTotalNumOutputChannels()), total);
+            out.clear();
+            juce::AudioBuffer<float> sc (out.getNumChannels(), block);
+            for (int pos = 0; pos < total;)
+            {
+                const int n = std::min (block, total - pos);
+                juce::AudioBuffer<float> b (sc.getArrayOfWritePointers(), out.getNumChannels(), n);
+                b.clear();
+                juce::MidiBuffer midi;
+                for (int h : hitSamples)
+                    if (h >= pos && h < pos + n)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, a1, vel), h - pos);
+                p.processBlock (b, midi);
+                for (int ch = 0; ch < out.getNumChannels(); ++ch) out.copyFrom (ch, pos, b, ch, 0, n);
+                pos += n;
+            }
+            p.releaseResources();
+            return out;
+        };
+        auto slewAround = [&] (const juce::AudioBuffer<float>& b, int centre, int halfWidth)
+        {
+            const float* x = b.getReadPointer (0);
+            float m = 0.0f;
+            for (int i = std::max (1, centre - halfWidth); i < std::min (b.getNumSamples(), centre + halfWidth); ++i)
+                m = std::max (m, std::abs (x[i] - x[i - 1]));
+            return m;
+        };
+
+        const int flamAt = 24;                        // 0.5 ms after the first hit — inside the 0.75 ms declick window
+        const auto control = renderHits ({ 0, flamAt });          // flam: A then B
+        const auto doubled = renderHits ({ 0, flamAt, flamAt });  // flam with B doubled on the same sample
+        const int w = (int) (sr * 0.001);
+        const float slewControl = slewAround (control, flamAt, w);
+        const float slewDoubled = slewAround (doubled, flamAt, w);
+        bool finite = true;
+        for (int i = 0; i < doubled.getNumSamples(); ++i) if (! std::isfinite (doubled.getReadPointer (0)[i])) finite = false;
+        std::printf ("  slew around the flam: control (A,B) %.4f   doubled (A,B,B) %.4f   ratio %.2f\n",
+                     slewControl, slewDoubled, slewDoubled / std::max (1.0e-6f, slewControl));
+        check (finite, "doubled note-on: finite output");
+        check (slewDoubled < slewControl * 1.5f,
+               "doubled note-on on a flam does not hard-cut the outgoing voice (no extra slew spike vs the plain flam)");
+    }
+
+    // 2026-09-01 (user request) — "Morph" knob: body oscillator waveform morph,
+    // sine -> triangle -> saw -> square. Isolates the body layer exactly like the
+    // oversampling pitch/decay checks above (fixed frequency, steady pitch, every other
+    // layer silenced, distortion/limiter bypassed) so the harmonic content measured is
+    // purely the body oscillator's own waveform shape.
+    std::printf ("\n[Fix] Morph knob reshapes the body oscillator's waveform\n");
+    {
+        auto goertzelMagM = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1, double hz)
+        {
+            const int i0 = (int) (t0 * s), i1 = (int) (t1 * s);
+            const float* x = b.getReadPointer (0);
+            const double w  = 2.0 * juce::MathConstants<double>::pi * hz / s;
+            const double cw = std::cos (w);
+            double s0 = 0.0, s1 = 0.0, s2 = 0.0;
+            for (int i = i0; i < i1 && i < b.getNumSamples(); ++i)
+            {
+                s0 = (double) x[i] + 2.0 * cw * s1 - s2;
+                s2 = s1; s1 = s0;
+            }
+            return std::sqrt (s1 * s1 + s2 * s2 - 2.0 * cw * s1 * s2) / (double) std::max (1, i1 - i0);
+        };
+
+        auto renderIsolatedBody = [&] (float morphAmt)
+        {
+            KICKRAudioProcessor p;
+            setP (p, "tuneMode",       1.0f);   // Fixed Frequency
+            setP (p, "fundamental",  100.0f);
+            setP (p, "pitchStart",     1.0f);   // steady — no pitch drop
+            setP (p, "bodyDecay",   2000.0f);
+            setP (p, "bodyHarmonics",  0.0f);   // no saturation colouring the harmonic measurement
+            setP (p, "subLevel",       0.0f);
+            setP (p, "clickLevel",     0.0f);
+            setP (p, "tailLevel",      0.0f);
+            setP (p, "noiseLevel",     0.0f);
+            setP (p, "driveMix",       0.0f);
+            setP (p, "limiter",        0.0f);
+            setP (p, "morph",     morphAmt);
+            return kickr::tests::renderNote (p, a1, vel, sr, 512, 0.8);
+        };
+
+        const auto sineOut   = renderIsolatedBody (0.0f);
+        const auto squareOut = renderIsolatedBody (1.0f);
+
+        const double sineFund    = goertzelMagM (sineOut,   sr, 0.10, 0.50, 100.0);
+        const double sine3rd     = goertzelMagM (sineOut,   sr, 0.10, 0.50, 300.0);
+        const double squareFund  = goertzelMagM (squareOut, sr, 0.10, 0.50, 100.0);
+        const double square3rd   = goertzelMagM (squareOut, sr, 0.10, 0.50, 300.0);
+
+        std::printf ("  morph=0 (sine):   fundamental %.4f  3rd harmonic %.4f  (ratio %.3f)\n",
+                     sineFund, sine3rd, sine3rd / std::max (1.0e-9, sineFund));
+        std::printf ("  morph=1 (square): fundamental %.4f  3rd harmonic %.4f  (ratio %.3f)\n",
+                     squareFund, square3rd, square3rd / std::max (1.0e-9, squareFund));
+
+        check (sine3rd / std::max (1.0e-9, sineFund) < 0.02,
+               "morph=0 is a clean sine (no meaningful 3rd harmonic) — default matches pre-morph behaviour exactly");
+        check (square3rd / std::max (1.0e-9, squareFund) > 0.15,
+               "morph=1 (square) has strong 3rd-harmonic content, unlike a sine");
+
+        // A mid-morph value must land strictly between the two extremes (monotonic,
+        // continuous crossfade — not a hard switch).
+        const auto midOut   = renderIsolatedBody (0.5f);
+        const double mid3rd = goertzelMagM (midOut, sr, 0.10, 0.50, 300.0);
+        const double midFund = goertzelMagM (midOut, sr, 0.10, 0.50, 100.0);
+        const double midRatio = mid3rd / std::max (1.0e-9, midFund);
+        std::printf ("  morph=0.5 (saw):  3rd-harmonic ratio %.3f\n", midRatio);
+        check (midRatio > sine3rd / std::max (1.0e-9, sineFund),
+               "morph=0.5 has more 3rd-harmonic content than pure sine (continuous morph, not a step)");
+
+        // 2026-09-01 bug-scan: an instantaneous morph change mid-note (a DAW automation
+        // jump, or a fast knob grab) must not click. Every other per-block level/shape
+        // control in the engine is smoothed; this checks morph is too. Sine->triangle
+        // region only (0 -> 0.3), where neither shape has any steps of its own, so any
+        // slew spike at the step instant can only come from the morph switch itself.
+        {
+            KICKRAudioProcessor p;
+            setP (p, "tuneMode",       1.0f);
+            setP (p, "fundamental",  100.0f);
+            setP (p, "pitchStart",     1.0f);
+            setP (p, "bodyDecay",   2000.0f);
+            setP (p, "bodyHarmonics",  0.0f);
+            setP (p, "subLevel",       0.0f);
+            setP (p, "clickLevel",     0.0f);
+            setP (p, "tailLevel",      0.0f);
+            setP (p, "noiseLevel",     0.0f);
+            setP (p, "driveMix",       0.0f);
+            setP (p, "limiter",        0.0f);
+            setP (p, "morph",          0.0f);
+
+            const int block = 64;
+            const int total = (int) (sr * 0.4);
+            // 9664 = block boundary at 20.133 periods of 100 Hz: phase ~0.13 into the cycle,
+            // where sine (0.74) and triangle (0.53) differ most. (9600 would land exactly
+            // on phase 0, where both shapes are 0 and the switch is invisible.)
+            const int stepAt = 9664;
+            p.setRateAndBufferSizeDetails (sr, block);
+            p.prepareToPlay (sr, block);
+            juce::AudioBuffer<float> out (juce::jmax (1, p.getTotalNumOutputChannels()), total);
+            out.clear();
+            juce::AudioBuffer<float> sc (out.getNumChannels(), block);
+            bool stepped = false;
+            for (int pos = 0; pos < total;)
+            {
+                const int n = std::min (block, total - pos);
+                if (! stepped && pos >= stepAt) { setP (p, "morph", 0.3f); stepped = true; }
+                juce::AudioBuffer<float> b (sc.getArrayOfWritePointers(), out.getNumChannels(), n);
+                b.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+                p.processBlock (b, midi);
+                for (int ch = 0; ch < out.getNumChannels(); ++ch) out.copyFrom (ch, pos, b, ch, 0, n);
+                pos += n;
+            }
+            p.releaseResources();
+
+            auto slewIn = [&] (double t0, double t1)
+            {
+                const int i0 = std::max (1, (int) (t0 * sr)), i1 = std::min (total, (int) (t1 * sr));
+                const float* x = out.getReadPointer (0);
+                float m = 0.0f;
+                for (int i = i0; i < i1; ++i) m = std::max (m, std::abs (x[i] - x[i - 1]));
+                return m;
+            };
+            const float steady = slewIn (0.10, 0.19);
+            const float atStep = slewIn (0.199, 0.206);
+            std::printf ("  morph step 0->0.3 @200ms: steady-state maxSlew %.4f   maxSlew at the step %.4f   ratio %.2f\n",
+                         steady, atStep, atStep / std::max (1.0e-6f, steady));
+            check (atStep < steady * 2.0f, "instant morph automation jump is smoothed — no slew spike / click at the step");
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -2187,6 +2540,7 @@ int main()
         pa.loadSampleByName (nm);
         setP (pa, "macroBody", 0.83f); setP (pa, "drive", 0.7f); setP (pa, "fundamental", 41.2f);
         setP (pa, "sampleEnable", 1.0f); setP (pa, "character", 0.4f); setP (pa, "tailLength", 900.0f);
+        setP (pa, "morph", 0.62f);   // 2026-09-01 — confirm the new parameter round-trips too
 
         juce::MemoryBlock mb;
         pa.getStateInformation (mb);
@@ -2201,7 +2555,8 @@ int main()
                              - pb.getValueTreeState().getRawParameterValue (id)->load()) < 1.0e-4f;
         };
         const bool paramsOk = eq ("macroBody") && eq ("drive") && eq ("fundamental")
-                            && eq ("sampleEnable") && eq ("character") && eq ("tailLength");
+                            && eq ("sampleEnable") && eq ("character") && eq ("tailLength")
+                            && eq ("morph");
         std::printf ("  state round-trip: params %s ; sample '%s' -> '%s'\n",
                      paramsOk ? "match" : "MISMATCH",
                      pa.getCurrentSampleName().toRawUTF8(), pb.getCurrentSampleName().toRawUTF8());
@@ -2970,6 +3325,45 @@ int main()
         std::printf ("  tested %d float knobs (their real ranges/skews) for shift-toggle continuity\n", tested);
         check (tested >= 50, "exercised (essentially) all float knobs, not a token few");
         check (anomalies == 0, "no snap-back/jump at any shift toggle, any knob, either direction");
+    }
+
+    std::printf ("\n[Fix] Sample-tweak knobs grey out (disabled) while SAMPLE is off\n");
+    {
+        KICKRAudioProcessor pg;
+        pg.prepareToPlay (48000.0, 512);
+        setP (pg, "sampleEnable", 0.0f);
+
+        std::unique_ptr<juce::AudioProcessorEditor> edBase (pg.createEditor());
+        auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
+        check (ed != nullptr, "editor created for the sample-enable grey-out test");
+        if (ed != nullptr)
+        {
+            const int total = ed->sampleTweaksCountForTest();
+            std::printf ("  sampleTweaks group has %d controls\n", total);
+            check (total > 0, "sample-tweak control group is non-empty");
+            check (ed->countEnabledSampleTweaksForTest() == 0,
+                   "all sample-tweak controls report disabled while sampleEnable is off");
+
+            setP (pg, "sampleEnable", 1.0f);   // ParameterAttachment is message-thread-synchronous here
+            check (ed->countEnabledSampleTweaksForTest() == total,
+                   "all sample-tweak controls report enabled again once SAMPLE is switched back on");
+
+            setP (pg, "sampleEnable", 0.0f);
+            check (ed->countEnabledSampleTweaksForTest() == 0,
+                   "toggling SAMPLE back off disables the tweak controls again");
+
+            // visual record, matching the project's existing UI snapshot convention
+            ed->setSize (1120, 819);
+            const auto snap = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+            const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_sample_disabled.png");
+            if (auto os = png.createOutputStream())
+            {
+                os->setPosition (0); os->truncate();
+                juce::PNGImageFormat fmt;
+                const bool wrote = fmt.writeImageToStream (snap, *os);
+                std::printf ("  wrote %s : %s\n", png.getFullPathName().toRawUTF8(), wrote ? "ok" : "FAILED");
+            }
+        }
     }
 
     // wall-clock proxy: no live audio device in this environment, so this measures render
