@@ -81,13 +81,15 @@ namespace kickr
         g.drawHorizontalLine (juce::roundToInt (midY), r.getX(), r.getRight());
 
         // ---- build the trace -------------------------------------------------------
-        //  The x axis is a FIXED window (kWaveCaptureLen). We only draw up to the
-        //  samples captured so far, so the trace sweeps in left -> right as the kick
-        //  plays and reaches the right edge exactly when the buffer is full.
-        const int   window = Analyzer::kWaveCaptureLen;
-        const int   drawTo = juce::jlimit (0, window, validLen);
-        const float ampY   = r.getHeight() * 0.40f;
-        const int   stride = juce::jmax (1, window / juce::jmax (1, (int) r.getWidth() * 2));
+        //  The x axis is a FIXED window (kWaveCaptureLen), same scale every trigger.
+        //  Capture sample 0 IS the note-on's own sample-accurate offset (dropped at the
+        //  source — see Analyzer::armCapture's `skipSamples`), so drawing from i=0 here
+        //  already starts exactly at the trigger with no empty space, at a constant
+        //  scale, for every retrigger timing — no per-frame detection needed.
+        const int   window  = Analyzer::kWaveCaptureLen;
+        const int   drawTo  = juce::jlimit (0, window, validLen);
+        const float ampY    = r.getHeight() * 0.40f;
+        const int   stride  = juce::jmax (1, window / juce::jmax (1, (int) r.getWidth() * 2));
 
         tracePath.clear();
         fillPath.clear();
@@ -141,7 +143,7 @@ namespace kickr
                           juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
             // leading-edge dot — the "pulse" head while the kick is still drawing in
-            if (drawTo < window)
+            if (drawTo < Analyzer::kWaveCaptureLen)
             {
                 const float hy = midY - juce::jlimit (-1.35f, 1.35f,
                                      wave[static_cast<size_t> (juce::jmax (0, drawTo - 1))]) * ampY;

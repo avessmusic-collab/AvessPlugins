@@ -53,8 +53,21 @@ namespace kickr
         void prepare (double sampleRate);
 
         //====================================================================== audio thread
-        /** Arm a one-kick capture. Call when a note-on is seen in the block. */
-        void armCapture() noexcept;
+        /** Arm a one-kick capture. Call when a note-on is seen in the block.
+            `skipSamples` = the note-on's sample-accurate offset WITHIN that block (e.g.
+            `MidiMessageMetadata::samplePosition`) — the first `pushBlock()` after arming
+            drops that many leading samples instead of capturing them. Without this, the
+            capture starts at sample 0 of the BLOCK containing the note-on, not the note-on
+            itself, so a mid-block trigger (the overwhelmingly common case) leaves genuine
+            silence at the front of the buffer — a fixed, non-deterministic amount that
+            varies with retrigger timing (2026-09-01 user report: "no matter what time i
+            input midi at, the soundwave ... appears always fixed and doesn't move
+            around" — a display-side amplitude-threshold guess at the onset, tried first,
+            couldn't tell a real new-kick onset from the tail of a still-ringing previous
+            voice bleeding into the same capture on a fast retrigger, so it was NOT actually
+            stable). Sample-accurate at the source removes the ambiguity entirely — default
+            0 for any caller that doesn't have (or need) the exact offset. */
+        void armCapture (int skipSamples = 0) noexcept;
 
         /** Append `numSamples` of the post-limiter mono sum (0.5*(L+R)) to the filling
             waveform buffer (while armed) and always push it into the spectrum ring.
@@ -99,6 +112,7 @@ namespace kickr
         std::uint32_t              genShadow   { 0 };    // audio-thread-only mirror of the
                                                           // current generation (single writer)
         bool                       captureFull { true };    // audio-thread only; true = idle
+        int                        armedSkipSamples { 0 };  // audio-thread only; see armCapture()
 
         // ---- spectrum: AbstractFifo-guarded ring ------------------------------------
         juce::AbstractFifo               specFifo { kSpecFifoLen };

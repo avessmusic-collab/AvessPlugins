@@ -2788,6 +2788,87 @@ int main()
         tmpBank6.deleteRecursively();
     }
 
+    // ---------------------------------------------------------------------
+    // Fix (2026-09-01, user request — "no matter what time i input midi at, the
+    // soundwave ... appears always fixed and doesn't move around"): retrigger at
+    // several DIFFERENT, irregular mid-block sample offsets and confirm the raw
+    // capture's leading "silence" is tiny and near-CONSTANT every time — i.e. it's
+    // governed only by the click's own natural attack ramp, not by where in the block
+    // the MIDI happened to land. (An earlier attempt trimmed this post-hoc in the
+    // display via an amplitude threshold; that couldn't tell a real new onset from a
+    // fast retrigger's previous-voice tail, so the trim amount actually varied. Fixed
+    // at the source instead — Analyzer::armCapture's skipSamples — so there's nothing
+    // left to detect: capture sample 0 IS the note-on, always.)
+    std::printf ("\n[Fix] Waveform capture starts at the note-on, any retrigger timing\n");
+    {
+        auto onsetAt = [&] (int noteOnSampleOffset)
+        {
+            KICKRAudioProcessor pt;
+            pt.prepareToPlay (48000.0, 512);
+            juce::AudioBuffer<float> tbuf (juce::jmax (1, pt.getTotalNumOutputChannels()), 512);
+            for (int bi = 0; bi < 20; ++bi)
+            {
+                tbuf.clear();
+                juce::MidiBuffer m;
+                if (bi == 0) m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), noteOnSampleOffset);
+                pt.processBlock (tbuf, m);
+            }
+            std::array<float, kickr::Analyzer::kWaveCaptureLen> rawWave {};
+            std::uint32_t rawGen = 0;
+            pt.getAnalyzer().getWaveform (rawWave, rawGen);
+            for (int i = 0; i < (int) rawWave.size(); ++i)
+                if (std::abs (rawWave[static_cast<size_t> (i)]) > 0.02f) return i;
+            return -1;
+        };
+
+        const int offsets[] = { 0, 41, 137, 300, 480, 511 };   // spans the whole block
+        int worst = 0;
+        for (int off : offsets)
+        {
+            const int onset = onsetAt (off);
+            std::printf ("  note-on at sample %3d of 512 -> capture onset at %d\n", off, onset);
+            worst = juce::jmax (worst, onset);
+        }
+        // A generous bound: the click's own raised-cosine rise can take a few samples
+        // (at the OVERSAMPLED rate, downsampled) to clear the 0.02 threshold — nothing
+        // to do with retrigger timing. 20 samples @ 48 kHz = ~0.4 ms.
+        check (worst >= 0 && worst < 20,
+               "capture onset stays tiny and timing-independent no matter where in the block the note-on lands");
+
+        std::unique_ptr<juce::AudioProcessorEditor> edBase;
+        {
+            KICKRAudioProcessor pv;
+            pv.prepareToPlay (48000.0, 512);
+            juce::AudioBuffer<float> tbuf (juce::jmax (1, pv.getTotalNumOutputChannels()), 512);
+            for (int bi = 0; bi < 20; ++bi)
+            {
+                tbuf.clear();
+                juce::MidiBuffer m;
+                if (bi == 0) m.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 300);   // mid-block
+                pv.processBlock (tbuf, m);
+            }
+            edBase.reset (pv.createEditor());
+            if (auto* edt = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get()))
+            {
+                edt->setSize (1120, 819);
+                edt->refreshAnalyzersForSnapshot();
+                const auto snap = edt->createComponentSnapshot (edt->getLocalBounds(), false, 1.0f);
+                const auto png  = juce::File::getCurrentWorkingDirectory().getChildFile ("kickr_ui_onset_trim.png");
+                if (auto os = png.createOutputStream())
+                {
+                    os->setPosition (0); os->truncate();
+                    juce::PNGImageFormat fmt;
+                    const bool wrote = fmt.writeImageToStream (snap, *os);
+                    std::printf ("  wrote %s : %s\n", png.getFullPathName().toRawUTF8(), wrote ? "ok" : "FAILED");
+                }
+            }
+            // edBase (and its editor) must outlive pv's destruction below? No — the
+            // editor holds a reference to pv's Analyzer; destroy the editor before pv
+            // goes out of scope at the end of this block.
+            edBase.reset();
+        }
+    }
+
     // wall-clock proxy: no live audio device in this environment, so this measures render
     // cost the same way a CPU meter would infer it — audio-seconds produced per
     // wall-clock-second, for the realistic worst case (BOTH synth + sample layers active,

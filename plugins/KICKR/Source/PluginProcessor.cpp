@@ -85,11 +85,14 @@ void KICKRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // analyzer taps sit in the PROCESSOR (not KickEngine — the engine stays pure DSP)
     // and read the FINAL post-limiter output, so the display matches what leaves the
     // plugin. Bounded scan, no allocation.
+    // 2026-09-01: pass the note-on's own sample-accurate offset within this block so
+    // pushBlock() (below) can drop the pre-trigger portion — capture sample 0 is then
+    // ALWAYS the note-on itself, regardless of retrigger timing (see Analyzer::armCapture).
     for (const auto meta : midiMessages)
     {
         if (meta.getMessage().isNoteOn())
         {
-            analyzer.armCapture();
+            analyzer.armCapture (meta.samplePosition);
             break;
         }
     }

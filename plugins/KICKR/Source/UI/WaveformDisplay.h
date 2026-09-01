@@ -20,6 +20,18 @@ namespace kickr
         a soft under-fill, a fat low-alpha glow stroke then a crisp thin stroke in a
         horizontal red -> magenta -> violet -> lowfam gradient, a millisecond axis, and
         a KICKR watermark bottom-right.
+
+        2026-09-01: capture sample 0 IS the note-on's own sample-accurate offset (see
+        `Analyzer::armCapture`'s `skipSamples` — the mid-block leading silence is dropped
+        at the SOURCE now, on the audio thread), so the trace always starts at x=0 with
+        no empty space, at a guaranteed-fixed scale, for every trigger no matter its
+        timing. An earlier version tried to detect this here instead, via an amplitude
+        threshold on the raw (block-start-aligned) capture — that couldn't distinguish a
+        real new onset from a still-ringing previous voice's tail bleeding into a fast
+        retrigger's capture, so the trim amount (and therefore the trace) was NOT
+        actually stable (user report: "no matter what time i input midi at, the
+        soundwave ... appears always fixed and doesn't move around" — it didn't, yet).
+        Fixing it at the source removes the ambiguity entirely.
     */
     class WaveformDisplay final : public juce::Component,
                                   private juce::Timer

@@ -26,17 +26,22 @@ namespace kickr
         spectrumDb.fill (-120.0f);
 
         captureFull = true;
+        armedSkipSamples = 0;
         waveState.store (static_cast<std::uint64_t> (genShadow) << 32, std::memory_order_relaxed);
         // genShadow itself is left as-is (a monotonically increasing tag across prepare() calls)
     }
 
     //========================================================================== audio thread
-    void Analyzer::armCapture() noexcept
+    void Analyzer::armCapture (int skipSamples) noexcept
     {
         // New trigger: restart the streamed capture from sample 0 AND bump the generation
         // in one atomic store (see the waveState doc comment) so the message thread never
-        // observes a torn (generation, writePos) pair.
+        // observes a torn (generation, writePos) pair. `skipSamples` (the note-on's exact
+        // offset within the block that's about to be rendered/pushed) is consumed by the
+        // very next pushBlock() call, below, so capture sample 0 IS the note-on, always —
+        // no leading silence, regardless of where in the block the trigger landed.
         captureFull = false;
+        armedSkipSamples = juce::jmax (0, skipSamples);
         ++genShadow;
         waveState.store (static_cast<std::uint64_t> (genShadow) << 32, std::memory_order_release);
     }
@@ -52,12 +57,19 @@ namespace kickr
         //  message thread sees the samples before the count.
         if (! captureFull)
         {
+            // Drop the pre-trigger portion of THIS call once, right after arming (armCapture()
+            // and the one pushBlock() for that same host block always pair up within a single
+            // processBlock() — see PluginProcessor.cpp). `skip` is always < numSamples: the
+            // note-on that armed this capture is BY DEFINITION inside the block being pushed.
+            const int skip = juce::jmin (armedSkipSamples, numSamples);
+            armedSkipSamples -= skip;
+
             const auto packed = waveState.load (std::memory_order_relaxed);
             const int  pos    = static_cast<int> (packed & 0xffffffffu);
-            const int  n      = juce::jmin (numSamples, kWaveCaptureLen - pos);
+            const int  n      = juce::jmin (numSamples - skip, kWaveCaptureLen - pos);
 
             for (int i = 0; i < n; ++i)
-                waveBuffer[static_cast<size_t> (pos + i)] = 0.5f * (left[i] + right[i]);
+                waveBuffer[static_cast<size_t> (pos + i)] = 0.5f * (left[skip + i] + right[skip + i]);
 
             waveState.store ((static_cast<std::uint64_t> (genShadow) << 32)
                                   | static_cast<std::uint32_t> (pos + n),
