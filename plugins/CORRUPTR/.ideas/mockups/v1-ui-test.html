@@ -1444,6 +1444,12 @@
     });
   });
 
+  // preset_search field -> action: search_presets (YAML control id: preset_search)
+  document.getElementById('preset_search').addEventListener('input', (e) => {
+    console.log(`Action triggered: search_presets ("${e.target.value}")`);
+    updateDebugMonitor('search_presets', e.target.value || '(empty)', '—');
+  });
+
   // ===================================================================
   // XY PAD (glide/inertia via delayed trailing dot, per creative-brief.md)
   // ===================================================================

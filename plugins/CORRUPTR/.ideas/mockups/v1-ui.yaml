@@ -174,9 +174,12 @@ controls:
   - id: ab_toggle
     type: toggle
     label: "A/B"
-    action: toggle_ab
+    parameter: abCompareState
+    parameter_type: bool
+    default: false
     position: { x: 760, y: 16 }
     size: { width: 60, height: 32 }
+    note: "UI-only A/B compare state, not host-automatable"
 
   - id: quality_mode
     type: combo
