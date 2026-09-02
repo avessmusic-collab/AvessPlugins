@@ -1,5 +1,8 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
+#include <array>
+#include <atomic>
 
 class CORRUPTRAudioProcessor : public juce::AudioProcessor
 {
@@ -32,6 +35,56 @@ public:
     juce::AudioProcessorValueTreeState& getAPVTS() { return parameters; }
 
 private:
+    //=========================================================================
+    // Stage 2 Phase 3.1: Feedback Routing Safety Validation (Isolated)
+    //
+    // See architecture.md component #7 ("Feedback Routing Path") and
+    // plan.md's "Phase 3.1: Feedback Routing Safety Validation (Isolated)".
+    // This is the single highest-risk component in CORRUPTR (potential for
+    // runaway/audible-harm if the safety math is wrong) and is deliberately
+    // built + proven in isolation BEFORE the Distortion Engine (#2) or
+    // Filter Stage (#6) exist to be spliced into the loop. Those two
+    // components' splice points are marked with TODO comments in
+    // processBlock() below and will be wired in during Phase 3.3/3.4.
+    //
+    // Safety design (non-negotiable per architecture.md):
+    //   1. Soft-clamp gain: internalGain = kFeedbackMaxSafeGain * tanh(feedbackAmount/100)
+    //      -> tanh() is bounded in [-1,1] for ALL finite inputs, so the
+    //      *parameter itself* can never command unity/runaway gain.
+    //   2. In-loop one-pole lowpass damping (feedbackDamping -> cutoff Hz)
+    //      attenuates HF energy every pass around the loop.
+    //   3. Per-sample std::isfinite() circuit breaker - hard-resets the
+    //      delay line + filter + RMS state for that channel if a NaN/Inf
+    //      is ever produced (checked every sample, not just once per block,
+    //      since a bad sample must never be allowed to recirculate even for
+    //      the remainder of the current block - unlike a feedforward chain,
+    //      a feedback loop can sustain a bad sample indefinitely).
+    //   4. Recommended belt-and-suspenders addition (architecture.md):
+    //      continuous RMS-envelope limiter on the feedback path itself,
+    //      independent of the tanh gain clamp and of the (not-yet-built)
+    //      main Output Limiter (component #13).
+    //=========================================================================
+    static constexpr float kFeedbackMaxSafeGain = 0.85f;      // architecture.md "Feedback Safety Soft-Clamp" — constant well below 1.0
+    static constexpr float kFeedbackDampingMinHz = 200.0f;    // feedbackDamping = 100% -> heaviest HF cut
+    static constexpr float kFeedbackDampingMaxHz = 18000.0f;  // feedbackDamping = 0%   -> near-transparent
+    static constexpr float kFeedbackRmsLimitThreshold = 0.95f;
+    static constexpr float kFeedbackRmsTimeConstantMs = 50.0f;
+    static constexpr double kFeedbackDelayHeadroomSeconds = 0.060; // microDelayTime max is 50ms; allocate to 60ms for automation-sweep headroom
+
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> feedbackDelayLine { 1 };
+    std::array<juce::dsp::FirstOrderTPTFilter<float>, 2> feedbackDampingFilter;
+    std::array<float, 2> feedbackRmsEnvelope { 0.0f, 0.0f };
+    float feedbackRmsOnePoleCoeff = 0.0f;
+    int feedbackMaxDelaySamples = 0;
+    juce::SmoothedValue<float> feedbackInternalGainSmoothed;
+    juce::SmoothedValue<float> feedbackDampingCutoffSmoothed;
+    std::atomic<bool> feedbackCircuitBreakerTripped { false }; // diagnostic only (not read for control flow on the audio thread)
+
+    // Real-time-safe: bounded loop over the already-allocated delay buffer
+    // (feedbackMaxDelaySamples iterations, no allocation) - the circuit
+    // breaker's "hard reset to zero for that channel" mechanism.
+    void resetFeedbackLoopChannel(int channel);
+
     juce::AudioProcessorValueTreeState parameters;
 
     // Parameter layout creation

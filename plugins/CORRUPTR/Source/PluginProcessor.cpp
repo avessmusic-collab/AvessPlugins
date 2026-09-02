@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 
 //==============================================================================
 // Parameter Layout
@@ -494,13 +495,67 @@ CORRUPTRAudioProcessor::~CORRUPTRAudioProcessor()
 
 void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Initialization will be added in Stage 2 (DSP)
-    juce::ignoreUnused(sampleRate, samplesPerBlock);
+    const int numChannels = juce::jmax(getTotalNumOutputChannels(), 2); // dual-mono per architecture.md's stereo-compatible processing note
+
+    juce::dsp::ProcessSpec spec;
+    spec.sampleRate = sampleRate;
+    spec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
+    spec.numChannels = static_cast<juce::uint32>(numChannels);
+
+    //=========================================================================
+    // Stage 2 Phase 3.1: Feedback Routing Safety Validation (Isolated)
+    //=========================================================================
+    feedbackMaxDelaySamples = static_cast<int>(std::ceil(kFeedbackDelayHeadroomSeconds * sampleRate)) + 4;
+    feedbackDelayLine.setMaximumDelayInSamples(feedbackMaxDelaySamples);
+    feedbackDelayLine.prepare(spec);
+    feedbackDelayLine.reset();
+
+    juce::dsp::ProcessSpec monoSpec = spec;
+    monoSpec.numChannels = 1;
+    for (auto& f : feedbackDampingFilter)
+    {
+        f.prepare(monoSpec);
+        f.setType(juce::dsp::FirstOrderTPTFilterType::lowpass);
+        f.reset();
+    }
+
+    feedbackRmsEnvelope.fill(0.0f);
+
+    // One-pole coefficient for the continuous RMS-envelope limiter
+    // (architecture.md's recommended "additional block-level RMS-based
+    // limiter on the feedback path" — implemented as a continuous one-pole
+    // tracker rather than strictly per-block for smoother, artifact-free
+    // gain reduction).
+    const float rmsTimeConstantSeconds = kFeedbackRmsTimeConstantMs / 1000.0f;
+    feedbackRmsOnePoleCoeff = std::exp(-1.0f / (rmsTimeConstantSeconds * static_cast<float>(sampleRate)));
+
+    feedbackInternalGainSmoothed.reset(sampleRate, 0.02); // 20ms ramp - avoids zipper noise on feedbackAmount automation
+    feedbackInternalGainSmoothed.setCurrentAndTargetValue(0.0f);
+
+    feedbackDampingCutoffSmoothed.reset(sampleRate, 0.02);
+    feedbackDampingCutoffSmoothed.setCurrentAndTargetValue(kFeedbackDampingMaxHz);
+
+    feedbackCircuitBreakerTripped.store(false);
 }
 
 void CORRUPTRAudioProcessor::releaseResources()
 {
-    // Cleanup will be added in Stage 2 (DSP)
+    // Nothing to release for Phase 3.1 — the feedback delay line and
+    // damping filters stay allocated at their prepared size. Revisit once
+    // later DSP phases add larger buffers (e.g. the Glitch ring buffer).
+}
+
+void CORRUPTRAudioProcessor::resetFeedbackLoopChannel(int channel)
+{
+    // Real-time-safe circuit-breaker reset: bounded loop over the
+    // already-allocated delay buffer (no allocation, deterministic
+    // execution time), fills that channel's delay history with zero so no
+    // NaN/Inf can recirculate.
+    for (int i = 0; i < feedbackMaxDelaySamples; ++i)
+        feedbackDelayLine.pushSample(channel, 0.0f);
+
+    feedbackDampingFilter[(size_t) channel].reset();
+    feedbackRmsEnvelope[(size_t) channel] = 0.0f;
 }
 
 void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -508,13 +563,153 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     juce::ScopedNoDenormals noDenormals;
     juce::ignoreUnused(midiMessages);
 
-    // Parameter access example (for Stage 2 DSP implementation):
-    // auto* driveParam = parameters.getRawParameterValue("drive");
-    // float driveValue = driveParam->load();  // Atomic read (real-time safe)
+    for (int i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
+        buffer.clear(i, 0, buffer.getNumSamples());
 
-    // Pass-through for Stage 1 (DSP implementation happens in Stage 2)
-    // Audio routing is already handled by JUCE
-    juce::ignoreUnused(buffer);
+    //=========================================================================
+    // Stage 2 Phase 3.1: Feedback Routing Safety Validation (Isolated)
+    //
+    // Signal routing for THIS ISOLATED PHASE ONLY (per plan.md/architecture.md):
+    //   input -> [SPLICE: Distortion Engine, placeholder passthrough for now]
+    //         -> [SPLICE: Filter Stage, placeholder passthrough for now]
+    //         -> in-loop damping filter (real, always active)
+    //         -> soft-clamp gain (real, always active)
+    //         -> RMS limiter (real, always active)
+    //         -> circuit breaker (real, always active)
+    //         -> DELAY stage write/read (real, always active - this is what
+    //            closes the loop back into "Distortion input" next sample)
+    //         -> summed back into output signal for this isolated test
+    //
+    // The two SPLICE points are marked with TODO comments below. Real
+    // Distortion (#2) / Filter (#6) processing wires in during Phase
+    // 3.3/3.4 — do NOT build throwaway versions of those here.
+    //=========================================================================
+    auto* feedbackAmountParam = parameters.getRawParameterValue("feedbackAmount");
+    auto* feedbackDampingParam = parameters.getRawParameterValue("feedbackDamping");
+    auto* microDelayTimeParam = parameters.getRawParameterValue("microDelayTime");
+
+    const float feedbackAmountPct = feedbackAmountParam->load();
+    const float feedbackDampingPct = feedbackDampingParam->load();
+    const float microDelayMs = microDelayTimeParam->load();
+
+    // Soft-clamp gain mapping (architecture.md "Feedback Safety Soft-Clamp"):
+    // tanh() is bounded in [-1,1] for every finite input, so
+    // internalGain <= kFeedbackMaxSafeGain (0.85) regardless of parameter value.
+    const float targetInternalGain = kFeedbackMaxSafeGain * std::tanh(feedbackAmountPct / 100.0f);
+    feedbackInternalGainSmoothed.setTargetValue(targetInternalGain);
+
+    // In-loop damping: feedbackDamping -> one-pole lowpass cutoff.
+    // 100% damping -> kFeedbackDampingMinHz (heaviest HF cut per pass)
+    // 0%   damping -> kFeedbackDampingMaxHz (near-transparent)
+    const float dampingNorm = juce::jlimit(0.0f, 1.0f, feedbackDampingPct / 100.0f);
+    const double nyquistGuardHz = getSampleRate() > 0.0 ? getSampleRate() * 0.45 : kFeedbackDampingMaxHz;
+    const float targetCutoffHz = juce::jmin(
+        kFeedbackDampingMinHz * std::pow(kFeedbackDampingMaxHz / kFeedbackDampingMinHz, 1.0f - dampingNorm),
+        static_cast<float>(nyquistGuardHz));
+    feedbackDampingCutoffSmoothed.setTargetValue(targetCutoffHz);
+
+    // microDelayTime binds directly to the feedback loop's internal DELAY
+    // stage — resolves architecture.md's flagged spec gap ("feedback loop's
+    // internal delay TIME not yet an explicit parameter"); parameter-spec.md
+    // confirms this exact binding for microDelayTime.
+    const double sr = getSampleRate() > 0.0 ? getSampleRate() : 44100.0;
+    const float delaySamples = juce::jlimit(1.0f, static_cast<float>(feedbackMaxDelaySamples - 1),
+                                             static_cast<float>(microDelayMs / 1000.0 * sr));
+    feedbackDelayLine.setDelay(delaySamples);
+
+    const int numSamples = buffer.getNumSamples();
+    const int numChannels = juce::jmin(buffer.getNumChannels(), 2); // dual-mono per architecture.md
+
+    for (int channel = 0; channel < numChannels; ++channel)
+    {
+        auto* channelData = buffer.getWritePointer(channel);
+        auto& dampingFilter = feedbackDampingFilter[(size_t) channel];
+        auto& rmsEnv = feedbackRmsEnvelope[(size_t) channel];
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float internalGain = feedbackInternalGainSmoothed.getNextValue();
+            const float cutoffHz = feedbackDampingCutoffSmoothed.getNextValue();
+            dampingFilter.setCutoffFrequency(cutoffHz);
+
+            const float x = channelData[n];
+
+            // Read the currently-delayed feedback sample - the loop's memory.
+            const float delayedFeedback = feedbackDelayLine.popSample(channel);
+
+            // --- SPLICE POINT: Distortion Engine (architecture.md component #2) ---
+            // TODO(Phase 3.3/3.4): replace this passthrough with the real
+            // Distortion Engine's output. Feedback sums into the distortion
+            // stage's input per architecture.md's DISTORTION -> FILTER ->
+            // DELAY -> DISTORTION loop description.
+            const float distortionInput = x + delayedFeedback;
+
+            // --- SPLICE POINT: Filter Stage (architecture.md component #6) ---
+            // TODO(Phase 3.3/3.4): replace this passthrough with a copy of
+            // the Filter Stage's current settings. NOTE: high filterResonance
+            // combined with high feedbackAmount is flagged as the single most
+            // dangerous parameter combination in the plugin (architecture.md
+            // Parameter Interactions) — re-validate safety once this splice
+            // is real.
+            const float filterOutput = distortionInput;
+
+            // In-loop HF damping — real, always active (NOT a placeholder).
+            float loopSample = dampingFilter.processSample(0, filterOutput);
+
+            // Soft-clamp gain — real, always active.
+            loopSample *= internalGain;
+
+            // Recommended additional safety net: continuous RMS-envelope
+            // limiter on the feedback path itself (architecture.md component #7).
+            rmsEnv = feedbackRmsOnePoleCoeff * rmsEnv + (1.0f - feedbackRmsOnePoleCoeff) * (loopSample * loopSample);
+            const float currentRms = std::sqrt(juce::jmax(0.0f, rmsEnv));
+            if (currentRms > kFeedbackRmsLimitThreshold)
+                loopSample *= (kFeedbackRmsLimitThreshold / currentRms);
+
+            // Circuit breaker: checked every sample (not just once per
+            // block) since a NaN/Inf sample can persist indefinitely once
+            // it enters a feedback loop, unlike a purely feedforward chain.
+            // This covers corruption INTERNAL to the loop (damping filter /
+            // gain stage / RMS math).
+            if (! std::isfinite(loopSample))
+            {
+                resetFeedbackLoopChannel(channel);
+                loopSample = 0.0f;
+                feedbackCircuitBreakerTripped.store(true, std::memory_order_relaxed);
+            }
+
+            // DELAY stage write: this pushed sample is what popSample()
+            // above will read back `delaySamples` from now, closing the loop.
+            feedbackDelayLine.pushSample(channel, loopSample);
+
+            // Sum feedback contribution back into the signal so this
+            // isolated phase is self-contained and testable end-to-end.
+            // Final signal-chain mix position (post-Filter, pre-Master-Mix
+            // per architecture.md's Processing Chain) is finalized during
+            // Phase 3.4 integration into the full core chain.
+            float finalOutput = x + loopSample;
+
+            // Final output-stage guard: the isfinite() check above only
+            // covers corruption generated INSIDE the loop - it does not
+            // cover a non-finite value arriving via the raw host input `x`
+            // itself (e.g. a misbehaving upstream plugin). Catch that case
+            // here too so the "never propagates to output" guarantee holds
+            // regardless of where the NaN/Inf originated.
+            if (! std::isfinite(finalOutput))
+            {
+                finalOutput = 0.0f;
+                feedbackCircuitBreakerTripped.store(true, std::memory_order_relaxed);
+            }
+
+            channelData[n] = finalOutput;
+        }
+    }
+
+    // Defensive only (shouldn't occur for this stereo-in/stereo-out effect):
+    // mirror channel 0's processed result into any additional channels
+    // rather than leaving them unprocessed.
+    for (int channel = numChannels; channel < buffer.getNumChannels(); ++channel)
+        buffer.copyFrom(channel, 0, buffer, 0, 0, numSamples);
 }
 
 //==============================================================================
