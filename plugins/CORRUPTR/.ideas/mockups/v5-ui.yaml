@@ -1120,3 +1120,8 @@ notes:
   - "Special elements (module_chrome_icons, static tiles, ADV pills, mini graph, step grid, mod matrix grid, meters) are visual/decorative and may need custom C++/Canvas implementation in Stage 3; ADV pills are functionally interactive (show/hide) in the test HTML via JS class toggling even though marked layer:decorative (not parameter-bound)."
   - "Two v2 decorative output-section level meters (output_input_meter/output_output_meter) were dropped in v4 - consolidated into the top-bar meters only, reducing visual clutter to match the reference's minimal top-bar-only metering approach. v2's page_indicator_pills and rainbow preset_tag_dots were also dropped/de-hued - v4 has no page-nav pills and preset_tag_dots is now monochrome."
   - "v5 adds 2 new controls (sequencer_enable, mod_matrix_enable), bringing the total from 67 to 69. Both are NEW - not yet in parameter-spec-draft.md, reconcile in Stage 0/1, same as the 5 existing node_bypass_* toggles and microDelayTime. Unlike those bypass toggles (true = bypassed, default false), the two v5 enable toggles use true = module on / default true, and additionally drive a visual dim state (opacity ~0.4) on the rest of their card when switched off - implemented in the test HTML by extending the same bindPowerButtons() mechanism, not a separate parameter-relay pattern. To make room without moving any pre-existing control, the sequencer and mod_matrix section start-y values were pulled up into pre-existing whitespace (1072->1050 and 1300->1280 respectively); each section's end-y, and every one of the other 67 controls' position/size, is byte-for-byte identical to v4."
+
+# Finalization metadata
+finalized: true
+finalized_at: 2026-09-02T13:49:09Z
+finalized_by_phase: 5.5

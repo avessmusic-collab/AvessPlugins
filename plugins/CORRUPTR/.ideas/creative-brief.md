@@ -147,15 +147,20 @@ Professional preset browser. **MVP target: ~15-20 presets** — one strong examp
 
 ## UI Concept
 
-**Layout:** Modern dark experimental professional interface. Top bar: preset browser, preset name, save, random, undo/redo, A/B. Main area: large distortion visualization/oscilloscope/spectrum. Large DRIVE control and algorithm selector front and center. Dedicated sections for GLITCH, RHYTHM, MODULATION, FILTER, OUTPUT.
+**Status:** Finalized — UI mockup v5 (`.ideas/mockups/v5-ui.yaml` / `v5-ui-test.html`), synced 2026-09-02. This section reflects the finalized design, which superseded the pre-mockup dark/neon concept described in the original raw brief (v1-v3 explored that direction and were scrapped per explicit user instruction in favor of a monochrome hardware-inspired restyle).
 
-**Visual Style:** Dark, experimental, professional — not a toy aesthetic despite the playful "playground" concept.
+**Layout:** Single continuous scrolling page, monochrome modular hardware "channel strip" aesthetic (raised white units, vertical modules divided by hairlines, near-black icon tiles, thin-ring knobs, dashed-tick faders with pill dB readouts) matching a user-supplied hardware reference image. Window: 1200×1650 total scrollable content, 1200×800 visible viewport.
 
-**Key Elements:**
-- Waveform, spectrum, input/output meters, rhythmic animation, modulation visualization
-- Modulated parameters show modulation ranges around their knobs
-- Large XY pad (Damage/Glitch default axes) with glide/inertia response
-- **Distortion Graph** — a visual modular routing graph (INPUT → SATURATION → WAVESHAPER → FILTER → BITCRUSH → GLITCH → PITCH → OUTPUT) with connectable modulation links between nodes. Flagged in the raw brief as a potential major visual-identity feature — worth prioritizing in UI mockup exploration since it differentiates CORRUPTR from typical distortion-plugin UIs.
+**Visual Style:** Near-zero color except a single accent line inside the frequency-response graph — deliberately restrained/professional rather than the originally-envisioned dark/neon "experimental" look. Each processing module follows a consistent anatomy: icon-button row (power/bypass, menu, undo) → icon tile → controls → ADV-reveal for secondary controls.
+
+**Module Map (69 parameter/action bindings total):**
+- **Main channel-strip unit:** Distortion → Bitcrush → Glitch → Master (center, LEVEL knob + IN/OUT faders + limiter) → Filter & EQ → Feedback + Delay. Five of these six modules carry an independent power/bypass icon.
+- **Second unit:** Macros (8, 4 base + 4 ADV-revealed), Performance (7-button live-trigger grid), XY Performance Pad (Damage/Glitch default axes, glide/inertia response).
+- **Sequencer strip:** rate/steps combos, 6 pattern-action buttons (Random/Mutate/Reverse/Mirror/Shift/Clear), 16-step visual grid with playhead, plus a module-level power toggle (`sequencerEnabled`, default on) that dims the whole strip when switched off.
+- **Mod Matrix strip:** 4 LFO mini-panels (rate/shape/sync) above a source × destination routing grid, plus a module-level power toggle (`modMatrixEnabled`, default on) with the same dim-when-off behavior.
+- Top bar: wordmark, preset search, save/random/undo/redo, A/B, quality-mode combo, input/output meters, monochrome preset-tag dots.
+
+**Reconciliation note:** The original brief's standalone "Distortion Graph" routing-visualization concept was not carried into the finalized design — the module-map channel-strip layout above (with per-module bypass icons standing in for the graph's node-level routing) is what shipped instead. 7 controls are still flagged NEW in the mockup and need reconciling into `parameter-spec-draft.md` before Stage 1: 5 module-bypass toggles (`graphBypassSaturation/Waveshaper/Filter/Bitcrush/Glitch`), `microDelayTime`, plus the two v5 additions (`sequencerEnabled`, `modMatrixEnabled`).
 
 ## Use Cases
 
