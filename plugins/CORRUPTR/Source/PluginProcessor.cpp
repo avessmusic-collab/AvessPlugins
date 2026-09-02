@@ -650,21 +650,23 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     juce::ScopedNoDenormals noDenormals;
     juce::ignoreUnused(midiMessages);
 
-    for (int i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
-        buffer.clear(i, 0, buffer.getNumSamples());
+    const int numSamples = buffer.getNumSamples();
+    const int numChannels = juce::jmin(buffer.getNumChannels(), 2); // dual-mono per architecture.md
 
     //=========================================================================
     // Stage 2 Phase 3.3: Master Mix dry-signal capture (component #14)
     //
     // Captured HERE — the very first thing that happens in processBlock(),
-    // before Input Gain, before Phase 3.2's diagnostic block, and before
-    // Phase 3.1's isolated feedback-loop test code (which DOES write into
-    // `buffer` below) — per architecture.md component #14: "capturing dry
-    // signal at the very start of processBlock(), before Input Gain, to
-    // match user expectation that 'dry' means the original unprocessed
-    // signal". This is restored into `buffer` again, overwriting Phase
-    // 3.1's diagnostic writes, right before the Phase 3.3 linear chain
-    // begins (see comment further down for why).
+    // before Input Gain and before Phase 3.2's diagnostic block — per
+    // architecture.md component #14: "capturing dry signal at the very
+    // start of processBlock(), before Input Gain, to match user expectation
+    // that 'dry' means the original unprocessed signal". As of Phase 3.4,
+    // `buffer` is no longer overwritten by an isolated feedback-loop test
+    // harness before the real chain runs (that workaround was retired when
+    // the feedback loop was integrated directly into the live per-sample
+    // chain below), so no restore-from-dryBuffer step is needed anymore —
+    // `dryBuffer` is read (not written back into `buffer`) only at the
+    // Master Mix step inside the merged per-sample loop further down.
     //=========================================================================
     {
         const int channelsToCapture = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
@@ -701,10 +703,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     //
     // Result is stored in `phase32DriveModulationObservation` for
     // diagnostic/future-use only - it is NOT applied to any DSP processing
-    // below. The Distortion Engine (architecture.md component #2, which
-    // would actually consume a modulated `drive` value) doesn't exist yet -
-    // built in Phase 3.3. This deliberately does NOT change Phase 3.1's
-    // feedback-loop code or output below it in any way.
+    // below (the real Distortion Engine reads the raw `drive` APVTS
+    // parameter directly, not this observation value - generalizing the
+    // modulation accumulator into the live chain is Phase 3.7-3.9's job,
+    // not this phase's). This deliberately does not change the Phase 3.4
+    // feedback-routing integration or core linear chain below in any way.
     //=========================================================================
     {
         constexpr float driveRangeMin = 0.0f;
@@ -750,22 +753,40 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     }
 
     //=========================================================================
-    // Stage 2 Phase 3.1: Feedback Routing Safety Validation (Isolated)
+    // Stage 2 Phase 3.4: Feedback Routing Integration (architecture.md
+    // component #7) — parameter reads + smoothing-target setup only.
     //
-    // Signal routing for THIS ISOLATED PHASE ONLY (per plan.md/architecture.md):
-    //   input -> [SPLICE: Distortion Engine, placeholder passthrough for now]
-    //         -> [SPLICE: Filter Stage, placeholder passthrough for now]
-    //         -> in-loop damping filter (real, always active)
-    //         -> soft-clamp gain (real, always active)
-    //         -> RMS limiter (real, always active)
-    //         -> circuit breaker (real, always active)
-    //         -> DELAY stage write/read (real, always active - this is what
-    //            closes the loop back into "Distortion input" next sample)
-    //         -> summed back into output signal for this isolated test
+    // Phase 3.1's isolated validation harness (which ran the loop's safety
+    // math against a synthetic passthrough and discarded its result) has
+    // been RETIRED. The loop's safety math itself — soft-clamp gain,
+    // in-loop damping filter, continuous RMS-envelope limiter, per-sample
+    // isfinite() circuit breaker — is unchanged and is now spliced directly
+    // into the live per-sample chain below (see the merged Distortion ->
+    // Bitcrush -> Filter -> Feedback-tap -> Master-Mix loop further down),
+    // operating on REAL Distortion Engine / Filter Stage output instead of
+    // a placeholder passthrough.
     //
-    // The two SPLICE points are marked with TODO comments below. Real
-    // Distortion (#2) / Filter (#6) processing wires in during Phase
-    // 3.3/3.4 — do NOT build throwaway versions of those here.
+    // TAP-POINT CONTRADICTION RESOLUTION (documented per Phase 3.3's own
+    // precedent for resolving prose-vs-numbered-list conflicts in
+    // architecture.md, e.g. its Output Gain/Limiter ordering note above
+    // outputGainDsp's declaration): architecture.md component #7's prose
+    // says the tap is "post-Distortion, routed through a copy of the Filter
+    // stage's current settings, through a short DelayLine... then summed
+    // back into the Distortion stage's input", while the "Sequential DSP
+    // chain (REQUIRED order)" section's explicit numbered list places the
+    // tap at step 10, immediately AFTER step 9 (Filter Stage) and BEFORE
+    // step 11 (Master Mix) — i.e. post-Filter, not post-Distortion. This
+    // implementation follows the Sequential DSP chain's explicit numbered
+    // order as authoritative (same precedent as Phase 3.3's resolution),
+    // meaning: the tap happens post-Filter-Stage (step 9's output), and the
+    // already-built in-loop damping filter (`feedbackDampingFilter`) IS
+    // component #7's "copy of the Filter stage" referenced in the prose —
+    // NOT a second real juce::dsp::StateVariableTPTFilter instance running
+    // the main Filter Stage's exact topology/resonance. This also matches
+    // the Processing Chain ASCII diagram, which draws the tap arrow leaving
+    // AFTER "Filter Stage" and the loop's own internal
+    // "[Filter copy -> short Delay -> safety soft-clamp/limiter, NaN
+    // guard]" box summing back into "Distortion Engine input, next block".
     //=========================================================================
     auto* feedbackAmountParam = parameters.getRawParameterValue("feedbackAmount");
     auto* feedbackDampingParam = parameters.getRawParameterValue("feedbackDamping");
@@ -778,12 +799,14 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // Soft-clamp gain mapping (architecture.md "Feedback Safety Soft-Clamp"):
     // tanh() is bounded in [-1,1] for every finite input, so
     // internalGain <= kFeedbackMaxSafeGain (0.85) regardless of parameter value.
+    // Unconditional — not bypassed or weakened by this integration.
     const float targetInternalGain = kFeedbackMaxSafeGain * std::tanh(feedbackAmountPct / 100.0f);
     feedbackInternalGainSmoothed.setTargetValue(targetInternalGain);
 
     // In-loop damping: feedbackDamping -> one-pole lowpass cutoff.
     // 100% damping -> kFeedbackDampingMinHz (heaviest HF cut per pass)
     // 0%   damping -> kFeedbackDampingMaxHz (near-transparent)
+    // Unconditional — not bypassed or weakened by this integration.
     const float dampingNorm = juce::jlimit(0.0f, 1.0f, feedbackDampingPct / 100.0f);
     const double nyquistGuardHz = getSampleRate() > 0.0 ? getSampleRate() * 0.45 : kFeedbackDampingMaxHz;
     const float targetCutoffHz = juce::jmin(
@@ -799,114 +822,6 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     const float delaySamples = juce::jlimit(1.0f, static_cast<float>(feedbackMaxDelaySamples - 1),
                                              static_cast<float>(microDelayMs / 1000.0 * sr));
     feedbackDelayLine.setDelay(delaySamples);
-
-    const int numSamples = buffer.getNumSamples();
-    const int numChannels = juce::jmin(buffer.getNumChannels(), 2); // dual-mono per architecture.md
-
-    for (int channel = 0; channel < numChannels; ++channel)
-    {
-        auto* channelData = buffer.getWritePointer(channel);
-        auto& dampingFilter = feedbackDampingFilter[(size_t) channel];
-        auto& rmsEnv = feedbackRmsEnvelope[(size_t) channel];
-
-        for (int n = 0; n < numSamples; ++n)
-        {
-            const float internalGain = feedbackInternalGainSmoothed.getNextValue();
-            const float cutoffHz = feedbackDampingCutoffSmoothed.getNextValue();
-            dampingFilter.setCutoffFrequency(cutoffHz);
-
-            const float x = channelData[n];
-
-            // Read the currently-delayed feedback sample - the loop's memory.
-            const float delayedFeedback = feedbackDelayLine.popSample(channel);
-
-            // --- SPLICE POINT: Distortion Engine (architecture.md component #2) ---
-            // TODO(Phase 3.3/3.4): replace this passthrough with the real
-            // Distortion Engine's output. Feedback sums into the distortion
-            // stage's input per architecture.md's DISTORTION -> FILTER ->
-            // DELAY -> DISTORTION loop description.
-            const float distortionInput = x + delayedFeedback;
-
-            // --- SPLICE POINT: Filter Stage (architecture.md component #6) ---
-            // TODO(Phase 3.3/3.4): replace this passthrough with a copy of
-            // the Filter Stage's current settings. NOTE: high filterResonance
-            // combined with high feedbackAmount is flagged as the single most
-            // dangerous parameter combination in the plugin (architecture.md
-            // Parameter Interactions) — re-validate safety once this splice
-            // is real.
-            const float filterOutput = distortionInput;
-
-            // In-loop HF damping — real, always active (NOT a placeholder).
-            float loopSample = dampingFilter.processSample(0, filterOutput);
-
-            // Soft-clamp gain — real, always active.
-            loopSample *= internalGain;
-
-            // Recommended additional safety net: continuous RMS-envelope
-            // limiter on the feedback path itself (architecture.md component #7).
-            rmsEnv = feedbackRmsOnePoleCoeff * rmsEnv + (1.0f - feedbackRmsOnePoleCoeff) * (loopSample * loopSample);
-            const float currentRms = std::sqrt(juce::jmax(0.0f, rmsEnv));
-            if (currentRms > kFeedbackRmsLimitThreshold)
-                loopSample *= (kFeedbackRmsLimitThreshold / currentRms);
-
-            // Circuit breaker: checked every sample (not just once per
-            // block) since a NaN/Inf sample can persist indefinitely once
-            // it enters a feedback loop, unlike a purely feedforward chain.
-            // This covers corruption INTERNAL to the loop (damping filter /
-            // gain stage / RMS math).
-            if (! std::isfinite(loopSample))
-            {
-                resetFeedbackLoopChannel(channel);
-                loopSample = 0.0f;
-                feedbackCircuitBreakerTripped.store(true, std::memory_order_relaxed);
-            }
-
-            // DELAY stage write: this pushed sample is what popSample()
-            // above will read back `delaySamples` from now, closing the loop.
-            feedbackDelayLine.pushSample(channel, loopSample);
-
-            // Sum feedback contribution back into the signal so this
-            // isolated phase is self-contained and testable end-to-end.
-            // Final signal-chain mix position (post-Filter, pre-Master-Mix
-            // per architecture.md's Processing Chain) is finalized during
-            // Phase 3.4 integration into the full core chain.
-            float finalOutput = x + loopSample;
-
-            // Final output-stage guard: the isfinite() check above only
-            // covers corruption generated INSIDE the loop - it does not
-            // cover a non-finite value arriving via the raw host input `x`
-            // itself (e.g. a misbehaving upstream plugin). Catch that case
-            // here too so the "never propagates to output" guarantee holds
-            // regardless of where the NaN/Inf originated.
-            if (! std::isfinite(finalOutput))
-            {
-                finalOutput = 0.0f;
-                feedbackCircuitBreakerTripped.store(true, std::memory_order_relaxed);
-            }
-
-            channelData[n] = finalOutput;
-        }
-    }
-
-    //=========================================================================
-    // Stage 2 Phase 3.3: Core Linear Chain
-    //
-    // Phase 3.1's feedback-loop code directly above is an ISOLATED,
-    // self-contained validation harness (per plan.md's "safety and
-    // foundation first" build order) — it is deliberately NOT part of the
-    // live signal path yet (that's Phase 3.4). Its writes to `buffer`
-    // above are diagnostic-test output only; we now discard them and
-    // restore the true dry signal captured at the very top of this
-    // function, which becomes the real input to this phase's linear
-    // chain. (Phase 3.1's internal state — delay line, damping filter,
-    // RMS envelope, circuit-breaker flag — is untouched by this restore;
-    // only its writes to the shared `buffer` are superseded.)
-    //=========================================================================
-    {
-        const int channelsToRestore = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
-        for (int ch = 0; ch < channelsToRestore; ++ch)
-            buffer.copyFrom(ch, 0, dryBuffer, ch, 0, numSamples);
-    }
 
     //=========================================================================
     // Stage 2 Phase 3.3: Core Linear Chain — per-block parameter reads
@@ -1007,30 +922,130 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         inputGainDsp.process(context);
     }
 
-    // Distortion Engine -> Bitcrusher/SRR -> Filter Stage -> Master Mix.
-    // Single per-sample pass; the sample-rate-shared SmoothedValues are
-    // advanced exactly ONCE per sample index (outer loop), NOT once per
-    // channel (inner loop) — this keeps their ramps correctly paced
-    // regardless of channel count, since a single juce::SmoothedValue
-    // instance is shared across both channels here.
+    // Distortion Engine -> Bitcrusher/SRR -> Filter Stage -> Feedback Routing
+    // tap (component #7) -> Master Mix. Single per-sample pass; ALL
+    // sample-rate-shared SmoothedValues (including the two Phase 3.4
+    // feedback-loop ones, `feedbackInternalGainSmoothed` and
+    // `feedbackDampingCutoffSmoothed`) are advanced exactly ONCE per sample
+    // index (outer loop), NOT once per channel (inner loop) — this keeps
+    // their ramps correctly paced regardless of channel count, since a
+    // single juce::SmoothedValue instance is shared across both channels
+    // here. (Phase 3.1's original isolated harness advanced the two
+    // feedback SmoothedValues once per channel-per-sample instead of once
+    // per sample — a ramp-rate bug relative to this file's own stated
+    // convention — corrected here as part of the Phase 3.4 merge.)
     for (int n = 0; n < numSamples; ++n)
     {
-        const float driveGain        = driveGainSmoothed.getNextValue();
-        const float distortionMixAmt = distortionMixSmoothed.getNextValue();
-        const float masterDryGain    = masterDryGainSmoothed.getNextValue();
-        const float masterWetGain    = masterWetGainSmoothed.getNextValue();
+        const float driveGain            = driveGainSmoothed.getNextValue();
+        const float distortionMixAmt     = distortionMixSmoothed.getNextValue();
+        const float masterDryGain        = masterDryGainSmoothed.getNextValue();
+        const float masterWetGain        = masterWetGainSmoothed.getNextValue();
+        const float feedbackInternalGain = feedbackInternalGainSmoothed.getNextValue();
+        const float feedbackCutoffHz     = feedbackDampingCutoffSmoothed.getNextValue();
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
             auto* channelData = buffer.getWritePointer(channel);
             const float dry = dryBuffer.getReadPointer(channel)[n];
 
-            float s = channelData[n];
+            // Feedback loop's stored/delayed sample — the recirculated
+            // output of a PREVIOUS sample's Filter Stage, already run
+            // through this loop's damping/soft-clamp/RMS-limiter/delay
+            // chain. Read BEFORE this sample's Distortion Engine call so it
+            // can be summed directly into this sample's Distortion input,
+            // per architecture.md's Sequential DSP chain step 10 -> step 5
+            // ("this block's feedback-loop-recirculated sample as part of
+            // its input, from step 10 of the PREVIOUS block").
+            const float delayedFeedback = feedbackDelayLine.popSample(channel);
+
+            float s = channelData[n] + delayedFeedback;
             s = processDistortionEngine(s, channel, driveGain, distortionMixAmt);
             s = processBitcrusher(s, channel);
             s = processFilterStage(s, channel);
 
-            channelData[n] = dry * masterDryGain + s * masterWetGain;
+            // `s` is now the Filter Stage's output (Sequential DSP chain
+            // step 9) — this is BOTH (a) what continues forward to Master
+            // Mix below, unmodified, AND (b) what gets tapped for the
+            // Feedback Routing Path (step 10). See the tap-point
+            // contradiction resolution documented above this loop's
+            // parameter-read section.
+            const float filterStageOutput = s;
+
+            // --- Feedback Routing Path (architecture.md component #7) ---
+            // In-loop HF damping — functions as component #7's "copy of
+            // the Filter stage" per this file's tap-point resolution — real,
+            // unconditional, always active (not gated by any bypass here).
+            auto& dampingFilter = feedbackDampingFilter[(size_t) channel];
+            dampingFilter.setCutoffFrequency(feedbackCutoffHz);
+            float loopSample = dampingFilter.processSample(0, filterStageOutput);
+
+            // Soft-clamp gain — real, unconditional, always active. tanh()
+            // is bounded in [-1,1] for all finite inputs, so the *parameter
+            // itself* can never command unity/runaway gain regardless of
+            // setting, even now that real nonlinear Distortion/Filter
+            // output feeds this loop instead of a synthetic passthrough.
+            loopSample *= feedbackInternalGain;
+
+            // Continuous RMS-envelope limiter on the feedback path itself —
+            // architecture.md's recommended belt-and-suspenders addition,
+            // independent of both the tanh gain clamp above and the main
+            // Output Limiter (component #13) downstream. This is the
+            // primary safety net for the flagged "high filterResonance +
+            // high feedbackAmount" danger case (a resonant Filter Stage can
+            // boost energy at the cutoff frequency beyond the Distortion
+            // stage's own saturation ceiling) and for unbounded Distortion
+            // algorithms (e.g. Ring-Mod at high Drive, which is NOT
+            // amplitude-bounded like the tanh/clip algorithms) reaching the
+            // loop before the main Output Limiter ever sees them, since the
+            // feedback tap sits upstream of Master Mix/Output Limiter.
+            auto& rmsEnv = feedbackRmsEnvelope[(size_t) channel];
+            rmsEnv = feedbackRmsOnePoleCoeff * rmsEnv + (1.0f - feedbackRmsOnePoleCoeff) * (loopSample * loopSample);
+            const float currentRms = std::sqrt(juce::jmax(0.0f, rmsEnv));
+            if (currentRms > kFeedbackRmsLimitThreshold)
+                loopSample *= (kFeedbackRmsLimitThreshold / currentRms);
+
+            // Circuit breaker — checked every sample (not just once per
+            // block), unconditional, real. A NaN/Inf sample can persist
+            // indefinitely once it enters a feedback loop, unlike a purely
+            // feedforward chain, so this must never be skipped. Now guards
+            // REAL nonlinear Distortion/Filter output flowing through the
+            // loop (previously only ever saw a synthetic passthrough).
+            if (! std::isfinite(loopSample))
+            {
+                resetFeedbackLoopChannel(channel);
+                loopSample = 0.0f;
+                feedbackCircuitBreakerTripped.store(true, std::memory_order_relaxed);
+            }
+
+            // DELAY stage write: closes the loop — this pushed sample is
+            // what popSample() will read back `delaySamples` from now,
+            // becoming a FUTURE sample's/block's Distortion Engine input
+            // contribution (the "DELAY -> DISTORTION" half of the
+            // DISTORTION -> FILTER -> DELAY -> DISTORTION loop).
+            feedbackDelayLine.pushSample(channel, loopSample);
+
+            // Master Mix (component #14): the main signal path continues
+            // forward using the Filter Stage's own output (untouched by the
+            // feedback tap above, which only READ it) — dry captured at
+            // step 1, before Input Gain.
+            float mixed = dry * masterDryGain + filterStageOutput * masterWetGain;
+
+            // Final output-stage guard: catches a non-finite value arriving
+            // via the raw host input itself (e.g. a misbehaving upstream
+            // plugin) or generated anywhere in the now-real, nonlinear
+            // linear chain, so the "never propagates to output" guarantee
+            // holds regardless of where the NaN/Inf originated. This does
+            // not replace the feedback loop's own internal circuit breaker
+            // above (which specifically protects the recirculating delay
+            // line's state) — it is a second, independent guard at the
+            // point where a sample is about to leave this function.
+            if (! std::isfinite(mixed))
+            {
+                mixed = 0.0f;
+                feedbackCircuitBreakerTripped.store(true, std::memory_order_relaxed);
+            }
+
+            channelData[n] = mixed;
         }
     }
 

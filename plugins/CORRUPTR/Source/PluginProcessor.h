@@ -37,16 +37,24 @@ public:
 
 private:
     //=========================================================================
-    // Stage 2 Phase 3.1: Feedback Routing Safety Validation (Isolated)
+    // Stage 2 Phase 3.1 (built) / Phase 3.4 (integrated): Feedback Routing
+    // Safety Validation + Integration
     //
-    // See architecture.md component #7 ("Feedback Routing Path") and
-    // plan.md's "Phase 3.1: Feedback Routing Safety Validation (Isolated)".
-    // This is the single highest-risk component in CORRUPTR (potential for
-    // runaway/audible-harm if the safety math is wrong) and is deliberately
-    // built + proven in isolation BEFORE the Distortion Engine (#2) or
-    // Filter Stage (#6) exist to be spliced into the loop. Those two
-    // components' splice points are marked with TODO comments in
-    // processBlock() below and will be wired in during Phase 3.3/3.4.
+    // See architecture.md component #7 ("Feedback Routing Path"), plan.md's
+    // "Phase 3.1: Feedback Routing Safety Validation (Isolated)", and
+    // plan.md's "Phase 3.4: Feedback Routing Integration". This is the
+    // single highest-risk component in CORRUPTR (potential for
+    // runaway/audible-harm if the safety math is wrong) and was
+    // deliberately built + proven in isolation in Phase 3.1, BEFORE the
+    // Distortion Engine (#2) and Filter Stage (#6) existed to be spliced
+    // into the loop. As of Phase 3.4, the loop is now wired directly into
+    // the live per-sample chain in processBlock() — real Distortion Engine
+    // output feeds the loop's input (via the delay-line's recirculated
+    // sample summing into the Distortion stage's input), and the Filter
+    // Stage's real output is what gets tapped (post-Filter, per the
+    // Sequential DSP chain's explicit step-10 ordering — see the
+    // tap-point contradiction resolution comment in processBlock()). The
+    // safety math below is unchanged and remains unconditional.
     //
     // Safety design (non-negotiable per architecture.md):
     //   1. Soft-clamp gain: internalGain = kFeedbackMaxSafeGain * tanh(feedbackAmount/100)
@@ -62,8 +70,10 @@ private:
     //      a feedback loop can sustain a bad sample indefinitely).
     //   4. Recommended belt-and-suspenders addition (architecture.md):
     //      continuous RMS-envelope limiter on the feedback path itself,
-    //      independent of the tanh gain clamp and of the (not-yet-built)
-    //      main Output Limiter (component #13).
+    //      independent of the tanh gain clamp and of the main Output
+    //      Limiter (component #13, built in Phase 3.3) — the feedback tap
+    //      sits upstream of Master Mix/Output Limiter, so this RMS limiter
+    //      is the only safety net protecting the recirculating loop itself.
     //=========================================================================
     static constexpr float kFeedbackMaxSafeGain = 0.85f;      // architecture.md "Feedback Safety Soft-Clamp" — constant well below 1.0
     static constexpr float kFeedbackDampingMinHz = 200.0f;    // feedbackDamping = 100% -> heaviest HF cut
@@ -122,12 +132,13 @@ private:
     // (dual-mode). See architecture.md components #1, #2, #3, #6, #13, #14
     // and the "Sequential DSP chain (per block, REQUIRED order)" section
     // (steps 3, 5, 6, 9, 11, 12, 13). Oversampling, Glitch, Sequencer, Mod
-    // Matrix, Macros, and Feedback-loop integration are explicitly OUT of
-    // scope for this phase — native sample rate only, no oversampling
-    // wrapper yet. Phase 3.1's feedback-loop code and Phase 3.2's
-    // modulation-accumulator observation code above are untouched and NOT
-    // wired into this chain — that integration is Phase 3.4 (feedback) and
-    // Phase 3.7-3.9 (modulation generalization).
+    // Matrix, and Macros are explicitly OUT of scope for this phase —
+    // native sample rate only, no oversampling wrapper yet. As of Phase
+    // 3.4, the Feedback Routing Path (Phase 3.1) IS wired into this chain
+    // (step 10's tap/recirculation, in processBlock()'s merged per-sample
+    // loop) — only Phase 3.2's modulation-accumulator observation code
+    // above remains untouched/unwired (that generalization is Phase
+    // 3.7-3.9's job).
     //
     // Real-time-safety note: the tone-tilt filter, DC blocker, and Notch
     // filter below are all HAND-ROLLED one-pole/biquad implementations
