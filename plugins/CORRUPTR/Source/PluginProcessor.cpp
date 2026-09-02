@@ -487,6 +487,21 @@ CORRUPTRAudioProcessor::CORRUPTRAudioProcessor()
                         .withOutput("Output", juce::AudioChannelSet::stereo(), true))
     , parameters(*this, nullptr, "Parameters", createParameterLayout())
 {
+    //=========================================================================
+    // Stage 2 Phase 3.2: Unified Modulation Accumulator (Isolated) - self-test
+    //
+    // Runs on EVERY plugin instantiation (including under pluginval, this
+    // repo's closest equivalent to an executable unit-test harness - see
+    // dsp/ModulationAccumulator.h's runSelfTest() doc comment for why).
+    // Debug builds hard-stop at the exact failing check via the jassert()s
+    // inside runSelfTest() itself; the aggregate result is also stored in a
+    // diagnostic atomic (same convention as Phase 3.1's
+    // feedbackCircuitBreakerTripped) so release builds never crash but the
+    // outcome remains inspectable.
+    //=========================================================================
+    const bool modAccumulatorSelfTestOk = ModulationAccumulator::runSelfTest();
+    modulationAccumulatorSelfTestPassed.store(modAccumulatorSelfTestOk, std::memory_order_relaxed);
+    jassert(modAccumulatorSelfTestOk);
 }
 
 CORRUPTRAudioProcessor::~CORRUPTRAudioProcessor()
@@ -565,6 +580,83 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     for (int i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
+
+    //=========================================================================
+    // Stage 2 Phase 3.2: Unified Modulation Accumulator (Isolated)
+    //
+    // Read-only observation point: computes what a modulated `drive` value
+    // WOULD be this block, using the generic ModulationAccumulator (see
+    // dsp/ModulationAccumulator.h) fed with:
+    //   - base:        real `drive` APVTS parameter
+    //   - Sequencer:   SYNTHETIC stand-in (Sequencer doesn't exist until
+    //                  Phase 3.7) - a slow, bounded, deterministic sine so
+    //                  this is a genuine per-block computation, not a
+    //                  compile-time constant, without needing a real clock
+    //   - Mod Matrix:  SYNTHETIC stand-in (Mod Matrix doesn't exist until
+    //                  Phase 3.8) - same idea, different rate, so the two
+    //                  synthetic contributors are independently verifiable
+    //   - Macro:       REAL `macroDamage` APVTS parameter (macros ARE real
+    //                  Stage 1 parameters already) mapped through a
+    //                  PLACEHOLDER 0-100% -> 0 to +8dB curve; the real
+    //                  macroDamage->drive routing/weighting is MacroEngine's
+    //                  job in Phase 3.8, not decided here
+    //   - Performance Trigger: REAL `performanceDestroy` bool APVTS
+    //                  parameter gates a PLACEHOLDER override value
+    //                  (driveRangeMax); the real Performance Trigger
+    //                  preset-diff semantics for "Destroy" are Phase 3.9's
+    //                  job, not decided here - this only exercises the
+    //                  override-wins-then-releases code path with a real,
+    //                  automatable boolean instead of a hardcoded constant
+    //
+    // Result is stored in `phase32DriveModulationObservation` for
+    // diagnostic/future-use only - it is NOT applied to any DSP processing
+    // below. The Distortion Engine (architecture.md component #2, which
+    // would actually consume a modulated `drive` value) doesn't exist yet -
+    // built in Phase 3.3. This deliberately does NOT change Phase 3.1's
+    // feedback-loop code or output below it in any way.
+    //=========================================================================
+    {
+        constexpr float driveRangeMin = 0.0f;
+        constexpr float driveRangeMax = 40.0f;
+
+        auto* driveParam = parameters.getRawParameterValue("drive");
+        auto* macroDamageParam = parameters.getRawParameterValue("macroDamage");
+        auto* performanceDestroyParam = parameters.getRawParameterValue("performanceDestroy");
+
+        const float driveBase = driveParam->load();
+        const float macroDamagePct = macroDamageParam->load();
+        const bool performanceDestroyActive = performanceDestroyParam->load() > 0.5f;
+
+        // Advance the two synthetic phases once per block (bounded,
+        // deterministic, no allocation - real-time safe). Rates are
+        // arbitrary placeholders chosen only to be slow enough to be
+        // musically-plausible modulation and mutually distinguishable.
+        const double blockDurationSeconds = getSampleRate() > 0.0
+                                                 ? static_cast<double>(buffer.getNumSamples()) / getSampleRate()
+                                                 : 0.0;
+        phase32SyntheticSequencerPhase += blockDurationSeconds * (2.0 * juce::MathConstants<double>::pi) * 0.5;  // 0.5 Hz synthetic stand-in
+        phase32SyntheticModMatrixPhase += blockDurationSeconds * (2.0 * juce::MathConstants<double>::pi) * 0.13; // 0.13 Hz synthetic stand-in
+        phase32SyntheticSequencerPhase = std::fmod(phase32SyntheticSequencerPhase, 2.0 * juce::MathConstants<double>::pi);
+        phase32SyntheticModMatrixPhase = std::fmod(phase32SyntheticModMatrixPhase, 2.0 * juce::MathConstants<double>::pi);
+
+        const float syntheticSequencerContribution = 3.0f * static_cast<float>(std::sin(phase32SyntheticSequencerPhase)); // +/-3dB
+        const float syntheticModMatrixContribution = 2.0f * static_cast<float>(std::sin(phase32SyntheticModMatrixPhase)); // +/-2dB
+        const float macroContribution = juce::jlimit(0.0f, 100.0f, macroDamagePct) * 0.08f; // 0-100% -> 0 to +8dB placeholder curve
+
+        const float performanceDestroyOverrideValue = driveRangeMax; // placeholder ("Destroy" -> max drive); real diff decided in Phase 3.9
+
+        const float modulatedDrive = ModulationAccumulator::accumulate(
+            driveBase,
+            syntheticSequencerContribution,
+            syntheticModMatrixContribution,
+            macroContribution,
+            performanceDestroyActive,
+            performanceDestroyOverrideValue,
+            driveRangeMin,
+            driveRangeMax);
+
+        phase32DriveModulationObservation.store(modulatedDrive, std::memory_order_relaxed);
+    }
 
     //=========================================================================
     // Stage 2 Phase 3.1: Feedback Routing Safety Validation (Isolated)

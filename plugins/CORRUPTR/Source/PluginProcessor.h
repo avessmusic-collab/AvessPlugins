@@ -3,6 +3,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <atomic>
+#include "dsp/ModulationAccumulator.h"
 
 class CORRUPTRAudioProcessor : public juce::AudioProcessor
 {
@@ -84,6 +85,33 @@ private:
     // (feedbackMaxDelaySamples iterations, no allocation) - the circuit
     // breaker's "hard reset to zero for that channel" mechanism.
     void resetFeedbackLoopChannel(int channel);
+
+    //=========================================================================
+    // Stage 2 Phase 3.2: Unified Modulation Accumulator (Isolated)
+    //
+    // See dsp/ModulationAccumulator.h for the generic, reusable combine-math
+    // class (Performance Trigger hard-override, else additive Sequencer +
+    // Mod Matrix + Macro combine, always clamped to the destination's valid
+    // range - architecture.md's recommended default rule). This section
+    // wires that class up to ONE destination only (`drive`, 0-40dB) per
+    // plan.md's recommended build order, using SYNTHETIC stand-ins for the
+    // Sequencer and Mod Matrix contributions (neither subsystem exists yet -
+    // built in Phase 3.7/3.8) and the REAL `macroDamage` APVTS parameter for
+    // the Macro contribution (macros are genuine Stage 1 parameters already).
+    //
+    // Deliberately NOT wired into the live audio signal path yet - this
+    // phase proves the accumulator's math in isolation, matching Phase
+    // 3.1's "isolated" pattern. The Distortion Engine (architecture.md
+    // component #2, which would actually READ a modulated `drive` value)
+    // doesn't exist yet either (built in Phase 3.3), so there is nothing
+    // for this observation point to feed even if it wanted to. Computed
+    // once per block (diagnostic/future-use only, not consumed anywhere
+    // yet) and stored in `phase32DriveModulationObservation` below.
+    //=========================================================================
+    std::atomic<bool> modulationAccumulatorSelfTestPassed { false }; // set once in the constructor (see .cpp)
+    std::atomic<float> phase32DriveModulationObservation { 0.0f };   // diagnostic only - last computed modulated `drive` value, not yet applied to any DSP
+    double phase32SyntheticSequencerPhase = 0.0;  // free-running phase for the synthetic Sequencer-lane stand-in (advances once per block)
+    double phase32SyntheticModMatrixPhase = 0.0;  // free-running phase for the synthetic Mod-Matrix-slot stand-in (advances once per block, different rate than the above so the two are distinguishable)
 
     juce::AudioProcessorValueTreeState parameters;
 
