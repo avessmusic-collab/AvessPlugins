@@ -502,6 +502,19 @@ CORRUPTRAudioProcessor::CORRUPTRAudioProcessor()
     const bool modAccumulatorSelfTestOk = ModulationAccumulator::runSelfTest();
     modulationAccumulatorSelfTestPassed.store(modAccumulatorSelfTestOk, std::memory_order_relaxed);
     jassert(modAccumulatorSelfTestOk);
+
+    //=========================================================================
+    // Stage 2 Phase 3.5: Glitch Engine RNG seed — architecture.md requires a
+    // SEEDED juce::Random instance (not juce::Random::getSystemRandom())
+    // whose seed persists through getStateInformation/setStateInformation so
+    // presets reproduce identical glitch behavior across sessions. The
+    // system RNG is used here ONCE, at construction (message thread, plugin
+    // instantiation — not the audio thread), purely as a one-time entropy
+    // source for the initial seed; every subsequent glitch-engine random
+    // draw uses `glitchRandom` (seeded from this value in prepareToPlay),
+    // never the system RNG again.
+    //=========================================================================
+    glitchRandomSeedAtomic.store(juce::Random::getSystemRandom().nextInt64(), std::memory_order_relaxed);
 }
 
 CORRUPTRAudioProcessor::~CORRUPTRAudioProcessor()
@@ -581,6 +594,58 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
 
     bitcrushHeldSample.fill(0.0f);
     bitcrushHoldCounter.fill(0);
+
+    //=========================================================================
+    // Stage 2 Phase 3.5: Glitch / Buffer Engine — ring buffer + sample-rate-
+    // derived constants (see PluginProcessor.h's Phase 3.5 doc comment for
+    // full design rationale).
+    //
+    // Ring buffer sizing: architecture.md "sized for the maximum musical
+    // division - 4 bars at slowest supported tempo, e.g. 4 bars @ 40bpm @
+    // 192kHz - allocate generously in prepareToPlay, never on audio
+    // thread." Computed against the ACTUAL prepared `sampleRate` (not a
+    // hardcoded 192kHz constant) combined with kGlitchMinSupportedBpm
+    // (40bpm, architecture.md's own worst-case example) and a 4/4 time-
+    // signature assumption for "1 bar" = 1 whole note = 4 quarter notes,
+    // so the buffer is correctly generous whatever sample rate the host
+    // actually uses while still covering the slowest-tempo/longest-
+    // division case at that rate. Allocated ONCE here; never
+    // resized/reallocated in processBlock().
+    //=========================================================================
+    {
+        const double wholeNoteSecondsAtMinBpm = (60.0 / kGlitchMinSupportedBpm) * 4.0; // 4/4 time assumption
+        const double maxDivisionSeconds = wholeNoteSecondsAtMinBpm * 4.0; // "4 bars" (the longest glitchBufferLength choice)
+        glitchRingBufferLength = static_cast<int>(std::ceil(maxDivisionSeconds * sampleRate)) + samplesPerBlock + 4;
+        glitchRingBuffer.setSize(numChannels, glitchRingBufferLength, false, true, true);
+        glitchRingBuffer.clear();
+    }
+    glitchRingWritePos = 0;
+    glitchCycleSampleCounter = 0;            // forces a cycle-boundary recompute on the very first processed sample
+    glitchCurrentCycleLengthSamples = 0;
+    glitchEventActiveThisCycle = false;
+    glitchActiveWindowLengthSamples = 0;
+    glitchWindowReadStartIndex = 0;
+    glitchReverseDirection = false;
+    glitchWindowReadPos.fill(0);
+
+    glitchMinWindowSamples   = juce::jmax(8, static_cast<int>(std::round(sampleRate * 0.001)));                       // >=1ms floor, avoids degenerate near-zero windows
+    glitchFreezeWindowSamples = juce::jmax(glitchMinWindowSamples, static_cast<int>(std::round(sampleRate * kGlitchFreezeWindowMs / 1000.0)));
+    glitchLoopEdgeFadeSamples = juce::jmax(1, static_cast<int>(std::round(sampleRate * kGlitchLoopEdgeFadeMs / 1000.0)));
+
+    glitchActiveMixSmoothed.reset(sampleRate, kGlitchCrossfadeMs / 1000.0);
+    glitchActiveMixSmoothed.setCurrentAndTargetValue(0.0f);
+    lastGlitchModeIndex = -1; // force clean per-block init on the first processBlock() call
+
+    // RNG: apply whatever seed currently lives in the cross-thread atomic
+    // (set in the constructor, or by a prior setStateInformation preset
+    // restore). prepareToPlay always runs before processBlock and is not
+    // itself real-time, so reseeding here (rather than lazily detecting a
+    // change on the first block) is safe and simplest.
+    {
+        const juce::int64 seed = glitchRandomSeedAtomic.load(std::memory_order_relaxed);
+        glitchRandom.setSeed(seed);
+        glitchLastAppliedRandomSeed = seed;
+    }
 
     for (auto& f : svfFilter)
     {
@@ -838,6 +903,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     auto* graphBypassBCParam       = parameters.getRawParameterValue("graphBypassBitcrush");
     auto* bitDepthParam            = parameters.getRawParameterValue("bitDepth");
     auto* srrParam                 = parameters.getRawParameterValue("sampleRateReduction");
+    auto* graphBypassGlitchParam   = parameters.getRawParameterValue("graphBypassGlitch");
+    auto* glitchModeParam          = parameters.getRawParameterValue("glitchMode");
+    auto* glitchBufferLenParam     = parameters.getRawParameterValue("glitchBufferLength");
+    auto* glitchProbabilityParam   = parameters.getRawParameterValue("glitchProbability");
+    auto* chaosParam               = parameters.getRawParameterValue("chaos");
     auto* graphBypassFiltParam     = parameters.getRawParameterValue("graphBypassFilter");
     auto* filterTypeParam          = parameters.getRawParameterValue("filterType");
     auto* filterCutoffParam        = parameters.getRawParameterValue("filterCutoff");
@@ -865,6 +935,84 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float srr = juce::jlimit(1.0f, 48.0f, srrParam->load());
         bitcrushHoldSamples = juce::jmax(1, static_cast<int>(std::round(srr)));
     }
+
+    //=========================================================================
+    // Stage 2 Phase 3.5: Glitch / Buffer Engine — per-block parameter reads
+    // + housekeeping. Per-sample cycle-boundary/trigger/window-read logic
+    // lives in the merged per-sample loop below (and in
+    // setUpGlitchEventForThisCycle()/readGlitchWindowSample()); this block
+    // only handles things that are correct to resolve once per block, per
+    // this file's established convention (mirrors `lastFilterTypeIndex`'s
+    // change-detection pattern and the feedback loop's per-block
+    // smoothing-target setup above).
+    //=========================================================================
+    glitchBypassed          = graphBypassGlitchParam->load() > 0.5f;
+    glitchModeIndex         = static_cast<int>(glitchModeParam->load());
+    glitchBufferLengthIndex = static_cast<int>(glitchBufferLenParam->load());
+    glitchProbabilityPct    = juce::jlimit(0.0f, 100.0f, glitchProbabilityParam->load());
+    glitchChaosPct          = juce::jlimit(0.0f, 100.0f, chaosParam->load());
+
+    // Mode-change detection (plan.md Phase 3.5 Test Criteria: "Mode
+    // switching mid-playback doesn't produce discontinuities"): forces the
+    // current cycle to end immediately (glitchEventActiveThisCycle=false,
+    // which drives glitchActiveMixSmoothed's target to 0 below and ramps
+    // cleanly to dry over kGlitchCrossfadeMs even if a window was
+    // mid-playback) and restarts cycle timing cleanly under the new mode.
+    if (glitchModeIndex != lastGlitchModeIndex)
+    {
+        glitchEventActiveThisCycle = false;
+        glitchCycleSampleCounter = 0;      // forces a fresh cycle-boundary recompute on the very next sample
+        glitchCurrentCycleLengthSamples = 0;
+        lastGlitchModeIndex = glitchModeIndex;
+    }
+
+    // RNG reseed detection — audio-thread reads the cross-thread atomic
+    // once per block (architecture.md Thread Boundaries: "read once per
+    // relevant trigger event, not per-sample") and only touches the real
+    // `glitchRandom` instance if a message-thread write (setStateInformation
+    // preset restore) actually changed the seed since last block.
+    {
+        const juce::int64 pendingSeed = glitchRandomSeedAtomic.load(std::memory_order_relaxed);
+        if (pendingSeed != glitchLastAppliedRandomSeed)
+        {
+            glitchRandom.setSeed(pendingSeed);
+            glitchLastAppliedRandomSeed = pendingSeed;
+        }
+    }
+
+    // Host BPM (architecture.md: "glitchBufferLength converts to sample
+    // count via host BPM (from juce::AudioPlayHead)"). JUCE 8
+    // std::optional<PositionInfo> API (architecture.md's own Sequencer
+    // section flags the older getCurrentPosition() pattern as deprecated/
+    // error-prone — using the current API here). Real-time-safe: no
+    // allocation in getPlayHead()/getPosition(), and the fallback path
+    // below (no host, or host doesn't report tempo) is a plain constant,
+    // also allocation-free.
+    float glitchHostBpm = kGlitchFallbackBpm;
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto position = playHead->getPosition())
+        {
+            if (const auto bpm = position->getBpm())
+                if (*bpm > 0.0)
+                    glitchHostBpm = static_cast<float>(*bpm);
+        }
+    }
+
+    // Nominal cycle length in samples for `glitchBufferLength`'s currently-
+    // selected musical division, at `glitchHostBpm`. Chaos-scaled jitter
+    // and the Bernoulli probability trial are applied per-CYCLE (not
+    // per-block) in the per-sample loop below, using this nominal value as
+    // their base — see PluginProcessor.h's Phase 3.5 doc comment for the
+    // exact formula.
+    const float glitchNominalCycleLengthSamplesF = [&]() -> float
+    {
+        const double wholeNoteSeconds = (60.0 / juce::jmax(1.0f, glitchHostBpm)) * 4.0; // 4/4 time assumption, documented in PluginProcessor.h
+        const int divIdx = juce::jlimit(0, 8, glitchBufferLengthIndex);
+        const double divisionSeconds = wholeNoteSeconds * static_cast<double>(kGlitchDivisionMultiplier[(size_t) divIdx]);
+        const double sr = getSampleRate() > 0.0 ? getSampleRate() : 44100.0;
+        return static_cast<float>(juce::jmax(1.0, divisionSeconds * sr));
+    }();
 
     filterBypassed  = graphBypassFiltParam->load() > 0.5f;
     filterTypeIndex = static_cast<int>(filterTypeParam->load());
@@ -943,6 +1091,72 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float feedbackInternalGain = feedbackInternalGainSmoothed.getNextValue();
         const float feedbackCutoffHz     = feedbackDampingCutoffSmoothed.getNextValue();
 
+        //=====================================================================
+        // Stage 2 Phase 3.5: Glitch / Buffer Engine — per-sample cycle/
+        // trigger bookkeeping. Runs exactly ONCE per sample index (not once
+        // per channel), matching this loop's established convention for
+        // channel-shared state (see the block comment above this `for (int
+        // n ...)` loop). This step is purely timing/RNG-based — it does NOT
+        // touch audio data (the actual ring-buffer WRITE of each channel's
+        // post-Bitcrush sample happens inside processGlitchEngine(), called
+        // per-channel below, using `glitchWritePosThisSample` captured here
+        // BEFORE any channel writes so both channels land at the same
+        // ring-buffer index for this sample).
+        //=====================================================================
+        const int glitchWritePosThisSample = glitchRingWritePos;
+
+        if (glitchCycleSampleCounter <= 0)
+        {
+            // New cycle boundary reached — recompute this cycle's length
+            // (chaos-scaled jitter around the nominal BPM-derived division
+            // length) and run the Bernoulli trigger trial (chaos-scaled
+            // probability variance). Both RNG draws happen UNCONDITIONALLY
+            // every cycle boundary, regardless of glitchMode/
+            // graphBypassGlitch, so the draw sequence — and therefore
+            // reproducibility from a given seed — depends only on tempo/
+            // sample-rate/probability/chaos, never on mode selection or
+            // bypass state (see PluginProcessor.h's Phase 3.5 doc comment).
+            const float chaosNorm = glitchChaosPct / 100.0f;
+
+            const float lengthJitter = (glitchRandom.nextFloat() * 2.0f - 1.0f) * chaosNorm * kGlitchChaosWindowLengthJitterRange;
+            const int jitteredCycleLength = static_cast<int>(std::round(glitchNominalCycleLengthSamplesF * (1.0f + lengthJitter)));
+            glitchCurrentCycleLengthSamples = juce::jlimit(1, glitchRingBufferLength - 4, jitteredCycleLength);
+
+            const float probBase = glitchProbabilityPct / 100.0f;
+            const float probJitter = (glitchRandom.nextFloat() * 2.0f - 1.0f) * chaosNorm * kGlitchChaosProbabilityJitterRange;
+            const float effectiveProbability = juce::jlimit(0.0f, 1.0f, probBase + probJitter);
+            const bool triggered = glitchRandom.nextFloat() < effectiveProbability;
+
+            // Tier 1 scope gate (plan.md Phase 3.5): an event can only go
+            // "active" for exactly the 6 Tier-1 modes. Off (0) and every
+            // Tier-2 mode (4, 6-11, 14-17) fall through to `else` below,
+            // guaranteeing a clean dry passthrough for this phase — not a
+            // half-implemented stub.
+            const bool isTier1PlayableMode = (glitchModeIndex == 1 || glitchModeIndex == 2 || glitchModeIndex == 3
+                                                || glitchModeIndex == 5 || glitchModeIndex == 12 || glitchModeIndex == 13);
+
+            if (triggered && isTier1PlayableMode && ! glitchBypassed)
+            {
+                glitchEventActiveThisCycle = true;
+                setUpGlitchEventForThisCycle(glitchWritePosThisSample);
+            }
+            else
+            {
+                glitchEventActiveThisCycle = false;
+            }
+
+            glitchCycleSampleCounter = glitchCurrentCycleLengthSamples;
+        }
+        --glitchCycleSampleCounter;
+
+        // graphBypassGlitch toggled ON mid-active-window: `glitchEventActiveThisCycle`
+        // is only recomputed at cycle boundaries, so re-check bypass here too —
+        // this drives the crossfade to dry smoothly (via glitchActiveMixSmoothed's
+        // ramp below) even if bypass is engaged mid-window, rather than an abrupt cut.
+        const bool glitchWantsWet = glitchEventActiveThisCycle && ! glitchBypassed;
+        glitchActiveMixSmoothed.setTargetValue(glitchWantsWet ? 1.0f : 0.0f);
+        const float glitchMixAmt = glitchActiveMixSmoothed.getNextValue();
+
         for (int channel = 0; channel < numChannels; ++channel)
         {
             auto* channelData = buffer.getWritePointer(channel);
@@ -961,6 +1175,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             float s = channelData[n] + delayedFeedback;
             s = processDistortionEngine(s, channel, driveGain, distortionMixAmt);
             s = processBitcrusher(s, channel);
+            s = processGlitchEngine(s, channel, glitchWritePosThisSample, glitchMixAmt);
             s = processFilterStage(s, channel);
 
             // `s` is now the Filter Stage's output (Sequential DSP chain
@@ -1047,6 +1262,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
             channelData[n] = mixed;
         }
+
+        // Advance the Glitch ring buffer's shared write index exactly ONCE
+        // per sample, AFTER both channels have written their post-Bitcrush
+        // sample at `glitchWritePosThisSample` inside processGlitchEngine()
+        // above (called once per channel, same index each time this sample).
+        glitchRingWritePos = (glitchRingWritePos + 1) % glitchRingBufferLength;
     }
 
     // Output Gain (block-level). CONTRADICTION RESOLUTION: applied BEFORE
@@ -1231,6 +1452,131 @@ float CORRUPTRAudioProcessor::processBitcrusher(float xIn, int channel)
     return std::round(held * bitcrushLevels) / bitcrushLevels;
 }
 
+//==============================================================================
+// Stage 2 Phase 3.5: Glitch / Buffer Engine (18 Modes) — Tier 1 helper method
+// implementations. See PluginProcessor.h's Phase 3.5 doc comment for the
+// full design rationale (ring buffer, trigger mechanism, chaos formula, RNG
+// seeding, per-mode window semantics, click-free guarantees).
+//==============================================================================
+float CORRUPTRAudioProcessor::processGlitchEngine(float xIn, int channel, int writePos, float mixAmt)
+{
+    // Continuous ring-buffer write — unconditional, every sample, every
+    // channel, regardless of whether a glitch is currently active or
+    // graphBypassGlitch is on. architecture.md: "so there's always a
+    // recent-history window available to capture from when a trigger
+    // fires." (writePos is the same index for both channels this sample,
+    // captured once in the outer per-sample loop before this call.)
+    glitchRingBuffer.setSample(channel, writePos, xIn);
+
+    if (mixAmt <= 0.0f)
+        return xIn; // fully dry: Off/Tier-2 mode, no event active, bypassed, or mid-crossfade-release-to-dry — cheap early-out, no ring-buffer read needed
+
+    const float wet = readGlitchWindowSample(channel);
+    return xIn * (1.0f - mixAmt) + wet * mixAmt;
+}
+
+void CORRUPTRAudioProcessor::setUpGlitchEventForThisCycle(int writePosThisSample)
+{
+    // Called once, at the moment a new glitch event is triggered (cycle
+    // boundary + Bernoulli trial succeeded + a Tier-1 mode is selected).
+    // Captures the historical ring-buffer window this event will play back
+    // for its duration — see PluginProcessor.h's "Per-mode window
+    // semantics" doc comment for the rationale behind each mode's window
+    // length.
+    glitchReverseDirection = false;
+    int windowLen = glitchCurrentCycleLengthSamples;
+
+    switch (glitchModeIndex)
+    {
+        case 1: // Stutter — short rapid-repeat slice, captured once, looped forward
+            windowLen = juce::jmax(glitchMinWindowSamples,
+                                    static_cast<int>(std::round(glitchCurrentCycleLengthSamples * kGlitchStutterFraction)));
+            break;
+
+        case 2: // Repeat — the full captured division, captured once, looped forward
+            windowLen = glitchCurrentCycleLengthSamples;
+            break;
+
+        case 3: // Reverse — the full captured division, read back-to-front every pass
+            windowLen = glitchCurrentCycleLengthSamples;
+            glitchReverseDirection = true;
+            break;
+
+        case 5: // Freeze — very short ("~single-cycle" approximation), captured once, looped forward
+            windowLen = juce::jmax(glitchMinWindowSamples, juce::jmin(glitchCurrentCycleLengthSamples, glitchFreezeWindowSamples));
+            break;
+
+        case 12: // Retrigger — short slice; the ACTUAL capture is re-done fresh at the
+                 // start of every loop pass inside readGlitchWindowSample(), so this
+                 // initial capture is only what plays for the FIRST pass.
+            windowLen = juce::jmax(glitchMinWindowSamples,
+                                    static_cast<int>(std::round(glitchCurrentCycleLengthSamples * kGlitchRetriggerFraction)));
+            break;
+
+        case 13: // Silence — window length only paces the mute duration; readGlitchWindowSample() never reads the ring buffer for this mode
+            windowLen = glitchCurrentCycleLengthSamples;
+            break;
+
+        default:
+            jassertfalse; // unreachable — guarded by isTier1PlayableMode at the call site
+            break;
+    }
+
+    windowLen = juce::jlimit(1, glitchRingBufferLength - 4, windowLen);
+    glitchActiveWindowLengthSamples = windowLen;
+    glitchWindowReadStartIndex = (writePosThisSample - windowLen + glitchRingBufferLength) % glitchRingBufferLength;
+    glitchWindowReadPos[0] = 0;
+    glitchWindowReadPos[1] = 0;
+}
+
+float CORRUPTRAudioProcessor::readGlitchWindowSample(int channel)
+{
+    if (glitchModeIndex == 13) // Silence — hard-gated mute for the window duration; the
+        return 0.0f;           // glitchActiveMixSmoothed crossfade still provides click-free fade in/out around this.
+
+    const int windowLen = juce::jmax(1, glitchActiveWindowLengthSamples);
+    auto& readPos = glitchWindowReadPos[(size_t) channel];
+
+    if (glitchModeIndex == 12 && readPos == 0)
+    {
+        // Retrigger: re-capture a fresh window from the CURRENT ring-buffer
+        // write position at the start of EVERY loop pass (not just the
+        // first) — the deliberate differentiator from Stutter/Repeat's
+        // fixed-loop behavior. See PluginProcessor.h's Phase 3.5 doc
+        // comment for the full rationale. (Both channels reach `readPos ==
+        // 0` on the same sample since they always advance in lockstep, so
+        // this recompute — though run once per channel — always produces
+        // the same shared index.)
+        glitchWindowReadStartIndex = (glitchRingWritePos - windowLen + glitchRingBufferLength) % glitchRingBufferLength;
+    }
+
+    const int idx = glitchReverseDirection
+                        ? (glitchWindowReadStartIndex + (windowLen - 1 - readPos)) % glitchRingBufferLength
+                        : (glitchWindowReadStartIndex + readPos) % glitchRingBufferLength;
+
+    float sample = glitchRingBuffer.getSample(channel, idx);
+
+    // Per-loop-pass click guard (plan.md Phase 3.5 Test Criteria: "click-free
+    // buffer manipulation"): linear fade-in/fade-out of
+    // `glitchLoopEdgeFadeSamples` at the START and END of EVERY pass through
+    // the window (not just the first), so the read pointer's wrap-to-start
+    // is never a hard discontinuity, no matter how many times it loops.
+    const int fadeSamples = juce::jmin(windowLen / 4, glitchLoopEdgeFadeSamples);
+    if (fadeSamples > 0)
+    {
+        if (readPos < fadeSamples)
+            sample *= static_cast<float>(readPos) / static_cast<float>(fadeSamples);
+        else if (readPos >= windowLen - fadeSamples)
+            sample *= static_cast<float>(windowLen - 1 - readPos) / static_cast<float>(fadeSamples);
+    }
+
+    readPos += 1;
+    if (readPos >= windowLen)
+        readPos = 0; // loop back to window start (Stutter/Repeat/Reverse/Freeze); Retrigger's readPos==0 branch above then re-captures a fresh window on the NEXT call
+
+    return sample;
+}
+
 void CORRUPTRAudioProcessor::updateFilterParameters(float cutoffHz, float resonancePct, double sampleRate)
 {
     const float resonanceNorm = juce::jlimit(0.0f, 1.0f, resonancePct / 100.0f);
@@ -1333,6 +1679,28 @@ void CORRUPTRAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = parameters.copyState();
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
+
+    //=========================================================================
+    // Stage 2 Phase 3.5: Glitch Engine RNG seed persistence.
+    //
+    // architecture.md component #4: "must use a seeded juce::Random
+    // instance... so presets reproduce identical glitch behavior across
+    // sessions - seed stored in custom state." architecture.md's State
+    // Persistence section describes the general mechanism as a nested
+    // juce::ValueTree merged into the same state blob (DrumRoulette
+    // pattern); at this phase's scope (a single int64 seed - no other
+    // custom state exists yet, Sequencer pattern data is Phase 3.7's job)
+    // a plain XML attribute on the root element achieves the same result
+    // without introducing a second ValueTree-merge mechanism a phase
+    // early. Stored as a String attribute (not `setAttribute(name, int)`)
+    // to preserve full int64 precision - juce::XmlElement's integer
+    // attribute API is 32-bit only. A `corruptrStateVersion` attribute is
+    // added alongside it per architecture.md's own "recommend a version
+    // attribute in the root ValueTree from day one" advice.
+    //=========================================================================
+    xml->setAttribute("corruptrStateVersion", 1);
+    xml->setAttribute("glitchRandomSeed", juce::String(glitchRandomSeedAtomic.load(std::memory_order_relaxed)));
+
     copyXmlToBinary(*xml, destData);
 }
 
@@ -1341,7 +1709,48 @@ void CORRUPTRAudioProcessor::setStateInformation(const void* data, int sizeInByt
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
 
     if (xmlState != nullptr && xmlState->hasTagName(parameters.state.getType()))
+    {
         parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+
+        //=====================================================================
+        // Stage 2 Phase 3.5: Glitch Engine RNG seed restore.
+        //
+        // Message-thread write to the cross-thread atomic ONLY — the real
+        // `glitchRandom` instance is reseeded by the audio thread once per
+        // block (processBlock()'s per-block Glitch parameter-read section),
+        // never mutated directly here, per architecture.md's Thread
+        // Boundaries convention ("Glitch/Randomization seeds:
+        // std::atomic<uint32_t> or similar, read once per relevant trigger
+        // event, not per-sample"). This is how a user reloading a saved
+        // preset gets IDENTICAL glitch timing: the exact same seed value
+        // round-trips through getStateInformation -> XML attribute ->
+        // setStateInformation -> this atomic -> the next processBlock()'s
+        // reseed of `glitchRandom`, so the sequence of Bernoulli-trial/
+        // jitter draws from that point forward is bit-for-bit identical to
+        // any other session that starts from the same seed (the exact
+        // wall-clock/transport-position alignment of those draws still
+        // depends on where playback starts, same as any tempo-synced
+        // effect - the RNG STREAM itself, not draw timing relative to
+        // playback start, is what's made reproducible here).
+        //
+        // Missing/corrupt attribute (e.g. a preset saved before this phase
+        // existed): architecture.md's Restore Behavior - "fall back to...
+        // a fresh random seed - never crash on malformed preset data." A
+        // fresh system-RNG-sourced seed is generated here (message thread,
+        // one-time, non-real-time - same justification as the
+        // constructor's initial seed) so an old preset still gets SOME
+        // seeded, reproducible-from-here-forward behavior.
+        //=====================================================================
+        if (xmlState->hasAttribute("glitchRandomSeed"))
+        {
+            const juce::int64 restoredSeed = xmlState->getStringAttribute("glitchRandomSeed").getLargeIntValue();
+            glitchRandomSeedAtomic.store(restoredSeed, std::memory_order_relaxed);
+        }
+        else
+        {
+            glitchRandomSeedAtomic.store(juce::Random::getSystemRandom().nextInt64(), std::memory_order_relaxed);
+        }
+    }
 }
 
 //==============================================================================
