@@ -10,10 +10,10 @@
 /**
     Table-driven APVTS parameter layout for KICKR.
 
-    60 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
+    70 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
     "Parameter Mapping", plus `morph` added 2026-09-01 — see NOTES.md):
-        - 52 juce::AudioParameterFloat   (41 v1 core + 10 v2 SAMPLE + 1 `morph`)
-        -  3 juce::AudioParameterChoice  (noiseType, oversampling, tuneMode)
+        - 60 juce::AudioParameterFloat   (41 v1 core + 10 v2 SAMPLE + 1 `morph` + 6 LIMITER + 2 FILTER, 2026-09-02)
+        -  4 juce::AudioParameterChoice  (noiseType, oversampling, tuneMode, filterType — 2026-09-02)
         -  5 juce::AudioParameterBool    (limiter, synthEnable, sampleEnable,
                                           sampleReverse, sampleMidiTrack)
 
@@ -45,9 +45,9 @@ namespace kickr
         const char* unitLabel;     // "" when unitless
     };
 
-    // 52 float parameters, grouped exactly as parameter-spec.md (41 v1 core + 10 v2 SAMPLE
+    // 60 float parameters, grouped exactly as parameter-spec.md (41 v1 core + 10 v2 SAMPLE
     // + 1 `morph`, added 2026-09-01, not in the original locked spec — see NOTES.md).
-    inline constexpr std::array<FloatParamSpec, 52> kFloatParams { {
+    inline constexpr std::array<FloatParamSpec, 60> kFloatParams { {
         // ---- PITCH ----
         { id::fundamental,      "Fundamental",          25.0f,   150.0f,   0.1f,   0.5f,   55.0f,  ""   }, // shown as a note (A1); see createParameterLayout special case
         { id::pitchStart,       "Pitch Start",           1.0f,    10.0f,   0.01f,  0.6f,    4.0f,  "x"  },
@@ -127,6 +127,19 @@ namespace kickr
         // ---- OUTPUT ----
         { id::output,           "Output",              -24.0f,    12.0f,   0.1f,   1.0f,    0.0f,  "dB" }, // 0 dB -> ~0.6667 normalised
         { id::mix,              "Mix",                   0.0f,     1.0f,   0.001f, 1.0f,    1.0f,  ""   },
+
+        // ---- LIMITER (2026-09-02 — Color-Limiter control set; defaults are transparent:
+        //      0 dB in, -0.5 dB ceiling (the old fixed ceiling), no saturation) ----
+        { id::limLoudness,      "Limiter Loudness",      0.0f,    24.0f,   0.1f,   1.0f,    0.0f,  "dB" },
+        { id::limCeiling,       "Limiter Ceiling",     -24.0f,     0.0f,   0.1f,   1.0f,   -0.5f,  "dB" },
+        { id::limLookahead,     "Limiter Lookahead",     0.1f,    10.0f,   0.01f,  0.5f,    1.5f,  "ms" },
+        { id::limRelease,       "Limiter Release",       1.0f,  1000.0f,   1.0f,   0.35f,  50.0f,  "ms" },
+        { id::limSaturation,    "Limiter Saturation",    0.0f,     1.0f,   0.001f, 1.0f,    0.0f,  ""   },
+        { id::limColor,         "Limiter Color",         0.0f,     1.0f,   0.001f, 1.0f,    0.5f,  ""   },
+
+        // ---- FILTER (2026-09-02 — master LP/HP, FILTER page of the scope; off by default) ----
+        { id::filterFreq,       "Filter Freq",          20.0f, 20000.0f,   1.0f,   0.25f, 1000.0f, "Hz" },
+        { id::filterRes,        "Filter Res",            0.0f,     1.0f,   0.001f, 1.0f,    0.2f,  ""   },
 
         // ---- TUNING ----
         { id::tune,             "Tune",                -24.0f,    24.0f,   1.0f,   1.0f,    0.0f,  "st" },
@@ -255,10 +268,18 @@ namespace kickr
             "Tune Mode",
             juce::StringArray { "MIDI Pitch", "Fixed Frequency" },
             0));
+        // 2026-09-02 — master filter type (FILTER page of the scope).
+        layout.add (std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID { id::filterType, 1 }, "Filter Type",
+            juce::StringArray { "Low Pass", "High Pass" },
+            0));
 
         // ---- 5 Bool parameters ----
         layout.add (std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID { id::limiter, 1 }, "Limiter", true));
+        // 2026-09-02 — master filter on/off (default OFF -> exact bypass).
+        layout.add (std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID { id::filterOn, 1 }, "Filter On", false));
 
         // SAMPLE (v2). Defaults chosen so v1 behaviour is preserved:
         // synthEnable on, sampleEnable off  ->  identical to the v1 synth-only engine.

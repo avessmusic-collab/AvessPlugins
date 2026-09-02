@@ -44,6 +44,8 @@ set(KICKR_CORE_SOURCES
     Source/DSP/NoiseGenerator.cpp
     # DSP — Stage 2 Phase 2.7b (sample player + managed drag-drop library)
     Source/DSP/SamplePlayer.cpp
+    Source/DSP/ColorLimiter.cpp
+    Source/DSP/MasterFilter.cpp
     Source/Sampling/SampleLibrary.cpp
     # DSP — Stage 2 Phase 2.8 (master morphing distortion — 7-curve character morph)
     Source/DSP/Waveshaper.cpp
@@ -52,6 +54,8 @@ set(KICKR_CORE_SOURCES
     # GUI — Stage 3 Phase 3.1 (native LookAndFeel + compound Knob/Toggle + full editor layout)
     Source/UI/KickrLookAndFeel.cpp
     Source/UI/KickrKnob.cpp
+    Source/UI/AboutPage.cpp
+    Source/UI/FilterDisplay.cpp
     # GUI — Stage 3 Phase 3.2 (real-time waveform + spectrum analyzers)
     Source/DSP/Analyzer.cpp
     Source/UI/WaveformDisplay.cpp

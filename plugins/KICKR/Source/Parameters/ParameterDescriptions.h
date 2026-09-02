@@ -80,7 +80,17 @@ namespace kickr
             // ---- OUTPUT --------------------------------------------------------------------------
             { id::output,           "Output gain, applied after the limiter." },
             { id::mix,              "Blends the processed signal with silence (equal-power)." },
-            { id::limiter,          "Safety soft-clip limiter on the final output." },
+            { id::limiter,          "Color Limiter on/off - the last stage before the output (off = raw, may exceed 0 dBFS)." },
+            { id::limLoudness,      "Limiter input gain - push the kick into the limiter for loudness." },
+            { id::limCeiling,       "Maximum output level - nothing gets past this." },
+            { id::limLookahead,     "How far ahead the limiter sees peaks - longer is cleaner, adds that much latency." },
+            { id::limRelease,       "How fast the limiter lets go after a peak - short pumps and adds bite, long stays smooth." },
+            { id::limSaturation,    "Saturation before the brickwall - harmonics, density and loudness. 0 is clean." },
+            { id::filterOn,         "Master filter on/off - shapes the whole kick after the crusher (FILTER page of the scope)." },
+            { id::filterType,       "Low pass keeps what's below the cutoff, high pass keeps what's above." },
+            { id::filterFreq,       "Filter cutoff. Drag the node on the FILTER page left/right for the same thing." },
+            { id::filterRes,        "Filter resonance - a peak at the cutoff. Drag the node up/down." },
+            { id::limColor,         "Tone of the saturation - low is warm and round (the lows drive it), high is bright and crunchy (the highs do)." },
             // ---- GLOBAL --------------------------------------------------------------------------
             { id::oversampling,     "Internal oversampling factor - higher = cleaner distortion, more CPU." },
             // ---- TUNING --------------------------------------------------------------------------

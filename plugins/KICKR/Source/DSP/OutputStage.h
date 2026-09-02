@@ -5,6 +5,7 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include "Utilities/DSPUtils.h"
+#include "DSP/ColorLimiter.h"
 
 namespace kickr
 {
@@ -84,7 +85,12 @@ namespace kickr
         /** Per block (from KickEngine — never reads APVTS itself). */
         void setParams (float lowDb, float midDb, float highDb,
                         float outputWidth01, float outputDb,
-                        bool limiterEnabled, float mix01) noexcept;
+                        const ColorLimiter::Params& limiterParams, float mix01) noexcept;
+        /*  2026-09-02 (user request): step 5 is now the `ColorLimiter` (Ableton Color
+            Limiter control set: loudness / ceiling / lookahead / release / saturation /
+            color) instead of the fixed -0.5 dBFS tanh soft-clip. Its look-ahead delay is
+            the plugin's only non-oversampling latency (reported by the processor). */
+        int limiterLatencySamples() const noexcept { return limiter.latencySamples(); }
 
         /** PRE-distortion 3-band tone, per sample, in-region. */
         void processTone (float& l, float& r) noexcept;
@@ -118,8 +124,7 @@ namespace kickr
         // Mix + output gain + limiter.
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> mixGain;
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> outGain;
-        bool  limiterOn   { true };
-        float limiterCeil { 0.944060876f };                // dbToGain(-0.5)
+        ColorLimiter limiter;                              // 2026-09-02 — replaces the fixed soft-clip
 
         // In-region DC blocker — before the limiter (see processOutput step 4).
         std::array<dsputils::DCBlocker, 2> dcBlock;

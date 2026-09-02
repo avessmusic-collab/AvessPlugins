@@ -9,12 +9,8 @@ namespace kickr
     {
         currentSampleRate = juce::jmax (1.0, sampleRate);
 
-        // Built ONCE here (message thread) — never per frame, never on the audio thread.
-        fft    = std::make_unique<juce::dsp::FFT> (kFftOrder);
-        window = std::make_unique<juce::dsp::WindowingFunction<float>> (
-                     static_cast<size_t> (kFftSize),
-                     juce::dsp::WindowingFunction<float>::hann,
-                     false);
+        // Built here (message thread) and in setResolutionOrder() — never on the audio thread.
+        setResolutionOrder (fftOrder);
 
         specFifo.reset();
         specRing.fill (0.0f);
@@ -22,7 +18,8 @@ namespace kickr
         waveBuffer.fill (0.0f);
 
         fftScratch.fill (0.0f);
-        drainBuf.fill (0.0f);
+        history.fill (0.0f);
+        historyPos = 0;
         spectrumDb.fill (-120.0f);
 
         captureFull = true;
@@ -61,6 +58,9 @@ namespace kickr
             // and the one pushBlock() for that same host block always pair up within a single
             // processBlock() — see PluginProcessor.cpp). `skip` is always < numSamples: the
             // note-on that armed this capture is BY DEFINITION inside the block being pushed.
+            // 2026-09-02: no longer always < numSamples — the processor adds the Color
+            // Limiter's look-ahead latency (up to 10 ms) so the capture aligns with the
+            // DELAYED onset; the remainder carries over to the following pushBlock() calls.
             const int skip = juce::jmin (armedSkipSamples, numSamples);
             armedSkipSamples -= skip;
 
@@ -110,47 +110,69 @@ namespace kickr
         return len;
     }
 
+    void Analyzer::setResolutionOrder (int order)
+    {
+        fftOrder = juce::jlimit (kMinFftOrder, kMaxFftOrder, order);
+        fft      = std::make_unique<juce::dsp::FFT> (fftOrder);
+        window   = std::make_unique<juce::dsp::WindowingFunction<float>> (
+                       static_cast<size_t> (getFftSize()),
+                       juce::dsp::WindowingFunction<float>::hann,
+                       false);
+        spectrumDb.fill (-120.0f);
+    }
+
     void Analyzer::updateSpectrum() noexcept
     {
         if (fft == nullptr || window == nullptr)
             return;
 
-        int ready = specFifo.getNumReady();
-        if (ready < kFftSize)
-            return;
+        const int fftSize = getFftSize();
+        const int numBins = getNumBins();
 
-        // Keep only the most recent kFftSize samples so the display never lags.
-        const int discard = ready - kFftSize;
-        if (discard > 0)
+        // Drain EVERYTHING new into the rolling history (overlapping frames: each update
+        // analyses the most recent fftSize samples, whatever arrived since the last call).
+        const int ready = specFifo.getNumReady();
+        if (ready > 0)
         {
             int s1 = 0, z1 = 0, s2 = 0, z2 = 0;
-            specFifo.prepareToRead (discard, s1, z1, s2, z2);
+            specFifo.prepareToRead (ready, s1, z1, s2, z2);
+            auto push = [this] (const float* src, int n)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    history[static_cast<size_t> (historyPos)] = src[i];
+                    historyPos = (historyPos + 1) % kMaxFftSize;
+                }
+            };
+            push (specRing.data() + s1, z1);
+            push (specRing.data() + s2, z2);
             specFifo.finishedRead (z1 + z2);
         }
 
-        int s1 = 0, z1 = 0, s2 = 0, z2 = 0;
-        specFifo.prepareToRead (kFftSize, s1, z1, s2, z2);
-        for (int i = 0; i < z1; ++i) drainBuf[static_cast<size_t> (i)]      = specRing[static_cast<size_t> (s1 + i)];
-        for (int i = 0; i < z2; ++i) drainBuf[static_cast<size_t> (z1 + i)] = specRing[static_cast<size_t> (s2 + i)];
-        specFifo.finishedRead (z1 + z2);
-
+        // Most recent fftSize samples, oldest first.
         fftScratch.fill (0.0f);
-        for (int i = 0; i < kFftSize; ++i)
-            fftScratch[static_cast<size_t> (i)] = drainBuf[static_cast<size_t> (i)];
+        int rp = (historyPos - fftSize + kMaxFftSize) % kMaxFftSize;
+        for (int i = 0; i < fftSize; ++i)
+        {
+            fftScratch[static_cast<size_t> (i)] = history[static_cast<size_t> (rp)];
+            rp = (rp + 1) % kMaxFftSize;
+        }
 
-        window->multiplyWithWindowingTable (fftScratch.data(), static_cast<size_t> (kFftSize));
+        window->multiplyWithWindowingTable (fftScratch.data(), static_cast<size_t> (fftSize));
         fft->performFrequencyOnlyForwardTransform (fftScratch.data());
 
-        // Hann coherent-gain compensation (~2.0) + FFT-size normalisation.
-        const float norm    = 4.0f / static_cast<float> (kFftSize);
-        const float smooth  = 0.6f;   // one-pole per bin for a calmer display
+        // Hann coherent-gain compensation (~2.0) + FFT-size normalisation: a 0 dBFS sine
+        // reads 0 dB in its bin at every resolution.
+        const float norm = 4.0f / static_cast<float> (fftSize);
+        // Pro-Q-style ballistics: instant attack, release at `releaseDbPerSec` (Speed).
+        const float releasePerFrame = releaseDbPerSec / frameRate;
 
-        for (int b = 0; b < kNumBins; ++b)
+        for (int b = 0; b < numBins; ++b)
         {
             const float mag = fftScratch[static_cast<size_t> (b)] * norm;
             const float db  = juce::Decibels::gainToDecibels (mag + 1.0e-9f, -120.0f);
             auto& prev = spectrumDb[static_cast<size_t> (b)];
-            prev = smooth * prev + (1.0f - smooth) * db;
+            prev = db > prev ? db : juce::jmax (db, prev - releasePerFrame);
         }
     }
 }

@@ -3,6 +3,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "DSP/Analyzer.h"
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <vector>
 
 namespace kickr
 {
@@ -20,7 +22,14 @@ namespace kickr
                                   private juce::Timer
     {
     public:
-        explicit SpectrumDisplay (Analyzer& analyzerToUse);
+        /*  2026-09-02 (user request): Pro-Q-3-style analyzer — one energy-averaged value per
+            pixel column on the log axis (see SpectrumCurve.h), instant attack / Speed-set
+            release, and the four Pro-Q settings as small selectors on the page:
+            RANGE 60/90/120 dB, RES Low/Medium/High/Max (FFT 2048..16384, overlapping
+            frames), SPEED Very Slow..Very Fast, TILT 0..6 dB/oct. Persisted as state
+            properties on the APVTS tree (view settings, not parameters). */
+        SpectrumDisplay (Analyzer& analyzerToUse, juce::AudioProcessorValueTreeState& apvts);
+        void resized() override;
         ~SpectrumDisplay() override;
 
         void paint (juce::Graphics&) override;
@@ -32,7 +41,13 @@ namespace kickr
     private:
         void timerCallback() override;
 
+        void applySettings (bool store);
+        void loadSettings();
+
         Analyzer&  analyzer;
+        juce::AudioProcessorValueTreeState& apvts;
+        juce::ComboBox rangeBox, resBox, speedBox, tiltBox;
+        std::vector<float> columns;
         juce::Path curvePath, fillPath;
 
         static constexpr float kMinDb =  -90.0f;

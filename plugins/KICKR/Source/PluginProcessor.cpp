@@ -10,6 +10,10 @@ KICKRAudioProcessor::KICKRAudioProcessor()
 {
     // PHASE 2.10 — report OS-factor latency changes to the host on the message thread.
     apvts.addParameterListener (kickr::id::oversampling, this);
+    pLimiterOn        = apvts.getRawParameterValue (kickr::id::limiter);       // cached for the audio thread
+    pLimiterLookahead = apvts.getRawParameterValue (kickr::id::limLookahead);
+    apvts.addParameterListener (kickr::id::limiter,      this);   // 2026-09-02 — look-ahead latency
+    apvts.addParameterListener (kickr::id::limLookahead, this);
 
     // PHASE 3.3 — first instantiation with no restored session shows as "Default".
     presetManager.markDefaultIfUnnamed();
@@ -27,13 +31,25 @@ KICKRAudioProcessor::KICKRAudioProcessor()
 KICKRAudioProcessor::~KICKRAudioProcessor()
 {
     apvts.removeParameterListener (kickr::id::oversampling, this);
+    apvts.removeParameterListener (kickr::id::limiter,      this);
+    apvts.removeParameterListener (kickr::id::limLookahead, this);
+}
+
+int KICKRAudioProcessor::limiterLatencySamples() const noexcept
+{
+    const auto* on = pLimiterOn;
+    const auto* la = pLimiterLookahead;
+    if (on == nullptr || la == nullptr || on->load() < 0.5f)
+        return 0;
+    return kickr::ColorLimiter::lookaheadSamplesFor (la->load(), currentSampleRate);
 }
 
 void KICKRAudioProcessor::parameterChanged (const juce::String& parameterID, float)
 {
     // Message thread only (APVTS dispatches parameter listeners there). Never mid-block.
-    if (parameterID == kickr::id::oversampling)
-        setLatencySamples (engine.pendingOsLatencySamples());
+    if (parameterID == kickr::id::oversampling || parameterID == kickr::id::limiter
+        || parameterID == kickr::id::limLookahead)
+        setLatencySamples (engine.pendingOsLatencySamples() + limiterLatencySamples());   // 2026-09-02: + look-ahead
 }
 
 void KICKRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -49,7 +65,7 @@ void KICKRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     // Phase 2.1: oversampling is pinned to 1x, so this reports 0. Phase 2.10 enables
     // real factors and updates latency on every `oversampling` change (AD-2 / AD-10).
-    setLatencySamples (engine.getLatencySamples());
+    setLatencySamples (engine.getLatencySamples() + limiterLatencySamples());   // 2026-09-02: + limiter look-ahead
 
     // PHASE 2.7b — resolve a pending sample name from a state restore that happened before
     // prepareToPlay, then drop any buffers no voice can still be referencing.
@@ -101,7 +117,9 @@ void KICKRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     {
         if (meta.getMessage().isNoteOn())
         {
-            analyzer.armCapture (meta.samplePosition);
+            // 2026-09-02: + the limiter's look-ahead delay, so capture sample 0 is still the
+            // moment the (delayed) kick actually leaves the plugin.
+            analyzer.armCapture (meta.samplePosition + limiterLatencySamples());
             break;
         }
     }

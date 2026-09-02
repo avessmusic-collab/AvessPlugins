@@ -89,7 +89,19 @@ namespace kickr::id
     // ---- OUTPUT ----------------------------------------------------- -------
     inline constexpr auto output           = "output";
     inline constexpr auto mix              = "mix";
-    inline constexpr auto limiter          = "limiter";    // Bool
+    inline constexpr auto limiter          = "limiter";
+    // 2026-09-02 (user request): Color-Limiter control set (Ableton Color Limiter layout).
+    inline constexpr auto limLoudness      = "limLoudness";      // 0..+24 dB
+    inline constexpr auto limCeiling       = "limCeiling";       // -24..0 dB
+    inline constexpr auto limLookahead     = "limLookahead";     // 0.1..10 ms
+    inline constexpr auto limRelease       = "limRelease";       // 1..1000 ms
+    inline constexpr auto limSaturation    = "limSaturation";    // 0..1
+    inline constexpr auto limColor         = "limColor";         // 0..1
+    // 2026-09-02 (user request): master filter (FILTER page of the scope).
+    inline constexpr auto filterOn         = "filterOn";         // Bool, default off
+    inline constexpr auto filterType       = "filterType";       // Choice: Low Pass / High Pass
+    inline constexpr auto filterFreq       = "filterFreq";       // 20..20000 Hz
+    inline constexpr auto filterRes        = "filterRes";        // 0..1    // Bool
 
     // ---- GLOBAL --------------------------------------------------- --------
     inline constexpr auto oversampling     = "oversampling"; // Choice

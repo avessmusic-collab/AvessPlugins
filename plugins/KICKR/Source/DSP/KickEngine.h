@@ -13,6 +13,7 @@
 #include "DSP/Waveshaper.h"
 #include "DSP/OutputStage.h"
 #include "Sampling/SampleBuffer.h"
+#include "DSP/MasterFilter.h"
 #include "Utilities/DSPUtils.h"
 
 namespace kickr
@@ -204,6 +205,7 @@ namespace kickr
         int    switchFadeInSamples { 0 };
 
         TransientShaper transientShaper;         // stereo-linked since Phase 2.9
+        MasterFilter    masterFilter;            // 2026-09-02 — master LP/HP after the crusher
         Waveshaper      waveshaperL;             // PHASE 2.8/2.9 — per-channel master morph
         Waveshaper      waveshaperR;
         OutputStage     outputStage;             // PHASE 2.9 — tone / crossover / width / mix / gain / limiter
@@ -238,6 +240,16 @@ namespace kickr
         std::atomic<float>* pOutput      { nullptr };   // PHASE 2.9 — OUTPUT
         std::atomic<float>* pMix         { nullptr };
         std::atomic<float>* pLimiter     { nullptr };   // Bool
+        std::atomic<float>* pLimLoudness   { nullptr }; // 2026-09-02 — Color Limiter
+        std::atomic<float>* pLimCeiling    { nullptr };
+        std::atomic<float>* pLimLookahead  { nullptr };
+        std::atomic<float>* pLimRelease    { nullptr };
+        std::atomic<float>* pLimSaturation { nullptr };
+        std::atomic<float>* pLimColor      { nullptr };
+        std::atomic<float>* pFilterOn      { nullptr };   // 2026-09-02 — master filter
+        std::atomic<float>* pFilterType    { nullptr };
+        std::atomic<float>* pFilterFreq    { nullptr };
+        std::atomic<float>* pFilterRes     { nullptr };
         std::atomic<float>* pClickLevel { nullptr };   // PHASE 2.4
         std::atomic<float>* pClickTone  { nullptr };
         std::atomic<float>* pClickTime  { nullptr };
@@ -309,6 +321,16 @@ namespace kickr
             float outputDb     { 0.0f };     // PHASE 2.9 — OUTPUT (bipolar dB, -24..+12)
             float mix01        { 1.0f };
             bool  limiterOn    { true };
+            float limLoudnessDb   { 0.0f };    // 2026-09-02 — Color Limiter
+            float limCeilingDb    { -0.5f };
+            float limLookaheadMs  { 1.5f };
+            float limReleaseMs    { 50.0f };
+            float limSaturation01 { 0.0f };
+            float limColor01      { 0.5f };
+            bool  filterOn        { false };   // 2026-09-02 — master filter
+            int   filterType      { 0 };
+            float filterFreqHz    { 1000.0f };
+            float filterRes01     { 0.2f };
             float clickLevel   { 0.4f };     // PHASE 2.4
             float clickToneHz  { 4000.0f };
             float clickTimeMs  { 3.0f };

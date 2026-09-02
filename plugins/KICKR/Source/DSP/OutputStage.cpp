@@ -20,7 +20,7 @@ namespace kickr
         crossover.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
         crossover.setCutoffFrequency (kMonoCrossoverHz);
 
-        limiterCeil = dsputils::dbToGain (kLimiterCeilingDb);
+        limiter.prepare (fs);   // 2026-09-02 — Color Limiter (allocates once, worst case)
 
         // In-region DC blocker, ~5 Hz corner at fsOversampled (below the 25 Hz sub).
         const float dcR = std::exp (-2.0f * juce::MathConstants<float>::pi * 5.0f
@@ -39,6 +39,7 @@ namespace kickr
 
     void OutputStage::reset() noexcept
     {
+        limiter.reset();   // 2026-09-02
         for (Filter* f : { &lowL, &lowR, &midL, &midR, &highL, &highR })
             f->reset();
 
@@ -51,6 +52,7 @@ namespace kickr
 
     void OutputStage::updateOversampledRate (double newFsOversampled) noexcept
     {
+        limiter.updateOversampledRate (juce::jmax (1.0, newFsOversampled));   // 2026-09-02 — coefficient-only
         fs = juce::jmax (1.0, newFsOversampled);
 
         juce::dsp::ProcessSpec spec;
@@ -92,7 +94,7 @@ namespace kickr
 
     void OutputStage::setParams (float lowDb, float midDb, float highDb,
                                  float outputWidth01, float outputDb,
-                                 bool limiterEnabled, float mix01) noexcept
+                                 const ColorLimiter::Params& limiterParams, float mix01) noexcept
     {
         // In-place biquad recompute only on a real change (no per-block heap otherwise).
         if (std::abs (lowDb  - lowDbCached)  > 0.01f
@@ -106,7 +108,7 @@ namespace kickr
         }
 
         widthFactor = 2.0f * juce::jlimit (0.0f, 1.0f, outputWidth01);
-        limiterOn   = limiterEnabled;
+        limiter.setParams (limiterParams);   // 2026-09-02
 
         outGain.setTargetValue (dsputils::dbToGain (juce::jlimit (-24.0f, 12.0f, outputDb)));
         // Equal-power processed<->silence blend (dsputils::equalPowerRise — shared with the
@@ -159,13 +161,10 @@ namespace kickr
         outL = dcBlock[0].process (outL);
         outR = dcBlock[1].process (outR);
 
-        // 5. Safety limiter — zero-latency soft-clip, truly the last stage, so the
-        //    -0.5 dBFS ceiling is guaranteed. tanh() asymptotes to `limiterCeil`.
-        if (limiterOn)
-        {
-            outL = limiterCeil * std::tanh (outL / limiterCeil);
-            outR = limiterCeil * std::tanh (outR / limiterCeil);
-        }
+        // 5. Color Limiter (2026-09-02) — loudness -> saturation/color -> look-ahead
+        //    brickwall -> ceiling soft-clip. Truly the last stage; disabled = pass-through
+        //    (and no delay).
+        limiter.process (outL, outR);
 
         crossover.snapToZero();
 

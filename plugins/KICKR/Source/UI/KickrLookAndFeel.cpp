@@ -216,4 +216,33 @@ namespace kickr
     {
         return microFont (juce::jlimit (8.0f, 13.0f, (float) buttonHeight * 0.42f));
     }
+
+    void KickrLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
+                                           bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
+    {
+        const auto& props = button.getProperties();
+        if (! props.contains ("arrowDir"))
+        {
+            juce::LookAndFeel_V4::drawButtonText (g, button, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown);
+            return;
+        }
+
+        const float dir = (int) props["arrowDir"] < 0 ? -1.0f : 1.0f;
+        const auto  b   = button.getLocalBounds().toFloat();
+        const float h   = juce::jmax (4.0f, b.getHeight() * 0.34f);   // triangle height
+        const float w   = h * 0.85f;                                   // triangle width
+        const auto  c   = b.getCentre();
+
+        // Same path for both arrows, mirrored about the button centre by `dir`.
+        juce::Path tri;
+        tri.startNewSubPath (c.x + dir * w * 0.5f, c.y);
+        tri.lineTo          (c.x - dir * w * 0.5f, c.y - h * 0.5f);
+        tri.lineTo          (c.x - dir * w * 0.5f, c.y + h * 0.5f);
+        tri.closeSubPath();
+
+        auto col = button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
+                                                              : juce::TextButton::textColourOffId);
+        g.setColour (col.withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.4f));
+        g.fillPath (tri);
+    }
 }

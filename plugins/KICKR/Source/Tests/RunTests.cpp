@@ -6,6 +6,7 @@
 */
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "UI/SpectrumCurve.h"
 #include "Tests/OfflineRender.h"
 #include "DSP/SamplePlayer.h"
 #include "DSP/Waveshaper.h"
@@ -154,7 +155,8 @@ int main()
     check (st.tailRms < 0.003,                        "near-silent after 900 ms (tail RMS < -50 dBFS)");
     check (st.lastAbove40dB > (int) (0.12 * sr)
         && st.lastAbove40dB < (int) (0.90 * sr),      "decay consistent with ~400 ms bodyDecay default");
-    check (proc.getLatencySamples() == 0,             "reported latency 0 at 1x oversampling");
+    // 2026-09-02: + the Color Limiter's look-ahead (default 1.5 ms, limiter on by default).
+    check (proc.getLatencySamples() == proc.limiterLatencySamples(), "reported latency == limiter look-ahead at 1x oversampling");
 
     {
         KICKRAudioProcessor p2;
@@ -2178,7 +2180,7 @@ int main()
             const auto bb  = kickr::tests::renderNote (p, a1, vel, sr, 512, 1.0);
             const auto stat = analyse (bb, sr);
             const int  lat    = p.getLatencySamples();
-            const int  expLat = expectedOsLatency (idx);
+            const int  expLat = expectedOsLatency (idx) + p.limiterLatencySamples();   // 2026-09-02: + look-ahead
             std::printf ("  OS %dx: peak %.3f  finite %d  latency %d (expected %d)\n",
                          1 << idx, stat.peak, (int) stat.allFinite, lat, expLat);
             check (stat.allFinite && stat.peak > 0.05f && stat.peak < 1.5f,
@@ -2187,10 +2189,10 @@ int main()
                  : idx == 2 ? "4x: default kick finite, audible, sane peak"
                             : "8x: default kick finite, audible, sane peak");
             check (lat == expLat,
-                   idx == 0 ? "1x reported latency == 0"
-                 : idx == 1 ? "2x reported latency == round(os latency)"
-                 : idx == 2 ? "4x reported latency == round(os latency)"
-                            : "8x reported latency == round(os latency)");
+                   idx == 0 ? "1x reported latency == limiter look-ahead"
+                 : idx == 1 ? "2x reported latency == round(os latency) + look-ahead"
+                 : idx == 2 ? "4x reported latency == round(os latency) + look-ahead"
+                            : "8x reported latency == round(os latency) + look-ahead");
             if (idx > 0)
                 check (lat > 0,
                        idx == 1 ? "2x latency > 0" : idx == 2 ? "4x latency > 0" : "8x latency > 0");
@@ -2295,15 +2297,16 @@ int main()
         }
         p.releaseResources();
 
-        float worstSlew = 0.0f;
+        float worstSlew = 0.0f; int worstAt = -1, worstSb = -1;
         const float* fx = full.getReadPointer (0);
         for (int sb : switchBlocks)
         {
             const int i0 = std::max (1, (sb - 1) * block);
             const int i1 = std::min (full.getNumSamples(), (sb + 2) * block);
             for (int i = i0; i < i1; ++i)
-                worstSlew = std::max (worstSlew, std::abs (fx[i] - fx[i - 1]));
+                if (std::abs (fx[i] - fx[i - 1]) > worstSlew) { worstSlew = std::abs (fx[i] - fx[i - 1]); worstAt = i; worstSb = sb; }
         }
+        juce::ignoreUnused (worstAt, worstSb);
         std::printf ("  1x<->4x flip x%d w/ note alive: peak %.2f  finite %d  worstSlew@switch %.3f\n",
                      (int) switchBlocks.size(), pk, (int) finite, worstSlew);
         check (finite,                       "OS switching under an active note: no NaN / Inf");
@@ -2777,14 +2780,15 @@ int main()
 
         // --- spectrum: FFT ran on this (message) thread; peak near the ~55 Hz fundamental ---
         const auto& db = pa.getAnalyzer().getSpectrumDb();
+        const int   nBinsActive = pa.getAnalyzer().getNumBins();   // 2026-09-02: resolution-dependent
         bool sFinite = true; int peakBin = 1; float peakDb = -1.0e9f;
-        for (int b = 1; b < (int) db.size(); ++b)
+        for (int b = 1; b < nBinsActive; ++b)
         {
             const float d = db[static_cast<size_t> (b)];
             if (! std::isfinite (d)) sFinite = false;
             if (d > peakDb) { peakDb = d; peakBin = b; }
         }
-        const double binHz  = (s2 * 0.5) / (double) db.size();
+        const double binHz  = (s2 * 0.5) / (double) nBinsActive;
         const double peakHz = (double) peakBin * binHz;
         std::printf ("  spectrum: finite=%d peakBin=%d (~%.0f Hz) peakDb=%.1f\n",
                      (int) sFinite, peakBin, peakHz, peakDb);
@@ -2854,11 +2858,11 @@ int main()
             return std::make_pair (rst, rmsWindow (rb, s3, 0.0, 0.5));
         };
 
-        // --- 17 factory presets: all load, render finite/audible, and differ ---
+        // --- 47 factory presets (17 + 30 added 2026-09-02): all load, render finite/audible, and differ ---
         {
             KICKRAudioProcessor p;
             auto& pm = p.getPresetManager();
-            check (kickr::PresetManager::getNumFactory() == 17, "17 factory presets registered");
+            check (kickr::PresetManager::getNumFactory() == 47, "47 factory presets registered");
 
             bool allOk = true; double prevRms = -1.0; int distinct = 0;
             for (int i = 0; i < kickr::PresetManager::getNumFactory(); ++i)
@@ -2870,9 +2874,9 @@ int main()
                 if (prevRms < 0.0 || std::abs (res.second - prevRms) > 1.0e-4) ++distinct;
                 prevRms = res.second;
             }
-            std::printf ("  factory: allOk=%d  distinct-rms=%d/17\n", (int) allOk, distinct);
+            std::printf ("  factory: allOk=%d  distinct-rms=%d/47\n", (int) allOk, distinct);
             check (allOk, "every factory preset renders a finite, audible, bounded kick");
-            check (distinct >= 12, "factory presets are meaningfully different from each other");
+            check (distinct >= 40, "factory presets are meaningfully different from each other");
         }
 
         // --- Randomize respects the exclusion list ---
@@ -3464,6 +3468,466 @@ int main()
                 "  and sampleCrush's hard nonlinearities well above the kick's own energy (Phase\n"
                 "  2.8/2.10 checkpoints); 4x/8x remain available per-patch for a harder-driven\n"
                 "  sound or a slower system, matching how the parameter was designed (AD-2/AD-10).\n");
+
+    // ---------------------------------------------------------------------
+    // 2026-09-02 (user request: "change the limiter to an identical to abletons colour
+    // limiter") — the fixed -0.5 dBFS soft-clip is now a ColorLimiter: loudness / ceiling /
+    // look-ahead / release / saturation / color, defaults transparent.
+    std::printf ("\n[Feature] Color Limiter\n");
+    {
+        auto goertzel = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1, double hz)
+        {
+            const float* x = b.getReadPointer (0);
+            const int i0 = std::max (0, (int) (t0 * s));
+            const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+            const double w = 2.0 * juce::MathConstants<double>::pi * hz / s;
+            const double cw = 2.0 * std::cos (w);
+            double s1 = 0.0, s2 = 0.0;
+            for (int i = i0; i < i1; ++i) { const double s0 = (double) x[i] + cw * s1 - s2; s2 = s1; s1 = s0; }
+            return std::sqrt (std::max (0.0, s1 * s1 + s2 * s2 - cw * s1 * s2)) / (double) std::max (1, i1 - i0);
+        };
+        auto peakOf = [] (const juce::AudioBuffer<float>& b, bool& finite)
+        {
+            finite = true; float pk = 0.0f;
+            for (int c = 0; c < b.getNumChannels(); ++c)
+            {
+                const float* x = b.getReadPointer (c);
+                for (int i = 0; i < b.getNumSamples(); ++i) { if (! std::isfinite (x[i])) finite = false; pk = std::max (pk, std::abs (x[i])); }
+            }
+            return pk;
+        };
+        auto rmsWin = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1)
+        {
+            const float* x = b.getReadPointer (0);
+            const int i0 = std::max (0, (int) (t0 * s));
+            const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+            double acc = 0.0;
+            for (int i = i0; i < i1; ++i) acc += (double) x[i] * x[i];
+            return std::sqrt (acc / (double) std::max (1, i1 - i0));
+        };
+        auto isolatedBody = [&] (KICKRAudioProcessor& p)   // steady 100 Hz sine body, nothing else, no drive
+        {
+            setP (p, "tuneMode", 1.0f); setP (p, "fundamental", 100.0f); setP (p, "pitchStart", 1.0f);
+            setP (p, "bodyDecay", 2000.0f); setP (p, "bodyHarmonics", 0.0f); setP (p, "morph", 0.0f);
+            setP (p, "subLevel", 0.0f); setP (p, "clickLevel", 0.0f); setP (p, "tailLevel", 0.0f);
+            setP (p, "noiseLevel", 0.0f); setP (p, "driveMix", 0.0f);
+        };
+
+        // A) Transparent by default: a quiet kick through the default limiter equals the
+        //    limiter-off render, just delayed by the look-ahead.
+        {
+            KICKRAudioProcessor pOn, pOff;
+            setP (pOn, "output", -20.0f); setP (pOff, "output", -20.0f);
+            setP (pOff, "limiter", 0.0f);
+            pOn.prepareToPlay (sr, 512);   // latency is rate-dependent: ask after the rate is known
+            const int lat = pOn.limiterLatencySamples();
+            const auto bOn  = kickr::tests::renderNote (pOn,  a1, vel, sr, 512, 0.6);
+            const auto bOff = kickr::tests::renderNote (pOff, a1, vel, sr, 512, 0.6);
+            double maxDiff = 0.0, maxAbs = 0.0;
+            const float* on = bOn.getReadPointer (0); const float* off = bOff.getReadPointer (0);
+            for (int i = 0; i + lat < bOn.getNumSamples(); ++i)
+            {
+                maxDiff = std::max (maxDiff, (double) std::abs (on[i + lat] - off[i]));
+                maxAbs  = std::max (maxAbs,  (double) std::abs (off[i]));
+            }
+            std::printf ("  default limiter vs off: look-ahead %d samples, max |diff| %.5f (signal peak %.3f)\n", lat, maxDiff, maxAbs);
+            check (lat == (int) std::lround (0.0015 * sr), "default look-ahead reports 1.5 ms of latency");
+            check (maxDiff < 0.01 * std::max (1.0e-9, maxAbs) + 1.0e-4, "default limiter is transparent on a quiet kick (== off, delayed by the look-ahead)");
+        }
+
+        // B) Ceiling is a hard guarantee.
+        {
+            for (float ceilDb : { -0.5f, -6.0f, -12.0f })
+            {
+                KICKRAudioProcessor p;
+                setP (p, "output", 12.0f); setP (p, "limLoudness", 24.0f); setP (p, "limCeiling", ceilDb);
+                setP (p, "limSaturation", 1.0f);
+                const auto b = kickr::tests::renderNote (p, a1, vel, sr, 512, 0.6);
+                bool fin = false; const float pk = peakOf (b, fin);
+                const float ceilGain = kickr::dsputils::dbToGain (ceilDb);
+                std::printf ("  ceiling %.1f dB: peak %.4f (ceiling gain %.4f)\n", ceilDb, pk, ceilGain);
+                check (fin && pk <= ceilGain + 1.0e-4f, "ceiling never exceeded, even at +12 dB output, +24 dB loudness, full saturation");
+            }
+        }
+
+        // C) Loudness pushes level up to the ceiling (denser, same peak).
+        {
+            KICKRAudioProcessor p0, p1;
+            setP (p1, "limLoudness", 12.0f);
+            const auto b0 = kickr::tests::renderNote (p0, a1, vel, sr, 512, 0.6);
+            const auto b1 = kickr::tests::renderNote (p1, a1, vel, sr, 512, 0.6);
+            const double r0 = rmsWin (b0, sr, 0.0, 0.3), r1 = rmsWin (b1, sr, 0.0, 0.3);
+            bool f0, f1; const float pk1 = peakOf (b1, f1); juce::ignoreUnused (f0);
+            std::printf ("  loudness 0 vs +12 dB: RMS %.4f -> %.4f, peak %.4f\n", r0, r1, pk1);
+            check (r1 > r0 * 1.3 && pk1 <= 0.944060876f + 1.0e-4f, "LOUDNESS raises density under the same -0.5 dB ceiling");
+        }
+
+        // D) SATURATION adds harmonics; E) COLOR tilts where they land.
+        double satRatio0 = 0.0, satRatio1 = 0.0, brightLow = 0.0, brightHigh = 0.0;
+        {
+            auto render = [&] (float satAmt, float colorAmt)
+            {
+                KICKRAudioProcessor p;
+                isolatedBody (p);
+                setP (p, "output", -6.0f);
+                setP (p, "limSaturation", satAmt); setP (p, "limColor", colorAmt);
+                return kickr::tests::renderNote (p, a1, vel, sr, 512, 0.8);
+            };
+            const auto bClean = render (0.0f, 0.5f);
+            const auto bSat   = render (0.8f, 0.5f);
+            const auto bDark  = render (0.8f, 0.0f);
+            const auto bBrite = render (0.8f, 1.0f);
+            // Window 20-120 ms: past the 1 ms fades, before the 2 s body decay has taken the
+            // level out of the shaper's saturating region. tanh is symmetric -> odd harmonics.
+            auto harm = [&] (const juce::AudioBuffer<float>& b) { return (goertzel (b, sr, 0.02, 0.12, 300.0) + goertzel (b, sr, 0.02, 0.12, 500.0)) / std::max (1.0e-9, goertzel (b, sr, 0.02, 0.12, 100.0)); };
+            auto bright = [&] (const juce::AudioBuffer<float>& b) { return (goertzel (b, sr, 0.02, 0.12, 700.0) + goertzel (b, sr, 0.02, 0.12, 900.0)) / std::max (1.0e-9, goertzel (b, sr, 0.02, 0.12, 300.0)); };
+            satRatio0 = harm (bClean); satRatio1 = harm (bSat);
+            brightLow = bright (bDark); brightHigh = bright (bBrite);
+            std::printf ("  saturation (h3+h5)/f: 0 -> %.4f, 0.8 -> %.4f | color brightness (h7+h9)/h3: 0 -> %.4f, 1 -> %.4f\n",
+                         satRatio0, satRatio1, brightLow, brightHigh);
+            check (satRatio1 > satRatio0 * 5.0 && satRatio1 > 0.02, "SATURATION adds harmonics to a clean sine body");
+            check (brightHigh > brightLow * 1.5, "COLOR high is brighter (more upper harmonics) than COLOR low");
+        }
+
+        // F) RELEASE: a long release holds the gain down longer after the hit.
+        {
+            KICKRAudioProcessor pS, pL;
+            for (auto* p : { &pS, &pL }) { setP (*p, "output", 12.0f); setP (*p, "bodyDecay", 2000.0f); setP (*p, "tailLevel", 0.0f); }
+            setP (pS, "limRelease", 1.0f); setP (pL, "limRelease", 1000.0f);
+            const auto bS = kickr::tests::renderNote (pS, a1, vel, sr, 512, 1.0);
+            const auto bL = kickr::tests::renderNote (pL, a1, vel, sr, 512, 1.0);
+            const double rS = rmsWin (bS, sr, 0.3, 0.5), rL = rmsWin (bL, sr, 0.3, 0.5);
+            std::printf ("  release 1 ms vs 1000 ms: 300-500 ms RMS %.4f vs %.4f\n", rS, rL);
+            check (rS > rL * 1.2, "RELEASE long keeps the gain reduction on longer than RELEASE short");
+        }
+
+        // G) Latency follows LOOKAHEAD and the on/off switch.
+        {
+            KICKRAudioProcessor p;
+            p.prepareToPlay (sr, 512);
+            setP (p, "limLookahead", 5.0f);
+            const int l5 = p.limiterLatencySamples();
+            setP (p, "limiter", 0.0f);
+            const int lOff = p.limiterLatencySamples();
+            std::printf ("  look-ahead 5 ms -> %d samples; limiter off -> %d\n", l5, lOff);
+            check (l5 == (int) std::lround (0.005 * sr) && lOff == 0, "reported look-ahead latency follows LOOKAHEAD and drops to 0 when the limiter is off");
+        }
+
+        // H) Every oversampling factor x machine-gun retrigger at full tilt: finite, under the ceiling.
+        {
+            bool allFinite = true; float worst = 0.0f;
+            for (int os = 0; os < 4; ++os)
+            {
+                KICKRAudioProcessor p;
+                setP (p, "oversampling", (float) os);
+                setP (p, "output", 12.0f); setP (p, "limLoudness", 24.0f); setP (p, "limSaturation", 1.0f);
+                setP (p, "limColor", os % 2 == 0 ? 0.0f : 1.0f); setP (p, "limLookahead", os == 3 ? 10.0f : 1.5f);
+                auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
+                juce::ignoreUnused (onsets);
+                bool fin = false; const float pk = peakOf (rbuf, fin);
+                allFinite = allFinite && fin; worst = std::max (worst, pk);
+            }
+            std::printf ("  limiter x oversampling x machine-gun: worst peak %.4f  all finite %d\n", worst, (int) allFinite);
+            check (allFinite, "Color Limiter never produces NaN/Inf under machine-gun retrigger at any oversampling factor");
+            check (worst <= 0.944060876f + 1.0e-3f, "Color Limiter holds the -0.5 dB ceiling under machine-gun retrigger at any oversampling factor");
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 2026-09-02 (user request): bigger wordmark + click -> about / licences page overlay.
+    std::printf ("\n[UI] About page overlay\n");
+    {
+        KICKRAudioProcessor pe;
+        pe.prepareToPlay (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> edBase (pe.createEditor());
+        auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
+        check (ed != nullptr, "editor created for the about-page test");
+        if (ed != nullptr)
+        {
+            ed->setSize (1120, 819);
+            const auto closed = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+            ed->showAboutPageForTest (true);
+            const auto opened = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+            ed->showAboutPageForTest (false);
+            const auto reclosed = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+
+            // The overlay dims the whole editor: the centre of the BODY hero panel must change
+            // while open and come back when closed.
+            const int cx = closed.getWidth() / 2, cy = closed.getHeight() * 3 / 5;
+            const auto pc = closed.getPixelAt (cx, cy), po = opened.getPixelAt (cx, cy), pr = reclosed.getPixelAt (cx, cy);
+            check (po != pc, "about page: overlay visibly covers the editor when open");
+            check (pr == pc, "about page: editor is back to normal after closing");
+
+            const auto out = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_ui_about_page.png");
+            out.deleteFile();
+            if (auto stream = out.createOutputStream())
+            {
+                juce::PNGImageFormat fmt;
+                fmt.writeImageToStream (opened, *stream);
+            }
+            std::printf ("  about-page snapshot: %s\n", out.getFullPathName().toRawUTF8());
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 2026-09-02 (user request): master LP / HP filter (FILTER page of the scope).
+    std::printf ("\n[Feature] Master filter (FILTER page)\n");
+    {
+        auto goertzelF = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1, double hz)
+        {
+            const float* x = b.getReadPointer (0);
+            const int i0 = std::max (0, (int) (t0 * s)); const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+            const double w = 2.0 * juce::MathConstants<double>::pi * hz / s; const double cw = 2.0 * std::cos (w);
+            double s1 = 0.0, s2 = 0.0;
+            for (int i = i0; i < i1; ++i) { const double s0 = (double) x[i] + cw * s1 - s2; s2 = s1; s1 = s0; }
+            return std::sqrt (std::max (0.0, s1 * s1 + s2 * s2 - cw * s1 * s2)) / (double) std::max (1, i1 - i0);
+        };
+        auto identicalF = [] (const juce::AudioBuffer<float>& x, const juce::AudioBuffer<float>& y)
+        {
+            if (x.getNumSamples() != y.getNumSamples()) return false;
+            for (int c = 0; c < x.getNumChannels(); ++c)
+                for (int i = 0; i < x.getNumSamples(); ++i)
+                    if (! juce::exactlyEqual (x.getSample (c, i), y.getSample (c, i))) return false;
+            return true;
+        };
+        auto peakF = [] (const juce::AudioBuffer<float>& b, bool& fin)
+        {
+            fin = true; float pk = 0.0f;
+            for (int c = 0; c < b.getNumChannels(); ++c) { const float* x = b.getReadPointer (c);
+                for (int i = 0; i < b.getNumSamples(); ++i) { if (! std::isfinite (x[i])) fin = false; pk = std::max (pk, std::abs (x[i])); } }
+            return pk;
+        };
+
+        // A) Off (default) is an exact bypass — even with the knobs anywhere.
+        {
+            KICKRAudioProcessor p0, p1;
+            setP (p1, "filterFreq", 200.0f); setP (p1, "filterRes", 0.9f); setP (p1, "filterType", 1.0f);
+            const auto b0 = kickr::tests::renderNote (p0, a1, vel, sr, 512, 0.6);
+            const auto b1 = kickr::tests::renderNote (p1, a1, vel, sr, 512, 0.6);
+            check (identicalF (b0, b1), "filter OFF: bit-identical bypass regardless of type / freq / res");
+        }
+
+        // B) LP 150 Hz removes the click's highs; HP 400 Hz removes the body's lows.
+        {
+            KICKRAudioProcessor pOff, pLp, pHp;
+            for (auto* p : { &pOff, &pLp, &pHp }) { setP (*p, "limiter", 0.0f); setP (*p, "driveMix", 0.0f); }
+            setP (pLp, "filterOn", 1.0f); setP (pLp, "filterType", 0.0f); setP (pLp, "filterFreq", 150.0f); setP (pLp, "filterRes", 0.0f);
+            setP (pHp, "filterOn", 1.0f); setP (pHp, "filterType", 1.0f); setP (pHp, "filterFreq", 400.0f); setP (pHp, "filterRes", 0.0f);
+            const auto bOff = kickr::tests::renderNote (pOff, a1, vel, sr, 512, 0.6);
+            const auto bLp  = kickr::tests::renderNote (pLp,  a1, vel, sr, 512, 0.6);
+            const auto bHp  = kickr::tests::renderNote (pHp,  a1, vel, sr, 512, 0.6);
+            // Body sits ~55 Hz after the sweep (0.15-0.5 s). Click energy is the fast edges in
+            // the first 20 ms — measured as second-difference RMS (a crude high-pass: a 55 Hz
+            // body contributes ~5e-5 of its amplitude, 4 kHz content ~0.27), because a plain
+            // rectangular-window Goertzel at 4 kHz mostly reads leakage from the body's onset.
+            auto hf2 = [] (const juce::AudioBuffer<float>& b, double s, double t0, double t1)
+            {
+                const float* x = b.getReadPointer (0);
+                const int i0 = std::max (2, (int) (t0 * s)); const int i1 = std::min (b.getNumSamples(), (int) (t1 * s));
+                double acc = 0.0;
+                for (int i = i0; i < i1; ++i) { const double d = (double) x[i] - 2.0 * x[i - 1] + x[i - 2]; acc += d * d; }
+                return std::sqrt (acc / (double) std::max (1, i1 - i0));
+            };
+            const double loOff = goertzelF (bOff, sr, 0.15, 0.5, 55.0), loHp = goertzelF (bHp, sr, 0.15, 0.5, 55.0);
+            const double hiOff = hf2 (bOff, sr, 0.0, 0.02), hiLp = hf2 (bLp, sr, 0.0, 0.02);
+            std::printf ("  55 Hz body: off %.5f  HP400 %.5f | click edges (2nd-diff RMS, 0-20 ms): off %.5f  LP150 %.5f\n", loOff, loHp, hiOff, hiLp);
+            check (loHp < loOff * 0.1, "HP 400 Hz removes the 55 Hz body (> 20 dB down)");
+            check (hiLp < hiOff * 0.1, "LP 150 Hz removes the click's fast edges (> 20 dB down)");
+        }
+
+        // C) Resonance makes a peak at the cutoff (LP 200 Hz on the steady 100 Hz body -> 2nd harmonic region).
+        {
+            KICKRAudioProcessor pQ0, pQ1;
+            for (auto* p : { &pQ0, &pQ1 })
+            {
+                setP (*p, "tuneMode", 1.0f); setP (*p, "fundamental", 200.0f); setP (*p, "pitchStart", 1.0f);
+                setP (*p, "bodyDecay", 2000.0f); setP (*p, "subLevel", 0.0f); setP (*p, "clickLevel", 0.0f);
+                setP (*p, "tailLevel", 0.0f); setP (*p, "noiseLevel", 0.0f); setP (*p, "driveMix", 0.0f); setP (*p, "limiter", 0.0f);
+                setP (*p, "output", -12.0f);
+                setP (*p, "filterOn", 1.0f); setP (*p, "filterType", 0.0f); setP (*p, "filterFreq", 200.0f);
+            }
+            setP (pQ0, "filterRes", 0.0f); setP (pQ1, "filterRes", 0.8f);
+            const auto b0 = kickr::tests::renderNote (pQ0, a1, vel, sr, 512, 0.6);
+            const auto b1 = kickr::tests::renderNote (pQ1, a1, vel, sr, 512, 0.6);
+            const double g0 = goertzelF (b0, sr, 0.1, 0.5, 200.0), g1 = goertzelF (b1, sr, 0.1, 0.5, 200.0);
+            std::printf ("  200 Hz sine at LP cutoff 200 Hz: res 0 -> %.5f, res 0.8 -> %.5f (x%.2f)\n", g0, g1, g1 / std::max (1e-9, g0));
+            check (g1 > g0 * 2.0, "RES raises the level at the cutoff (resonant peak)");
+        }
+
+        // D) Stability: every OS factor x machine-gun with a resonant HP sweeping low.
+        {
+            bool allFin = true; float worst = 0.0f;
+            for (int os = 0; os < 4; ++os)
+            {
+                KICKRAudioProcessor p;
+                setP (p, "oversampling", (float) os);
+                setP (p, "filterOn", 1.0f); setP (p, "filterType", (float) (os % 2)); setP (p, "filterFreq", os < 2 ? 60.0f : 8000.0f); setP (p, "filterRes", 1.0f);
+                auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
+                juce::ignoreUnused (onsets);
+                bool fin = false; const float pk = peakF (rbuf, fin);
+                allFin = allFin && fin; worst = std::max (worst, pk);
+            }
+            std::printf ("  filter x oversampling x machine-gun @ res 1.0: worst peak %.3f  all finite %d\n", worst, (int) allFin);
+            check (allFin,       "master filter: no NaN/Inf at any oversampling factor under machine-gun retrigger");
+            check (worst < 4.0f, "master filter: bounded at full resonance");
+        }
+
+        // E) FILTER page snapshot (headless) for visual review.
+        {
+            KICKRAudioProcessor pe;
+            pe.prepareToPlay (48000.0, 512);
+            setP (pe, "filterOn", 1.0f); setP (pe, "filterFreq", 320.0f); setP (pe, "filterRes", 0.55f);
+            kickr::tests::renderNote (pe, a1, vel, 48000.0, 512, 0.3);   // feed the analyzer so the spectrum backdrop has something to show
+            std::unique_ptr<juce::AudioProcessorEditor> edBase (pe.createEditor());
+            auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
+            check (ed != nullptr, "editor created for the filter-page snapshot");
+            if (ed != nullptr)
+            {
+                ed->setSize (1120, 819);
+                ed->showFilterPageForTest();
+                ed->refreshAnalyzersForSnapshot();   // 2026-09-02 follow-up: spectrum backdrop behind the curve
+                const auto img = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+                const auto out = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_ui_filter_page.png");
+                out.deleteFile();
+                if (auto stream = out.createOutputStream()) { juce::PNGImageFormat fmt; fmt.writeImageToStream (img, *stream); }
+                std::printf ("  filter-page snapshot: %s\n", out.getFullPathName().toRawUTF8());
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 2026-09-02 (user: "feels like the spectrum doesnt show the high end correctly ...
+    // look at how fabfilter pro q 3 works and implement the same settings").
+    std::printf ("\n[Feature] Pro-Q-style analyzer\n");
+    {
+        const double fsA = 48000.0;
+        auto pushSine = [&] (kickr::Analyzer& an, double hz, float amp, double seconds, int blk)
+        {
+            std::vector<float> l ((size_t) blk), r ((size_t) blk);
+            const int nBlocks = (int) std::ceil (seconds * fsA / blk);
+            double ph = 0.0;
+            for (int b = 0; b < nBlocks; ++b)
+            {
+                for (int i = 0; i < blk; ++i)
+                {
+                    l[(size_t) i] = r[(size_t) i] = amp * (float) std::sin (ph);
+                    ph += 2.0 * juce::MathConstants<double>::pi * hz / fsA;
+                }
+                an.pushBlock (l.data(), r.data(), blk);
+                an.updateSpectrum();
+            }
+        };
+        auto pushNoise = [&] (kickr::Analyzer& an, float amp, double seconds, int blk, juce::Random& rng)
+        {
+            std::vector<float> l ((size_t) blk), r ((size_t) blk);
+            const int nBlocks = (int) std::ceil (seconds * fsA / blk);
+            for (int b = 0; b < nBlocks; ++b)
+            {
+                for (int i = 0; i < blk; ++i) l[(size_t) i] = r[(size_t) i] = amp * (rng.nextFloat() * 2.0f - 1.0f);
+                an.pushBlock (l.data(), r.data(), blk);
+                an.updateSpectrum();
+            }
+        };
+        auto peakBinDb = [] (const kickr::Analyzer& an, int& binOut)
+        {
+            const auto& db = an.getSpectrumDb(); float best = -1e9f; binOut = 1;
+            for (int b = 1; b < an.getNumBins(); ++b) if (db[(size_t) b] > best) { best = db[(size_t) b]; binOut = b; }
+            return best;
+        };
+        auto columnAt = [] (const std::vector<float>& cols, float fMin, float fMax, float hz)
+        {
+            const double t = std::log (hz / fMin) / std::log (fMax / fMin);
+            return cols[(size_t) juce::jlimit (0, (int) cols.size() - 1, (int) std::lround (t * (double) (cols.size() - 1)))];
+        };
+
+        // A) Calibration: a 0 dBFS 1 kHz sine reads ~0 dB in its bin at every resolution.
+        {
+            bool ok = true; juce::String line;
+            for (int order = 11; order <= 14; ++order)
+            {
+                kickr::Analyzer an; an.prepare (fsA); an.setResolutionOrder (order);
+                pushSine (an, 1000.0, 1.0f, 0.6, 512);
+                int bin = 0; const float pk = peakBinDb (an, bin);
+                const double hz = bin * (fsA * 0.5) / an.getNumBins();
+                line << " " << (1 << order) << ":" << juce::String (pk, 2) << "dB@" << juce::String (hz, 0) << "Hz";
+                if (std::abs (pk) > 1.0f || std::abs (hz - 1000.0) > 2.0 * (fsA * 0.5) / an.getNumBins()) ok = false;
+            }
+            std::printf ("  0 dBFS 1 kHz sine per resolution:%s\n", line.toRawUTF8());
+            check (ok, "analyzer: 0 dBFS sine reads 0 dB (+-1) at its frequency at every resolution (2048..16384)");
+        }
+
+        // B) Tilt: column value at 4 kHz is +9 dB with 4.5 dB/oct, 0 with tilt 0.
+        {
+            kickr::Analyzer an; an.prepare (fsA);
+            pushSine (an, 4000.0, 1.0f, 0.6, 512);
+            std::vector<float> cols;
+            an.getView().tiltDbPerOct = 0.0f;
+            kickr::buildSpectrumColumns (an, 1000, 20.0f, 20000.0f, cols);
+            const float c0 = columnAt (cols, 20.0f, 20000.0f, 4000.0f);
+            an.getView().tiltDbPerOct = 4.5f;
+            kickr::buildSpectrumColumns (an, 1000, 20.0f, 20000.0f, cols);
+            const float c45 = columnAt (cols, 20.0f, 20000.0f, 4000.0f);
+            std::printf ("  4 kHz sine column: tilt 0 -> %.2f dB, tilt 4.5 -> %.2f dB (expect a +9 dB difference)\n", c0, c45);
+            check (std::abs ((c45 - c0) - 9.0f) < 1.5f, "analyzer tilt: +4.5 dB/oct lifts 4 kHz by 9 dB relative to the 1 kHz pivot");
+        }
+
+        // C) Ballistics: instant attack, release at the Speed rate.
+        {
+            kickr::Analyzer an; an.prepare (fsA); an.setFrameRate (30.0f); an.setReleaseDbPerSecond (60.0f);
+            pushSine (an, 1000.0, 1.0f, 0.3, 512);
+            int bin = 0; const float before = peakBinDb (an, bin);
+            // silence: ~10 frames at 30 Hz = 1600 samples each
+            std::vector<float> z (1600, 0.0f);
+            for (int f = 0; f < 10; ++f) { an.pushBlock (z.data(), z.data(), 1600); an.updateSpectrum(); }
+            const float after = an.getSpectrumDb()[(size_t) bin];
+            std::printf ("  release: %.2f dB -> %.2f dB after 10 frames @ 60 dB/s (expect -20 dB)\n", before, after);
+            check (std::abs ((before - after) - 20.0f) < 4.0f, "analyzer speed: peak falls at the set release rate (60 dB/s -> 20 dB in 10 frames)");
+        }
+
+        // D) Broadband highs read flat: white noise, tilt 0, per-column energy averaging ->
+        //    2-10 kHz within a few dB of each other (the old per-bin drawing sagged here).
+        {
+            kickr::Analyzer an; an.prepare (fsA); an.setResolutionOrder (12); an.setFrameRate (30.0f); an.setReleaseDbPerSecond (240.0f);   // Very Fast: little peak-hold bias
+            an.getView().tiltDbPerOct = 0.0f;
+            juce::Random rng (1234);
+            pushNoise (an, 0.5f, 1.0, 512, rng);
+            std::vector<float> cols;
+            kickr::buildSpectrumColumns (an, 1000, 20.0f, 20000.0f, cols);
+            // Trend, not raw scatter: the old per-bin drawing sagged the high end by tens of dB;
+            // single-bin columns near 2 kHz still carry a few dB of Rayleigh variance, which is
+            // real signal statistics, not a display error.
+            float lo = 1e9f, hi = -1e9f, lowBand = 0.0f, highBand = 0.0f;
+            for (float hz : { 2000.0f, 3000.0f, 5000.0f, 7000.0f, 10000.0f }) { const float c = columnAt (cols, 20.0f, 20000.0f, hz); lo = std::min (lo, c); hi = std::max (hi, c); }
+            for (float hz : { 2000.0f, 2500.0f, 3000.0f })    lowBand  += columnAt (cols, 20.0f, 20000.0f, hz) / 3.0f;
+            for (float hz : { 7000.0f, 8500.0f, 10000.0f })   highBand += columnAt (cols, 20.0f, 20000.0f, hz) / 3.0f;
+            const float at200 = columnAt (cols, 20.0f, 20000.0f, 200.0f);
+            std::printf ("  white noise columns 2-10 kHz: %.1f .. %.1f dB (scatter %.1f), 2-3 kHz mean %.1f vs 7-10 kHz mean %.1f, 200 Hz %.1f dB\n", lo, hi, hi - lo, lowBand, highBand, at200);
+            check (std::abs (lowBand - highBand) < 4.0f, "analyzer: no high-end sag - 7-10 kHz reads within 4 dB of 2-3 kHz on white noise");
+            check (hi - lo < 8.0f, "analyzer: broadband scatter across 2-10 kHz stays under 8 dB (energy-averaged, 1/48-oct smoothed columns)");
+            check (std::abs (at200 - 0.5f * (lo + hi)) < 6.0f, "analyzer: white noise reads the same level in the lows as in the highs");
+        }
+
+        // E) SPECTRUM page snapshot with the settings row, fed with a kick.
+        {
+            KICKRAudioProcessor pe;
+            pe.prepareToPlay (48000.0, 512);
+            kickr::tests::renderNote (pe, a1, vel, 48000.0, 512, 0.05);   // fresh hit in the analyzer history
+            std::unique_ptr<juce::AudioProcessorEditor> edBase (pe.createEditor());
+            auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
+            check (ed != nullptr, "editor created for the spectrum-page snapshot");
+            if (ed != nullptr)
+            {
+                ed->setSize (1120, 819);
+                ed->showSpectrumPageForTest();
+                ed->refreshAnalyzersForSnapshot();
+                const auto img = ed->createComponentSnapshot (ed->getLocalBounds(), false, 1.0f);
+                const auto out = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("kickr_ui_spectrum_page.png");
+                out.deleteFile();
+                if (auto stream = out.createOutputStream()) { juce::PNGImageFormat fmt; fmt.writeImageToStream (img, *stream); }
+                std::printf ("  spectrum-page snapshot: %s\n", out.getFullPathName().toRawUTF8());
+            }
+        }
+    }
 
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;

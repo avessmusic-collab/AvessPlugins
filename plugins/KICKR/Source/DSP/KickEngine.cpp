@@ -37,6 +37,16 @@ namespace kickr
         pOutput           = apvts.getRawParameterValue (id::output);
         pMix              = apvts.getRawParameterValue (id::mix);
         pLimiter          = apvts.getRawParameterValue (id::limiter);
+        pLimLoudness      = apvts.getRawParameterValue (id::limLoudness);     // 2026-09-02 — Color Limiter
+        pLimCeiling       = apvts.getRawParameterValue (id::limCeiling);
+        pLimLookahead     = apvts.getRawParameterValue (id::limLookahead);
+        pLimRelease       = apvts.getRawParameterValue (id::limRelease);
+        pLimSaturation    = apvts.getRawParameterValue (id::limSaturation);
+        pLimColor         = apvts.getRawParameterValue (id::limColor);
+        pFilterOn         = apvts.getRawParameterValue (id::filterOn);       // 2026-09-02 — master filter
+        pFilterType       = apvts.getRawParameterValue (id::filterType);
+        pFilterFreq       = apvts.getRawParameterValue (id::filterFreq);
+        pFilterRes        = apvts.getRawParameterValue (id::filterRes);
         pClickLevel       = apvts.getRawParameterValue (id::clickLevel);
         pClickTone        = apvts.getRawParameterValue (id::clickTone);
         pClickTime        = apvts.getRawParameterValue (id::clickTime);
@@ -105,6 +115,7 @@ namespace kickr
 
         transientShaper.prepare (fsOversampled);
         waveshaperL.prepare (fsOversampled);     // PHASE 2.8/2.9 — coefficients vs fsOversampled
+        masterFilter.prepare (fsOversampled);    // 2026-09-02
         waveshaperR.prepare (fsOversampled);
         outputStage.prepare (fsOversampled);     // PHASE 2.9 — tone / crossover / limiter vs fsOversampled
 
@@ -138,6 +149,7 @@ namespace kickr
 
         transientShaper.updateOversampledRate (fsOversampled);
         waveshaperL.updateOversampledRate (fsOversampled);
+        masterFilter.updateOversampledRate (fsOversampled);   // 2026-09-02
         waveshaperR.updateOversampledRate (fsOversampled);
         outputStage.updateOversampledRate (fsOversampled);
 
@@ -153,6 +165,7 @@ namespace kickr
 
         transientShaper.reset();
         waveshaperL.reset();
+        masterFilter.reset();   // 2026-09-02
         waveshaperR.reset();
         outputStage.reset();
 
@@ -385,6 +398,7 @@ namespace kickr
             transientShaper.processStereo (L, R);          // stereo-linked gain
             L = waveshaperL.processSample (L);             // per-channel 7-curve morph
             R = waveshaperR.processSample (R);
+            masterFilter.process (L, R);                  // 2026-09-02 — master LP/HP (bypass when off)
             outputStage.processOutput (L, R);             // crossover / width / mix / gain / limiter
 
             const float outL = dsputils::sanitize (L);
@@ -475,6 +489,16 @@ namespace kickr
         snap.outputDb     = load (pOutput, 0.0f);        // PHASE 2.9 — OUTPUT
         snap.mix01        = load (pMix,    1.0f);
         snap.limiterOn    = load (pLimiter, 1.0f) > 0.5f;
+        snap.limLoudnessDb   = load (pLimLoudness,   0.0f);   // 2026-09-02 — Color Limiter
+        snap.limCeilingDb    = load (pLimCeiling,   -0.5f);
+        snap.limLookaheadMs  = load (pLimLookahead,  1.5f);
+        snap.limReleaseMs    = load (pLimRelease,   50.0f);
+        snap.limSaturation01 = load (pLimSaturation, 0.0f);
+        snap.limColor01      = load (pLimColor,      0.5f);
+        snap.filterOn        = load (pFilterOn,      0.0f) > 0.5f;   // 2026-09-02 — master filter
+        snap.filterType      = static_cast<int> (std::lround (load (pFilterType, 0.0f)));
+        snap.filterFreqHz    = load (pFilterFreq, 1000.0f);
+        snap.filterRes01     = load (pFilterRes,     0.2f);
         snap.clickLevel      = load (pClickLevel, 0.4f);
         snap.clickToneHz     = load (pClickTone,  4000.0f);
         snap.clickTimeMs     = load (pClickTime,  3.0f);
@@ -599,9 +623,19 @@ namespace kickr
 
         // PHASE 2.9 — tone (pre-distortion) + crossover / width / mix / gain / limiter.
         // low/mid/high, outputWidth/output/mix: no macro targets (per the contract).
+        masterFilter.setParams (snap.filterOn, snap.filterType, snap.filterFreqHz, snap.filterRes01);   // 2026-09-02
+
+        ColorLimiter::Params lim;   // 2026-09-02
+        lim.enabled      = snap.limiterOn;
+        lim.loudnessDb   = snap.limLoudnessDb;
+        lim.ceilingDb    = snap.limCeilingDb;
+        lim.lookaheadMs  = snap.limLookaheadMs;
+        lim.releaseMs    = snap.limReleaseMs;
+        lim.saturation01 = snap.limSaturation01;
+        lim.color01      = snap.limColor01;
         outputStage.setParams (snap.lowDb, snap.midDb, snap.highDb,
                                snap.outputWidth01, snap.outputDb,
-                               snap.limiterOn, snap.mix01);
+                               lim, snap.mix01);
 
         // Sample-accurate sub-block split at each note-on.
         int pos = 0;
@@ -667,7 +701,7 @@ namespace kickr
         // residual filter overshoot — it engages on ~0.1% of samples so its own
         // base-rate aliasing is far below the noise floor — and guarantees the
         // -0.5 dBFS digital ceiling when `limiter` is on. `limiter` off -> raw.
-        const float ceilGain = OutputStage::kLimiterCeilingGain;
+        const float ceilGain = dsputils::dbToGain (juce::jlimit (-24.0f, 0.0f, snap.limCeilingDb));   // 2026-09-02 — follows the CEILING knob
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         {
             auto* data = buffer.getWritePointer (ch);

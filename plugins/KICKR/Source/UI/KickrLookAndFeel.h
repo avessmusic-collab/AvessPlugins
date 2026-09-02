@@ -69,6 +69,14 @@ namespace kickr
                                    bool shouldDrawButtonAsDown) override;
         juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 
+        /** 2026-09-02 (user request: "make the arrows that swap presets identical"): a
+            TextButton whose properties carry "arrowDir" (-1 = left, +1 = right) gets a
+            vector triangle instead of text — the two arrows are the same path mirrored,
+            so they can never differ (the old "\u25C4"/"\u25BA" glyphs had different
+            advance widths and the right one was being truncated to "..."). */
+        void drawButtonText (juce::Graphics&, juce::TextButton&,
+                             bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+
         /** Bold + tracked caps for section titles / wordmark. */
         static juce::Font titleFont (float heightPx);
         /** Regular tracked caps for control captions / micro labels. */

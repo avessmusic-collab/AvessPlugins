@@ -28,14 +28,24 @@ You only need to do this once per plugin format you installed.
 PLUGIN INFO:
 - Version: 1.0.0
 - Formats: VST3, AU (choose one or both during install)
-- Parameters: 60 (Pitch, Body incl. the MORPH knob, Sub, Click, Tail, Noise,
-  Sample, Distortion, Tone, Stereo, Output, Tuning, 4 Macros)
+- Parameters: 70 (Pitch, Body incl. the MORPH knob, Sub, Click, Tail, Noise,
+  Sample, Distortion, Tone, Stereo, Filter, Limiter, 4 Macros)
+- SPECTRUM page: Pro-Q-style analyzer (energy-averaged, tilted curve) with
+  Range / Resolution / Speed / Tilt selectors at the bottom-left.
+- FILTER (third page of the scope, next to WAVE / SPECTRUM): a master low pass /
+  high pass with a draggable response - drag the node left/right for cutoff,
+  up/down for resonance - plus an ON button. Off by default.
+- LIMITER (last section, with the oversampling selector): a Color-Limiter-style
+  output limiter - LOUDNESS, CEILING, LOOKAHEAD,
+  RELEASE, SATURATION and COLOR (tone of the saturation: low = warm, high =
+  bright). Defaults are transparent; the look-ahead adds 1.5 ms of latency
+  that your DAW compensates automatically.
 - MORPH (big knob, left of the scope): skews the body waveform toward a soft
   saw ON THE ATTACK only — the tail always relaxes back to a clean sine.
   0 = pure sine (the classic KICKR sound).
 - Strictly monophonic: a new note always cuts the previous one instantly
   (0.75 ms declick), no overlapping hits, no stuck tails.
-- Includes: 50 built-in factory kick samples, 17 factory presets
+- Includes: 50 built-in factory kick samples, 47 factory presets
 - Description: a commercial-grade kick-drum design instrument - algorithmic
   synthesis blendable with a sample layer, 7-curve morphing distortion,
   real-time waveform/spectrum analyzer (sample-accurate onset - the scope

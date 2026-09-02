@@ -14,7 +14,7 @@ namespace kickr
         each. `currentSampleName` is a `state` property (not a param); a preset load /
         save round-trips it via the callback, but Randomize / Mutate NEVER touch it.
 
-        - 17 factory patches (a code table of ID->value overrides on top of the APVTS
+        - 47 factory patches (17 + 30 added 2026-09-02; a code table of ID->value overrides on top of the APVTS
           defaults), all synth-only (`synthEnable` on, `sampleEnable` off).
         - User presets: `<userMusicDirectory>/KICKR/Presets/<name>.kickrpreset` (XML).
           NOT `~/Library/Audio/Presets` — root-owned on many machines (same rationale

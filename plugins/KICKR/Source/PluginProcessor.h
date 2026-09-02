@@ -84,6 +84,11 @@ public:
 
     static constexpr int kStateVersion = 2;   // v2: SAMPLE group + currentSampleName
 
+    /** 2026-09-02 — the Color Limiter's look-ahead delay at the BASE rate (0 when the
+        limiter is off). Read from the raw parameter atomics — safe on either thread.
+        Total reported latency = oversampling latency + this. */
+    int limiterLatencySamples() const noexcept;
+
 private:
     void retireUnreferenced();   // PHASE 2.7b — free unreferenced sample buffers (message thread)
 
@@ -111,6 +116,12 @@ private:
     std::atomic<const kickr::SampleBuffer*>          currentSample { nullptr };
     std::atomic<const kickr::SampleBuffer*>          pendingSample { nullptr };
     std::vector<std::unique_ptr<kickr::SampleBuffer>> retiredSamples;
+
+    // 2026-09-02 (code-review): the two limiter atomics behind limiterLatencySamples() are
+    // cached once here — it is called from processBlock on every note-on, and a parameter
+    // lookup by ID there was a map search on the audio thread.
+    std::atomic<float>* pLimiterOn        { nullptr };
+    std::atomic<float>* pLimiterLookahead { nullptr };
 
     double currentSampleRate { 44100.0 };
     int    currentBlockSize  { 512 };

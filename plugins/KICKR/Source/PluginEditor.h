@@ -13,6 +13,8 @@
 #include "UI/WaveformDisplay.h"
 #include "UI/SpectrumDisplay.h"
 #include "UI/SampleWaveformView.h"
+#include "UI/AboutPage.h"
+#include "UI/FilterDisplay.h"
 
 class KICKRAudioProcessor;
 
@@ -22,7 +24,7 @@ class KICKRAudioProcessor;
     Mirrors the approved v2 mockup (`plugins/KICKR/.ideas/mockups/v1-ui-concept.html`):
     soft slate-grey chassis + recessed faceplate, header, an oscilloscope PLACEHOLDER
     (real analyzer is Phase 3.2), the SAMPLE strip, four PUNCH/BODY/CRUSH/TAIL macro
-    modules and a 7-cell engine strip. Every one of the 60 APVTS parameters is bound
+    modules and a 7-cell engine strip. Every APVTS parameter except the four TUNING ones (cell removed 2026-09-02) is bound
     exactly once via SliderAttachment / ButtonAttachment / ComboBoxAttachment.
 
     Resizable, fixed 1600:1170 aspect; all layout scales from getLocalBounds() through a
@@ -47,7 +49,13 @@ public:
     void filesDropped  (const juce::StringArray& files, int, int) override;
 
     /** Headless snapshot tests only — pull one analyzer frame into the displays. */
-    void refreshAnalyzersForSnapshot() { waveDisplay.refreshNow(); spectrumDisplay.refreshNow(); }
+    void refreshAnalyzersForSnapshot() { waveDisplay.refreshNow(); spectrumDisplay.refreshNow(); filterDisplay.refreshNow(); }
+    /** Test hook — switch the scope to the SPECTRUM page (snapshot tests). */
+    void showSpectrumPageForTest() { scopeSpectrumButton.setToggleState (true, juce::sendNotification); }
+    /** Test hook — switch the scope to the FILTER page (snapshot tests). */
+    void showFilterPageForTest() { scopeFilterButton.setToggleState (true, juce::sendNotification); }
+    /** Test hook — open / close the about page (snapshot tests). */
+    void showAboutPageForTest (bool on) { on ? aboutPage.show() : aboutPage.hide(); }
     /** Test hook — run the drop path for one file. */
     void importDroppedFileForTest (const juce::File& f) { importAudioFile (f); }
 
@@ -91,6 +99,7 @@ private:
     void layoutMorph (juce::Rectangle<int>);   // 2026-09-01 — Morph knob, left of the scope panel
 
     void updateSampleLabel();
+    void enforceMidiPitchMode();   // 2026-09-02 — TUNING cell removed; tuneMode pinned to MIDI Pitch
     void updateUndoRedoState();
 
     static void placeRow  (juce::Rectangle<int> area, const std::vector<juce::Component*>&, int gap);
@@ -117,6 +126,8 @@ private:
 
     // ---- header ----
     juce::Label wordmark, versionLabel, presetNameLabel, noticeLabel;
+    // 2026-09-02 (user request): click the (bigger) wordmark -> about / licences page overlay.
+    kickr::AboutPage aboutPage;
     juce::TextButton undoButton   { "Undo" };
     juce::TextButton redoButton   { "Redo" };
     juce::TextButton saveButton   { "Save" };
@@ -129,8 +140,10 @@ private:
     // ---- oscilloscope (Phase 3.2 — real-time analyzers) ----
     juce::TextButton scopeWaveButton     { "WAVE" };
     juce::TextButton scopeSpectrumButton { "SPECTRUM" };
+    juce::TextButton scopeFilterButton   { "FILTER" };   // 2026-09-02 — master filter page
+    kickr::FilterDisplay filterDisplay { proc.getValueTreeState(), proc.getAnalyzer() };
     kickr::WaveformDisplay waveDisplay     { proc.getAnalyzer() };
-    kickr::SpectrumDisplay spectrumDisplay { proc.getAnalyzer() };
+    kickr::SpectrumDisplay spectrumDisplay { proc.getAnalyzer(), proc.getValueTreeState() };   // 2026-09-02: + Pro-Q-style settings
 
     // 2026-09-01 (user request) — Morph: body oscillator waveform morph, left of the scope.
     kickr::KickrKnob* morphKnob { nullptr };

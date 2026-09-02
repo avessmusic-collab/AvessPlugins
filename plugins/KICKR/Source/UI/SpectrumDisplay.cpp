@@ -1,5 +1,6 @@
 #include "UI/SpectrumDisplay.h"
 #include "UI/KickrLookAndFeel.h"
+#include "UI/SpectrumCurve.h"
 
 #include <cmath>
 #include <utility>
@@ -8,10 +9,81 @@ namespace pal = kickr::palette;
 
 namespace kickr
 {
-    SpectrumDisplay::SpectrumDisplay (Analyzer& analyzerToUse)
-        : analyzer (analyzerToUse)
+    SpectrumDisplay::SpectrumDisplay (Analyzer& analyzerToUse, juce::AudioProcessorValueTreeState& state)
+        : analyzer (analyzerToUse), apvts (state)
     {
-        setInterceptsMouseClicks (false, false);
+        setInterceptsMouseClicks (false, true);   // the settings selectors need clicks; the rest passes through
+
+        rangeBox.addItemList ({ "60 dB", "90 dB", "120 dB" }, 1);
+        resBox.addItemList   ({ "Res Low", "Res Med", "Res High", "Res Max" }, 1);
+        speedBox.addItemList ({ "V.Slow", "Slow", "Medium", "Fast", "V.Fast" }, 1);
+        tiltBox.addItemList  ({ "Tilt 0", "Tilt 1.5", "Tilt 3", "Tilt 4.5", "Tilt 6" }, 1);   // dB/oct (tooltip)
+        rangeBox.setTooltip ("Analyzer range (dB shown)");
+        resBox.setTooltip   ("Analyzer resolution (FFT 2048 / 4096 / 8192 / 16384)");
+        speedBox.setTooltip ("Analyzer speed - how fast peaks fall back");
+        tiltBox.setTooltip  ("Analyzer tilt - dB per octave around 1 kHz (4.5 makes a natural spectrum read flat)");
+        for (auto* b : { &rangeBox, &resBox, &speedBox, &tiltBox })
+        {
+            b->setJustificationType (juce::Justification::centred);
+            b->setColour (juce::ComboBox::textColourId, pal::ink);
+            b->setColour (juce::ComboBox::arrowColourId, pal::ink);
+            b->onChange = [this] { applySettings (true); repaint(); };
+            addAndMakeVisible (b);
+        }
+        loadSettings();
+        applySettings (false);
+    }
+
+    void SpectrumDisplay::loadSettings()
+    {
+        auto& st = apvts.state;
+        rangeBox.setSelectedId ((int) st.getProperty ("anRange", 2), juce::dontSendNotification);   // 90 dB
+        resBox.setSelectedId   ((int) st.getProperty ("anRes",   2), juce::dontSendNotification);   // Medium
+        speedBox.setSelectedId ((int) st.getProperty ("anSpeed", 3), juce::dontSendNotification);   // Medium
+        tiltBox.setSelectedId  ((int) st.getProperty ("anTilt",  4), juce::dontSendNotification);   // 4.5 dB/oct
+    }
+
+    void SpectrumDisplay::applySettings (bool store)
+    {
+        static const float ranges[]  = { 60.0f, 90.0f, 120.0f };
+        static const int   orders[]  = { 11, 12, 13, 14 };
+        static const float speeds[]  = { 15.0f, 30.0f, 60.0f, 120.0f, 240.0f };   // dB/s release
+        static const float tilts[]   = { 0.0f, 1.5f, 3.0f, 4.5f, 6.0f };
+
+        const int r = juce::jlimit (1, 3, rangeBox.getSelectedId());
+        const int o = juce::jlimit (1, 4, resBox.getSelectedId());
+        const int p = juce::jlimit (1, 5, speedBox.getSelectedId());
+        const int t = juce::jlimit (1, 5, tiltBox.getSelectedId());
+
+        analyzer.getView().rangeDb      = ranges[r - 1];
+        analyzer.getView().tiltDbPerOct = tilts[t - 1];
+        analyzer.setReleaseDbPerSecond (speeds[p - 1]);
+        analyzer.setFrameRate (30.0f);
+        if (analyzer.getFftOrder() != orders[o - 1])
+            analyzer.setResolutionOrder (orders[o - 1]);
+
+        if (store)
+        {
+            auto& st = apvts.state;
+            st.setProperty ("anRange", r, nullptr);
+            st.setProperty ("anRes",   o, nullptr);
+            st.setProperty ("anSpeed", p, nullptr);
+            st.setProperty ("anTilt",  t, nullptr);
+        }
+    }
+
+    void SpectrumDisplay::resized()
+    {
+        const float s = juce::jmax (0.5f, (float) getWidth() / 1120.0f);
+        const auto sc = [s] (float v) { return juce::roundToInt (v * s); };
+        // Settings row, bottom-left, clear of the axis labels.
+        auto row = getLocalBounds().reduced (sc (14), sc (12)).removeFromBottom (sc (20));
+        row.removeFromLeft (sc (2));
+        for (auto* b : { &rangeBox, &resBox, &speedBox, &tiltBox })
+        {
+            b->setBounds (row.removeFromLeft (sc (82)));
+            row.removeFromLeft (sc (6));
+        }
     }
 
     SpectrumDisplay::~SpectrumDisplay()
@@ -73,9 +145,10 @@ namespace kickr
             const double t = (std::log (clamped) - logLo) / (logHi - logLo);
             return r.getX() + r.getWidth() * (float) juce::jlimit (0.0, 1.0, t);
         };
+        const float rangeDb = analyzer.getView().rangeDb;   // Pro-Q "Range"
         auto yForDb = [&] (float db)
         {
-            const float t = juce::jlimit (0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+            const float t = juce::jlimit (0.0f, 1.0f, (db + rangeDb) / rangeDb);
             return r.getBottom() - r.getHeight() * t;
         };
 
@@ -86,28 +159,24 @@ namespace kickr
             g.setColour (pal::ink.withAlpha (0.08f));
             g.drawVerticalLine (juce::roundToInt (xForHz (gridHz)), r.getY(), r.getBottom());
         }
-        for (float gridDb : { -24.0f, -48.0f, -72.0f })
+        for (int k = 1; k < 4; ++k)
         {
             g.setColour (pal::ink.withAlpha (0.05f));
-            g.drawHorizontalLine (juce::roundToInt (yForDb (gridDb)), r.getX(), r.getRight());
+            g.drawHorizontalLine (juce::roundToInt (yForDb (-rangeDb * (float) k / 4.0f)), r.getX(), r.getRight());
         }
 
-        // ---- magnitude curve --------------------------------------------
-        const auto&  spec  = analyzer.getSpectrumDb();
-        const int    bins  = Analyzer::kNumBins;
-        const double binHz = nyq / (double) bins;
+        // ---- magnitude curve: one energy-averaged, tilted value per pixel column ----
+        const int numCols = juce::jmax (2, (int) r.getWidth());
+        buildSpectrumColumns (analyzer, numCols, kMinHz, (float) nyq, columns);
 
         curvePath.clear();
         fillPath.clear();
         bool started = false;
 
-        for (int b = 1; b < bins; ++b)
+        for (int i = 0; i < numCols; ++i)
         {
-            const double hz = (double) b * binHz;
-            if (hz < (double) kMinHz) continue;
-
-            const float x = xForHz (hz);
-            const float y = yForDb (spec[static_cast<size_t> (b)]);
+            const float x = r.getX() + (float) i;
+            const float y = yForDb (columns[static_cast<size_t> (i)]);
 
             if (! started)
             {

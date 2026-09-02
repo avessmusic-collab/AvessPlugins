@@ -30,8 +30,13 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     wordmark.setText ("KICKR", juce::dontSendNotification);
     wordmark.setJustificationType (juce::Justification::centredLeft);
     wordmark.setColour (juce::Label::textColourId, pal::inkHi);
-    wordmark.setInterceptsMouseClicks (false, false);
+    // 2026-09-02 (user request): the wordmark is a button now — click -> about / licences page.
+    wordmark.setInterceptsMouseClicks (true, false);
+    wordmark.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    wordmark.setTooltip ("About KICKR - licences and credits");
+    wordmark.addMouseListener (this, false);
     addAndMakeVisible (wordmark);
+    addChildComponent (aboutPage);   // hidden until the wordmark is clicked
 
     versionLabel.setText ("v1.0", juce::dontSendNotification);
     versionLabel.setJustificationType (juce::Justification::centredLeft);
@@ -47,7 +52,7 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
 
     for (auto* b : { &undoButton, &redoButton, &saveButton, &randomButton, &mutateButton,
                      &abButton, &presetPrev, &presetNext,
-                     &scopeWaveButton, &scopeSpectrumButton, &samplePrev, &sampleNext })
+                     &scopeWaveButton, &scopeSpectrumButton, &scopeFilterButton, &samplePrev, &sampleNext })
         addAndMakeVisible (b);
 
     auto afterAction = [this]
@@ -82,6 +87,9 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     abButton.setTooltip     ("Stash / compare two states");
     presetPrev.setTooltip   ("Previous preset");
     presetNext.setTooltip   ("Next preset");
+    // 2026-09-02 (user request): identical mirrored vector arrows (see KickrLookAndFeel::drawButtonText).
+    presetPrev.getProperties().set ("arrowDir", -1);
+    presetNext.getProperties().set ("arrowDir",  1);
 
     presetNameLabel.setInterceptsMouseClicks (true, false);
     presetNameLabel.addMouseListener (this, false);
@@ -94,24 +102,29 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
 
     scopeWaveButton.setClickingTogglesState (true);
     scopeSpectrumButton.setClickingTogglesState (true);
+    scopeFilterButton.setClickingTogglesState (true);     // 2026-09-02
     scopeWaveButton.setRadioGroupId (0x5c09e);
     scopeSpectrumButton.setRadioGroupId (0x5c09e);
+    scopeFilterButton.setRadioGroupId (0x5c09e);
+    scopeFilterButton.setTooltip ("Master filter - low / high pass with a draggable response");
     scopeWaveButton.setToggleState (true, juce::dontSendNotification);
     scopeWaveButton.setTooltip ("Kick waveform - one capture per trigger");
     scopeSpectrumButton.setTooltip ("Live FFT spectrum");
 
-    scopeWaveButton.onClick = [this]
+    // 2026-09-02: three radio pages — WAVE / SPECTRUM / FILTER.
+    auto syncScopePages = [this]
     {
-        const bool wave = scopeWaveButton.getToggleState();
-        waveDisplay.setVisible (wave);
-        spectrumDisplay.setVisible (! wave);
+        waveDisplay.setVisible     (scopeWaveButton.getToggleState());
+        spectrumDisplay.setVisible (scopeSpectrumButton.getToggleState());
+        filterDisplay.setVisible   (scopeFilterButton.getToggleState());
     };
-    scopeSpectrumButton.onClick = [this]
-    {
-        const bool spectrum = scopeSpectrumButton.getToggleState();
-        spectrumDisplay.setVisible (spectrum);
-        waveDisplay.setVisible (! spectrum);
-    };
+    scopeWaveButton.onClick     = syncScopePages;
+    scopeSpectrumButton.onClick = syncScopePages;
+    scopeFilterButton.onClick   = syncScopePages;
+    addChildComponent (filterDisplay);
+    filterDisplay.setVisible (false);
+    for (auto* b : { &scopeWaveButton, &scopeSpectrumButton, &scopeFilterButton })
+        b->toFront (false);   // the page components sit under the mode buttons
 
     // 2026-09-01 (user request) — Morph: a big knob in the scope panel's carved-out left
     // 1/6 that morphs the body oscillator's waveform (sine -> triangle -> saw -> square).
@@ -265,21 +278,37 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
         &addKnob (kickr::id::outputWidth, "OUT",   pal::violet,  false, KSize::Small),
     };
 
-    engineTitles[5] = &addSectionLabel ("TUNING", pal::lowfam);
-    engineCombos[5] = &addCombo (kickr::id::tuneMode, { "MIDI Pitch", "Fixed Frequency" }, pal::lowfam);
+    // 2026-09-02 (user request): "remove the tuning section, we will add something there
+    // later. leave the midi pitch mode on always." Engine cell 5 is intentionally EMPTY —
+    // no title, combo, or knobs — reserved for a future module. The four parameters
+    // (`tuneMode`, `tune`, `fineTune`, `velSensitivity`) stay in the APVTS untouched so
+    // old sessions / presets still load; `tuneMode` is pinned to MIDI Pitch by
+    // enforceMidiPitchMode() at every editor refresh point.
+    // 2026-09-02 (user request, same day): "change the limiter to an identical to abletons
+    // colour limiter" — the reserved cell becomes LIMITER: on/off + the Color-Limiter
+    // control set in a 3 x 2 grid. OUTPUT keeps oversampling / GAIN / MIX.
+    // 2026-09-02 (user request, later the same day): "remove the output section give limiter
+    // the space and place the oversampling with the limiter" — LIMITER now spans the last
+    // TWO engine cells (the 7th is gone), the oversampling selector sits beside the on/off
+    // pill, and the six knobs are Medium size. `output` (GAIN) and `mix` stay in the APVTS
+    // at their defaults (0 dB / 1.0) but have no control any more — LOUDNESS is the gain now.
+    engineTitles[5] = &addSectionLabel ("LIMITER", pal::red);
+    engineCombos[5] = &addCombo  (kickr::id::oversampling, { "1x", "2x", "4x", "8x" }, pal::red);
+    engineExtra[5]  = &addToggle (kickr::id::limiter, "LIMITER", pal::red);
     engineCells[5] = {
-        &addKnob (kickr::id::tune,           "TUNE", pal::lowfam, true,  KSize::Small),
-        &addKnob (kickr::id::fineTune,       "FINE", pal::lowfam, true,  KSize::Small),
-        &addKnob (kickr::id::velSensitivity, "VEL",  pal::lowfam, false, KSize::Small),
+        &addKnob (kickr::id::limLoudness,   "LOUD",  pal::red,     false, KSize::Medium),
+        &addKnob (kickr::id::limCeiling,    "CEIL",  pal::red,     false, KSize::Medium),
+        &addKnob (kickr::id::limLookahead,  "LOOK",  pal::lowfam,  false, KSize::Medium),
+        &addKnob (kickr::id::limRelease,    "REL",   pal::lowfam,  false, KSize::Medium),
+        &addKnob (kickr::id::limSaturation, "SAT",   pal::magenta, false, KSize::Medium),
+        &addKnob (kickr::id::limColor,      "COLOR", pal::magenta, false, KSize::Medium),
     };
 
-    engineTitles[6] = &addSectionLabel ("OUTPUT", pal::red);
-    engineCombos[6] = &addCombo  (kickr::id::oversampling, { "1x", "2x", "4x", "8x" }, pal::red);
-    engineExtra[6]  = &addToggle (kickr::id::limiter, "LIMITER", pal::red);
-    engineCells[6] = {
-        &addKnob (kickr::id::output, "GAIN", pal::violet, false, KSize::Small),
-        &addKnob (kickr::id::mix,    "MIX",  pal::violet, false, KSize::Small),
-    };
+    // OUTPUT cell removed 2026-09-02 (see LIMITER above) — slot 6 is folded into slot 5.
+    engineTitles[6] = nullptr;
+    engineCombos[6] = nullptr;
+    engineExtra[6]  = nullptr;
+    engineCells[6].clear();
 
     // ---------------------------------------------------------------- wiring
     proc.getUndoManager().addChangeListener (this);
@@ -288,7 +317,7 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     updateUndoRedoState();
     updateSampleLabel();
 
-    jassert (boundParamCount == 60);   // 2026-09-01: 59 + morph
+    jassert (boundParamCount == 60);   // 2026-09-01: 59 + morph; 2026-09-02: - 4 TUNING controls, + 6 Color-Limiter knobs, - GAIN / MIX (OUTPUT cell removed)
 
     // 2026-09-01: reverted the 2026-08-31 fixed-size trial — resizable again, with a
     // bottom-right corner drag handle. Aspect-locked to the mockup's 1600:1170 ratio so
@@ -582,10 +611,25 @@ void KICKRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
     if (e.eventComponent == &presetNameLabel)
         showPresetMenu();
+    else if (e.eventComponent == &wordmark)   // 2026-09-02
+        aboutPage.show();
+}
+
+void KICKRAudioProcessorEditor::enforceMidiPitchMode()
+{
+    // 2026-09-02 — the TUNING cell is gone; the mode has no UI any more and must always
+    // read MIDI Pitch (index 0). A preset / session / undo step that carried "Fixed
+    // Frequency" is corrected here (message thread, at the same refresh points as the
+    // sample label). Headless use (tests) is unaffected — this is editor-only.
+    if (auto* p = proc.getValueTreeState().getParameter (kickr::id::tuneMode))
+        if (p->getValue() > 0.0f)
+            p->setValueNotifyingHost (0.0f);
 }
 
 void KICKRAudioProcessorEditor::updateSampleLabel()
 {
+    enforceMidiPitchMode();   // 2026-09-02 — shares every state-refresh point
+
     auto& lib = proc.getSampleLibrary();
     const auto n = proc.getCurrentSampleName();
 
@@ -666,6 +710,8 @@ void KICKRAudioProcessorEditor::placeGrid (juce::Rectangle<int> area,
 void KICKRAudioProcessorEditor::resized()
 {
     scaleFactor = (float) getWidth() / 1600.0f;
+    aboutPage.setBounds (getLocalBounds());   // 2026-09-02 — overlay covers the whole editor
+    aboutPage.setScale (scaleFactor);
 
     auto face = getLocalBounds().reduced (scaled (10));
     faceplateBounds = face.reduced (scaled (24));
@@ -706,8 +752,9 @@ void KICKRAudioProcessorEditor::resized()
 
 void KICKRAudioProcessorEditor::layoutHeader (juce::Rectangle<int> a)
 {
-    wordmark.setFont (kickr::KickrLookAndFeel::titleFont ((float) scaled (20)));
-    wordmark.setBounds (a.removeFromLeft (scaled (104)));
+    // 2026-09-02 (user request: "make the KICKR logo bigger"): 20 -> 30 px, 104 -> 150 wide.
+    wordmark.setFont (kickr::KickrLookAndFeel::titleFont ((float) scaled (30)));
+    wordmark.setBounds (a.removeFromLeft (scaled (150)));
 
     versionLabel.setFont (kickr::KickrLookAndFeel::microFont ((float) scaled (10)));
     versionLabel.setBounds (a.removeFromLeft (scaled (44)));
@@ -717,10 +764,20 @@ void KICKRAudioProcessorEditor::layoutHeader (juce::Rectangle<int> a)
     for (auto* b : { &saveButton, &undoButton, &redoButton, &randomButton, &mutateButton, &abButton })
         b->setBounds (btns.removeFromLeft (bw).reduced (scaled (3)));
 
+    // 2026-09-02 (user request: "move them a bit closer to each other"): the two arrows
+    // used to sit at the far ends of the whole header gap; now they hug a fixed-width
+    // name area centred in it.
+    // Follow-up (same day, "now the arrows are way too close move them half of what you
+    // moved them before"): the group is now the midpoint between the old far-ends layout
+    // (the full pill width) and the tight 200 px name area.
     auto pill = a.reduced (scaled (14), scaled (6));
-    presetPrev.setBounds (pill.removeFromLeft (scaled (26)));
-    presetNext.setBounds (pill.removeFromRight (scaled (26)));
-    presetNameLabel.setBounds (pill);
+    const int arrowW = scaled (26), nameW = scaled (200), gap = scaled (6);
+    const int tightW = nameW + 2 * (arrowW + gap);
+    const int groupW = juce::jmin (pill.getWidth(), (pill.getWidth() + tightW) / 2);
+    auto group = pill.withSizeKeepingCentre (groupW, pill.getHeight());
+    presetPrev.setBounds (group.removeFromLeft (arrowW));
+    presetNext.setBounds (group.removeFromRight (arrowW));
+    presetNameLabel.setBounds (group.reduced (gap, 0));
     presetNameLabel.setFont (kickr::KickrLookAndFeel::titleFont ((float) scaled (11)));
 }
 
@@ -737,7 +794,11 @@ void KICKRAudioProcessorEditor::layoutScope (juce::Rectangle<int> a)
     waveDisplay.setBounds (a);
     spectrumDisplay.setBounds (a);
 
-    auto modes = a.reduced (scaled (14)).removeFromTop (scaled (22)).removeFromRight (scaled (150));
+    filterDisplay.setBounds (a);   // 2026-09-02 — third page
+
+    auto modes = a.reduced (scaled (14)).removeFromTop (scaled (22)).removeFromRight (scaled (224));
+    scopeFilterButton.setBounds (modes.removeFromRight (scaled (66)));
+    modes.removeFromRight (scaled (4));
     scopeSpectrumButton.setBounds (modes.removeFromRight (scaled (78)));
     modes.removeFromRight (scaled (4));
     scopeWaveButton.setBounds (modes);
@@ -823,7 +884,16 @@ void KICKRAudioProcessorEditor::layoutEngine (juce::Rectangle<int> a)
 
     for (int i = 0; i < 7; ++i)
     {
-        juce::Rectangle<int> cell (a.getX() + i * cw, a.getY(), cw, a.getHeight());
+        // 2026-09-02: LIMITER (slot 5) takes slots 5 + 6; slot 6 itself is empty.
+        if (i == 6)
+        {
+            engineRects[6] = {};
+            continue;
+        }
+        const int span = (i == 5) ? 2 : 1;
+        juce::Rectangle<int> cell (a.getX() + i * cw, a.getY(), cw * span, a.getHeight());
+        if (i == 5)
+            cell.setRight (a.getRight());   // absorb the /7 rounding remainder
         engineRects[(size_t) i] = cell;
 
         auto inner = cell.reduced (scaled (10));
@@ -835,18 +905,29 @@ void KICKRAudioProcessorEditor::layoutEngine (juce::Rectangle<int> a)
         }
         inner.removeFromTop (scaled (4));
 
-        if (engineCombos[(size_t) i] != nullptr)
+        if (i == 5 && engineCombos[5] != nullptr && engineExtra[5] != nullptr)
         {
-            engineCombos[(size_t) i]->setBounds (inner.removeFromTop (scaled (22)));
+            // LIMITER: on/off pill (left) and oversampling selector (right) share one row.
+            auto row = inner.removeFromTop (scaled (22));
+            engineExtra[5]->setBounds (row.removeFromLeft (row.getWidth() / 2).withTrimmedRight (scaled (4)));
+            engineCombos[5]->setBounds (row.withTrimmedLeft (scaled (4)));
             inner.removeFromTop (scaled (6));
         }
-        if (engineExtra[(size_t) i] != nullptr)
+        else
         {
-            engineExtra[(size_t) i]->setBounds (inner.removeFromTop (scaled (22)));
-            inner.removeFromTop (scaled (6));
+            if (engineCombos[(size_t) i] != nullptr)
+            {
+                engineCombos[(size_t) i]->setBounds (inner.removeFromTop (scaled (22)));
+                inner.removeFromTop (scaled (6));
+            }
+            if (engineExtra[(size_t) i] != nullptr)
+            {
+                engineExtra[(size_t) i]->setBounds (inner.removeFromTop (scaled (22)));
+                inner.removeFromTop (scaled (6));
+            }
         }
 
-        placeGrid (inner, engineCells[(size_t) i], 2, scaled (4));
+        placeGrid (inner, engineCells[(size_t) i], i == 5 ? 3 : 2, scaled (4));   // LIMITER cell: 3 x 2
     }
 }
 
@@ -897,7 +978,7 @@ void KICKRAudioProcessorEditor::paint (juce::Graphics& g)
 
     // engine cell dividers
     g.setColour (juce::Colours::black.withAlpha (0.35f));
-    for (int i = 1; i < 7; ++i)
+    for (int i = 1; i < 6; ++i)   // 2026-09-02: no divider inside the double-width LIMITER cell
         g.drawVerticalLine (engineRects[(size_t) i].getX(),
                             (float) engineBounds.getY() + sf (10),
                             (float) engineBounds.getBottom() - sf (10));
