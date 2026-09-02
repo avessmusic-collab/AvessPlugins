@@ -1,7 +1,7 @@
 # CORRUPTR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 0 (Research & Planning Complete)
+- **Current Status:** 🚧 Stage 1 (Foundation + Shell Complete)
 - **Version:** N/A
 - **Type:** Audio Effect (Multi-Distortion/Glitch)
 - **Complexity:** 5.0 (capped) / 19.0 (uncapped raw score) — see `.ideas/plan.md`
@@ -10,6 +10,8 @@
 
 - **2026-09-01:** Creative brief finalized via `/dream` — plugin-ideation skill
 - **2026-09-01 (Stage 0):** Research & Planning complete — DSP architecture documented (14 core components across distortion, glitch, sequencer, mod matrix, macros, feedback routing, oversampling, limiter), complexity assessed (5.0 capped / 19.0 uncapped). Recommendation: split into Wave 1 (MVP-of-MVP) and Wave 2 (full feature set) implementation efforts rather than one continuous phased pass — see `.ideas/plan.md`.
+- **2026-09-02:** UI mockup finalized (v5) and `parameter-spec.md` locked at v2 (94 parameters — the 56 mockup-bound v1 parameters plus 38 architecture-required additions: per-LFO shape/sync x4 and the 8-slot Mod Matrix's source/destination/amount/enable fields).
+- **2026-09-02 (Stage 1):** Foundation + Shell complete — CMakeLists.txt (VST3/AU/Standalone) and full APVTS with all 94 locked parameters implemented in exact spec order, zero drift. `processBlock()` is an intentional pass-through stub; Stage 2 DSP owns all processing.
 
 ## Known Issues
 
