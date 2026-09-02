@@ -551,6 +551,78 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     feedbackDampingCutoffSmoothed.setCurrentAndTargetValue(kFeedbackDampingMaxHz);
 
     feedbackCircuitBreakerTripped.store(false);
+
+    //=========================================================================
+    // Stage 2 Phase 3.3: Core Linear Chain
+    //=========================================================================
+    inputGainDsp.prepare(spec);
+    inputGainDsp.reset();
+    inputGainDsp.setRampDurationSeconds(0.02); // 10-20ms smoothed ramp per architecture.md component #1
+
+    driveGainSmoothed.reset(sampleRate, 0.02);
+    driveGainSmoothed.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(6.0f)); // matches `drive` default (6dB)
+    distortionMixSmoothed.reset(sampleRate, 0.02);
+    distortionMixSmoothed.setCurrentAndTargetValue(1.0f); // matches `distortionMix` default (100%)
+
+    distortionToneLpState.fill(0.0f);
+    distortionDcBlockerX1.fill(0.0f);
+    distortionDcBlockerY1.fill(0.0f);
+    // Fixed 1kHz pole for the tone-tilt filter's internal one-pole LP.
+    distortionToneLpCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * 1000.0f / static_cast<float>(sampleRate));
+    // Fixed ~5Hz pole for the DC blocker (architecture.md component #2).
+    distortionDcBlockerR = std::exp(-2.0f * juce::MathConstants<float>::pi * 5.0f / static_cast<float>(sampleRate));
+
+    for (auto& osc : ringModOsc)
+    {
+        osc.initialise([](float phase) { return std::sin(phase); }, 128);
+        osc.prepare(monoSpec);
+        osc.reset();
+    }
+
+    bitcrushHeldSample.fill(0.0f);
+    bitcrushHoldCounter.fill(0);
+
+    for (auto& f : svfFilter)
+    {
+        f.prepare(monoSpec);
+        f.reset();
+    }
+    notchX1.fill(0.0f); notchX2.fill(0.0f);
+    notchY1.fill(0.0f); notchY2.fill(0.0f);
+
+    combMaxDelaySamples = static_cast<int>(std::ceil(0.025 * sampleRate)) + 4; // 25ms headroom for the ~1-20ms comb spacing range
+    for (auto& d : combDelay)
+    {
+        d.setMaximumDelayInSamples(combMaxDelaySamples);
+        d.prepare(monoSpec);
+        d.reset();
+    }
+    lastFilterTypeIndex = -1; // force a state reset + coefficient recompute on the first processBlock() call
+
+    dryBuffer.setSize(numChannels, samplesPerBlock, false, true, true);
+    dryBuffer.clear();
+    masterDryGainSmoothed.reset(sampleRate, 0.02);
+    masterDryGainSmoothed.setCurrentAndTargetValue(0.0f); // matches `mix` default (100% = fully wet)
+    masterWetGainSmoothed.reset(sampleRate, 0.02);
+    masterWetGainSmoothed.setCurrentAndTargetValue(1.0f);
+
+    outputGainDsp.prepare(spec);
+    outputGainDsp.reset();
+    outputGainDsp.setRampDurationSeconds(0.02);
+
+    coloredLimiterSaturation.functionToUse = [](float x)
+    {
+        // Fixed, gentle, always-on-in-Colored-mode saturation (architecture.md
+        // component #13's recommended MVP approximation for GR-proportional
+        // coloring, since juce::dsp::Limiter doesn't expose a GR signal).
+        constexpr float driveAmt = 1.6f;
+        return std::tanh(x * driveAmt) / std::tanh(driveAmt);
+    };
+
+    outputLimiter.prepare(spec);
+    outputLimiter.reset();
+    outputLimiter.setThreshold(-0.3f);
+    outputLimiter.setRelease(50.0f);
 }
 
 void CORRUPTRAudioProcessor::releaseResources()
@@ -580,6 +652,25 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     for (int i = getTotalNumInputChannels(); i < getTotalNumOutputChannels(); ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
+
+    //=========================================================================
+    // Stage 2 Phase 3.3: Master Mix dry-signal capture (component #14)
+    //
+    // Captured HERE — the very first thing that happens in processBlock(),
+    // before Input Gain, before Phase 3.2's diagnostic block, and before
+    // Phase 3.1's isolated feedback-loop test code (which DOES write into
+    // `buffer` below) — per architecture.md component #14: "capturing dry
+    // signal at the very start of processBlock(), before Input Gain, to
+    // match user expectation that 'dry' means the original unprocessed
+    // signal". This is restored into `buffer` again, overwriting Phase
+    // 3.1's diagnostic writes, right before the Phase 3.3 linear chain
+    // begins (see comment further down for why).
+    //=========================================================================
+    {
+        const int channelsToCapture = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
+        for (int ch = 0; ch < channelsToCapture; ++ch)
+            dryBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
+    }
 
     //=========================================================================
     // Stage 2 Phase 3.2: Unified Modulation Accumulator (Isolated)
@@ -797,11 +888,423 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         }
     }
 
+    //=========================================================================
+    // Stage 2 Phase 3.3: Core Linear Chain
+    //
+    // Phase 3.1's feedback-loop code directly above is an ISOLATED,
+    // self-contained validation harness (per plan.md's "safety and
+    // foundation first" build order) — it is deliberately NOT part of the
+    // live signal path yet (that's Phase 3.4). Its writes to `buffer`
+    // above are diagnostic-test output only; we now discard them and
+    // restore the true dry signal captured at the very top of this
+    // function, which becomes the real input to this phase's linear
+    // chain. (Phase 3.1's internal state — delay line, damping filter,
+    // RMS envelope, circuit-breaker flag — is untouched by this restore;
+    // only its writes to the shared `buffer` are superseded.)
+    //=========================================================================
+    {
+        const int channelsToRestore = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
+        for (int ch = 0; ch < channelsToRestore; ++ch)
+            buffer.copyFrom(ch, 0, dryBuffer, ch, 0, numSamples);
+    }
+
+    //=========================================================================
+    // Stage 2 Phase 3.3: Core Linear Chain — per-block parameter reads
+    //=========================================================================
+    auto* inputGainParam          = parameters.getRawParameterValue("inputGain");
+    auto* graphBypassSatParam     = parameters.getRawParameterValue("graphBypassSaturation");
+    auto* distortionAlgoParam     = parameters.getRawParameterValue("distortionAlgorithm");
+    auto* driveParam              = parameters.getRawParameterValue("drive");
+    auto* toneParam                = parameters.getRawParameterValue("tone");
+    auto* biasParam                = parameters.getRawParameterValue("bias");
+    auto* foldParam                = parameters.getRawParameterValue("fold");
+    auto* distortionMixParam       = parameters.getRawParameterValue("distortionMix");
+    auto* graphBypassWSParam       = parameters.getRawParameterValue("graphBypassWaveshaper");
+    auto* graphBypassBCParam       = parameters.getRawParameterValue("graphBypassBitcrush");
+    auto* bitDepthParam            = parameters.getRawParameterValue("bitDepth");
+    auto* srrParam                 = parameters.getRawParameterValue("sampleRateReduction");
+    auto* graphBypassFiltParam     = parameters.getRawParameterValue("graphBypassFilter");
+    auto* filterTypeParam          = parameters.getRawParameterValue("filterType");
+    auto* filterCutoffParam        = parameters.getRawParameterValue("filterCutoff");
+    auto* filterResonanceParam     = parameters.getRawParameterValue("filterResonance");
+    auto* mixParam                 = parameters.getRawParameterValue("mix");
+    auto* outputGainParam          = parameters.getRawParameterValue("outputGain");
+    auto* outputLimiterStyleParam  = parameters.getRawParameterValue("outputLimiterStyle");
+
+    distortionEngineBypassed  = graphBypassSatParam->load() > 0.5f;
+    waveshaperCurveBypassed   = graphBypassWSParam->load() > 0.5f;
+    distortionAlgorithmIndex  = static_cast<int>(distortionAlgoParam->load());
+    distortionToneNorm        = juce::jlimit(-1.0f, 1.0f, toneParam->load() / 100.0f);
+    distortionBiasOffset      = juce::jlimit(-1.0f, 1.0f, biasParam->load() / 100.0f) * 0.3f; // moderate pre-shaper DC offset range
+    distortionFoldPct         = foldParam->load();
+
+    driveGainSmoothed.setTargetValue(juce::Decibels::decibelsToGain(driveParam->load()));
+    distortionMixSmoothed.setTargetValue(juce::jlimit(0.0f, 100.0f, distortionMixParam->load()) / 100.0f);
+
+    bitcrushBypassed = graphBypassBCParam->load() > 0.5f;
+    {
+        const float bitDepth = juce::jlimit(1.0f, 16.0f, bitDepthParam->load());
+        bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
+    }
+    {
+        const float srr = juce::jlimit(1.0f, 48.0f, srrParam->load());
+        bitcrushHoldSamples = juce::jmax(1, static_cast<int>(std::round(srr)));
+    }
+
+    filterBypassed  = graphBypassFiltParam->load() > 0.5f;
+    filterTypeIndex = static_cast<int>(filterTypeParam->load());
+    {
+        const float cutoffHz     = juce::jlimit(20.0f, 20000.0f, filterCutoffParam->load());
+        const float resonancePct = juce::jlimit(0.0f, 100.0f, filterResonanceParam->load());
+        updateFilterParameters(cutoffHz, resonancePct, getSampleRate());
+    }
+
+    if (filterTypeIndex != lastFilterTypeIndex)
+    {
+        // architecture.md: "Filter must reset state on filterType change to
+        // prevent transient bursts" — reset ALL topology states regardless
+        // of which one is newly active, since any of them could hold stale
+        // energy from the previously-active type. All three reset calls
+        // are bounded/allocation-free (DelayLine::reset() and
+        // StateVariableTPTFilter::reset() clear their already-allocated
+        // internal buffers; the Notch state is just four floats).
+        for (auto& f : svfFilter) f.reset();
+        notchX1.fill(0.0f); notchX2.fill(0.0f);
+        notchY1.fill(0.0f); notchY2.fill(0.0f);
+        for (auto& d : combDelay) d.reset();
+        lastFilterTypeIndex = filterTypeIndex;
+    }
+
+    // Master Mix target gains (0-200% per architecture.md component #14)
+    {
+        const float mixPct = juce::jlimit(0.0f, 200.0f, mixParam->load());
+        float dryGain, wetGain;
+        if (mixPct <= 100.0f)
+        {
+            const float t = mixPct / 100.0f;
+            dryGain = 1.0f - t;
+            wetGain = t;
+        }
+        else
+        {
+            const float t = (mixPct - 100.0f) / 100.0f; // 0..1 across the 100-200% range
+            constexpr float wetCeilingLinear = 1.9953f;  // +6dB at mix=200%, per architecture.md component #14
+            dryGain = 0.0f;
+            wetGain = 1.0f + t * (wetCeilingLinear - 1.0f);
+        }
+        masterDryGainSmoothed.setTargetValue(dryGain);
+        masterWetGainSmoothed.setTargetValue(wetGain);
+    }
+
+    outputGainDsp.setGainDecibels(outputGainParam->load());
+    const bool coloredLimiterMode = static_cast<int>(outputLimiterStyleParam->load()) == 1;
+
+    // Input Gain (block-level, via juce::dsp::Gain — built-in 10-20ms ramp)
+    {
+        juce::dsp::AudioBlock<float> block(buffer);
+        juce::dsp::ProcessContextReplacing<float> context(block);
+        inputGainDsp.setGainDecibels(inputGainParam->load());
+        inputGainDsp.process(context);
+    }
+
+    // Distortion Engine -> Bitcrusher/SRR -> Filter Stage -> Master Mix.
+    // Single per-sample pass; the sample-rate-shared SmoothedValues are
+    // advanced exactly ONCE per sample index (outer loop), NOT once per
+    // channel (inner loop) — this keeps their ramps correctly paced
+    // regardless of channel count, since a single juce::SmoothedValue
+    // instance is shared across both channels here.
+    for (int n = 0; n < numSamples; ++n)
+    {
+        const float driveGain        = driveGainSmoothed.getNextValue();
+        const float distortionMixAmt = distortionMixSmoothed.getNextValue();
+        const float masterDryGain    = masterDryGainSmoothed.getNextValue();
+        const float masterWetGain    = masterWetGainSmoothed.getNextValue();
+
+        for (int channel = 0; channel < numChannels; ++channel)
+        {
+            auto* channelData = buffer.getWritePointer(channel);
+            const float dry = dryBuffer.getReadPointer(channel)[n];
+
+            float s = channelData[n];
+            s = processDistortionEngine(s, channel, driveGain, distortionMixAmt);
+            s = processBitcrusher(s, channel);
+            s = processFilterStage(s, channel);
+
+            channelData[n] = dry * masterDryGain + s * masterWetGain;
+        }
+    }
+
+    // Output Gain (block-level). CONTRADICTION RESOLUTION: applied BEFORE
+    // the Output Limiter, per the Sequential DSP chain's explicit numbered
+    // order (step 12 before step 13) — see header comment above
+    // outputGainDsp's declaration for the full contradiction note.
+    {
+        juce::dsp::AudioBlock<float> block(buffer);
+        juce::dsp::ProcessContextReplacing<float> context(block);
+        outputGainDsp.process(context);
+    }
+
+    // Output Limiter (dual-mode). Colored mode runs a fixed, gentle,
+    // always-on saturation stage just before the limiter (architecture.md
+    // component #13's recommended MVP approximation for GR-proportional
+    // coloring); Transparent mode is the limiter alone.
+    {
+        juce::dsp::AudioBlock<float> block(buffer);
+        juce::dsp::ProcessContextReplacing<float> context(block);
+        if (coloredLimiterMode)
+            coloredLimiterSaturation.process(context);
+        outputLimiter.process(context);
+    }
+
     // Defensive only (shouldn't occur for this stereo-in/stereo-out effect):
-    // mirror channel 0's processed result into any additional channels
-    // rather than leaving them unprocessed.
+    // mirror channel 0's final processed result into any additional
+    // channels rather than leaving them unprocessed.
     for (int channel = numChannels; channel < buffer.getNumChannels(); ++channel)
         buffer.copyFrom(channel, 0, buffer, 0, 0, numSamples);
+}
+
+//==============================================================================
+// Stage 2 Phase 3.3: Core Linear Chain — helper method implementations
+//==============================================================================
+float CORRUPTRAudioProcessor::processDistortionEngine(float xIn, int channel, float driveGain, float distortionMixAmt)
+{
+    if (distortionEngineBypassed)
+        return xIn; // graphBypassSaturation: full stage bypass (dry passthrough of this graph node)
+
+    const float xBiased = xIn * driveGain + distortionBiasOffset;
+
+    float y;
+    if (waveshaperCurveBypassed)
+    {
+        // graphBypassWaveshaper ("Fold Bypass" in the UI, ADV panel): skips
+        // ONLY the nonlinear transfer function below, keeping drive/bias/
+        // tone/distortionMix active. This is intentionally NOT the same as
+        // graphBypassSaturation above (see PluginProcessor.h comment / JSON
+        // report for the full non-redundancy reasoning).
+        y = xBiased;
+    }
+    else
+    {
+        switch (distortionAlgorithmIndex)
+        {
+            case 0: // Saturation
+                y = std::tanh(xBiased);
+                break;
+
+            case 1: // Soft Clip (cubic soft-knee)
+                if (xBiased <= -1.0f)      y = -2.0f / 3.0f;
+                else if (xBiased >= 1.0f)  y =  2.0f / 3.0f;
+                else                       y = xBiased - (xBiased * xBiased * xBiased) / 3.0f;
+                break;
+
+            case 2: // Hard Clip
+                y = juce::jlimit(-1.0f, 1.0f, xBiased);
+                break;
+
+            case 3: // Tube (asymmetric tanh w/ bias)
+                y = xBiased >= 0.0f ? std::tanh(xBiased) : std::tanh(xBiased * 1.5f) * 0.75f;
+                break;
+
+            case 4: // Diode (piecewise exponential diode I-V curve approximation)
+                y = xBiased >= 0.0f ? (1.0f - std::exp(-xBiased))
+                                    : -(1.0f - std::exp(xBiased * 3.0f)) * 0.3f;
+                break;
+
+            case 5: // Fuzz (2-stage hard-clip cascade with extra gain)
+            {
+                const float stage1 = juce::jlimit(-1.0f, 1.0f, xBiased * 2.0f);
+                y = juce::jlimit(-1.0f, 1.0f, stage1 * 2.0f);
+                break;
+            }
+
+            case 6: // Digital Distortion (hard clip + fixed quantizer, reuses the bitcrush quantizer at a fixed depth)
+            {
+                const float clipped = juce::jlimit(-1.0f, 1.0f, xBiased);
+                constexpr float fixedLevels = 15.0f; // fixed 4-bit-style quantizer
+                y = std::round(clipped * fixedLevels) / fixedLevels;
+                break;
+            }
+
+            case 7:  // Bitcrusher (distortionAlgorithm choice)
+            case 8:  // Sample Rate Reducer (distortionAlgorithm choice)
+                // architecture.md's explicit flagged resolution: these two
+                // choices are a no-op passthrough in the waveshaper — the
+                // actual crush/reduce happens in the always-on component #3
+                // (Bitcrusher/SRR stage) regardless of algorithm selection.
+                // Full passthrough (bypasses drive/bias/tone/mix too, since
+                // this is meant to be a literal no-op node).
+                return xIn;
+
+            case 9: // Wavefolder (triangle fold, closed-form asin(sin()))
+            {
+                const float k = 1.0f + (distortionFoldPct / 100.0f) * 4.0f;
+                const float folded = xBiased * k;
+                y = (2.0f / juce::MathConstants<float>::pi)
+                        * std::asin(std::sin(folded * juce::MathConstants<float>::halfPi));
+                break;
+            }
+
+            case 10: // Ring-Mod (x * sine carrier). NOTE: no dedicated APVTS
+                     // carrier-frequency parameter exists in parameter-spec.md
+                     // for this MVP phase (architecture.md flags carrier freq
+                     // as a future Mod Matrix destination) — `fold` is
+                     // repurposed here as the carrier-frequency control
+                     // (20Hz-5000Hz exponential) since Fold has no other
+                     // effect on Ring-Mod. Documented in the JSON report.
+            {
+                auto& osc = ringModOsc[(size_t) channel];
+                const float carrierNorm = juce::jlimit(0.0f, 1.0f, distortionFoldPct / 100.0f);
+                const float carrierFreq = 20.0f * std::pow(250.0f, carrierNorm); // 20Hz .. 5000Hz
+                osc.setFrequency(carrierFreq);
+                const float carrierSample = osc.processSample(0.0f);
+                y = xBiased * carrierSample;
+                break;
+            }
+
+            case 11: // Foldback (reflect-at-threshold recursive fold, bounded loop — softer knee than Wavefolder)
+            default:
+            {
+                const float threshold = juce::jmax(0.05f, 1.0f - (distortionFoldPct / 100.0f) * 0.5f);
+                float v = xBiased;
+                for (int iter = 0; iter < 8 && (v > threshold || v < -threshold); ++iter)
+                {
+                    if (v > threshold)       v = 2.0f * threshold - v;
+                    else if (v < -threshold) v = -2.0f * threshold - v;
+                }
+                y = v;
+                break;
+            }
+        }
+    }
+
+    // Post-shaper tone tilt (fixed 1kHz pole, hand-rolled one-pole — see
+    // PluginProcessor.h for the real-time-safety rationale).
+    auto& lpState = distortionToneLpState[(size_t) channel];
+    lpState += distortionToneLpCoeff * (y - lpState);
+    const float hp = y - lpState;
+    y = y + distortionToneNorm * (hp - lpState) * 0.5f;
+
+    // Post-shaper DC blocker (~5Hz, hand-rolled one-pole highpass) — always
+    // active regardless of `bias` value, per architecture.md component #2.
+    auto& x1 = distortionDcBlockerX1[(size_t) channel];
+    auto& y1 = distortionDcBlockerY1[(size_t) channel];
+    const float dcBlocked = y - x1 + distortionDcBlockerR * y1;
+    x1 = y;
+    y1 = dcBlocked;
+    y = dcBlocked;
+
+    // Stage-local dry/wet (`distortionMix`, independent of master `mix`).
+    return xIn * (1.0f - distortionMixAmt) + y * distortionMixAmt;
+}
+
+float CORRUPTRAudioProcessor::processBitcrusher(float xIn, int channel)
+{
+    if (bitcrushBypassed)
+        return xIn;
+
+    auto& held = bitcrushHeldSample[(size_t) channel];
+    auto& counter = bitcrushHoldCounter[(size_t) channel];
+
+    if (counter <= 0)
+    {
+        held = xIn;
+        counter = bitcrushHoldSamples;
+    }
+    --counter;
+
+    // architecture.md Algorithm Details: "y[n] = quantize(hold(x[n], srrFactor), bitDepth)".
+    return std::round(held * bitcrushLevels) / bitcrushLevels;
+}
+
+void CORRUPTRAudioProcessor::updateFilterParameters(float cutoffHz, float resonancePct, double sampleRate)
+{
+    const float resonanceNorm = juce::jlimit(0.0f, 1.0f, resonancePct / 100.0f);
+
+    // StateVariableTPTFilter-backed topologies (LP/HP/BP/Resonant LP/Resonant HP).
+    // architecture.md: "clamped to prevent self-oscillation blowup" —
+    // regular LP/HP/BP get a conservative resonance ceiling; the two
+    // "Resonant" variants get a higher ceiling (closer to, but still
+    // safely below, self-oscillation) since that's their entire purpose.
+    constexpr float kStandardResonanceMax = 8.0f;
+    constexpr float kResonantVariantMax = 18.0f;
+    auto svfType = juce::dsp::StateVariableTPTFilterType::lowpass;
+    float svfResonance = 0.7071f; // default Butterworth Q
+
+    switch (filterTypeIndex)
+    {
+        case 0: svfType = juce::dsp::StateVariableTPTFilterType::lowpass;  svfResonance = juce::jmap(resonanceNorm, 0.5f, kStandardResonanceMax); break; // LP
+        case 1: svfType = juce::dsp::StateVariableTPTFilterType::highpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kStandardResonanceMax); break; // HP
+        case 2: svfType = juce::dsp::StateVariableTPTFilterType::bandpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kStandardResonanceMax); break; // BP
+        case 5: svfType = juce::dsp::StateVariableTPTFilterType::lowpass;  svfResonance = juce::jmap(resonanceNorm, 0.5f, kResonantVariantMax); break; // Resonant LP
+        case 6: svfType = juce::dsp::StateVariableTPTFilterType::highpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kResonantVariantMax); break; // Resonant HP
+        default: break; // Notch (3) / Comb (4) don't use the SVF path
+    }
+
+    for (auto& f : svfFilter)
+    {
+        f.setType(svfType);
+        f.setCutoffFrequency(cutoffHz);
+        f.setResonance(svfResonance);
+    }
+
+    // Notch (custom biquad, manual RBJ formula — see PluginProcessor.h for
+    // why this avoids juce::dsp::IIR::Filter::makeNotch()'s heap allocation).
+    {
+        const float q = juce::jmap(resonanceNorm, 0.7071f, 12.0f);
+        const float w0 = juce::MathConstants<float>::twoPi * cutoffHz / static_cast<float>(sampleRate);
+        const float alpha = std::sin(w0) / (2.0f * q);
+        const float cosw0 = std::cos(w0);
+        const float a0 = 1.0f + alpha;
+        notchB0 = 1.0f / a0;
+        notchB1 = (-2.0f * cosw0) / a0;
+        notchB2 = 1.0f / a0;
+        notchA1 = (-2.0f * cosw0) / a0;
+        notchA2 = (1.0f - alpha) / a0;
+    }
+
+    // Comb (custom, via DelayLine + feedback gain). architecture.md:
+    // "~1-20ms, tunable via filterCutoff reinterpreted as comb spacing".
+    {
+        const float delayMs = juce::jlimit(0.5f, 20.0f, 1000.0f / juce::jmax(50.0f, cutoffHz));
+        const float delaySamples = juce::jlimit(1.0f, static_cast<float>(combMaxDelaySamples - 1),
+                                                 static_cast<float>(delayMs / 1000.0 * sampleRate));
+        for (auto& d : combDelay)
+            d.setDelay(delaySamples);
+        combFeedbackGain = juce::jlimit(0.0f, 0.92f, resonanceNorm * 0.92f); // clamped well below 1.0 to prevent self-oscillation blowup
+    }
+}
+
+float CORRUPTRAudioProcessor::processFilterStage(float xIn, int channel)
+{
+    if (filterBypassed)
+        return xIn;
+
+    switch (filterTypeIndex)
+    {
+        case 3: // Notch (custom biquad)
+        {
+            auto& x1 = notchX1[(size_t) channel];
+            auto& x2 = notchX2[(size_t) channel];
+            auto& y1 = notchY1[(size_t) channel];
+            auto& y2 = notchY2[(size_t) channel];
+            const float y = notchB0 * xIn + notchB1 * x1 + notchB2 * x2 - notchA1 * y1 - notchA2 * y2;
+            x2 = x1; x1 = xIn;
+            y2 = y1; y1 = y;
+            return y;
+        }
+
+        case 4: // Comb (custom DelayLine + feedback)
+        {
+            auto& delay = combDelay[(size_t) channel];
+            const float delayed = delay.popSample(0);
+            const float y = xIn + combFeedbackGain * delayed;
+            delay.pushSample(0, y);
+            return y;
+        }
+
+        default: // LP(0)/HP(1)/BP(2)/Resonant LP(5)/Resonant HP(6) via StateVariableTPTFilter
+            return svfFilter[(size_t) channel].processSample(0, xIn);
+    }
 }
 
 //==============================================================================

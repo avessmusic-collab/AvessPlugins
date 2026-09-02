@@ -113,6 +113,99 @@ private:
     double phase32SyntheticSequencerPhase = 0.0;  // free-running phase for the synthetic Sequencer-lane stand-in (advances once per block)
     double phase32SyntheticModMatrixPhase = 0.0;  // free-running phase for the synthetic Mod-Matrix-slot stand-in (advances once per block, different rate than the above so the two are distinguishable)
 
+    //=========================================================================
+    // Stage 2 Phase 3.3: Core Linear Chain
+    //
+    // Working, non-modulated core signal path: Input Gain -> Distortion
+    // Engine (12 algorithms) -> Bitcrusher/SRR -> Filter Stage (7
+    // topologies) -> Master Mix (0-200%) -> Output Gain -> Output Limiter
+    // (dual-mode). See architecture.md components #1, #2, #3, #6, #13, #14
+    // and the "Sequential DSP chain (per block, REQUIRED order)" section
+    // (steps 3, 5, 6, 9, 11, 12, 13). Oversampling, Glitch, Sequencer, Mod
+    // Matrix, Macros, and Feedback-loop integration are explicitly OUT of
+    // scope for this phase — native sample rate only, no oversampling
+    // wrapper yet. Phase 3.1's feedback-loop code and Phase 3.2's
+    // modulation-accumulator observation code above are untouched and NOT
+    // wired into this chain — that integration is Phase 3.4 (feedback) and
+    // Phase 3.7-3.9 (modulation generalization).
+    //
+    // Real-time-safety note: the tone-tilt filter, DC blocker, and Notch
+    // filter below are all HAND-ROLLED one-pole/biquad implementations
+    // (NOT juce::dsp::IIR::Filter) specifically because
+    // IIR::Coefficients<float>::make*() factory functions allocate a new
+    // heap-backed Coefficients object on every call — recomputing them
+    // every block (needed since filterCutoff/filterResonance/tone/bias are
+    // all automatable) would violate "no allocation in processBlock()".
+    // Manual coefficient math (plain floats, no JUCE Coefficients object)
+    // sidesteps this entirely. StateVariableTPTFilter and DelayLine are
+    // used as-is for the other topologies since their setCutoffFrequency/
+    // setResonance/setDelay calls are documented as allocation-free.
+    //=========================================================================
+
+    // --- Component #1: Input Gain ---
+    juce::dsp::Gain<float> inputGainDsp;
+
+    // --- Component #2: Distortion Engine (12-algorithm waveshaper) ---
+    std::array<float, 2> distortionToneLpState { 0.0f, 0.0f };  // one-pole LP state for tone-tilt filter (per channel)
+    std::array<float, 2> distortionDcBlockerX1 { 0.0f, 0.0f };  // DC blocker x[n-1] (per channel)
+    std::array<float, 2> distortionDcBlockerY1 { 0.0f, 0.0f };  // DC blocker y[n-1] (per channel)
+    std::array<juce::dsp::Oscillator<float>, 2> ringModOsc;     // Ring-Mod carrier (per channel, sine, lookup-table mode)
+    float distortionToneLpCoeff = 0.0f; // computed in prepareToPlay from a fixed 1kHz tilt-filter pole
+    float distortionDcBlockerR = 0.0f;  // computed in prepareToPlay from a fixed ~5Hz DC-blocker pole
+    juce::SmoothedValue<float> driveGainSmoothed;     // smoothed linear gain from `drive` (dB) — avoids zipper on automation
+    juce::SmoothedValue<float> distortionMixSmoothed; // smoothed 0-1 stage-local dry/wet (`distortionMix`)
+
+    // Per-block parameter cache (recomputed every block from APVTS, not
+    // persistent DSP state — plain scalars, no allocation).
+    int distortionAlgorithmIndex = 0;
+    bool distortionEngineBypassed = false; // graphBypassSaturation (whole-module power-bypass)
+    bool waveshaperCurveBypassed = false;  // graphBypassWaveshaper ("Fold Bypass" — waveshaper-curve-only bypass)
+    float distortionBiasOffset = 0.0f;
+    float distortionToneNorm = 0.0f;
+    float distortionFoldPct = 0.0f;
+
+    float processDistortionEngine(float xIn, int channel, float driveGain, float distortionMixAmt);
+
+    // --- Component #3: Bitcrusher / Sample Rate Reducer (always-on) ---
+    std::array<float, 2> bitcrushHeldSample { 0.0f, 0.0f };
+    std::array<int, 2> bitcrushHoldCounter { 0, 0 };
+    bool bitcrushBypassed = false;
+    float bitcrushLevels = 65535.0f;
+    int bitcrushHoldSamples = 1;
+
+    float processBitcrusher(float xIn, int channel);
+
+    // --- Component #6: Filter Stage (7 topologies) ---
+    std::array<juce::dsp::StateVariableTPTFilter<float>, 2> svfFilter; // LP/HP/BP/Resonant LP/Resonant HP
+    std::array<float, 2> notchX1 { 0.0f, 0.0f }, notchX2 { 0.0f, 0.0f };
+    std::array<float, 2> notchY1 { 0.0f, 0.0f }, notchY2 { 0.0f, 0.0f };
+    float notchB0 = 1.0f, notchB1 = 0.0f, notchB2 = 0.0f, notchA1 = 0.0f, notchA2 = 0.0f; // manual biquad coeffs (see rationale above)
+    std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>, 2> combDelay;
+    int combMaxDelaySamples = 0;
+    float combFeedbackGain = 0.0f;
+    int lastFilterTypeIndex = -1; // triggers a one-time state reset when filterType changes (architecture.md: "must reset state on filterType change")
+    bool filterBypassed = false;
+    int filterTypeIndex = 0;
+
+    void updateFilterParameters(float cutoffHz, float resonancePct, double sampleRate);
+    float processFilterStage(float xIn, int channel);
+
+    // --- Component #14: Master Mix ---
+    juce::AudioBuffer<float> dryBuffer; // captured at the very start of processBlock(), before Input Gain
+    juce::SmoothedValue<float> masterDryGainSmoothed;
+    juce::SmoothedValue<float> masterWetGainSmoothed;
+
+    // --- Component #13: Output Gain + Output Limiter (dual-mode) ---
+    // CONTRADICTION FLAGGED & RESOLVED (see JSON report): architecture.md's
+    // component #13 prose says "outputGain applied after the limiter", but
+    // its own "Sequential DSP chain (REQUIRED order)" section lists step 12
+    // Output Gain BEFORE step 13 Output Limiter. This implementation follows
+    // the Sequential DSP chain's explicit numbered order (authoritative per
+    // its own text, "REQUIRED order") — Output Gain, THEN Output Limiter.
+    juce::dsp::Gain<float> outputGainDsp;
+    juce::dsp::WaveShaper<float> coloredLimiterSaturation; // fixed, gentle, always-on-in-Colored-mode saturation before the limiter (architecture.md #13's recommended MVP approximation for GR-proportional coloring)
+    juce::dsp::Limiter<float> outputLimiter;
+
     juce::AudioProcessorValueTreeState parameters;
 
     // Parameter layout creation
