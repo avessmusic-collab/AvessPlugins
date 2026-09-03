@@ -6,6 +6,9 @@
 #include <vector>
 #include "dsp/ModulationAccumulator.h"
 #include "dsp/RhythmicSequencer.h"
+#include "dsp/Lfo.h"
+#include "dsp/ModMatrix.h"
+#include "dsp/MacroEngine.h"
 
 class CORRUPTRAudioProcessor : public juce::AudioProcessor
 {
@@ -115,8 +118,15 @@ private:
     // with the REAL Rhythmic Sequencer's `drive`-lane contribution (see the
     // Phase 3.7 section below, `sequencerDriveContributionDb`) -- the
     // `phase32SyntheticSequencerPhase` member this comment used to describe
-    // no longer exists. The Mod Matrix stand-in (`phase32SyntheticModMatrixPhase`
-    // below) is UNCHANGED -- Mod Matrix itself doesn't exist until Phase 3.8.
+    // no longer exists.
+    //
+    // AS OF PHASE 3.8: the Mod Matrix stand-in is ALSO now RETIRED --
+    // `phase32SyntheticModMatrixPhase` (a free-running synthetic-sine phase
+    // this comment used to describe) no longer exists, replaced by the REAL
+    // 8-slot Mod Matrix's resolved `drive`-destination total (see the Phase
+    // 3.8 section below, `modMatrixDestinationTotals`). The Macro
+    // contribution is likewise no longer a placeholder inline curve -- see
+    // the Phase 3.8 section's `macroContributions` (dsp/MacroEngine.h).
     // `phase32DriveModulationObservation` is likewise no longer "diagnostic
     // only" -- as of Phase 3.7 it is CONSUMED by the Distortion Engine's real
     // drive-gain smoothing target (see processBlock()'s Phase 3.3 per-block
@@ -125,7 +135,6 @@ private:
     //=========================================================================
     std::atomic<bool> modulationAccumulatorSelfTestPassed { false }; // set once in the constructor (see .cpp)
     std::atomic<float> phase32DriveModulationObservation { 0.0f };   // AS OF PHASE 3.7: consumed by driveGainSmoothed's target (no longer diagnostic-only) -- last computed modulated `drive` value
-    double phase32SyntheticModMatrixPhase = 0.0;  // free-running phase for the synthetic Mod-Matrix-slot stand-in (advances once per block) -- unchanged, still a stand-in until Phase 3.8
 
     //=========================================================================
     // Stage 2 Phase 3.7: Rhythmic Sequencer -- architecture.md component #5,
@@ -263,6 +272,253 @@ private:
     static constexpr float kSequencerVolumeRangeDb = 24.0f;   // Volume lane's full +/-dB swing (new destination, no competing base -- see doc comment above)
 
     void updateSequencerStepAndContributions(); // called once per block from processBlock(), before the Phase 3.2/3.7 drive-accumulate block
+
+    //=========================================================================
+    // Stage 2 Phase 3.8: Modulation Matrix (8 slots) + 4 LFOs + Macro System
+    // (8 macros) -- architecture.md components #8 ("Modulation Matrix + 4
+    // LFOs") and #9 ("Macro System"), plan.md's "Phase 3.8: Modulation
+    // Matrix + 4 LFOs + Macros".
+    //
+    // Three new header-only classes (dsp/Lfo.h, dsp/ModMatrix.h,
+    // dsp/MacroEngine.h) implement the actual DSP/routing logic, following
+    // this file's established pattern (dsp/ModulationAccumulator.h,
+    // dsp/RhythmicSequencer.h) of keeping generic/reusable logic out of
+    // PluginProcessor itself. See each header's own top doc comment for its
+    // full design rationale; this comment covers the INTEGRATION into
+    // PluginProcessor specifically.
+    //
+    // CALL ORDER (processBlock()): `resolveModMatrixAndMacroContributions()`
+    // runs BEFORE `updateSequencerStepAndContributions()` (both near the top
+    // of processBlock(), after the dry-signal capture and this phase's new
+    // MIDI-CC scan) -- the REVERSE of a naive "Sequencer feeds Mod Matrix's
+    // Sequencer source" ordering. This is deliberate: the Mod Matrix's
+    // "Sequencer" source (see below) and the Envelope/Audio Level sources
+    // are all documented as ONE-BLOCK-OLD readings (this block's resolution
+    // uses values computed during the PREVIOUS block), which removes any
+    // same-block ordering dependency and lets
+    // `updateSequencerStepAndContributions()`'s own Gate-lane accumulate()
+    // call (see its Phase 3.7 doc comment, now UPDATED to consume this
+    // phase's real `macroContributions.gateGainOffset`) run AFTER this
+    // method with `macroContributions` already populated for the current
+    // block.
+    //
+    // MODULATION SOURCES (10, matching parameter-spec.md's modSlotNSource
+    // choice order exactly -- see ModMatrix::Source):
+    //   - LFO 1-4: `lfos[0..3]`, each a dsp/Lfo.h instance, resolved at
+    //     CONTROL RATE (once per block -- see Lfo.h's own doc comment for
+    //     the full flagged-resolution rationale). Rate is either the raw
+    //     lfoNRate parameter (Hz, free-running) or, when lfoNSync is true,
+    //     that SAME parameter value re-mapped to a tempo-synced Hz via
+    //     `Lfo::mapToSyncedHz()` against a THIRD independent
+    //     `AudioPlayHead::getPosition()`/`getBpm()` read this block (the
+    //     same cheap, real-time-safe, allocation-free per-block query
+    //     pattern Phase 3.5's `glitchHostBpm` and Phase 3.7's
+    //     `updateSequencerStepAndContributions()` already each
+    //     independently establish -- not a new/different mechanism).
+    //   - Envelope / Audio Level: two `juce::dsp::BallisticsFilter<float>`
+    //     instances (`envelopeFollowerBallistics` -- musical ~10ms
+    //     attack/~150ms release; `audioLevelBallistics` -- fast ~1ms
+    //     attack/~30ms release, near-instantaneous level, the concrete
+    //     difference between these two named sources), BOTH tapping the
+    //     SAME mono-summed signal, tracked at AUDIO RATE (once per SAMPLE,
+    //     inside the merged per-sample loop -- BallisticsFilter is designed
+    //     for per-sample ballistics, unlike this class's own control-rate
+    //     LFOs) -- see the per-sample tap site in processBlock() for the
+    //     TAP-POINT resolution: FLAGGED, architecture.md does not specify a
+    //     tap point, post-Input-Gain (the conventional choice for an
+    //     envelope-follower mod source) is used here. Each block's Mod
+    //     Matrix resolution uses the LAST sample's tracked value from the
+    //     PREVIOUS block (`envelopeFollowerLastValue`/`audioLevelLastValue`)
+    //     -- a standard one-block-old envelope tap, no audible consequence
+    //     at typical block sizes, and avoids any same-block
+    //     ordering dependency (see "CALL ORDER" above).
+    //   - Sequencer: FLAGGED DESIGN RESOLUTION -- this is the Mod Matrix's
+    //     OWN generic tap into the Rhythmic Sequencer's pattern data,
+    //     SEPARATE from the Sequencer's 10 pre-wired fixed lanes (Phase
+    //     3.7). architecture.md does not specify which (if any specific)
+    //     lane should feed this generic source choice -- this
+    //     implementation reuses the Drive lane's raw value (bipolar -1..1)
+    //     as a representative general-purpose reading, at the PREVIOUS
+    //     block's resolved step index (`sequencerLastStepIndex`, one-block-
+    //     old for the same reason as Envelope/Audio Level above).
+    //   - Random: a fresh draw every block from `modMatrixRandom` (see
+    //     below).
+    //   - MIDI CC: `midiCcSourceValue`, updated by a small MIDI-parsing
+    //     loop near the top of processBlock() (this phase's first actual
+    //     use of the `midiMessages` parameter -- previously
+    //     `juce::ignoreUnused()`d). FLAGGED: no per-slot "which CC number"
+    //     parameter exists in the locked parameter-spec.md (modSlot fields
+    //     are only Source/Destination/Amount/Enable) -- a single fixed CC
+    //     number (`kModMatrixMidiCcNumber`, CC1/mod wheel) is used for
+    //     every slot that selects "MIDI CC," per architecture.md's "any
+    //     incoming CC value (0-127 -> 0.0-1.0) usable as a modulation
+    //     source." The held value persists across blocks with no new
+    //     messages (plain audio-thread-only member -- MIDI is already
+    //     parsed on the audio thread per architecture.md's MIDI Routing
+    //     section, no cross-thread concern).
+    //   - Macro: FLAGGED DESIGN RESOLUTION -- same "no per-slot
+    //     sub-selector parameter exists" gap as MIDI CC above (no per-slot
+    //     "which of the 8 macros" parameter exists either) -- the AVERAGE
+    //     of all 8 macros' 0-100% values, normalized to 0-1, is used as the
+    //     generic "Macro" Mod Matrix source.
+    //
+    // DEDICATED RNG (`modMatrixRandom`, DETERMINISM task requirement): used
+    // for LFO S&H/Random/Smooth-Random/Random-Walk shape draws (passed by
+    // reference into each `Lfo::advanceAndGetValue()` call) AND the Mod
+    // Matrix's own "Random" source draw. Deliberately a SEPARATE
+    // `juce::Random` instance from BOTH the audio-thread `glitchRandom`
+    // (Phase 3.5) and `RhythmicSequencer`'s message-thread `editRandom`
+    // (Phase 3.7) -- structurally guarantees this class's randomness can
+    // never perturb either of those draw sequences, since no code path ever
+    // shares the instance. UNLIKE `glitchRandom`, this RNG's seed is NOT
+    // persisted in getStateInformation()/setStateInformation() and is NOT
+    // deliberately reseeded from `juce::Random::getSystemRandom()` the way
+    // `glitchRandom`'s initial seed is -- it simply uses `juce::Random`'s
+    // own default-constructor seeding. FLAGGED RESOLUTION: architecture.md's
+    // explicit "seed stored in custom state... presets reproduce identical
+    // behavior across sessions" reproducibility requirement is scoped
+    // specifically to component #4 (Glitch Engine's chaos/randomization
+    // text) -- neither component #8 (Mod Matrix/LFOs) nor component #9
+    // (Macros) makes the same reproducibility claim, so this implementation
+    // does not extend it here; only the "must not perturb glitchRandom's
+    // draw sequence" requirement (which is explicit and unconditional) is
+    // honored, and it is honored structurally (separate instance, never
+    // shared) rather than via seed persistence.
+    //
+    // MOD MATRIX RESOLUTION (`ModMatrix::resolve()`, dsp/ModMatrix.h): all
+    // 8 slots' current Source/Destination/Amount/Enable state is read from
+    // the CACHED raw parameter pointers below (see "CACHED PARAMETER
+    // POINTERS"), producing `modMatrixDestinationTotals` -- one raw
+    // (roughly -1..+1-per-contributing-slot, unbounded-sum-across-slots)
+    // total PER of the 12 possible destinations (matching
+    // parameter-spec.md's modSlotNDestination choice order exactly -- see
+    // ModMatrix::Destination). `modMatrixEnabled=false` (module-off,
+    // ENABLE-semantic polarity matching `sequencerEnabled`/
+    // `modMatrixEnabled`'s documented convention) zeroes every total for
+    // this block rather than calling `ModMatrix::resolve()` at all.
+    //
+    // DESTINATION WIRING -- "Mod Matrix/Macro output enters parameter
+    // modulation ONLY through ModulationAccumulator::accumulate()" (task
+    // requirement, mirroring Phase 3.7's identical requirement for the
+    // Sequencer): each of `modMatrixDestinationTotals`' 12 raw totals is
+    // converted to destination-units at THAT destination's own existing (or,
+    // for Fold/Feedback Amount, NEWLY added -- see below) per-block
+    // accumulate() call site, reusing the SAME `kModMatrixDepthFraction`
+    // (0.5, deliberately the SAME numeric value as
+    // `kSequencerModDepthFraction`) half-of-full-range convention
+    // RhythmicSequencer's lanes already established, so the Mod Matrix can
+    // swing a destination up to +/-50% of its full range around the
+    // combined base+Sequencer+Macro value without ever fully overriding it:
+    //   - Drive, Mix, Filter Cutoff, Bit Depth, Sample Rate Reduction,
+    //     Glitch Probability: the 6 PRE-EXISTING call sites Phase 3.7
+    //     stubbed at `modMatrixContribution=0.0f` -- filled in with real
+    //     values this phase (Filter Cutoff has no macro target per
+    //     architecture.md's routing table, so its macro argument stays a
+    //     literal `0.0f` with an explanatory comment, not a stub).
+    //   - Fold, Feedback Amount: TWO NEW call sites (architecture.md's Mod
+    //     Matrix destination list and macroDamage's routing table both name
+    //     these as targets, but neither `fold` nor `feedbackAmount` had ANY
+    //     accumulate() call before this phase -- Phase 3.3/3.4 read them as
+    //     raw APVTS values directly). SAFETY NOTE for Feedback Amount:
+    //     wiring it through the accumulator does NOT weaken Phase 3.1's
+    //     safety guarantee -- `ModulationAccumulator::accumulate()` clamps
+    //     its result to [0,100] BEFORE that value ever reaches the existing
+    //     `tanh()` soft-clamp formula, so the soft-clamp still only ever
+    //     sees a valid 0-100% input, exactly as before; this adds an EXTRA
+    //     clamp layer upstream of the existing one, it does not remove or
+    //     bypass it.
+    //   - Gate (the Sequencer's own, Phase-3.7-introduced destination, in
+    //     `updateSequencerStepAndContributions()`): the PRE-EXISTING
+    //     `macroContribution=0.0f` stub is filled with
+    //     `macroContributions.gateGainOffset` (macroRhythm's "Sequencer/
+    //     Glitch gate intensity" routing) -- its `modMatrixContribution`
+    //     stays 0.0f (no "Gate" entry exists in the Mod Matrix's 12-item
+    //     destination list).
+    //   - Volume (the Sequencer's other Phase-3.7 destination): BOTH stubs
+    //     stay literal `0.0f` -- no "Volume" Mod Matrix destination exists,
+    //     and no macro's documented routing table targets it specifically.
+    //   - Glitch Size, Pitch, Pan, Width: the remaining 4 of 12 Mod Matrix
+    //     destinations (plus macroWidth's own contribution, for Width
+    //     specifically) have NO live DSP destination yet (Stereo and
+    //     Pitch/Frequency FX are explicitly post-MVP per architecture.md's
+    //     Scope Reconciliation Note; "Glitch Size" has no continuously-
+    //     modulatable APVTS parameter -- `glitchBufferLength` is a discrete
+    //     Choice). Computed and clamped through the identical
+    //     ModulationAccumulator path anyway, stored in diagnostic atomics
+    //     below, matching RhythmicSequencer's `sequencerPanObservation`/
+    //     `sequencerPitchObservation` precedent exactly (this file's
+    //     established pattern for a destination whose downstream engine
+    //     doesn't exist yet).
+    //
+    // Real-time safety: all 53 cached raw parameter pointers below are
+    // fetched exactly ONCE (constructor, see .cpp), never re-looked-up by
+    // string per block. `envelopeFollowerBallistics`/`audioLevelBallistics`
+    // are prepared only in prepareToPlay(). `modMatrixRandom.nextFloat()`,
+    // `Lfo::advanceAndGetValue()`, `ModMatrix::resolve()`, and
+    // `MacroEngine::resolve()` are all bounded, allocation-free, lock-free
+    // arithmetic over already-allocated/already-cached state. The MIDI scan
+    // is a plain bounded loop over `midiMessages` (already guaranteed
+    // real-time-safe/allocation-free by JUCE's MidiBuffer iterator design).
+    //=========================================================================
+    static constexpr int kModMatrixMidiCcNumber = 1;      // FLAGGED default CC (mod wheel) -- see doc comment above
+    static constexpr float kModMatrixDepthFraction = 0.5f; // reuses kSequencerModDepthFraction's established half-range-swing convention (see doc comment above)
+
+    std::array<Lfo, 4> lfos;
+    juce::Random modMatrixRandom; // dedicated RNG -- see "DEDICATED RNG" doc comment above
+    std::array<double, 4> lfoLastValue { 0.0, 0.0, 0.0, 0.0 }; // diagnostic/inspection convenience only -- not required for correctness, ModMatrix reads advanceAndGetValue()'s return value directly each block
+
+    juce::dsp::BallisticsFilter<float> envelopeFollowerBallistics; // "Envelope" Mod Matrix source (slower, musical ballistics)
+    juce::dsp::BallisticsFilter<float> audioLevelBallistics;       // "Audio Level" Mod Matrix source (faster, near-instantaneous ballistics -- the concrete difference from Envelope above)
+    float envelopeFollowerLastValue = 0.0f;
+    float audioLevelLastValue = 0.0f;
+
+    float midiCcSourceValue = 0.0f; // last-received normalized (0-1) value for kModMatrixMidiCcNumber, held across blocks -- see "MODULATION SOURCES" doc comment above
+
+    //=========================================================================
+    // CACHED PARAMETER POINTERS -- fetched ONCE in the constructor (see
+    // .cpp), a deliberate, explicitly-directed exception to this file's
+    // OTHERWISE-established convention of re-fetching every parameter fresh
+    // every block via `parameters.getRawParameterValue(...)` (see e.g.
+    // processBlock()'s large Phase 3.3 per-block parameter-read section).
+    // 53 string-keyed lookups (32 mod-slot + 12 LFO + 8 macro + 1
+    // modMatrixEnabled) every single block would be needless repeated
+    // hashing for parameters this phase's own per-block work already reads
+    // in bulk; caching the `std::atomic<float>*` once (constructed AFTER
+    // `parameters` in the member-init-list, so these pointers are already
+    // valid by the time the constructor body runs) and re-`load()`-ing them
+    // every block is standard, real-time-safe APVTS practice.
+    //=========================================================================
+    std::atomic<float>* modMatrixEnabledParam = nullptr;
+    std::array<std::atomic<float>*, 4> lfoRateParam {};
+    std::array<std::atomic<float>*, 4> lfoShapeParam {};
+    std::array<std::atomic<float>*, 4> lfoSyncParam {};
+    std::array<std::atomic<float>*, 8> modSlotSourceParam {};
+    std::array<std::atomic<float>*, 8> modSlotDestinationParam {};
+    std::array<std::atomic<float>*, 8> modSlotAmountParam {};
+    std::array<std::atomic<float>*, 8> modSlotEnableParam {};
+    std::atomic<float>* macroDamageParamCached = nullptr;
+    std::atomic<float>* macroCrushParamCached = nullptr;
+    std::atomic<float>* macroGlitchParamCached = nullptr;
+    std::atomic<float>* macroChaosParamCached = nullptr;
+    std::atomic<float>* macroRhythmParamCached = nullptr;
+    std::atomic<float>* macroMovementParamCached = nullptr;
+    std::atomic<float>* macroWidthParamCached = nullptr;
+    std::atomic<float>* macroMixParamCached = nullptr;
+
+    // Per-block resolved outputs, consumed at each destination's own
+    // per-block accumulate() call site -- see "DESTINATION WIRING" doc
+    // comment above.
+    std::array<float, ModMatrix::kNumDestinations> modMatrixDestinationTotals {}; // raw units, NOT yet scaled to any destination's physical range -- see dsp/ModMatrix.h
+    MacroEngine::Contributions macroContributions;                               // physical-units-ready -- see dsp/MacroEngine.h
+
+    // Destinations with no live DSP yet -- see "DESTINATION WIRING" doc
+    // comment above (Glitch Size / Pitch / Pan / Width).
+    std::atomic<float> modMatrixGlitchSizeObservation { 0.0f };
+    std::atomic<float> modMatrixPanObservation { 0.0f };
+    std::atomic<float> modMatrixPitchObservation { 0.0f };
+    std::atomic<float> modMatrixWidthObservation { 0.0f }; // combines the Mod Matrix's own "Width" destination total + macroWidth's contribution (both target the same not-yet-existing Stereo-width parameter)
+
+    void resolveModMatrixAndMacroContributions(double blockDurationSeconds); // called once per block from processBlock(), BEFORE updateSequencerStepAndContributions() -- see "CALL ORDER" doc comment above
 
     //=========================================================================
     // Stage 2 Phase 3.3: Core Linear Chain

@@ -515,6 +515,38 @@ CORRUPTRAudioProcessor::CORRUPTRAudioProcessor()
     // never the system RNG again.
     //=========================================================================
     glitchRandomSeedAtomic.store(juce::Random::getSystemRandom().nextInt64(), std::memory_order_relaxed);
+
+    //=========================================================================
+    // Stage 2 Phase 3.8: cache the 53 Modulation Matrix / LFO / Macro raw
+    // parameter pointers exactly ONCE here (constructor body -- `parameters`
+    // is already fully constructed by the member-init-list above, so these
+    // pointers are valid immediately). See PluginProcessor.h's Phase 3.8
+    // "CACHED PARAMETER POINTERS" doc comment for the full rationale.
+    //=========================================================================
+    modMatrixEnabledParam = parameters.getRawParameterValue("modMatrixEnabled");
+    for (int i = 0; i < 4; ++i)
+    {
+        const juce::String n = juce::String(i + 1);
+        lfoRateParam[(size_t) i] = parameters.getRawParameterValue("lfo" + n + "Rate");
+        lfoShapeParam[(size_t) i] = parameters.getRawParameterValue("lfo" + n + "Shape");
+        lfoSyncParam[(size_t) i] = parameters.getRawParameterValue("lfo" + n + "Sync");
+    }
+    for (int i = 0; i < 8; ++i)
+    {
+        const juce::String n = juce::String(i + 1);
+        modSlotSourceParam[(size_t) i] = parameters.getRawParameterValue("modSlot" + n + "Source");
+        modSlotDestinationParam[(size_t) i] = parameters.getRawParameterValue("modSlot" + n + "Destination");
+        modSlotAmountParam[(size_t) i] = parameters.getRawParameterValue("modSlot" + n + "Amount");
+        modSlotEnableParam[(size_t) i] = parameters.getRawParameterValue("modSlot" + n + "Enable");
+    }
+    macroDamageParamCached = parameters.getRawParameterValue("macroDamage");
+    macroCrushParamCached = parameters.getRawParameterValue("macroCrush");
+    macroGlitchParamCached = parameters.getRawParameterValue("macroGlitch");
+    macroChaosParamCached = parameters.getRawParameterValue("macroChaos");
+    macroRhythmParamCached = parameters.getRawParameterValue("macroRhythm");
+    macroMovementParamCached = parameters.getRawParameterValue("macroMovement");
+    macroWidthParamCached = parameters.getRawParameterValue("macroWidth");
+    macroMixParamCached = parameters.getRawParameterValue("macroMix");
 }
 
 CORRUPTRAudioProcessor::~CORRUPTRAudioProcessor()
@@ -607,6 +639,42 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     //=========================================================================
     sequencerVolumeGateGainSmoothed.reset(sampleRate, 0.008);
     sequencerVolumeGateGainSmoothed.setCurrentAndTargetValue(1.0f);
+
+    //=========================================================================
+    // Stage 2 Phase 3.8: Modulation Matrix / LFOs / Macros — see
+    // PluginProcessor.h's Phase 3.8 doc comment for full design rationale.
+    // `envelopeFollowerBallistics` (musical ~10ms attack / ~150ms release)
+    // and `audioLevelBallistics` (fast ~1ms attack / ~30ms release, the
+    // concrete difference between the two named Mod Matrix sources) both
+    // tap the same mono-summed post-Input-Gain signal (see processBlock()'s
+    // per-sample tap site). `lfos`/`modMatrixRandom` need no sample-rate-
+    // dependent state beyond `Lfo::prepare()` itself (phase-wrapping, not
+    // sample-count-based).
+    //=========================================================================
+    envelopeFollowerBallistics.prepare(monoSpec);
+    envelopeFollowerBallistics.setAttackTime(10.0f);
+    envelopeFollowerBallistics.setReleaseTime(150.0f);
+    envelopeFollowerBallistics.reset();
+
+    audioLevelBallistics.prepare(monoSpec);
+    audioLevelBallistics.setAttackTime(1.0f);
+    audioLevelBallistics.setReleaseTime(30.0f);
+    audioLevelBallistics.reset();
+
+    envelopeFollowerLastValue = 0.0f;
+    audioLevelLastValue = 0.0f;
+    midiCcSourceValue = 0.0f;
+
+    for (auto& lfo : lfos)
+        lfo.prepare(sampleRate);
+    lfoLastValue.fill(0.0);
+
+    modMatrixDestinationTotals.fill(0.0f);
+    macroContributions = MacroEngine::Contributions {};
+    modMatrixGlitchSizeObservation.store(0.0f, std::memory_order_relaxed);
+    modMatrixPanObservation.store(0.0f, std::memory_order_relaxed);
+    modMatrixPitchObservation.store(0.0f, std::memory_order_relaxed);
+    modMatrixWidthObservation.store(0.0f, std::memory_order_relaxed);
 
     //=========================================================================
     // Stage 2 Phase 3.5: Glitch / Buffer Engine — ring buffer + sample-rate-
@@ -757,7 +825,6 @@ void CORRUPTRAudioProcessor::resetFeedbackLoopChannel(int channel)
 void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused(midiMessages);
 
     const int numSamples = buffer.getNumSamples();
     const int numChannels = juce::jmin(buffer.getNumChannels(), 2); // dual-mono per architecture.md
@@ -784,35 +851,74 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     }
 
     //=========================================================================
+    // Stage 2 Phase 3.8: MIDI CC Mod Matrix source — architecture.md
+    // component #8: "any incoming CC value (0-127 -> 0.0-1.0) usable as a
+    // modulation source in an assigned slot." This is this file's FIRST
+    // actual use of `midiMessages` (previously `juce::ignoreUnused()`d).
+    // Parsed once per block, on the audio thread, per architecture.md's
+    // MIDI Routing section ("MIDI parsed once per block on the audio
+    // thread; no background thread needed"). See PluginProcessor.h's Phase
+    // 3.8 doc comment ("MODULATION SOURCES" / MIDI CC) for the
+    // fixed-CC-number flagged resolution.
+    //=========================================================================
+    for (const auto metadata : midiMessages)
+    {
+        const auto message = metadata.getMessage();
+        if (message.isController() && message.getControllerNumber() == kModMatrixMidiCcNumber)
+            midiCcSourceValue = juce::jlimit(0.0f, 1.0f, (float) message.getControllerValue() / 127.0f);
+    }
+
+    const double blockDurationSeconds = getSampleRate() > 0.0
+                                             ? static_cast<double>(numSamples) / getSampleRate()
+                                             : 0.0;
+
+    //=========================================================================
+    // Stage 2 Phase 3.8: Modulation Matrix (8 slots) + 4 LFOs + Macro System
+    // — resolves this block's LFO outputs, all 10 Mod Matrix source values,
+    // the 8-slot Mod Matrix's per-destination totals, and all 8 Macros'
+    // fixed-routing-table contributions. Runs BEFORE
+    // updateSequencerStepAndContributions() (see PluginProcessor.h's Phase
+    // 3.8 "CALL ORDER" doc comment for why the ordering is safe/deliberate
+    // despite the Mod Matrix's "Sequencer" source conceptually depending on
+    // Sequencer state) and BEFORE every accumulate() call site that
+    // consumes `modMatrixDestinationTotals`/`macroContributions` further
+    // down. See this method's own definition (below processBlock()) for the
+    // full design rationale.
+    //=========================================================================
+    resolveModMatrixAndMacroContributions(blockDurationSeconds);
+
+    //=========================================================================
     // Stage 2 Phase 3.7: Rhythmic Sequencer — resolves this block's step
     // index (host-synced, or the explicit no-transport freeze-at-step-0
     // fallback) and computes all 10 lanes' raw contribution scalars, BEFORE
     // the Phase 3.2/3.7 drive-accumulate block below (which consumes
     // `sequencerDriveContributionDb`) and before Phase 3.3/3.5's per-block
     // sections further down (which consume the other lanes' contributions).
+    // As of Phase 3.8, this method's own Gate-lane accumulate() call also
+    // consumes `macroContributions.gateGainOffset` (resolved just above).
     // See PluginProcessor.h's Phase 3.7 doc comment and this method's own
     // definition (below processBlock()) for the full design rationale.
     //=========================================================================
     updateSequencerStepAndContributions();
 
     //=========================================================================
-    // Stage 2 Phase 3.2 / 3.7: Unified Modulation Accumulator — `drive`
-    // destination.
+    // Stage 2 Phase 3.2 / 3.7 / 3.8: Unified Modulation Accumulator —
+    // `drive` destination.
     //
     // Computes the modulated `drive` value using the generic
     // ModulationAccumulator (see dsp/ModulationAccumulator.h) fed with:
     //   - base:        real `drive` APVTS parameter
-    //   - Sequencer:   AS OF PHASE 3.7, the REAL Rhythmic Sequencer's
-    //                  `drive`-lane contribution (`sequencerDriveContributionDb`,
-    //                  computed just above by updateSequencerStepAndContributions())
-    //                  — replaces Phase 3.2's synthetic sine stand-in
-    //   - Mod Matrix:  SYNTHETIC stand-in (Mod Matrix doesn't exist until
-    //                  Phase 3.8) - unchanged from Phase 3.2
-    //   - Macro:       REAL `macroDamage` APVTS parameter (macros ARE real
-    //                  Stage 1 parameters already) mapped through a
-    //                  PLACEHOLDER 0-100% -> 0 to +8dB curve; the real
-    //                  macroDamage->drive routing/weighting is MacroEngine's
-    //                  job in Phase 3.8, not decided here
+    //   - Sequencer:   the REAL Rhythmic Sequencer's `drive`-lane
+    //                  contribution (`sequencerDriveContributionDb`,
+    //                  computed above by updateSequencerStepAndContributions())
+    //                  (Phase 3.7)
+    //   - Mod Matrix:  AS OF PHASE 3.8, the REAL 8-slot Mod Matrix's
+    //                  resolved `destDrive` total (`modMatrixDestinationTotals`,
+    //                  computed above by resolveModMatrixAndMacroContributions())
+    //                  — replaces Phase 3.2's synthetic-sine stand-in
+    //   - Macro:       AS OF PHASE 3.8, MacroEngine's REAL `macroDamage`
+    //                  routing (`macroContributions.driveDb`) — replaces
+    //                  Phase 3.2's placeholder 0-100% -> 0..+8dB inline curve
     //   - Performance Trigger: REAL `performanceDestroy` bool APVTS
     //                  parameter gates a PLACEHOLDER override value
     //                  (driveRangeMax); the real Performance Trigger
@@ -825,42 +931,28 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // stored in `phase32DriveModulationObservation` and CONSUMED by
     // `driveGainSmoothed`'s target below (Phase 3.3's per-block parameter-
     // read section), the first destination where the unified modulation
-    // accumulator's output reaches live DSP. This deliberately does not
-    // change the Phase 3.4 feedback-routing integration's own logic.
+    // accumulator's output reaches live DSP.
     //=========================================================================
     {
         constexpr float driveRangeMin = 0.0f;
         constexpr float driveRangeMax = 40.0f;
 
         auto* driveParam = parameters.getRawParameterValue("drive");
-        auto* macroDamageParam = parameters.getRawParameterValue("macroDamage");
         auto* performanceDestroyParam = parameters.getRawParameterValue("performanceDestroy");
 
         const float driveBase = driveParam->load();
-        const float macroDamagePct = macroDamageParam->load();
         const bool performanceDestroyActive = performanceDestroyParam->load() > 0.5f;
 
-        // Advance the Mod Matrix synthetic phase once per block (bounded,
-        // deterministic, no allocation - real-time safe). Rate is an
-        // arbitrary placeholder chosen only to be slow enough to be
-        // musically-plausible modulation. (Sequencer's own synthetic phase
-        // was retired in Phase 3.7 — see PluginProcessor.h.)
-        const double blockDurationSeconds = getSampleRate() > 0.0
-                                                 ? static_cast<double>(buffer.getNumSamples()) / getSampleRate()
-                                                 : 0.0;
-        phase32SyntheticModMatrixPhase += blockDurationSeconds * (2.0 * juce::MathConstants<double>::pi) * 0.13; // 0.13 Hz synthetic stand-in
-        phase32SyntheticModMatrixPhase = std::fmod(phase32SyntheticModMatrixPhase, 2.0 * juce::MathConstants<double>::pi);
-
-        const float syntheticModMatrixContribution = 2.0f * static_cast<float>(std::sin(phase32SyntheticModMatrixPhase)); // +/-2dB
-        const float macroContribution = juce::jlimit(0.0f, 100.0f, macroDamagePct) * 0.08f; // 0-100% -> 0 to +8dB placeholder curve
+        const float modMatrixDriveContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destDrive]
+                                                       * (driveRangeMax - driveRangeMin) * kModMatrixDepthFraction;
 
         const float performanceDestroyOverrideValue = driveRangeMax; // placeholder ("Destroy" -> max drive); real diff decided in Phase 3.9
 
         const float modulatedDrive = ModulationAccumulator::accumulate(
             driveBase,
-            sequencerDriveContributionDb, // REAL Sequencer `drive`-lane contribution (Phase 3.7)
-            syntheticModMatrixContribution,
-            macroContribution,
+            sequencerDriveContributionDb,  // REAL Sequencer `drive`-lane contribution (Phase 3.7)
+            modMatrixDriveContribution,    // REAL Mod Matrix `drive`-destination total (Phase 3.8)
+            macroContributions.driveDb,    // REAL macroDamage routing (Phase 3.8)
             performanceDestroyActive,
             performanceDestroyOverrideValue,
             driveRangeMin,
@@ -909,7 +1001,20 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     auto* feedbackDampingParam = parameters.getRawParameterValue("feedbackDamping");
     auto* microDelayTimeParam = parameters.getRawParameterValue("microDelayTime");
 
-    const float feedbackAmountPct = feedbackAmountParam->load();
+    // Stage 2 Phase 3.8: feedbackAmount's Mod Matrix + macroDamage
+    // ("Feedback Amount" target) contributions — a NEWLY added accumulate()
+    // call site (Phase 3.4 read this as a raw APVTS value directly; no
+    // accumulate() call existed here before this phase). SAFETY NOTE: this
+    // does NOT weaken Phase 3.1's safety guarantee — accumulate() clamps
+    // its result to [0,100] BEFORE it reaches the tanh soft-clamp formula
+    // just below, so that formula still only ever sees a valid 0-100% input,
+    // exactly as before; this adds an EXTRA clamp layer upstream of the
+    // existing one, it does not remove or bypass it.
+    const float modMatrixFeedbackContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFeedback]
+                                                     * 100.0f * kModMatrixDepthFraction;
+    const float feedbackAmountPct = ModulationAccumulator::accumulate(
+        feedbackAmountParam->load(), 0.0f, modMatrixFeedbackContribution, macroContributions.feedbackAmountPct,
+        false, 0.0f, 0.0f, 100.0f);
     const float feedbackDampingPct = feedbackDampingParam->load();
     const float microDelayMs = microDelayTimeParam->load();
 
@@ -973,33 +1078,51 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     distortionAlgorithmIndex  = static_cast<int>(distortionAlgoParam->load());
     distortionToneNorm        = juce::jlimit(-1.0f, 1.0f, toneParam->load() / 100.0f);
     distortionBiasOffset      = juce::jlimit(-1.0f, 1.0f, biasParam->load() / 100.0f) * 0.3f; // moderate pre-shaper DC offset range
-    distortionFoldPct         = foldParam->load();
+    {
+        // Stage 2 Phase 3.8: fold's Mod Matrix + macroDamage
+        // ("Fold-bias-toward-clip" target) contributions — a NEWLY added
+        // accumulate() call site (fold had no accumulate() call before this
+        // phase; Phase 3.3 read it as a raw APVTS value directly).
+        const float modMatrixFoldContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFold]
+                                                     * 100.0f * kModMatrixDepthFraction;
+        distortionFoldPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
+            foldParam->load(), 0.0f, modMatrixFoldContribution, macroContributions.foldPct, false, 0.0f, 0.0f, 100.0f));
+    }
 
-    // Stage 2 Phase 3.7: consumes the modulated `drive` value computed
-    // above (Phase 3.2/3.7 merged accumulator block: base APVTS `drive` +
-    // REAL Sequencer Drive-lane contribution + Mod Matrix stub (Phase 3.8)
-    // + real macroDamage + real performanceDestroy override), replacing
-    // the raw `driveParam->load()` read Phase 3.2 used before this
-    // destination was wired live.
+    // Stage 2 Phase 3.7/3.8: consumes the modulated `drive` value computed
+    // above (Phase 3.2/3.7/3.8 merged accumulator block: base APVTS `drive`
+    // + REAL Sequencer Drive-lane contribution + REAL Mod Matrix `drive`
+    // total + REAL macroDamage routing + real performanceDestroy override),
+    // replacing the raw `driveParam->load()` read Phase 3.2 used before
+    // this destination was wired live.
     driveGainSmoothed.setTargetValue(juce::Decibels::decibelsToGain(phase32DriveModulationObservation.load(std::memory_order_relaxed)));
     distortionMixSmoothed.setTargetValue(juce::jlimit(0.0f, 100.0f, distortionMixParam->load()) / 100.0f);
 
     bitcrushBypassed = graphBypassBCParam->load() > 0.5f;
     {
-        // Stage 2 Phase 3.7: bitDepth's Sequencer contribution combines
-        // through ModulationAccumulator, same "base + sequencer, Mod
-        // Matrix/Macro/Performance stubbed at 0/false until Phase 3.8/3.9"
-        // pattern as `drive` above.
+        // Stage 2 Phase 3.7/3.8: bitDepth's Sequencer + Mod Matrix +
+        // macroCrush ("Bit Depth" target, negative weight) contributions
+        // combine through ModulationAccumulator (Mod Matrix/Macro were
+        // stubbed at 0 until this phase; Performance Trigger is still
+        // stubbed at false/0 — no trigger targets Bit Depth per
+        // architecture.md).
+        const float modMatrixBitDepthContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destBitDepth]
+                                                          * (16.0f - 1.0f) * kModMatrixDepthFraction;
         const float modulatedBitDepth = ModulationAccumulator::accumulate(
-            bitDepthParam->load(), sequencerBitDepthContributionBits, 0.0f, 0.0f, false, 0.0f, 1.0f, 16.0f);
+            bitDepthParam->load(), sequencerBitDepthContributionBits, modMatrixBitDepthContribution,
+            macroContributions.bitDepthBits, false, 0.0f, 1.0f, 16.0f);
         const float bitDepth = juce::jlimit(1.0f, 16.0f, modulatedBitDepth);
         bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
     }
     {
-        // Stage 2 Phase 3.7: sampleRateReduction's Sequencer contribution,
-        // same pattern.
+        // Stage 2 Phase 3.7/3.8: sampleRateReduction's Sequencer + Mod
+        // Matrix + macroCrush/macroGlitch (shared per architecture.md's
+        // routing table) contributions, same pattern.
+        const float modMatrixSrrContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destSampleRate]
+                                                     * (48.0f - 1.0f) * kModMatrixDepthFraction;
         const float modulatedSrr = ModulationAccumulator::accumulate(
-            srrParam->load(), sequencerSampleRateContributionFactor, 0.0f, 0.0f, false, 0.0f, 1.0f, 48.0f);
+            srrParam->load(), sequencerSampleRateContributionFactor, modMatrixSrrContribution,
+            macroContributions.sampleRateFactor, false, 0.0f, 1.0f, 48.0f);
         const float srr = juce::jlimit(1.0f, 48.0f, modulatedSrr);
         bitcrushHoldSamples = juce::jmax(1, static_cast<int>(std::round(srr)));
     }
@@ -1017,11 +1140,25 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     glitchBypassed          = graphBypassGlitchParam->load() > 0.5f;
     glitchModeIndex         = static_cast<int>(glitchModeParam->load());
     glitchBufferLengthIndex = static_cast<int>(glitchBufferLenParam->load());
-    // Stage 2 Phase 3.7: glitchProbability's Sequencer contribution combines
-    // through ModulationAccumulator, same pattern as drive/bitDepth/srr above.
+    // Stage 2 Phase 3.7/3.8: glitchProbability's Sequencer + Mod Matrix +
+    // macroGlitch/macroRhythm (both target Glitch Probability per
+    // architecture.md's routing table) contributions combine through
+    // ModulationAccumulator, same pattern as drive/bitDepth/srr above.
+    const float modMatrixGlitchProbContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destGlitchProbability]
+                                                        * 100.0f * kModMatrixDepthFraction;
     glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
-        glitchProbabilityParam->load(), sequencerGlitchProbabilityContributionPct, 0.0f, 0.0f, false, 0.0f, 0.0f, 100.0f));
-    glitchChaosPct          = juce::jlimit(0.0f, 100.0f, chaosParam->load());
+        glitchProbabilityParam->load(), sequencerGlitchProbabilityContributionPct, modMatrixGlitchProbContribution,
+        macroContributions.glitchProbabilityPct, false, 0.0f, 0.0f, 100.0f));
+    // Stage 2 Phase 3.8: chaos's macroChaos ("global chaos param scaling")
+    // contribution — a NEWLY added accumulate() call site (chaos had no
+    // accumulate() call before this phase). No Mod Matrix destination named
+    // "Chaos" exists (mm stays a literal 0.0f); macroChaos's OTHER
+    // documented target ("Mod Matrix Random source depth") is consumed
+    // directly by ModMatrix::resolve() via
+    // `macroContributions.randomSourceDepthMultiplier`, not through this
+    // accumulate() call.
+    glitchChaosPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
+        chaosParam->load(), 0.0f, 0.0f, macroContributions.chaosPct, false, 0.0f, 0.0f, 100.0f));
 
     // Mode-change detection (plan.md Phase 3.5 Test Criteria: "Mode
     // switching mid-playback doesn't produce discontinuities"): forces the
@@ -1087,10 +1224,16 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     filterBypassed  = graphBypassFiltParam->load() > 0.5f;
     filterTypeIndex = static_cast<int>(filterTypeParam->load());
     {
-        // Stage 2 Phase 3.7: filterCutoff's Sequencer contribution combines
-        // through ModulationAccumulator, same pattern as the other lanes.
+        // Stage 2 Phase 3.7/3.8: filterCutoff's Sequencer + Mod Matrix
+        // contributions combine through ModulationAccumulator, same pattern
+        // as the other lanes. Macro stays a literal 0.0f -- no macro's
+        // documented routing table (architecture.md component #9) targets
+        // Filter Cutoff.
+        const float modMatrixCutoffContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFilterCutoff]
+                                                        * (20000.0f - 20.0f) * kModMatrixDepthFraction;
         const float modulatedCutoff = ModulationAccumulator::accumulate(
-            filterCutoffParam->load(), sequencerFilterCutoffContributionHz, 0.0f, 0.0f, false, 0.0f, 20.0f, 20000.0f);
+            filterCutoffParam->load(), sequencerFilterCutoffContributionHz, modMatrixCutoffContribution, 0.0f,
+            false, 0.0f, 20.0f, 20000.0f);
         const float cutoffHz     = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
         const float resonancePct = juce::jlimit(0.0f, 100.0f, filterResonanceParam->load());
         updateFilterParameters(cutoffHz, resonancePct, getSampleRate());
@@ -1114,10 +1257,14 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     // Master Mix target gains (0-200% per architecture.md component #14)
     {
-        // Stage 2 Phase 3.7: mix's Sequencer contribution combines through
+        // Stage 2 Phase 3.7/3.8: mix's Sequencer + Mod Matrix + macroMix
+        // ("mirrors master mix") contributions combine through
         // ModulationAccumulator, same pattern as the other lanes.
+        const float modMatrixMixContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destMix]
+                                                     * (200.0f - 0.0f) * kModMatrixDepthFraction;
         const float modulatedMix = ModulationAccumulator::accumulate(
-            mixParam->load(), sequencerMixContributionPct, 0.0f, 0.0f, false, 0.0f, 0.0f, 200.0f);
+            mixParam->load(), sequencerMixContributionPct, modMatrixMixContribution, macroContributions.mixPct,
+            false, 0.0f, 0.0f, 200.0f);
         const float mixPct = juce::jlimit(0.0f, 200.0f, modulatedMix);
         float dryGain, wetGain;
         if (mixPct <= 100.0f)
@@ -1169,6 +1316,39 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float feedbackInternalGain = feedbackInternalGainSmoothed.getNextValue();
         const float feedbackCutoffHz     = feedbackDampingCutoffSmoothed.getNextValue();
         const float sequencerVolumeGateGain = sequencerVolumeGateGainSmoothed.getNextValue(); // Stage 2 Phase 3.7 -- see PluginProcessor.h doc comment
+
+        //=====================================================================
+        // Stage 2 Phase 3.8: Envelope Follower / Audio Level Mod Matrix
+        // sources — tapped post-Input-Gain (FLAGGED: architecture.md
+        // doesn't specify a tap point; post-Input-Gain is the conventional
+        // choice for an envelope-follower mod source, see
+        // PluginProcessor.h's Phase 3.8 doc comment), mono-summed, tracked
+        // at AUDIO RATE here (juce::dsp::BallisticsFilter is designed for
+        // per-sample ballistics) even though the Mod Matrix that CONSUMES
+        // these values resolves at control rate (see dsp/Lfo.h's own doc
+        // comment for the parallel reasoning). Runs exactly once per
+        // sample index (shared, not per-channel), matching this loop's
+        // established convention for channel-shared state. THIS block's
+        // resolveModMatrixAndMacroContributions() call already ran (near
+        // the top of processBlock(), before this loop) using the values
+        // tracked during the PREVIOUS block — the values computed here feed
+        // the FOLLOWING block's resolution, a standard one-block-old
+        // envelope tap with no audible consequence at typical block sizes.
+        //=====================================================================
+        {
+            float monoInputForEnvelope = 0.0f;
+            for (int ch = 0; ch < numChannels; ++ch)
+                monoInputForEnvelope += buffer.getReadPointer(ch)[n];
+            monoInputForEnvelope /= (float) juce::jmax(1, numChannels);
+
+            // Clamped to this source's documented unipolar [0,1] natural
+            // range (Mod Matrix sources are documented per-source in
+            // PluginProcessor.h's "MODULATION SOURCES" doc comment) --
+            // guards against a >1 reading at very hot inputGain settings
+            // (up to +24dB) without affecting real-time safety either way.
+            envelopeFollowerLastValue = juce::jlimit(0.0f, 1.0f, envelopeFollowerBallistics.processSample(0, std::abs(monoInputForEnvelope)));
+            audioLevelLastValue = juce::jlimit(0.0f, 1.0f, audioLevelBallistics.processSample(0, std::abs(monoInputForEnvelope)));
+        }
 
         //=====================================================================
         // Stage 2 Phase 3.5: Glitch / Buffer Engine — per-sample cycle/
@@ -1542,14 +1722,23 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
     // range) + Gate (new destination, base=1.0/fully-open, full 0..1 range)
     // both combine via ModulationAccumulator too, per this phase's
     // "sequencer output enters modulation ONLY through accumulate()"
-    // requirement, even though there's no separate Mod Matrix/Macro/
-    // Performance Trigger contributor for either yet (all stubbed at
-    // 0/false, same as every other lane above — Phase 3.8/3.9's job to add
-    // real contributions).
+    // requirement.
+    //
+    // AS OF PHASE 3.8: Gate's `macroContribution` stub is filled with
+    // `macroContributions.gateGainOffset` (macroRhythm's documented
+    // "Sequencer/Glitch gate intensity" routing, see dsp/MacroEngine.h) —
+    // `macroContributions` is guaranteed already-resolved-for-this-block
+    // here since resolveModMatrixAndMacroContributions() runs BEFORE this
+    // method (see PluginProcessor.h's Phase 3.8 "CALL ORDER" doc comment).
+    // Gate's `modMatrixContribution` stays a literal 0.0f — no "Gate" entry
+    // exists in the Mod Matrix's 12-item destination list. Volume's BOTH
+    // stubs stay literal 0.0f — no "Volume" Mod Matrix destination exists
+    // either, and no macro's documented routing table (architecture.md
+    // component #9) targets Volume specifically.
     const float modulatedVolumeDb = ModulationAccumulator::accumulate(
         0.0f, volumeRaw * kSequencerVolumeRangeDb, 0.0f, 0.0f, false, 0.0f, -kSequencerVolumeRangeDb, kSequencerVolumeRangeDb);
     const float modulatedGate = ModulationAccumulator::accumulate(
-        1.0f, gateRaw - 1.0f, 0.0f, 0.0f, false, 0.0f, 0.0f, 1.0f);
+        1.0f, gateRaw - 1.0f, 0.0f, macroContributions.gateGainOffset, false, 0.0f, 0.0f, 1.0f);
 
     sequencerVolumeGateGainTarget = juce::Decibels::decibelsToGain(modulatedVolumeDb) * modulatedGate;
     sequencerVolumeGateGainSmoothed.setTargetValue(sequencerVolumeGateGainTarget);
@@ -1567,6 +1756,150 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
         0.0f, pitchRaw * 24.0f, 0.0f, 0.0f, false, 0.0f, -24.0f, 24.0f);
     sequencerPanObservation.store(modulatedPan, std::memory_order_relaxed);
     sequencerPitchObservation.store(modulatedPitch, std::memory_order_relaxed);
+}
+
+//==============================================================================
+// Stage 2 Phase 3.8: Modulation Matrix + 4 LFOs + Macros — helper method
+// implementation. See PluginProcessor.h's Phase 3.8 doc comment for the
+// full design rationale (call order, all 10 source values, destination
+// wiring, cached-pointer convention, dedicated RNG).
+//==============================================================================
+void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockDurationSeconds)
+{
+    const bool modMatrixEnabledFlag = modMatrixEnabledParam->load() > 0.5f;
+
+    // Host BPM for tempo-synced LFOs — a THIRD independent, cheap,
+    // allocation-free AudioPlayHead::getPosition() call this block. Phase
+    // 3.5's glitchHostBpm read and Phase 3.7's
+    // updateSequencerStepAndContributions() each already independently
+    // establish this same "call getPosition() again this block, it's
+    // cheap/real-time-safe" precedent — reused here, not a new/different
+    // mechanism.
+    float hostBpmForLfo = 120.0f;
+    if (auto* playHead = getPlayHead())
+        if (const auto position = playHead->getPosition())
+            if (const auto bpm = position->getBpm())
+                if (*bpm > 0.0)
+                    hostBpmForLfo = static_cast<float>(*bpm);
+
+    //=========================================================================
+    // 4 LFOs (control-rate: advance once per block — see dsp/Lfo.h's doc
+    // comment for the full flagged-resolution rationale).
+    //=========================================================================
+    ModMatrix::SourceValues sources;
+    for (int i = 0; i < 4; ++i)
+    {
+        lfos[(size_t) i].setShape(static_cast<int>(lfoShapeParam[(size_t) i]->load()));
+        const bool synced = lfoSyncParam[(size_t) i]->load() > 0.5f;
+        const float rawRateHz = lfoRateParam[(size_t) i]->load();
+        const float effectiveRateHz = synced ? Lfo::mapToSyncedHz(rawRateHz, hostBpmForLfo) : rawRateHz;
+        const float value = lfos[(size_t) i].advanceAndGetValue(effectiveRateHz, blockDurationSeconds, modMatrixRandom);
+        lfoLastValue[(size_t) i] = value;
+        sources.value[(size_t) i] = value; // sourceLfo1..4 == indices 0..3, matches the lfos[] array order exactly
+    }
+
+    // Envelope / Audio Level — one-block-old, see the per-sample tap site
+    // in processBlock() for the full "why one-block-old" rationale.
+    sources.value[(size_t) ModMatrix::sourceEnvelope]   = envelopeFollowerLastValue;
+    sources.value[(size_t) ModMatrix::sourceAudioLevel] = audioLevelLastValue;
+
+    // Sequencer — Mod Matrix's OWN generic tap into the pattern data,
+    // separate from the Sequencer's 10 pre-wired fixed lanes (Phase 3.7).
+    // FLAGGED: reuses the Drive lane's raw value as a representative
+    // general-purpose reading — see PluginProcessor.h's "MODULATION
+    // SOURCES" doc comment. One-block-old: uses `sequencerLastStepIndex` as
+    // resolved by the PREVIOUS block's updateSequencerStepAndContributions()
+    // call, since THIS method runs BEFORE that call this block (see
+    // PluginProcessor.h's "CALL ORDER" doc comment).
+    {
+        const auto* snapshot = rhythmicSequencer.getActiveSnapshot();
+        const int s = juce::jlimit(0, RhythmicSequencer::kMaxSteps - 1, sequencerLastStepIndex);
+        sources.value[(size_t) ModMatrix::sourceSequencer] =
+            snapshot != nullptr ? snapshot->values[(size_t) RhythmicSequencer::laneDrive][(size_t) s]
+                                 : RhythmicSequencer::laneDefaultValue(RhythmicSequencer::laneDrive);
+    }
+
+    // Random — fresh draw every block from the dedicated `modMatrixRandom`
+    // instance (see PluginProcessor.h's "DEDICATED RNG" doc comment for why
+    // this is deliberately separate from glitchRandom/editRandom).
+    sources.value[(size_t) ModMatrix::sourceRandom] = modMatrixRandom.nextFloat() * 2.0f - 1.0f;
+
+    // MIDI CC — held member, updated by processBlock()'s own MIDI scan
+    // earlier this same block (see kModMatrixMidiCcNumber's doc comment).
+    sources.value[(size_t) ModMatrix::sourceMidiCc] = midiCcSourceValue;
+
+    //=========================================================================
+    // Macro System (architecture.md component #9) — fixed routing table,
+    // see dsp/MacroEngine.h.
+    //=========================================================================
+    const float macroDamagePct   = macroDamageParamCached->load();
+    const float macroCrushPct    = macroCrushParamCached->load();
+    const float macroGlitchPct   = macroGlitchParamCached->load();
+    const float macroChaosPct    = macroChaosParamCached->load();
+    const float macroRhythmPct   = macroRhythmParamCached->load();
+    const float macroMovementPct = macroMovementParamCached->load();
+    const float macroWidthPct    = macroWidthParamCached->load();
+    const float macroMixPct      = macroMixParamCached->load();
+
+    macroContributions = MacroEngine::resolve(macroDamagePct, macroCrushPct, macroGlitchPct, macroChaosPct,
+                                               macroRhythmPct, macroMovementPct, macroWidthPct, macroMixPct);
+
+    // Macro — FLAGGED: no per-slot "which of the 8 macros" parameter exists
+    // (same "no sub-selector parameter exists" gap as MIDI CC above) — the
+    // average of all 8 macros' 0-100% values, normalized to 0-1, is used as
+    // the generic "Macro" Mod Matrix source.
+    const float macroAveragePct = (macroDamagePct + macroCrushPct + macroGlitchPct + macroChaosPct
+                                    + macroRhythmPct + macroMovementPct + macroWidthPct + macroMixPct) / 8.0f;
+    sources.value[(size_t) ModMatrix::sourceMacro] = juce::jlimit(0.0f, 1.0f, macroAveragePct / 100.0f);
+
+    //=========================================================================
+    // 8-slot Mod Matrix resolution (architecture.md component #8).
+    // modMatrixEnabled=false -> module off (ENABLE-semantic polarity,
+    // matches sequencerEnabled's documented convention) -> every total
+    // zeroed for this block, ModMatrix::resolve() not even called.
+    //=========================================================================
+    if (modMatrixEnabledFlag)
+    {
+        std::array<ModMatrix::Slot, 8> slots;
+        for (int i = 0; i < 8; ++i)
+        {
+            slots[(size_t) i].sourceIndex      = static_cast<int>(modSlotSourceParam[(size_t) i]->load());
+            slots[(size_t) i].destinationIndex = static_cast<int>(modSlotDestinationParam[(size_t) i]->load());
+            slots[(size_t) i].amountPct        = modSlotAmountParam[(size_t) i]->load();
+            slots[(size_t) i].enabled          = modSlotEnableParam[(size_t) i]->load() > 0.5f;
+        }
+        modMatrixDestinationTotals = ModMatrix::resolve(slots, sources,
+                                                          macroContributions.lfoModMatrixDepthMultiplier,
+                                                          macroContributions.randomSourceDepthMultiplier);
+    }
+    else
+    {
+        modMatrixDestinationTotals.fill(0.0f);
+    }
+
+    //=========================================================================
+    // Destinations with no live DSP yet (Glitch Size / Pitch / Pan / Width)
+    // — computed + clamped via the identical ModulationAccumulator path,
+    // diagnostic-only, matching RhythmicSequencer's Pan/Pitch precedent
+    // (see PluginProcessor.h's "DESTINATION WIRING" doc comment).
+    //=========================================================================
+    const float modMatrixGlitchSize = ModulationAccumulator::accumulate(
+        0.0f, 0.0f, modMatrixDestinationTotals[(size_t) ModMatrix::destGlitchSize] * 100.0f, 0.0f,
+        false, 0.0f, -100.0f, 100.0f);
+    const float modMatrixPan = ModulationAccumulator::accumulate(
+        0.0f, 0.0f, modMatrixDestinationTotals[(size_t) ModMatrix::destPan] * 100.0f, 0.0f,
+        false, 0.0f, -100.0f, 100.0f);
+    const float modMatrixPitch = ModulationAccumulator::accumulate(
+        0.0f, 0.0f, modMatrixDestinationTotals[(size_t) ModMatrix::destPitch] * 24.0f, 0.0f,
+        false, 0.0f, -24.0f, 24.0f);
+    const float modMatrixWidth = ModulationAccumulator::accumulate(
+        0.0f, 0.0f, modMatrixDestinationTotals[(size_t) ModMatrix::destWidth] * 100.0f,
+        macroContributions.widthObservation, false, 0.0f, -100.0f, 100.0f);
+
+    modMatrixGlitchSizeObservation.store(modMatrixGlitchSize, std::memory_order_relaxed);
+    modMatrixPanObservation.store(modMatrixPan, std::memory_order_relaxed);
+    modMatrixPitchObservation.store(modMatrixPitch, std::memory_order_relaxed);
+    modMatrixWidthObservation.store(modMatrixWidth, std::memory_order_relaxed);
 }
 
 //==============================================================================
