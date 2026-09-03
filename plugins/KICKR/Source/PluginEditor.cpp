@@ -3,6 +3,7 @@
 
 #include "Parameters/ParameterIDs.h"
 #include "Parameters/ParameterDescriptions.h"
+#include "Parameters/ParameterLayout.h"
 
 namespace pal = kickr::palette;
 using KSize = kickr::KickrKnob::Size;
@@ -130,6 +131,35 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     // 1/6 that morphs the body oscillator's waveform (sine -> triangle -> saw -> square).
     // Default 0.0 (pure sine) so existing presets/factory sounds are unaffected unless
     // this knob is moved. Approved from an unbound layout mockup before wiring to DSP.
+    // 2026-09-02 (user request — "make the morph knob have choices like Serum's warp
+    // mode"): a small mode selector sits above the knob; the knob itself becomes the
+    // AMOUNT for whichever of the 8 modes is selected. Default mode 0 (Bend/Skew) is
+    // exactly the original behaviour, so existing presets are unaffected either way.
+    // 2026-09-03 (user request — "keep the drop down menu like before but add the left
+    // right arrows"): dropdown combo restored (single source of truth — the earlier
+    // arrows-only version hand-rolled a separate float/index round-trip that turned out
+    // buggy, "only jumps to RM and Bend/Skew"); the arrows now just drive the SAME combo
+    // via setSelectedItemIndex(), which the existing ComboBoxParameterAttachment already
+    // turns into a parameter change exactly like a manual dropdown pick.
+    morphModeCombo = &addCombo (kickr::id::morphMode,
+        { "Bend/Skew", "Sync", "Fold", "FM", "FM:Sample", "PD", "AM", "RM" }, pal::violet);
+    addAndMakeVisible (morphModePrev);
+    addAndMakeVisible (morphModeNext);
+    morphModePrev.getProperties().set ("arrowDir", -1);
+    morphModeNext.getProperties().set ("arrowDir",  1);
+    morphModePrev.setTooltip ("Previous Morph mode");
+    morphModeNext.setTooltip ("Next Morph mode");
+    morphModePrev.onClick = [this]
+    {
+        const int n = morphModeCombo->getNumItems();
+        if (n > 0) morphModeCombo->setSelectedItemIndex ((morphModeCombo->getSelectedItemIndex() - 1 + n) % n, juce::sendNotificationSync);
+    };
+    morphModeNext.onClick = [this]
+    {
+        const int n = morphModeCombo->getNumItems();
+        if (n > 0) morphModeCombo->setSelectedItemIndex ((morphModeCombo->getSelectedItemIndex() + 1) % n, juce::sendNotificationSync);
+    };
+
     morphKnob = &addKnob (kickr::id::morph, "MORPH", pal::violet, false, KSize::Large);
 
     // ---------------------------------------------------------------- sample strip
@@ -317,7 +347,7 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     updateUndoRedoState();
     updateSampleLabel();
 
-    jassert (boundParamCount == 60);   // 2026-09-01: 59 + morph; 2026-09-02: - 4 TUNING controls, + 6 Color-Limiter knobs, - GAIN / MIX (OUTPUT cell removed)
+    jassert (boundParamCount == 61);   // 2026-09-01: 59 + morph; 2026-09-02: - 4 TUNING controls, + 6 Color-Limiter knobs, - GAIN / MIX (OUTPUT cell removed), + morphMode
 
     // 2026-09-01: reverted the 2026-08-31 fixed-size trial — resizable again, with a
     // bottom-right corner drag handle. Aspect-locked to the mockup's 1600:1170 ratio so
@@ -783,8 +813,17 @@ void KICKRAudioProcessorEditor::layoutHeader (juce::Rectangle<int> a)
 
 void KICKRAudioProcessorEditor::layoutMorph (juce::Rectangle<int> a)
 {
+    auto area = a.reduced (scaled (8));
+    auto modeRow = area.removeFromTop (scaled (20));
+    morphModePrev.setBounds (modeRow.removeFromLeft (scaled (14)));
+    morphModeNext.setBounds (modeRow.removeFromRight (scaled (14)));
+    if (morphModeCombo != nullptr)
+        morphModeCombo->setBounds (modeRow);
     if (morphKnob != nullptr)
-        morphKnob->setBounds (a.reduced (scaled (8)));
+    {
+        area.removeFromTop (scaled (4));
+        morphKnob->setBounds (area);
+    }
 }
 
 void KICKRAudioProcessorEditor::layoutScope (juce::Rectangle<int> a)

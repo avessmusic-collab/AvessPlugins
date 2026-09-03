@@ -32,6 +32,7 @@ namespace kickr
         pHigh             = apvts.getRawParameterValue (id::high);
         pBodyWidth        = apvts.getRawParameterValue (id::bodyWidth);
         pMorph            = apvts.getRawParameterValue (id::morph);
+        pMorphMode        = apvts.getRawParameterValue (id::morphMode);
         pClickWidth       = apvts.getRawParameterValue (id::clickWidth);
         pOutputWidth      = apvts.getRawParameterValue (id::outputWidth);
         pOutput           = apvts.getRawParameterValue (id::output);
@@ -484,6 +485,7 @@ namespace kickr
         snap.highDb       = load (pHigh, 0.0f);
         snap.bodyWidth01  = load (pBodyWidth,   0.0f);   // PHASE 2.9 — STEREO
         snap.morph01      = load (pMorph,       0.0f);   // 2026-09-01 — body waveform morph
+        snap.morphMode    = static_cast<int> (load (pMorphMode, 0.0f));   // 2026-09-02
         snap.clickWidth01 = load (pClickWidth,  0.3f);
         snap.outputWidth01 = load (pOutputWidth, 0.5f);
         snap.outputDb     = load (pOutput, 0.0f);        // PHASE 2.9 — OUTPUT
@@ -607,6 +609,7 @@ namespace kickr
                               snap.clickPitchHz, snap.clickWidth01);   // PHASE 2.9 — clickWidth
             v.setBodyWidth (snap.bodyWidth01);                          // PHASE 2.9 — bodyWidth
             v.setMorph (snap.morph01);                                  // 2026-09-01 — body waveform morph
+            v.setMorphMode (snap.morphMode);                            // 2026-09-02 — warp mode selector
             v.setSubParams (snap.subLevel, snap.subFreqHz, snap.subDecayMs);
             v.setTailParams (snap.tailLevel, snap.tailLengthMs, snap.tailTone01, snap.tailDrive01);
             v.setNoiseParams (snap.noiseLevel, snap.noiseDecayMs, snap.noiseTone01, snap.noiseType);

@@ -120,8 +120,14 @@ namespace kickr
         /** PHASE 2.9 — per-block: body-path stereo decorrelation amount (`bodyWidth` 0..1). */
         void setBodyWidth (float bodyWidth01) noexcept;
 
-        /** 2026-09-01 — per-block: body oscillator waveform morph, 0 (sine) .. 1 (square). */
+        /** 2026-09-01 — per-block: body oscillator morph amount, 0 (sine) .. 1 (max effect
+            for the selected morphMode). */
         void setMorph (float morph01) noexcept;
+
+        /** 2026-09-02 — per-block: which of the 8 Serum-Warp-style modes `morph` drives
+            (see BodyOscillator::Mode). Not smoothed — same convention as every other
+            Choice parameter in the engine. */
+        void setMorphMode (int mode) noexcept;
 
         /**
             Per-block: forward the SUB-group snapshot to the SubOscillator

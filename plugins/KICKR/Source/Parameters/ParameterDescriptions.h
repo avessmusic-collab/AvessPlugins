@@ -27,7 +27,8 @@ namespace kickr
             { id::bodyLevel,        "Level of the sine body oscillator." },
             { id::bodyDecay,        "Decay time of the body's amplitude envelope." },
             { id::bodyHarmonics,    "Adds harmonic saturation to the body oscillator's own tone." },
-            { id::morph,            "Skews the body waveform toward a soft saw on the attack; the tail always relaxes back to a clean sine." },
+            { id::morph,            "Amount for the selected Morph Mode (0 = clean sine, regardless of mode)." },
+            { id::morphMode,        "Which warp algorithm Morph applies: Bend/Skew (soft-saw skew, attack-only), Sync, Fold, FM, FM:Sample (FM from the Sample layer - needs SAMPLE turned ON with something loaded; its LEVEL can sit at 0 for silent modulation), PD (continuous phase distortion), AM, RM." },
             // ---- SUB ------------------------------------------------------------------
             { id::subLevel,         "Level of the independent sub-bass sine layer." },
             { id::subFreq,          "Fixed frequency of the sub layer - doesn't follow the pitch envelope." },

@@ -69,6 +69,13 @@ public:
     }
     int sampleTweaksCountForTest() const noexcept { return (int) sampleTweaks.size(); }
 
+    /** Test hooks — 2026-09-03 (user report: the arrows-only morphMode selector "only
+        jumps to RM and Bend/Skew"): actually click the arrow buttons, not just check
+        layout, since that's exactly what the earlier verification missed. */
+    void clickMorphModePrevForTest() { if (morphModePrev.onClick) morphModePrev.onClick(); }
+    void clickMorphModeNextForTest() { if (morphModeNext.onClick) morphModeNext.onClick(); }
+    int  morphModeIndexForTest() const noexcept { return morphModeCombo != nullptr ? morphModeCombo->getSelectedItemIndex() : -1; }
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
@@ -147,6 +154,17 @@ private:
 
     // 2026-09-01 (user request) — Morph: body oscillator waveform morph, left of the scope.
     kickr::KickrKnob* morphKnob { nullptr };
+    // 2026-09-02 (user request — "make the morph knob have choices like Serum's warp
+    // mode") — mode selector, sits above the Morph knob in the same carved-out slot.
+    // 2026-09-03 (user request — "keep the drop down menu like before but add the left
+    // right arrows"): the dropdown combo is back (single source of truth for the current
+    // selection); the arrows just call `morphModeCombo->setSelectedItemIndex(...)`, which
+    // drives the existing ComboBoxParameterAttachment exactly like a manual combo pick —
+    // no separate index bookkeeping (that hand-rolled float/index round-trip was the
+    // likely cause of the "only jumps to RM and Bend/Skew" bug in the arrows-only version).
+    juce::ComboBox*  morphModeCombo { nullptr };
+    juce::TextButton morphModePrev { juce::String::fromUTF8 ("\xe2\x97\x84") };
+    juce::TextButton morphModeNext { juce::String::fromUTF8 ("\xe2\x96\xba") };
 
     // ---- sample strip ----
     juce::Label      sampleNameLabel, sampleDropHint;

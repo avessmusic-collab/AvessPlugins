@@ -3,10 +3,12 @@
 /**
     Single source of truth for every KICKR APVTS parameter ID string.
 
-    60 automatable parameters: 52 Float, 3 Choice (noiseType, oversampling, tuneMode),
-    5 Bool (limiter, synthEnable, sampleEnable, sampleReverse, sampleMidiTrack).
+    71 automatable parameters: 60 Float, 5 Choice (noiseType, oversampling, tuneMode,
+    filterType, morphMode), 6 Bool (limiter, filterOn, synthEnable, sampleEnable,
+    sampleReverse, sampleMidiTrack).
     `morph` added 2026-09-01 (body oscillator waveform morph — not in the original v2
-    parameter-spec.md; see plugins/KICKR/NOTES.md for the addition).
+    parameter-spec.md; see plugins/KICKR/NOTES.md for the addition). `morphMode` added
+    2026-09-02 (Serum-Warp-style mode selector for `morph` — see NOTES.md).
     Randomize / Mutate / Save / sample-bank-browse / sample-drag-drop are UI actions,
     NOT parameters. Sample selection is the state property `currentSampleName`.
 
@@ -26,7 +28,8 @@ namespace kickr::id
     inline constexpr auto bodyLevel        = "bodyLevel";
     inline constexpr auto bodyDecay        = "bodyDecay";
     inline constexpr auto bodyHarmonics    = "bodyHarmonics";
-    inline constexpr auto morph            = "morph";   // 2026-09-01: body osc waveform morph (sine->tri->saw->square)
+    inline constexpr auto morph            = "morph";   // 2026-09-01: body osc waveform morph amount (0..1)
+    inline constexpr auto morphMode        = "morphMode";   // 2026-09-02: Choice — which warp mode `morph` drives (8 modes, see BodyOscillator::Mode)
 
     // ---- SUB --------------------------------------------------------------- -
     inline constexpr auto subLevel         = "subLevel";

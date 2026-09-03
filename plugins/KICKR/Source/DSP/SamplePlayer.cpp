@@ -38,6 +38,7 @@ namespace kickr
         attacking    = false;
         crushCounter = 0;
         crushHeld    = 0.0f;
+        lastRaw      = 0.0f;
         active       = false;
         finished     = true;
         hp.reset();
@@ -223,7 +224,10 @@ namespace kickr
     float SamplePlayer::renderSample() noexcept
     {
         if (! active || finished || buf == nullptr)
+        {
+            lastRaw = 0.0f;
             return 0.0f;
+        }
 
         // 2. Trim — past the window edge -> silence for the rest of the voice.
         const bool pastEnd = reverse ? (readPos <= static_cast<double> (startIdx))
@@ -231,6 +235,7 @@ namespace kickr
         if (pastEnd)
         {
             finished = true;
+            lastRaw  = 0.0f;
             return 0.0f;
         }
 
@@ -316,7 +321,9 @@ namespace kickr
             env      = 0.0f;
         }
 
-        // 6. x level x velocity.
+        // 6. x level x velocity. `lastRaw` taps the pre-level/velocity value first —
+        //    2026-09-03: the FM:Sample modulator source (see lastRawSample()).
+        lastRaw = dsputils::sanitize (s);
         return dsputils::sanitize (s * params.level * velFactor);
     }
 }

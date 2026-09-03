@@ -94,6 +94,17 @@ namespace kickr
         /** One mono sample. Exactly 0 when the layer is inactive / finished. */
         float renderSample() noexcept;
 
+        /** 2026-09-03 (user request — "decouple fm modulation from sample velocity. i want
+            to modulate with the sample volume at 0"): the value the LAST renderSample()
+            produced BEFORE the final `x sampleLevel x velFactor` multiply — i.e. the
+            sample's full processed character (trim/fades/AD env/HP/LP/crush) at unit
+            level. KickVoice feeds this, not the audible post-level output, into
+            BodyOscillator's Mode::fmFromSample modulator, so FM depth is set by the Morph
+            knob alone: SAMPLE level 0 still modulates (silent sample, full warp), and
+            velocity no longer changes the warp depth between hits. 0 whenever
+            renderSample() last returned the inactive/finished/past-end silence path. */
+        float lastRawSample() const noexcept { return lastRaw; }
+
         bool isActive() const noexcept { return active && ! finished; }
 
     private:
@@ -140,6 +151,7 @@ namespace kickr
         bool   attacking     { false };
         int    crushCounter  { 0 };
         float  crushHeld     { 0.0f };
+        float  lastRaw       { 0.0f };   // 2026-09-03 — pre-level/velocity tap, see lastRawSample()
         bool   active    { false };
         bool   finished  { true };
 

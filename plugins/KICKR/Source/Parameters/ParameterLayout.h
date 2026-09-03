@@ -10,11 +10,13 @@
 /**
     Table-driven APVTS parameter layout for KICKR.
 
-    70 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
+    71 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
     "Parameter Mapping", plus `morph` added 2026-09-01 — see NOTES.md):
         - 60 juce::AudioParameterFloat   (41 v1 core + 10 v2 SAMPLE + 1 `morph` + 6 LIMITER + 2 FILTER, 2026-09-02)
-        -  4 juce::AudioParameterChoice  (noiseType, oversampling, tuneMode, filterType — 2026-09-02)
-        -  5 juce::AudioParameterBool    (limiter, synthEnable, sampleEnable,
+        -  5 juce::AudioParameterChoice  (noiseType, oversampling, tuneMode, filterType,
+                                          morphMode — 2026-09-02, Serum-Warp-style mode
+                                          selector for `morph`, 8 choices)
+        -  6 juce::AudioParameterBool    (limiter, filterOn, synthEnable, sampleEnable,
                                           sampleReverse, sampleMidiTrack)
 
     Ranges / defaults / skews are taken verbatim from the locked spec. Skew < 1 on the
@@ -155,6 +157,12 @@ namespace kickr
         { id::macroTail,        "Tail",                  0.0f,     1.0f,   0.001f, 1.0f,    0.5f,  ""   },
     } };
 
+    // 2026-09-02 — the 8 `morphMode` choices, index order MUST match BodyOscillator::Mode.
+    // Kept short (fits a small combo box) — see ParameterDescriptions.h for the full name
+    // in each mode's tooltip.
+    inline constexpr const char* kMorphModeNames[8] =
+        { "Bend/Skew", "Sync", "Fold", "FM", "FM:Sample", "PD", "AM", "RM" };
+
     // Nearest chromatic note name for a frequency in Hz (440 Hz = A4, 55 Hz = A1).
     inline juce::String hzToNoteName (float hz)
     {
@@ -272,6 +280,15 @@ namespace kickr
         layout.add (std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID { id::filterType, 1 }, "Filter Type",
             juce::StringArray { "Low Pass", "High Pass" },
+            0));
+
+        // 2026-09-02 (user request — "make the morph knob have choices like Serum's warp
+        // mode") — which of the 8 warp algorithms the `morph` amount knob drives. Default
+        // 0 = Bend/Skew, bit-identical to pre-morphMode behaviour, so existing presets and
+        // automation on `morph` alone are unaffected. See BodyOscillator::Mode.
+        layout.add (std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID { id::morphMode, 1 }, "Morph Mode",
+            juce::StringArray (kMorphModeNames, 8),
             0));
 
         // ---- 5 Bool parameters ----

@@ -393,6 +393,261 @@ int main()
         check (worstPeak < 8.0f,    "Morph output stays bounded (no runaway) across every combination tested");
     }
 
+    // 2026-09-02 (user request — "make the morph knob have choices like Serum's warp
+    // mode") — same machine-gun x oversampling stress, repeated for all 8 morphMode
+    // choices (0 Bend/Skew .. 7 RM, see BodyOscillator::Mode). Mode 0 is already covered
+    // above (default); this sweeps the 7 new modes for the same NaN/Inf + bounded-output
+    // guarantee the brief's testing criteria call for.
+    {
+        bool allFinite = true;
+        float worstPeak = 0.0f;
+        for (int mode = 0; mode < 8; ++mode)
+        {
+            for (int os = 0; os < 4; ++os)
+            {
+                for (float morphAmt : { 0.0f, 0.5f, 1.0f })
+                {
+                    KICKRAudioProcessor p;
+                    silenceClick (p); silenceSub (p); silenceTail (p); silenceDist (p);
+                    setP (p, "oversampling", (float) os);
+                    setP (p, "morphMode", (float) mode);
+                    setP (p, "morph", morphAmt);
+                    auto [rbuf, onsets] = renderRetrigger (p, a1, vel, sr, 256, 24, 60.0 / 174.0 / 8.0, 2.0);
+                    juce::ignoreUnused (onsets);
+                    const float* rx = rbuf.getReadPointer (0);
+                    for (int i = 0; i < rbuf.getNumSamples(); ++i)
+                    {
+                        if (! std::isfinite (rx[i])) allFinite = false;
+                        worstPeak = std::max (worstPeak, std::abs (rx[i]));
+                    }
+                }
+            }
+        }
+        std::printf ("  morphMode(8) x morph x oversampling x machine-gun: worst peak %.2f  all finite %d\n",
+                     worstPeak, (int) allFinite);
+        check (allFinite,        "every morphMode is finite (no NaN/Inf) at every oversampling factor under machine-gun retrigger");
+        check (worstPeak < 8.0f, "every morphMode stays bounded (no runaway) across every combination tested");
+    }
+
+    // Mode::fmFromSample specifically: no sample loaded (or sampleEnable off) must
+    // degrade gracefully to "no effect" (SamplePlayer renders 0 -> the FM modulator is 0
+    // -> BodyOscillator::renderSample's fmFromSample branch collapses to a plain phase
+    // modulation by 0, i.e. unmodified sine), not silence-driven garbage or NaN.
+    {
+        KICKRAudioProcessor p;
+        silenceClick (p); silenceSub (p); silenceTail (p); silenceDist (p);
+        setP (p, "sampleEnable", 0.0f);   // no sample loaded either way — belt and braces
+        setP (p, "morphMode", 4.0f);      // FM:Sample
+        setP (p, "morph",     1.0f);      // max amount
+        const auto fmSampleBuf = kickr::tests::renderNote (p, a1, vel, sr, 512, 0.3);
+        const auto sineOut = [&]
+        {
+            KICKRAudioProcessor s;
+            silenceClick (s); silenceSub (s); silenceTail (s); silenceDist (s);
+            setP (s, "morphMode", 0.0f);
+            setP (s, "morph",     0.0f);
+            return kickr::tests::renderNote (s, a1, vel, sr, 512, 0.3);
+        }();
+        bool finite = true, matches = true;
+        const float* bx = fmSampleBuf.getReadPointer (0);
+        const float* sx = sineOut.getReadPointer (0);
+        for (int i = 0; i < fmSampleBuf.getNumSamples(); ++i)
+        {
+            if (! std::isfinite (bx[i])) finite = false;
+            if (std::abs (bx[i] - sx[i]) > 1.0e-5f) matches = false;
+        }
+        check (finite,  "Mode::fmFromSample with no sample loaded: finite output");
+        check (matches, "Mode::fmFromSample with no sample loaded degrades to an unmodified sine (no silence-driven garbage)");
+    }
+
+    // 2026-09-03 (user request — "decouple fm modulation from sample velocity. i want to
+    // modulate with the sample volume at 0"): the FM:Sample modulator is now SamplePlayer's
+    // PRE-level/velocity tap (lastRawSample), gated only by the smoothed sampleGate.
+    {
+        auto renderFmSample = [&] (float sampleLevel, float velocity01, float velSens)
+        {
+            KICKRAudioProcessor p;
+            silenceClick (p); silenceSub (p); silenceTail (p); silenceDist (p);
+            setP (p, "tuneMode",       1.0f);
+            setP (p, "fundamental",  100.0f);
+            setP (p, "pitchStart",     1.0f);   // no velocity-scaled pitch drop — isolates the FM path
+            setP (p, "bodyDecay",   2000.0f);
+            setP (p, "sampleEnable",   1.0f);   // default bank sample is auto-loaded (factoryNames[0])
+            setP (p, "sampleLevel", sampleLevel);
+            setP (p, "velSensitivity", velSens);
+            setP (p, "limiter",        0.0f);   // nonlinear stage would break the proportionality check below
+            setP (p, "morphMode",      4.0f);   // FM:Sample
+            setP (p, "morph",          1.0f);
+            return kickr::tests::renderNote (p, a1, velocity01, sr, 512, 0.3);
+        };
+
+        // (a) SAMPLE level at 0: the sample layer is silent, but it still modulates.
+        const auto silentModBuf = renderFmSample (0.0f, vel, 0.5f);
+        const auto sineRef = [&]
+        {
+            KICKRAudioProcessor s;
+            silenceClick (s); silenceSub (s); silenceTail (s); silenceDist (s);
+            setP (s, "tuneMode", 1.0f); setP (s, "fundamental", 100.0f);
+            setP (s, "pitchStart", 1.0f); setP (s, "bodyDecay", 2000.0f);
+            setP (s, "velSensitivity", 0.5f);
+            setP (s, "limiter", 0.0f);
+            setP (s, "morph", 0.0f);
+            return kickr::tests::renderNote (s, a1, vel, sr, 512, 0.3);
+        }();
+        double devAcc = 0.0; int devN = 0;
+        {
+            const int i0 = (int) (0.003 * sr), i1 = std::min ((int) (0.043 * sr), silentModBuf.getNumSamples());
+            const float* ax = silentModBuf.getReadPointer (0);
+            const float* sx = sineRef.getReadPointer (0);
+            for (int i = i0; i < i1; ++i) { const double d = ax[i] - sx[i]; devAcc += d * d; ++devN; }
+        }
+        const double silentModDev = std::sqrt (devAcc / std::max (1, devN));
+        std::printf ("  FM:Sample @ sampleLevel=0: RMS-deviation-from-sine [3-43ms] %.5f\n", silentModDev);
+        check (silentModDev > 0.05, "FM:Sample modulates at SAMPLE level 0 (silent sample, audible warp)");
+
+        // (b1) velSens=0: velocity must be COMPLETELY inert — two hits at different
+        // velocities render bit-near-identically (catches any velocity path into the
+        // modulator that bypasses velSensitivity).
+        {
+            const auto vA = renderFmSample (0.0f, 1.0f, 0.0f);
+            const auto vB = renderFmSample (0.0f, 0.5f, 0.0f);
+            float worst = 0.0f;
+            const int n = std::min (vA.getNumSamples(), vB.getNumSamples());
+            const float* ax = vA.getReadPointer (0);
+            const float* bx2 = vB.getReadPointer (0);
+            for (int i = 0; i < n; ++i) worst = std::max (worst, std::abs (ax[i] - bx2[i]));
+            std::printf ("  FM:Sample @ velSens=0: vel 1.0 vs 0.5 max diff %.6f\n", worst);
+            check (worst < 1.0e-4f, "FM:Sample @ velSens=0: velocity is completely inert (identical renders)");
+        }
+
+        // (b2) velSens=1: the whole-voice level halves between vel 1.0 and 0.5 but the
+        // WAVEFORM must stay essentially the same shape — pre-fix, the modulator amplitude
+        // itself halved (index 3 -> 1.5 rad, a drastic shape change, deviation way past
+        // 50% of peak). Post-fix the only remaining velocity path into the modulator is
+        // the DELIBERATE velocity->sampleLP darkening (~18 kHz LP at half velocity), which
+        // costs a mid-teens % of localized transient deviation — hence the 30% threshold:
+        // loose enough for the designed darkening, far below the old coupling's failure.
+        const auto vHi = renderFmSample (0.0f, 1.0f, 1.0f);
+        const auto vLo = renderFmSample (0.0f, 0.5f, 1.0f);
+        const int i0 = (int) (0.003 * sr), i1 = std::min ((int) (0.100 * sr), vHi.getNumSamples());
+        const float* hx = vHi.getReadPointer (0);
+        const float* lx = vLo.getReadPointer (0);
+        float peakHi = 0.0f, peakLo = 0.0f;
+        for (int i = i0; i < i1; ++i) { peakHi = std::max (peakHi, std::abs (hx[i])); peakLo = std::max (peakLo, std::abs (lx[i])); }
+        const float scale = peakHi / std::max (1.0e-9f, peakLo);
+        float worstDev = 0.0f;
+        for (int i = i0; i < i1; ++i) worstDev = std::max (worstDev, std::abs (hx[i] - scale * lx[i]));
+        std::printf ("  FM:Sample velocity decoupling: vel 1.0 vs 0.5 peak scale %.3f, worst shape deviation %.4f (%.1f%% of peak)\n",
+                     scale, worstDev, 100.0f * worstDev / std::max (1.0e-9f, peakHi));
+        check (peakHi > 0.05f && peakLo > 0.02f, "FM:Sample velocity test renders audible output at both velocities");
+        check (scale > 1.7f && scale < 2.3f,
+               "FM:Sample @ velSens=1: velocity scales LEVEL as designed (~2x between vel 1.0 and 0.5)");
+        check (worstDev < peakHi * 0.30f,
+               "FM:Sample warp depth no longer follows velocity (shape deviation stays within the designed sampleLP darkening)");
+    }
+
+    // Instant morphMode automation change mid-note (a mode switch is NOT crossfaded —
+    // same convention as every other Choice parameter in the engine, e.g. noiseType/
+    // filterType/tuneMode; mode changes are a patch decision, not something automated at
+    // audio rate). The safety guarantee this checks is: it stays finite and bounded, even
+    // switching between the most different pair of modes (Bend/Skew <-> RM) at max amount.
+    {
+        const int block = 64;
+        const int total = (int) (sr * 0.05);
+        const int switchAt = 448;
+
+        KICKRAudioProcessor p;
+        silenceClick (p); silenceSub (p); silenceTail (p); silenceDist (p);
+        setP (p, "tuneMode",     1.0f);
+        setP (p, "fundamental",  100.0f);
+        setP (p, "bodyDecay",    2000.0f);
+        setP (p, "morphMode",    0.0f);   // Bend/Skew
+        setP (p, "morph",        1.0f);
+        p.setRateAndBufferSizeDetails (sr, block);
+        p.prepareToPlay (sr, block);
+        juce::AudioBuffer<float> o (juce::jmax (1, p.getTotalNumOutputChannels()), total);
+        o.clear();
+        juce::AudioBuffer<float> sc (o.getNumChannels(), block);
+        bool switched = false;
+        for (int pos = 0; pos < total;)
+        {
+            const int n = std::min (block, total - pos);
+            if (! switched && pos >= switchAt) { setP (p, "morphMode", 7.0f); switched = true; }   // -> RM
+            juce::AudioBuffer<float> b (sc.getArrayOfWritePointers(), o.getNumChannels(), n);
+            b.clear();
+            juce::MidiBuffer midi;
+            if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, a1, vel), 0);
+            p.processBlock (b, midi);
+            for (int ch = 0; ch < o.getNumChannels(); ++ch) o.copyFrom (ch, pos, b, ch, 0, n);
+            pos += n;
+        }
+        p.releaseResources();
+        bool finite = true; float peak = 0.0f;
+        const float* ox = o.getReadPointer (0);
+        for (int i = 0; i < o.getNumSamples(); ++i) { if (! std::isfinite (ox[i])) finite = false; peak = std::max (peak, std::abs (ox[i])); }
+        std::printf ("  morphMode step Bend/Skew->RM mid-note @9.3ms: peak %.2f  finite %d\n", peak, (int) finite);
+        check (finite,      "instant morphMode switch mid-note: finite output");
+        check (peak < 8.0f, "instant morphMode switch mid-note: bounded output (no runaway)");
+    }
+
+    // 2026-09-03 (user bug report — "AM FM FROM SAMPLE AND RM Dont work or effect too
+    // subtle"). Investigation: AM/RM's audible deviation from a plain sine WAS real and
+    // finite (not a dead-code bug), but the shared internal modulator sat at an exact 2:1
+    // ratio to the carrier — harmonically LOCKED, so AM/RM only reinforced a harmonic
+    // already present in the carrier's own series instead of producing the "detuned /
+    // metallic" clash that gives AM/RM their character. Fix: `BodyOscillator::kModRatio`
+    // 2.0 -> 2.71 (inharmonic). FM:Sample specifically needs `sampleEnable` ON with a
+    // sample loaded — off (the default) is the documented graceful degrade to "no effect"
+    // tested above, not a bug; ParameterDescriptions.h's morphMode tooltip now says so.
+    //
+    // Permanent regression guard from this investigation: every mode with an internal
+    // effect (everything except Bend/Skew, which is the k=0 reference at morph=1 too)
+    // must deviate from a plain sine by more than a floor well below anything observed
+    // here — catches a future "this mode is silently a no-op" regression, which is
+    // exactly what wasn't being tested before this bug report.
+    {
+        auto renderIso = [&] (int mode, bool sampleOn)
+        {
+            KICKRAudioProcessor p;
+            silenceClick (p); silenceSub (p); silenceTail (p); silenceDist (p);
+            setP (p, "tuneMode",      1.0f);
+            setP (p, "fundamental", 100.0f);
+            setP (p, "pitchStart",    1.0f);
+            setP (p, "bodyDecay",  2000.0f);
+            setP (p, "morphMode", (float) mode);
+            setP (p, "morph",         1.0f);
+            if (sampleOn) setP (p, "sampleEnable", 1.0f);
+            return kickr::tests::renderNote (p, a1, vel, sr, 512, 0.3);
+        };
+        auto rmsDiff = [&] (const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b, double t0, double t1)
+        {
+            const int i0 = (int) (t0 * sr), i1 = std::min ((int) (t1 * sr), a.getNumSamples());
+            const float* ax = a.getReadPointer (0);
+            const float* bx = b.getReadPointer (0);
+            double acc = 0.0; int n = 0;
+            for (int i = i0; i < i1; ++i) { const double d = ax[i] - bx[i]; acc += d * d; ++n; }
+            return std::sqrt (acc / std::max (1, n));
+        };
+        KICKRAudioProcessor pref;
+        silenceClick (pref); silenceSub (pref); silenceTail (pref); silenceDist (pref);
+        setP (pref, "tuneMode", 1.0f); setP (pref, "fundamental", 100.0f);
+        setP (pref, "pitchStart", 1.0f); setP (pref, "bodyDecay", 2000.0f);
+        setP (pref, "morph", 0.0f);   // mode is irrelevant at morph=0 — every mode collapses to this
+        const auto sineRef = kickr::tests::renderNote (pref, a1, vel, sr, 512, 0.3);
+
+        const char* names[8] = { "Bend/Skew", "Sync", "Fold", "FM", "FM:Sample", "PD", "AM", "RM" };
+        constexpr double kMinDeviation = 0.05;   // well under the smallest observed (~0.24, AM)
+        bool allDeviate = true;
+        for (int mode = 1; mode < 8; ++mode)
+        {
+            const auto out = renderIso (mode, mode == kickr::BodyOscillator::fmFromSample);
+            const double d = rmsDiff (out, sineRef, 0.003, 0.043);
+            std::printf ("  morphMode %d (%-10s) RMS-deviation-from-sine [3-43ms]: %.5f\n", mode, names[mode], d);
+            if (d < kMinDeviation) allDeviate = false;
+        }
+        check (allDeviate, "every non-default morphMode audibly deviates from a plain sine at amount=1 (no silent/no-op mode)");
+    }
+
     // Fix (2026-08-31): a retriggered click must play at the same level as an isolated
     // one. The old crossfade scaled the INCOMING voice by a ramping gNew (0 -> 1 over
     // 3 ms), which swallowed the click's sharp transient on every fast retrigger while
@@ -2567,6 +2822,7 @@ int main()
         setP (pa, "macroBody", 0.83f); setP (pa, "drive", 0.7f); setP (pa, "fundamental", 41.2f);
         setP (pa, "sampleEnable", 1.0f); setP (pa, "character", 0.4f); setP (pa, "tailLength", 900.0f);
         setP (pa, "morph", 0.62f);   // 2026-09-01 — confirm the new parameter round-trips too
+        setP (pa, "morphMode", 3.0f);   // 2026-09-02 — FM; confirm the Choice round-trips too
 
         juce::MemoryBlock mb;
         pa.getStateInformation (mb);
@@ -2582,7 +2838,7 @@ int main()
         };
         const bool paramsOk = eq ("macroBody") && eq ("drive") && eq ("fundamental")
                             && eq ("sampleEnable") && eq ("character") && eq ("tailLength")
-                            && eq ("morph");
+                            && eq ("morph") && eq ("morphMode");
         std::printf ("  state round-trip: params %s ; sample '%s' -> '%s'\n",
                      paramsOk ? "match" : "MISMATCH",
                      pa.getCurrentSampleName().toRawUTF8(), pb.getCurrentSampleName().toRawUTF8());
@@ -3792,6 +4048,50 @@ int main()
                 if (auto stream = out.createOutputStream()) { juce::PNGImageFormat fmt; fmt.writeImageToStream (img, *stream); }
                 std::printf ("  filter-page snapshot: %s\n", out.getFullPathName().toRawUTF8());
             }
+        }
+    }
+
+    // 2026-09-03 (user bug report — the earlier arrows-only morphMode selector "only
+    // jumps to RM and Bend/Skew"). That version was verified only via a static layout
+    // screenshot, never an actual simulated click — this test closes that gap by
+    // triggerClick()-ing the real buttons and reading back both the combo's own index
+    // AND the underlying APVTS parameter, for every step in both directions.
+    std::printf ("\n[Fix] Morph mode arrow buttons actually cycle through all 8 modes\n");
+    {
+        KICKRAudioProcessor pe;
+        pe.prepareToPlay (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> edBase (pe.createEditor());
+        auto* ed = dynamic_cast<KICKRAudioProcessorEditor*> (edBase.get());
+        check (ed != nullptr, "editor created for the morphMode arrow test");
+        if (ed != nullptr)
+        {
+            ed->setSize (1120, 819);
+            auto paramIndex = [&] { return (int) std::lround (pe.getValueTreeState().getRawParameterValue ("morphMode")->load()); };
+
+            bool forwardOk = true, syncOk = true;
+            check (ed->morphModeIndexForTest() == 0 && paramIndex() == 0, "morphMode starts at index 0 (Bend/Skew)");
+            for (int step = 1; step <= 8; ++step)
+            {
+                ed->clickMorphModeNextForTest();
+                const int expected = step % 8;
+                if (ed->morphModeIndexForTest() != expected) forwardOk = false;
+                if (paramIndex() != ed->morphModeIndexForTest()) syncOk = false;
+            }
+            std::printf ("  forward: after 8 Next clicks, back to index %d (combo) / %d (param)\n", ed->morphModeIndexForTest(), paramIndex());
+            check (forwardOk, "Next arrow steps through every index 1,2,3,4,5,6,7,0 in order (no stuck/skip)");
+            check (syncOk,    "combo selection and the morphMode APVTS parameter agree at every step");
+
+            bool backwardOk = true;
+            for (int step = 1; step <= 8; ++step)
+            {
+                ed->clickMorphModePrevForTest();
+                const int expected = ((8 - step) % 8 + 8) % 8;
+                if (ed->morphModeIndexForTest() != expected) backwardOk = false;
+                if (paramIndex() != ed->morphModeIndexForTest()) syncOk = false;
+            }
+            std::printf ("  backward: after 8 Prev clicks, back to index %d (combo) / %d (param)\n", ed->morphModeIndexForTest(), paramIndex());
+            check (backwardOk, "Prev arrow steps through every index 7,6,5,4,3,2,1,0 in order (no stuck/skip)");
+            check (syncOk,     "combo selection and the morphMode APVTS parameter still agree after backward cycling");
         }
     }
 

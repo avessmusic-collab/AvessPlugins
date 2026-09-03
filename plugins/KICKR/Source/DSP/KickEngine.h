@@ -235,6 +235,7 @@ namespace kickr
         std::atomic<float>* pHigh        { nullptr };
         std::atomic<float>* pBodyWidth   { nullptr };   // PHASE 2.9 — STEREO
         std::atomic<float>* pMorph       { nullptr };   // 2026-09-01 — body waveform morph
+        std::atomic<float>* pMorphMode   { nullptr };   // 2026-09-02 — AudioParameterChoice — index
         std::atomic<float>* pClickWidth  { nullptr };
         std::atomic<float>* pOutputWidth { nullptr };
         std::atomic<float>* pOutput      { nullptr };   // PHASE 2.9 — OUTPUT
@@ -316,6 +317,7 @@ namespace kickr
             float highDb       { 0.0f };
             float bodyWidth01  { 0.0f };     // PHASE 2.9 — STEREO
             float morph01      { 0.0f };     // 2026-09-01 — body waveform morph (0 = pure sine)
+            int   morphMode    { 0 };        // 2026-09-02 — 0 = Bend/Skew .. 7 = RM (BodyOscillator::Mode)
             float clickWidth01 { 0.3f };
             float outputWidth01 { 0.5f };
             float outputDb     { 0.0f };     // PHASE 2.9 — OUTPUT (bipolar dB, -24..+12)

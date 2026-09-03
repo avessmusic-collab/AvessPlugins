@@ -93,6 +93,11 @@ namespace kickr
         body.setMorph (morph01);
     }
 
+    void KickVoice::setMorphMode (int mode) noexcept
+    {
+        body.setMorphMode (mode);
+    }
+
     void KickVoice::setSubParams (float subLevel, float subFreqHz, float subDecayMs) noexcept
     {
         sub.setParams (subLevel, subFreqHz, subDecayMs);
@@ -161,6 +166,22 @@ namespace kickr
         int i = 0;
         for (; i < numSamples; ++i)
         {
+            // PHASE 2.7b — smoothed 0/1 layer gates + the sample layer (carries sampleLevel x velFactor).
+            // 2026-09-02: rendered BEFORE the body so Mode::fmFromSample can use the
+            // sample as its FM modulator (see BodyOscillator::renderSample).
+            // sample.renderSample() must run exactly once per sample regardless of mode.
+            // 2026-09-03 (user request — "decouple fm modulation from sample velocity.
+            // i want to modulate with the sample volume at 0"): the modulator is now the
+            // PRE-level/velocity tap (lastRawSample), NOT the audible post-level output —
+            // SAMPLE level at 0 still warps at full depth, and velocity no longer changes
+            // the warp between hits. It IS still scaled by the smoothed sampleGate, so
+            // toggling SAMPLE off mid-note fades the modulation out click-free instead of
+            // leaving an inaudible modulator warping the body (code-review CONFIRMED bug).
+            const float synthG  = synthGate.getNextValue();
+            const float sampleG = sampleGate.getNextValue();
+            const float sampleM = sample.renderSample();                 // mono for v1 (audible layer)
+            const float sampleMod = sample.lastRawSample() * sampleG;    // FM:Sample modulator
+
             float bodyM = 0.0f;
             if (ampEnv.isActive())
             {
@@ -169,7 +190,7 @@ namespace kickr
                 body.setFrequency (freqHz);
 
                 const float env = ampEnv.tick();
-                const float osc = body.renderSample();
+                const float osc = body.renderSample (sampleMod);   // only consulted by Mode::fmFromSample
                 const float lvl = bodyLevel.getNextValue();
                 bodyM = osc * env * lvl;                    // body-level -> body only
             }
@@ -191,11 +212,6 @@ namespace kickr
             const float subM   = sub.renderSample();        // carries subLevel   (mono, not vel-scaled)
             const float tailM  = tail.renderSample();       // carries tailLevel  (mono, not vel-scaled)
             const float noiseM = noise.renderSample();      // carries noiseLevel (mono, not vel-scaled)
-
-            // PHASE 2.7b — smoothed 0/1 layer gates + the sample layer (carries sampleLevel x velFactor).
-            const float synthG  = synthGate.getNextValue();
-            const float sampleG = sampleGate.getNextValue();
-            const float sampleM = sample.renderSample();     // mono for v1
 
             const float monoLayers = subM + tailM + noiseM;
             const float L = synthG * (bodyL + clickL + monoLayers) * velLevel + sampleG * sampleM;
