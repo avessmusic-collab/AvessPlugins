@@ -647,6 +647,37 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
         glitchLastAppliedRandomSeed = seed;
     }
 
+    //=========================================================================
+    // Stage 2 Phase 3.6: Glitch Engine Tier 2 — Slice/Random Repeat shared
+    // state + Granular Repeat's grain-voice scheduler + Hann window table.
+    // See PluginProcessor.h's Phase 3.6 doc comment for full design
+    // rationale. Grain length is FIXED (kGlitchGrainLengthMs, independent
+    // of glitchBufferLength) specifically so the Hann table can be sized
+    // and filled exactly once here — never resized/refilled in
+    // processBlock().
+    //=========================================================================
+    glitchSliceOrder = { 0, 1, 2, 3, 4, 5, 6, 7 };
+    glitchSliceCurrentIndex = 0;
+    glitchTier2SharedReadPos = 0;
+    glitchPitchJumpRatio = 1.0f;
+
+    glitchGrainLengthSamples = juce::jmax(4, static_cast<int>(std::round(sampleRate * kGlitchGrainLengthMs / 1000.0)));
+    glitchGrainSpawnIntervalSamples = juce::jmax(1, glitchGrainLengthSamples / kGlitchGranularVoiceCount);
+    glitchGrainWindowFn.fillWindowingTables(static_cast<size_t>(glitchGrainLengthSamples),
+                                             juce::dsp::WindowingFunction<float>::WindowingMethod::hann,
+                                             true);
+    glitchGrainWindowTable.assign(static_cast<size_t>(glitchGrainLengthSamples), 1.0f);
+    glitchGrainWindowFn.multiplyWithWindowingTable(glitchGrainWindowTable.data(),
+                                                    static_cast<size_t>(glitchGrainLengthSamples));
+    for (auto& v : glitchGrainVoices)
+    {
+        v.active = false;
+        v.startRingIndex = 0;
+        v.phase = 0;
+    }
+    glitchGrainNextVoiceSlot = 0;
+    glitchGrainSpawnCountdown = 0;
+
     for (auto& f : svfFilter)
     {
         f.prepare(monoSpec);
@@ -1127,15 +1158,14 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             const float effectiveProbability = juce::jlimit(0.0f, 1.0f, probBase + probJitter);
             const bool triggered = glitchRandom.nextFloat() < effectiveProbability;
 
-            // Tier 1 scope gate (plan.md Phase 3.5): an event can only go
-            // "active" for exactly the 6 Tier-1 modes. Off (0) and every
-            // Tier-2 mode (4, 6-11, 14-17) fall through to `else` below,
-            // guaranteeing a clean dry passthrough for this phase — not a
-            // half-implemented stub.
-            const bool isTier1PlayableMode = (glitchModeIndex == 1 || glitchModeIndex == 2 || glitchModeIndex == 3
-                                                || glitchModeIndex == 5 || glitchModeIndex == 12 || glitchModeIndex == 13);
+            // Phase 3.6: all 17 non-Off glitchMode indices (1-17) are now
+            // implemented (Tier 1 modes from Phase 3.5 + Tier 2 modes from
+            // this phase) — widened from Phase 3.5's `isTier1PlayableMode`
+            // (which only covered 6 indices) to `isImplementedMode`. Off
+            // (0) remains the only index that can never go "active."
+            const bool isImplementedMode = (glitchModeIndex >= 1 && glitchModeIndex <= 17);
 
-            if (triggered && isTier1PlayableMode && ! glitchBypassed)
+            if (triggered && isImplementedMode && ! glitchBypassed)
             {
                 glitchEventActiveThisCycle = true;
                 setUpGlitchEventForThisCycle(glitchWritePosThisSample);
@@ -1156,6 +1186,21 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const bool glitchWantsWet = glitchEventActiveThisCycle && ! glitchBypassed;
         glitchActiveMixSmoothed.setTargetValue(glitchWantsWet ? 1.0f : 0.0f);
         const float glitchMixAmt = glitchActiveMixSmoothed.getNextValue();
+
+        // Stage 2 Phase 3.6: shared (NOT per-channel) once-per-sample
+        // advance for the three Tier-2 modes whose wrap-triggered state
+        // change must execute exactly once per sample, not once per
+        // channel-call — see PluginProcessor.h's Phase 3.6 "Shared vs.
+        // per-channel state" doc note for why duplicating these per
+        // channel would be incorrect (double RNG draws / double
+        // index-advances / double grain spawns).
+        if (glitchWantsWet)
+        {
+            if (glitchModeIndex == 9)
+                advanceGlitchGranularVoicesForThisSample();
+            else if (glitchModeIndex == 6 || glitchModeIndex == 7 || glitchModeIndex == 17)
+                advanceGlitchTier2SharedState();
+        }
 
         for (int channel = 0; channel < numChannels; ++channel)
         {
@@ -1484,6 +1529,7 @@ void CORRUPTRAudioProcessor::setUpGlitchEventForThisCycle(int writePosThisSample
     // semantics" doc comment for the rationale behind each mode's window
     // length.
     glitchReverseDirection = false;
+    glitchTier2SharedReadPos = 0; // Slice/Random Slice/Random Repeat shared position — reset every new event regardless of mode (harmless no-op for modes that don't use it)
     int windowLen = glitchCurrentCycleLengthSamples;
 
     switch (glitchModeIndex)
@@ -1502,8 +1548,66 @@ void CORRUPTRAudioProcessor::setUpGlitchEventForThisCycle(int writePosThisSample
             glitchReverseDirection = true;
             break;
 
+        case 4: // Buffer Repeat (Phase 3.6) — captured ONCE (fixed, like Stutter/Repeat), a
+                // moderate-length chunk (kGlitchBufferRepeatFraction of the cycle), looped
+                // forward every pass — NOT re-captured/re-selected (see Random Repeat, 17).
+            windowLen = juce::jmax(glitchMinWindowSamples,
+                                    static_cast<int>(std::round(glitchCurrentCycleLengthSamples * kGlitchBufferRepeatFraction)));
+            break;
+
         case 5: // Freeze — very short ("~single-cycle" approximation), captured once, looped forward
             windowLen = juce::jmax(glitchMinWindowSamples, juce::jmin(glitchCurrentCycleLengthSamples, glitchFreezeWindowSamples));
+            break;
+
+        case 6:  // Slice (Phase 3.6) — full captured window subdivided into kGlitchSliceCount
+                 // equal slices, played in natural order, looping.
+        case 7:  // Random Slice (Phase 3.6) — same subdivision, but the play ORDER is
+                 // shuffled ONCE here (Fisher-Yates, seeded glitchRandom) then held fixed
+                 // for the rest of the event.
+            windowLen = glitchCurrentCycleLengthSamples;
+            {
+                for (int i = 0; i < kGlitchSliceCount; ++i)
+                    glitchSliceOrder[(size_t) i] = i;
+
+                if (glitchModeIndex == 7)
+                {
+                    for (int i = kGlitchSliceCount - 1; i > 0; --i)
+                    {
+                        const int j = glitchRandom.nextInt(i + 1);
+                        std::swap(glitchSliceOrder[(size_t) i], glitchSliceOrder[(size_t) j]);
+                    }
+                }
+            }
+            glitchSliceCurrentIndex = 0;
+            break;
+
+        case 8: // Micro Loop (Phase 3.6) — captured ONCE, finer-grained (shorter) than
+                // Stutter, and TEMPO-RELATIVE (unlike Freeze's fixed-ms window).
+            windowLen = juce::jmax(glitchMinWindowSamples,
+                                    static_cast<int>(std::round(glitchCurrentCycleLengthSamples * kGlitchMicroLoopFraction)));
+            break;
+
+        case 9: // Granular Repeat (Phase 3.6) — reset all grain voices/spawn scheduler;
+                // the per-sample scheduler (advanceGlitchGranularVoicesForThisSample())
+                // spawns the first grain on its very next call.
+            windowLen = glitchCurrentCycleLengthSamples;
+            for (auto& v : glitchGrainVoices)
+            {
+                v.active = false;
+                v.phase = 0;
+            }
+            glitchGrainNextVoiceSlot = 0;
+            glitchGrainSpawnCountdown = 0;
+            break;
+
+        case 10: // Tape Stop (Phase 3.6) — full-cycle captured window; playback rate ramps
+                 // 1.0->0.0 via a closed-form position integral (see readGlitchFractionalRateSample()).
+            windowLen = glitchCurrentCycleLengthSamples;
+            break;
+
+        case 11: // Tape Start (Phase 3.6) — full-cycle captured window; playback rate ramps
+                 // 0.0->1.0 via a closed-form position integral (see readGlitchFractionalRateSample()).
+            windowLen = glitchCurrentCycleLengthSamples;
             break;
 
         case 12: // Retrigger — short slice; the ACTUAL capture is re-done fresh at the
@@ -1517,8 +1621,36 @@ void CORRUPTRAudioProcessor::setUpGlitchEventForThisCycle(int writePosThisSample
             windowLen = glitchCurrentCycleLengthSamples;
             break;
 
+        case 14: // Noise Burst (Phase 3.6) — window length only paces the burst duration;
+                 // readGlitchWindowSample() draws fresh noise instead of reading the ring buffer.
+            windowLen = glitchCurrentCycleLengthSamples;
+            break;
+
+        case 15: // Bitcrush Burst (Phase 3.6) — full captured window (like Repeat), quantized
+                 // at a fixed extreme depth AFTER the standard windowed read (self-contained
+                 // to the Glitch Engine, not Component #3's bitDepth/sampleRateReduction).
+            windowLen = glitchCurrentCycleLengthSamples;
+            break;
+
+        case 16: // Pitch Jump (Phase 3.6) — full-cycle captured window; choose a musical-interval
+                 // playback ratio ONCE here (extra draw at event-setup/fired-event time, per the
+                 // established RNG-invariant convention — see PluginProcessor.h's Phase 3.6 doc note).
+            windowLen = glitchCurrentCycleLengthSamples;
+            {
+                const int idx = glitchRandom.nextInt(static_cast<int>(kGlitchPitchJumpRatios.size()));
+                glitchPitchJumpRatio = kGlitchPitchJumpRatios[(size_t) idx];
+            }
+            break;
+
+        case 17: // Random Repeat (Phase 3.6) — same window SIZE as Buffer Repeat, but
+                 // readGlitchRandomRepeatSample()/advanceGlitchTier2SharedState() re-select a
+                 // NEW random historical position every time the loop wraps.
+            windowLen = juce::jmax(glitchMinWindowSamples,
+                                    static_cast<int>(std::round(glitchCurrentCycleLengthSamples * kGlitchBufferRepeatFraction)));
+            break;
+
         default:
-            jassertfalse; // unreachable — guarded by isTier1PlayableMode at the call site
+            jassertfalse; // unreachable — guarded by isImplementedMode at the call site
             break;
     }
 
@@ -1531,9 +1663,33 @@ void CORRUPTRAudioProcessor::setUpGlitchEventForThisCycle(int writePosThisSample
 
 float CORRUPTRAudioProcessor::readGlitchWindowSample(int channel)
 {
+    // ---- Phase 3.6: Tier-2 modes with bespoke read machinery (fractional-
+    // rate / shared-position / no-ring-buffer-read) dispatch to dedicated
+    // helpers below. See PluginProcessor.h's Phase 3.6 doc comment for the
+    // full per-mode design rationale.
+    if (glitchModeIndex == 9) // Granular Repeat
+        return readGlitchGranularSample(channel);
+
+    if (glitchModeIndex == 10 || glitchModeIndex == 11 || glitchModeIndex == 16) // Tape Stop / Tape Start / Pitch Jump
+        return readGlitchFractionalRateSample(channel);
+
+    if (glitchModeIndex == 6 || glitchModeIndex == 7) // Slice / Random Slice
+        return readGlitchSliceSample(channel);
+
+    if (glitchModeIndex == 17) // Random Repeat
+        return readGlitchRandomRepeatSample(channel);
+
+    if (glitchModeIndex == 14) // Noise Burst — juce::Random noise, per-channel independent draws, no ring-buffer read
+        return (glitchRandom.nextFloat() * 2.0f - 1.0f) * kGlitchNoiseBurstAmplitude;
+
     if (glitchModeIndex == 13) // Silence — hard-gated mute for the window duration; the
         return 0.0f;           // glitchActiveMixSmoothed crossfade still provides click-free fade in/out around this.
 
+    // ---- Tier-1 modes (1/2/3/5/12) + Tier-2's simple fixed/fixed-loop
+    // modes (4 Buffer Repeat, 8 Micro Loop, 15 Bitcrush Burst) all share
+    // this SAME per-channel captured-window loop-read machinery — they
+    // only differ in window LENGTH (set in setUpGlitchEventForThisCycle)
+    // or, for Bitcrush Burst, one extra quantize step applied below.
     const int windowLen = juce::jmax(1, glitchActiveWindowLengthSamples);
     auto& readPos = glitchWindowReadPos[(size_t) channel];
 
@@ -1570,11 +1726,250 @@ float CORRUPTRAudioProcessor::readGlitchWindowSample(int channel)
             sample *= static_cast<float>(windowLen - 1 - readPos) / static_cast<float>(fadeSamples);
     }
 
+    if (glitchModeIndex == 15) // Bitcrush Burst (Phase 3.6) — extreme fixed quantization applied
+                               // AFTER the standard windowed read, self-contained to the Glitch Engine.
+        sample = std::round(sample * kGlitchBitcrushBurstLevels) / kGlitchBitcrushBurstLevels;
+
     readPos += 1;
     if (readPos >= windowLen)
-        readPos = 0; // loop back to window start (Stutter/Repeat/Reverse/Freeze); Retrigger's readPos==0 branch above then re-captures a fresh window on the NEXT call
+        readPos = 0; // loop back to window start (Stutter/Repeat/Reverse/Freeze/Buffer Repeat/Micro Loop/Bitcrush Burst); Retrigger's readPos==0 branch above then re-captures a fresh window on the NEXT call
 
     return sample;
+}
+
+//==============================================================================
+// Stage 2 Phase 3.6: Glitch / Buffer Engine — Tier 2 helper method
+// implementations. See PluginProcessor.h's Phase 3.6 doc comment for the
+// full design rationale (per-mode window semantics, the DelayLine-vs-
+// hand-rolled-Lagrange deviation, the shared-vs-per-channel state
+// distinction, the RNG draw-sequence invariant, and the Granular windowing
+// implementation note).
+//==============================================================================
+float CORRUPTRAudioProcessor::readGlitchRingBufferFractional(int channel, float fractionalIndex) const
+{
+    // 4-point, 3rd-order Lagrange interpolation — the same closed-form
+    // cubic formula juce::dsp::DelayLineInterpolationTypes::Lagrange3rd
+    // implements internally — applied directly to the already-captured,
+    // static glitchRingBuffer content at an arbitrary fractional index.
+    const int i0 = static_cast<int>(std::floor(fractionalIndex));
+    const float frac = fractionalIndex - static_cast<float>(i0);
+
+    const int len = juce::jmax(1, glitchRingBufferLength);
+    auto wrap = [len](int idx)
+    {
+        idx %= len;
+        if (idx < 0)
+            idx += len;
+        return idx;
+    };
+
+    const float ym1 = glitchRingBuffer.getSample(channel, wrap(i0 - 1));
+    const float y0  = glitchRingBuffer.getSample(channel, wrap(i0));
+    const float y1  = glitchRingBuffer.getSample(channel, wrap(i0 + 1));
+    const float y2  = glitchRingBuffer.getSample(channel, wrap(i0 + 2));
+
+    const float c0 = y0;
+    const float c1 = y1 - (1.0f / 3.0f) * ym1 - 0.5f * y0 - (1.0f / 6.0f) * y2;
+    const float c2 = 0.5f * (ym1 + y1) - y0;
+    const float c3 = (1.0f / 6.0f) * (y2 - ym1) + 0.5f * (y0 - y1);
+
+    return ((c3 * frac + c2) * frac + c1) * frac + c0;
+}
+
+float CORRUPTRAudioProcessor::readGlitchFractionalRateSample(int channel)
+{
+    // Elapsed samples within the current cycle — derived from the already-
+    // shared glitchCurrentCycleLengthSamples/glitchCycleSampleCounter (no
+    // new per-sample accumulator needed; independently, identically
+    // computable by each channel's call — see PluginProcessor.h's Phase
+    // 3.6 doc note).
+    const int elapsed = juce::jlimit(0, juce::jmax(0, glitchCurrentCycleLengthSamples - 1),
+                                      glitchCurrentCycleLengthSamples - 1 - glitchCycleSampleCounter);
+    const float T = static_cast<float>(juce::jmax(1, glitchActiveWindowLengthSamples));
+    const float t = static_cast<float>(elapsed);
+    const float baseIndex = static_cast<float>(glitchWindowReadStartIndex);
+
+    if (glitchModeIndex == 10) // Tape Stop: rate(t) = 1 - t/T -> position(t) = t - t^2/(2T)
+    {
+        const float position = juce::jlimit(0.0f, T - 1.0f, t - (t * t) / (2.0f * T));
+        return readGlitchRingBufferFractional(channel, baseIndex + position);
+    }
+
+    if (glitchModeIndex == 11) // Tape Start: rate(t) = t/T -> position(t) = t^2/(2T)
+    {
+        const float position = juce::jlimit(0.0f, T - 1.0f, (t * t) / (2.0f * T));
+        return readGlitchRingBufferFractional(channel, baseIndex + position);
+    }
+
+    // Pitch Jump (16): constant-rate read at glitchPitchJumpRatio, wrapping
+    // within the window with the same linear loop-edge fade convention
+    // Tier-1 uses at every wrap.
+    const float rawPosition = t * glitchPitchJumpRatio;
+    float wrapped = std::fmod(rawPosition, T);
+    if (wrapped < 0.0f)
+        wrapped += T;
+
+    float gain = 1.0f;
+    const float fadeF = static_cast<float>(juce::jmax(1, glitchLoopEdgeFadeSamples));
+    if (wrapped < fadeF)
+        gain = wrapped / fadeF;
+    else if (wrapped > T - fadeF)
+        gain = (T - wrapped) / fadeF;
+
+    const float sample = readGlitchRingBufferFractional(channel, baseIndex + wrapped);
+    return sample * juce::jlimit(0.0f, 1.0f, gain);
+}
+
+float CORRUPTRAudioProcessor::readGlitchSliceSample(int channel)
+{
+    // Slice (6) / Random Slice (7): glitchTier2SharedReadPos (position
+    // within the CURRENT slice) and glitchSliceCurrentIndex (which slot in
+    // glitchSliceOrder is currently playing) are both already resolved for
+    // this sample by advanceGlitchTier2SharedState(), called once per
+    // sample from processBlock() BEFORE the per-channel loop — this
+    // function only reads, it never advances shared state itself.
+    const int windowLen = juce::jmax(1, glitchActiveWindowLengthSamples);
+    const int sliceLength = juce::jmax(1, windowLen / kGlitchSliceCount);
+    const int sliceSlot = glitchSliceOrder[(size_t) juce::jlimit(0, kGlitchSliceCount - 1, glitchSliceCurrentIndex)];
+    const int sliceStartOffset = sliceSlot * sliceLength;
+    const int readPos = juce::jlimit(0, sliceLength - 1, glitchTier2SharedReadPos);
+
+    const int idx = (glitchWindowReadStartIndex + sliceStartOffset + readPos) % glitchRingBufferLength;
+    float sample = glitchRingBuffer.getSample(channel, idx);
+
+    // Per-slice click guard (same fade convention as Tier-1's per-loop-pass
+    // fade, applied within each slice's own boundaries rather than the
+    // whole window).
+    const int fadeSamples = juce::jmin(sliceLength / 4, glitchLoopEdgeFadeSamples);
+    if (fadeSamples > 0)
+    {
+        if (readPos < fadeSamples)
+            sample *= static_cast<float>(readPos) / static_cast<float>(fadeSamples);
+        else if (readPos >= sliceLength - fadeSamples)
+            sample *= static_cast<float>(sliceLength - 1 - readPos) / static_cast<float>(fadeSamples);
+    }
+
+    return sample;
+}
+
+float CORRUPTRAudioProcessor::readGlitchRandomRepeatSample(int channel)
+{
+    // Random Repeat (17): glitchTier2SharedReadPos and (on wrap)
+    // glitchWindowReadStartIndex's random re-selection are both already
+    // resolved for this sample by advanceGlitchTier2SharedState() — this
+    // function only reads.
+    const int windowLen = juce::jmax(1, glitchActiveWindowLengthSamples);
+    const int readPos = juce::jlimit(0, windowLen - 1, glitchTier2SharedReadPos);
+    const int idx = (glitchWindowReadStartIndex + readPos) % glitchRingBufferLength;
+    float sample = glitchRingBuffer.getSample(channel, idx);
+
+    const int fadeSamples = juce::jmin(windowLen / 4, glitchLoopEdgeFadeSamples);
+    if (fadeSamples > 0)
+    {
+        if (readPos < fadeSamples)
+            sample *= static_cast<float>(readPos) / static_cast<float>(fadeSamples);
+        else if (readPos >= windowLen - fadeSamples)
+            sample *= static_cast<float>(windowLen - 1 - readPos) / static_cast<float>(fadeSamples);
+    }
+
+    return sample;
+}
+
+float CORRUPTRAudioProcessor::readGlitchGranularSample(int channel)
+{
+    // Granular Repeat (9): sums every currently-active grain voice's
+    // windowed contribution. Voice scheduling/phase-advance is handled
+    // exclusively by advanceGlitchGranularVoicesForThisSample() (called
+    // once per sample from processBlock(), NOT here) — this function only
+    // reads the already-resolved voice state, once per channel.
+    float sum = 0.0f;
+    for (auto& v : glitchGrainVoices)
+    {
+        if (! v.active)
+            continue;
+
+        const int idx = (v.startRingIndex + v.phase) % glitchRingBufferLength;
+        const float raw = glitchRingBuffer.getSample(channel, idx);
+        const float win = glitchGrainWindowTable[(size_t) juce::jlimit(0, glitchGrainLengthSamples - 1, v.phase)];
+        sum += raw * win;
+    }
+
+    // Fixed headroom scalar: with kGlitchGranularVoiceCount fixed
+    // round-robin-spawned voices (not derived from Hann's exact constant-
+    // overlap-add ratio), a small defensive scalar keeps overlapping grains
+    // from summing to an unnecessarily hot level.
+    return sum * 0.85f;
+}
+
+void CORRUPTRAudioProcessor::advanceGlitchGranularVoicesForThisSample()
+{
+    if (glitchGrainSpawnCountdown <= 0)
+    {
+        auto& voice = glitchGrainVoices[(size_t) glitchGrainNextVoiceSlot];
+
+        // Random start position within the captured window — architecture.md:
+        // "short overlapping grains" — a fresh draw from the seeded
+        // glitchRandom instance per grain spawn while this event is active
+        // (an "extra draw at the fired-event path", per the established RNG-
+        // invariant convention documented in PluginProcessor.h).
+        const int maxOffset = juce::jmax(1, glitchActiveWindowLengthSamples - glitchGrainLengthSamples);
+        const int randomOffset = static_cast<int>(glitchRandom.nextFloat() * static_cast<float>(maxOffset));
+        voice.startRingIndex = (glitchWindowReadStartIndex + randomOffset + glitchRingBufferLength) % glitchRingBufferLength;
+        voice.phase = 0;
+        voice.active = true;
+
+        glitchGrainNextVoiceSlot = (glitchGrainNextVoiceSlot + 1) % kGlitchGranularVoiceCount;
+        glitchGrainSpawnCountdown = glitchGrainSpawnIntervalSamples;
+    }
+    --glitchGrainSpawnCountdown;
+
+    for (auto& v : glitchGrainVoices)
+    {
+        if (! v.active)
+            continue;
+
+        v.phase += 1;
+        if (v.phase >= glitchGrainLengthSamples)
+            v.active = false;
+    }
+}
+
+void CORRUPTRAudioProcessor::advanceGlitchTier2SharedState()
+{
+    if (glitchModeIndex == 17) // Random Repeat
+    {
+        const int windowLen = juce::jmax(1, glitchActiveWindowLengthSamples);
+        glitchTier2SharedReadPos += 1;
+        if (glitchTier2SharedReadPos >= windowLen)
+        {
+            glitchTier2SharedReadPos = 0;
+
+            // Re-select a NEW random historical window position, bounded to
+            // stay within already-written ring-buffer history relative to
+            // the CURRENT write position — a single shared draw from
+            // glitchRandom per wrap (architecture.md: "Buffer Repeat/Random
+            // Repeat... optional random window re-selection").
+            const int maxBackOffset = juce::jmax(windowLen, glitchRingBufferLength - windowLen - 4);
+            const int span = juce::jmax(1, maxBackOffset - windowLen);
+            const int randomBackOffset = windowLen + static_cast<int>(glitchRandom.nextFloat() * static_cast<float>(span));
+            glitchWindowReadStartIndex = (glitchRingWritePos - randomBackOffset + glitchRingBufferLength) % glitchRingBufferLength;
+        }
+        return;
+    }
+
+    // Slice (6) / Random Slice (7): advance position within the current
+    // slice; on wrap, move to the NEXT slot in glitchSliceOrder
+    // (predetermined once at event setup — Random Slice's shuffle already
+    // happened then, so no further RNG draw is needed here, only a
+    // deterministic index advance).
+    const int windowLen = juce::jmax(1, glitchActiveWindowLengthSamples);
+    const int sliceLength = juce::jmax(1, windowLen / kGlitchSliceCount);
+    glitchTier2SharedReadPos += 1;
+    if (glitchTier2SharedReadPos >= sliceLength)
+    {
+        glitchTier2SharedReadPos = 0;
+        glitchSliceCurrentIndex = (glitchSliceCurrentIndex + 1) % kGlitchSliceCount;
+    }
 }
 
 void CORRUPTRAudioProcessor::updateFilterParameters(float cutoffHz, float resonancePct, double sampleRate)
