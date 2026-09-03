@@ -5,6 +5,7 @@
 #include <atomic>
 #include <vector>
 #include "dsp/ModulationAccumulator.h"
+#include "dsp/RhythmicSequencer.h"
 
 class CORRUPTRAudioProcessor : public juce::AudioProcessor
 {
@@ -98,31 +99,170 @@ private:
     void resetFeedbackLoopChannel(int channel);
 
     //=========================================================================
-    // Stage 2 Phase 3.2: Unified Modulation Accumulator (Isolated)
+    // Stage 2 Phase 3.2: Unified Modulation Accumulator (Isolated) -- UPDATED
+    // IN PHASE 3.7, see that section's doc comment below for the full story.
     //
     // See dsp/ModulationAccumulator.h for the generic, reusable combine-math
     // class (Performance Trigger hard-override, else additive Sequencer +
     // Mod Matrix + Macro combine, always clamped to the destination's valid
     // range - architecture.md's recommended default rule). This section
     // wires that class up to ONE destination only (`drive`, 0-40dB) per
-    // plan.md's recommended build order, using SYNTHETIC stand-ins for the
-    // Sequencer and Mod Matrix contributions (neither subsystem exists yet -
-    // built in Phase 3.7/3.8) and the REAL `macroDamage` APVTS parameter for
-    // the Macro contribution (macros are genuine Stage 1 parameters already).
+    // plan.md's recommended build order, originally (Phase 3.2) using
+    // SYNTHETIC stand-ins for the Sequencer and Mod Matrix contributions and
+    // the REAL `macroDamage` APVTS parameter for the Macro contribution.
     //
-    // Deliberately NOT wired into the live audio signal path yet - this
-    // phase proves the accumulator's math in isolation, matching Phase
-    // 3.1's "isolated" pattern. The Distortion Engine (architecture.md
-    // component #2, which would actually READ a modulated `drive` value)
-    // doesn't exist yet either (built in Phase 3.3), so there is nothing
-    // for this observation point to feed even if it wanted to. Computed
-    // once per block (diagnostic/future-use only, not consumed anywhere
-    // yet) and stored in `phase32DriveModulationObservation` below.
+    // AS OF PHASE 3.7: the Sequencer stand-in has been RETIRED and replaced
+    // with the REAL Rhythmic Sequencer's `drive`-lane contribution (see the
+    // Phase 3.7 section below, `sequencerDriveContributionDb`) -- the
+    // `phase32SyntheticSequencerPhase` member this comment used to describe
+    // no longer exists. The Mod Matrix stand-in (`phase32SyntheticModMatrixPhase`
+    // below) is UNCHANGED -- Mod Matrix itself doesn't exist until Phase 3.8.
+    // `phase32DriveModulationObservation` is likewise no longer "diagnostic
+    // only" -- as of Phase 3.7 it is CONSUMED by the Distortion Engine's real
+    // drive-gain smoothing target (see processBlock()'s Phase 3.3 per-block
+    // parameter-read section) -- this is the first destination where the
+    // unified modulation accumulator's output reaches live DSP.
     //=========================================================================
     std::atomic<bool> modulationAccumulatorSelfTestPassed { false }; // set once in the constructor (see .cpp)
-    std::atomic<float> phase32DriveModulationObservation { 0.0f };   // diagnostic only - last computed modulated `drive` value, not yet applied to any DSP
-    double phase32SyntheticSequencerPhase = 0.0;  // free-running phase for the synthetic Sequencer-lane stand-in (advances once per block)
-    double phase32SyntheticModMatrixPhase = 0.0;  // free-running phase for the synthetic Mod-Matrix-slot stand-in (advances once per block, different rate than the above so the two are distinguishable)
+    std::atomic<float> phase32DriveModulationObservation { 0.0f };   // AS OF PHASE 3.7: consumed by driveGainSmoothed's target (no longer diagnostic-only) -- last computed modulated `drive` value
+    double phase32SyntheticModMatrixPhase = 0.0;  // free-running phase for the synthetic Mod-Matrix-slot stand-in (advances once per block) -- unchanged, still a stand-in until Phase 3.8
+
+    //=========================================================================
+    // Stage 2 Phase 3.7: Rhythmic Sequencer -- architecture.md component #5,
+    // plan.md's "Phase 3.7: Rhythmic Sequencer".
+    //
+    // `rhythmicSequencer` (see dsp/RhythmicSequencer.h for the full class
+    // doc comment) owns the 10-lane x up-to-32-step pattern data as custom,
+    // non-APVTS state (locked Stage 0 decision) plus the lock-free
+    // double-buffered audio-thread snapshot mechanism architecture.md's
+    // Thread Boundaries section specifies. `getRhythmicSequencer()` below
+    // exposes it publicly (message-thread only) so a future GUI can call
+    // its pattern-editing/pattern-operation methods directly, the same
+    // convention `getAPVTS()` already establishes for APVTS access.
+    //
+    // Host sync: uses the SAME JUCE 8 `AudioPlayHead::getPosition()`
+    // `std::optional<PositionInfo>` API Phase 3.5 already established for
+    // `glitchHostBpm` (getIsPlaying() + getPpqPosition() instead of
+    // getBpm()). This method runs BEFORE Phase 3.5's own per-block BPM
+    // read (see the call site in processBlock()), so it issues its OWN
+    // `getPosition()` call rather than sharing Phase 3.5's -- both queries
+    // are cheap, allocation-free, and real-time-safe (a plain stack-based
+    // std::optional read), so calling getPosition() twice per block has no
+    // meaningful cost; this is a second, independent use of the SAME
+    // established API/pattern, not a second DIFFERENT playhead-query
+    // mechanism.
+    //
+    // NO-TRANSPORT FALLBACK (architecture.md, explicit MVP requirement):
+    // if the host provides no AudioPlayHead, no PositionInfo, isPlaying()
+    // is false, or the host doesn't report ppqPosition at all, the
+    // sequencer FREEZES AT STEP 0 -- an explicit, deliberate branch in
+    // updateSequencerStepAndContributions() (see PluginProcessor.cpp),
+    // not an accidental fallthrough. (architecture.md phrases this as
+    // "freeze at step 0 / hold last value" -- freeze-at-step-0 was chosen
+    // as the simpler, unambiguous, easily user-verifiable of the two
+    // options: Standalone with no transport running always reads step 0's
+    // values, never an indeterminate "whatever step it happened to be on
+    // last.")
+    //
+    // PER-BLOCK (not per-sample) step-boundary resolution -- FLAGGED DESIGN
+    // RESOLUTION: architecture.md does not specify per-sample vs. per-block
+    // granularity for step advancement. This implementation resolves it
+    // once per BLOCK (unlike Phase 3.5's Glitch Engine, whose cycle counter
+    // advances per-sample from a per-block BPM read) -- full reasoning is
+    // documented at updateSequencerStepAndContributions()'s definition in
+    // PluginProcessor.cpp.
+    //
+    // Destination wiring -- "Sequencer output enters parameter modulation
+    // ONLY through ModulationAccumulator::accumulate()" (task requirement):
+    // every one of the 10 lanes' step values is converted to a
+    // destination-units contribution scalar here (the
+    // `sequencerXContributionY` members below), then combined via
+    // ModulationAccumulator::accumulate() AT each destination's own
+    // existing per-block parameter-read call site (drive: this section's
+    // Phase 3.2 block above; mix/filterCutoff/bitDepth/sampleRateReduction:
+    // Phase 3.3's per-block section; glitchProbability: Phase 3.5's
+    // per-block section; volume/gate: this section's own new combined-gain
+    // application point in the per-sample loop) -- see each call site in
+    // PluginProcessor.cpp for its own per-lane comment. Pan and Pitch have
+    // NO live destination yet (Stereo and Pitch/Frequency FX are explicitly
+    // post-MVP per architecture.md's Scope Reconciliation Note) -- their
+    // contributions are still computed and clamped via the identical
+    // accumulate() path, stored in diagnostic atomics
+    // (`sequencerPanObservation`/`sequencerPitchObservation`) for a future
+    // Stage, matching Phase 3.2's own "computed but not yet applied to any
+    // DSP" precedent exactly.
+    //
+    // Per-lane modulation-depth scaling (FLAGGED DESIGN RESOLUTION --
+    // architecture.md does not specify depth per lane): lanes with a
+    // pre-existing base APVTS knob (Drive/Mix/Filter Cutoff/Bit Depth/
+    // Sample Rate Reduction/Glitch Probability) scale by
+    // `kSequencerModDepthFraction` (0.5) of the destination's full range,
+    // so the sequencer can swing the accumulated result up to +/-50% of the
+    // range around the user's own base setting without ever fully
+    // overriding it. Volume/Gate (new, sequencer-owned destinations with no
+    // competing base setting) use their full range instead. See
+    // PluginProcessor.cpp's updateSequencerStepAndContributions() for the
+    // exact per-lane formulas.
+    //
+    // Volume + Gate consumption: combined into ONE linear gain scalar
+    // (`sequencerVolumeGateGainTarget`), smoothed via
+    // `sequencerVolumeGateGainSmoothed` (8ms ramp -- fast enough to feel
+    // rhythmically tight/gate-like, still click-free), applied once per
+    // sample in the merged per-sample loop immediately after Master Mix's
+    // dry/wet combine and before that loop's existing final isfinite()
+    // guard (so a corrupt combined gain is still caught by that guard).
+    //
+    // Pattern-operation RNG: `rhythmicSequencer`'s internal `editRandom`
+    // (message-thread-only, see dsp/RhythmicSequencer.h) is used for
+    // Random/Mutate/Syncopate/Humanize -- NEVER the audio-thread
+    // `glitchRandom` instance (Phase 3.5's determinism invariant for
+    // `glitchRandom`'s own draw sequence is preserved unchanged).
+    //
+    // Real-time safety: `rhythmicSequencer.getActiveSnapshot()` is a single
+    // relaxed atomic load (no allocation, no locks). All ten per-block
+    // sequencer contribution scalars below are plain float arithmetic,
+    // bounded, allocation-free. `sequencerVolumeGateGainSmoothed` is reset/
+    // sized only in prepareToPlay(), same convention as every other
+    // SmoothedValue in this file.
+    //=========================================================================
+    RhythmicSequencer rhythmicSequencer; // pattern data + double-buffered audio-thread snapshot (dsp/RhythmicSequencer.h)
+
+public:
+    // Message-thread only (pattern editing/pattern operations from a future
+    // GUI) -- same accessor convention as getAPVTS() above.
+    RhythmicSequencer& getRhythmicSequencer() noexcept { return rhythmicSequencer; }
+
+private:
+    bool sequencerEnabledFlag = true;
+    int sequencerRateIndex = 2;   // sequencerRate choice index (default "1/16")
+    int sequencerNumSteps = 16;   // sequencerSteps choice resolved to an actual count (16 or 32)
+    int sequencerLastStepIndex = -1; // diagnostic/inspection only -- last resolved step index (or 0 during the no-transport freeze)
+
+    // Per-lane raw contribution scalars, already converted to the
+    // destination's native units (e.g. dB for Drive, Hz for Filter Cutoff),
+    // computed once per block by updateSequencerStepAndContributions() and
+    // consumed at each destination's own existing per-block parameter-read
+    // call site (see the doc comment above for the full list).
+    float sequencerDriveContributionDb              = 0.0f;
+    float sequencerMixContributionPct               = 0.0f;
+    float sequencerFilterCutoffContributionHz       = 0.0f;
+    float sequencerBitDepthContributionBits         = 0.0f;
+    float sequencerSampleRateContributionFactor     = 0.0f;
+    float sequencerGlitchProbabilityContributionPct = 0.0f;
+
+    float sequencerVolumeGateGainTarget = 1.0f; // combined Volume+Gate linear gain (see doc comment above)
+    juce::SmoothedValue<float> sequencerVolumeGateGainSmoothed;
+
+    // Pan/Pitch: NOT YET CONSUMED (see doc comment above) -- diagnostic
+    // atomics only, same convention as Phase 3.2's
+    // phase32DriveModulationObservation was before Phase 3.7 wired it live.
+    std::atomic<float> sequencerPanObservation { 0.0f };
+    std::atomic<float> sequencerPitchObservation { 0.0f };
+
+    static constexpr float kSequencerModDepthFraction = 0.5f; // see doc comment above
+    static constexpr float kSequencerVolumeRangeDb = 24.0f;   // Volume lane's full +/-dB swing (new destination, no competing base -- see doc comment above)
+
+    void updateSequencerStepAndContributions(); // called once per block from processBlock(), before the Phase 3.2/3.7 drive-accumulate block
 
     //=========================================================================
     // Stage 2 Phase 3.3: Core Linear Chain

@@ -596,6 +596,19 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     bitcrushHoldCounter.fill(0);
 
     //=========================================================================
+    // Stage 2 Phase 3.7: Rhythmic Sequencer — Volume+Gate combined-gain
+    // smoothing. 8ms ramp: fast enough to feel rhythmically tight/gate-like
+    // (this lane pair is meant to read as a step-sequenced level/gate, not
+    // a slow automation curve) while still avoiding a hard click at step
+    // boundaries — see PluginProcessor.h's Phase 3.7 doc comment.
+    // `rhythmicSequencer` itself needs no prepareToPlay() work (its two
+    // snapshot buffers and working pattern are preallocated fixed-size
+    // members, sized at construction, never resized here).
+    //=========================================================================
+    sequencerVolumeGateGainSmoothed.reset(sampleRate, 0.008);
+    sequencerVolumeGateGainSmoothed.setCurrentAndTargetValue(1.0f);
+
+    //=========================================================================
     // Stage 2 Phase 3.5: Glitch / Buffer Engine — ring buffer + sample-rate-
     // derived constants (see PluginProcessor.h's Phase 3.5 doc comment for
     // full design rationale).
@@ -771,19 +784,30 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     }
 
     //=========================================================================
-    // Stage 2 Phase 3.2: Unified Modulation Accumulator (Isolated)
+    // Stage 2 Phase 3.7: Rhythmic Sequencer — resolves this block's step
+    // index (host-synced, or the explicit no-transport freeze-at-step-0
+    // fallback) and computes all 10 lanes' raw contribution scalars, BEFORE
+    // the Phase 3.2/3.7 drive-accumulate block below (which consumes
+    // `sequencerDriveContributionDb`) and before Phase 3.3/3.5's per-block
+    // sections further down (which consume the other lanes' contributions).
+    // See PluginProcessor.h's Phase 3.7 doc comment and this method's own
+    // definition (below processBlock()) for the full design rationale.
+    //=========================================================================
+    updateSequencerStepAndContributions();
+
+    //=========================================================================
+    // Stage 2 Phase 3.2 / 3.7: Unified Modulation Accumulator — `drive`
+    // destination.
     //
-    // Read-only observation point: computes what a modulated `drive` value
-    // WOULD be this block, using the generic ModulationAccumulator (see
-    // dsp/ModulationAccumulator.h) fed with:
+    // Computes the modulated `drive` value using the generic
+    // ModulationAccumulator (see dsp/ModulationAccumulator.h) fed with:
     //   - base:        real `drive` APVTS parameter
-    //   - Sequencer:   SYNTHETIC stand-in (Sequencer doesn't exist until
-    //                  Phase 3.7) - a slow, bounded, deterministic sine so
-    //                  this is a genuine per-block computation, not a
-    //                  compile-time constant, without needing a real clock
+    //   - Sequencer:   AS OF PHASE 3.7, the REAL Rhythmic Sequencer's
+    //                  `drive`-lane contribution (`sequencerDriveContributionDb`,
+    //                  computed just above by updateSequencerStepAndContributions())
+    //                  — replaces Phase 3.2's synthetic sine stand-in
     //   - Mod Matrix:  SYNTHETIC stand-in (Mod Matrix doesn't exist until
-    //                  Phase 3.8) - same idea, different rate, so the two
-    //                  synthetic contributors are independently verifiable
+    //                  Phase 3.8) - unchanged from Phase 3.2
     //   - Macro:       REAL `macroDamage` APVTS parameter (macros ARE real
     //                  Stage 1 parameters already) mapped through a
     //                  PLACEHOLDER 0-100% -> 0 to +8dB curve; the real
@@ -797,13 +821,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     //                  override-wins-then-releases code path with a real,
     //                  automatable boolean instead of a hardcoded constant
     //
-    // Result is stored in `phase32DriveModulationObservation` for
-    // diagnostic/future-use only - it is NOT applied to any DSP processing
-    // below (the real Distortion Engine reads the raw `drive` APVTS
-    // parameter directly, not this observation value - generalizing the
-    // modulation accumulator into the live chain is Phase 3.7-3.9's job,
-    // not this phase's). This deliberately does not change the Phase 3.4
-    // feedback-routing integration or core linear chain below in any way.
+    // AS OF PHASE 3.7: the result is no longer diagnostic-only — it is
+    // stored in `phase32DriveModulationObservation` and CONSUMED by
+    // `driveGainSmoothed`'s target below (Phase 3.3's per-block parameter-
+    // read section), the first destination where the unified modulation
+    // accumulator's output reaches live DSP. This deliberately does not
+    // change the Phase 3.4 feedback-routing integration's own logic.
     //=========================================================================
     {
         constexpr float driveRangeMin = 0.0f;
@@ -817,19 +840,17 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float macroDamagePct = macroDamageParam->load();
         const bool performanceDestroyActive = performanceDestroyParam->load() > 0.5f;
 
-        // Advance the two synthetic phases once per block (bounded,
-        // deterministic, no allocation - real-time safe). Rates are
-        // arbitrary placeholders chosen only to be slow enough to be
-        // musically-plausible modulation and mutually distinguishable.
+        // Advance the Mod Matrix synthetic phase once per block (bounded,
+        // deterministic, no allocation - real-time safe). Rate is an
+        // arbitrary placeholder chosen only to be slow enough to be
+        // musically-plausible modulation. (Sequencer's own synthetic phase
+        // was retired in Phase 3.7 — see PluginProcessor.h.)
         const double blockDurationSeconds = getSampleRate() > 0.0
                                                  ? static_cast<double>(buffer.getNumSamples()) / getSampleRate()
                                                  : 0.0;
-        phase32SyntheticSequencerPhase += blockDurationSeconds * (2.0 * juce::MathConstants<double>::pi) * 0.5;  // 0.5 Hz synthetic stand-in
         phase32SyntheticModMatrixPhase += blockDurationSeconds * (2.0 * juce::MathConstants<double>::pi) * 0.13; // 0.13 Hz synthetic stand-in
-        phase32SyntheticSequencerPhase = std::fmod(phase32SyntheticSequencerPhase, 2.0 * juce::MathConstants<double>::pi);
         phase32SyntheticModMatrixPhase = std::fmod(phase32SyntheticModMatrixPhase, 2.0 * juce::MathConstants<double>::pi);
 
-        const float syntheticSequencerContribution = 3.0f * static_cast<float>(std::sin(phase32SyntheticSequencerPhase)); // +/-3dB
         const float syntheticModMatrixContribution = 2.0f * static_cast<float>(std::sin(phase32SyntheticModMatrixPhase)); // +/-2dB
         const float macroContribution = juce::jlimit(0.0f, 100.0f, macroDamagePct) * 0.08f; // 0-100% -> 0 to +8dB placeholder curve
 
@@ -837,7 +858,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
         const float modulatedDrive = ModulationAccumulator::accumulate(
             driveBase,
-            syntheticSequencerContribution,
+            sequencerDriveContributionDb, // REAL Sequencer `drive`-lane contribution (Phase 3.7)
             syntheticModMatrixContribution,
             macroContribution,
             performanceDestroyActive,
@@ -925,7 +946,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     auto* inputGainParam          = parameters.getRawParameterValue("inputGain");
     auto* graphBypassSatParam     = parameters.getRawParameterValue("graphBypassSaturation");
     auto* distortionAlgoParam     = parameters.getRawParameterValue("distortionAlgorithm");
-    auto* driveParam              = parameters.getRawParameterValue("drive");
+    // (`drive` is read in the Phase 3.2/3.7 merged accumulator block above.)
     auto* toneParam                = parameters.getRawParameterValue("tone");
     auto* biasParam                = parameters.getRawParameterValue("bias");
     auto* foldParam                = parameters.getRawParameterValue("fold");
@@ -954,16 +975,32 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     distortionBiasOffset      = juce::jlimit(-1.0f, 1.0f, biasParam->load() / 100.0f) * 0.3f; // moderate pre-shaper DC offset range
     distortionFoldPct         = foldParam->load();
 
-    driveGainSmoothed.setTargetValue(juce::Decibels::decibelsToGain(driveParam->load()));
+    // Stage 2 Phase 3.7: consumes the modulated `drive` value computed
+    // above (Phase 3.2/3.7 merged accumulator block: base APVTS `drive` +
+    // REAL Sequencer Drive-lane contribution + Mod Matrix stub (Phase 3.8)
+    // + real macroDamage + real performanceDestroy override), replacing
+    // the raw `driveParam->load()` read Phase 3.2 used before this
+    // destination was wired live.
+    driveGainSmoothed.setTargetValue(juce::Decibels::decibelsToGain(phase32DriveModulationObservation.load(std::memory_order_relaxed)));
     distortionMixSmoothed.setTargetValue(juce::jlimit(0.0f, 100.0f, distortionMixParam->load()) / 100.0f);
 
     bitcrushBypassed = graphBypassBCParam->load() > 0.5f;
     {
-        const float bitDepth = juce::jlimit(1.0f, 16.0f, bitDepthParam->load());
+        // Stage 2 Phase 3.7: bitDepth's Sequencer contribution combines
+        // through ModulationAccumulator, same "base + sequencer, Mod
+        // Matrix/Macro/Performance stubbed at 0/false until Phase 3.8/3.9"
+        // pattern as `drive` above.
+        const float modulatedBitDepth = ModulationAccumulator::accumulate(
+            bitDepthParam->load(), sequencerBitDepthContributionBits, 0.0f, 0.0f, false, 0.0f, 1.0f, 16.0f);
+        const float bitDepth = juce::jlimit(1.0f, 16.0f, modulatedBitDepth);
         bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
     }
     {
-        const float srr = juce::jlimit(1.0f, 48.0f, srrParam->load());
+        // Stage 2 Phase 3.7: sampleRateReduction's Sequencer contribution,
+        // same pattern.
+        const float modulatedSrr = ModulationAccumulator::accumulate(
+            srrParam->load(), sequencerSampleRateContributionFactor, 0.0f, 0.0f, false, 0.0f, 1.0f, 48.0f);
+        const float srr = juce::jlimit(1.0f, 48.0f, modulatedSrr);
         bitcrushHoldSamples = juce::jmax(1, static_cast<int>(std::round(srr)));
     }
 
@@ -980,7 +1017,10 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     glitchBypassed          = graphBypassGlitchParam->load() > 0.5f;
     glitchModeIndex         = static_cast<int>(glitchModeParam->load());
     glitchBufferLengthIndex = static_cast<int>(glitchBufferLenParam->load());
-    glitchProbabilityPct    = juce::jlimit(0.0f, 100.0f, glitchProbabilityParam->load());
+    // Stage 2 Phase 3.7: glitchProbability's Sequencer contribution combines
+    // through ModulationAccumulator, same pattern as drive/bitDepth/srr above.
+    glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
+        glitchProbabilityParam->load(), sequencerGlitchProbabilityContributionPct, 0.0f, 0.0f, false, 0.0f, 0.0f, 100.0f));
     glitchChaosPct          = juce::jlimit(0.0f, 100.0f, chaosParam->load());
 
     // Mode-change detection (plan.md Phase 3.5 Test Criteria: "Mode
@@ -1041,14 +1081,17 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const double wholeNoteSeconds = (60.0 / juce::jmax(1.0f, glitchHostBpm)) * 4.0; // 4/4 time assumption, documented in PluginProcessor.h
         const int divIdx = juce::jlimit(0, 8, glitchBufferLengthIndex);
         const double divisionSeconds = wholeNoteSeconds * static_cast<double>(kGlitchDivisionMultiplier[(size_t) divIdx]);
-        const double sr = getSampleRate() > 0.0 ? getSampleRate() : 44100.0;
         return static_cast<float>(juce::jmax(1.0, divisionSeconds * sr));
     }();
 
     filterBypassed  = graphBypassFiltParam->load() > 0.5f;
     filterTypeIndex = static_cast<int>(filterTypeParam->load());
     {
-        const float cutoffHz     = juce::jlimit(20.0f, 20000.0f, filterCutoffParam->load());
+        // Stage 2 Phase 3.7: filterCutoff's Sequencer contribution combines
+        // through ModulationAccumulator, same pattern as the other lanes.
+        const float modulatedCutoff = ModulationAccumulator::accumulate(
+            filterCutoffParam->load(), sequencerFilterCutoffContributionHz, 0.0f, 0.0f, false, 0.0f, 20.0f, 20000.0f);
+        const float cutoffHz     = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
         const float resonancePct = juce::jlimit(0.0f, 100.0f, filterResonanceParam->load());
         updateFilterParameters(cutoffHz, resonancePct, getSampleRate());
     }
@@ -1071,7 +1114,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
     // Master Mix target gains (0-200% per architecture.md component #14)
     {
-        const float mixPct = juce::jlimit(0.0f, 200.0f, mixParam->load());
+        // Stage 2 Phase 3.7: mix's Sequencer contribution combines through
+        // ModulationAccumulator, same pattern as the other lanes.
+        const float modulatedMix = ModulationAccumulator::accumulate(
+            mixParam->load(), sequencerMixContributionPct, 0.0f, 0.0f, false, 0.0f, 0.0f, 200.0f);
+        const float mixPct = juce::jlimit(0.0f, 200.0f, modulatedMix);
         float dryGain, wetGain;
         if (mixPct <= 100.0f)
         {
@@ -1121,6 +1168,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float masterWetGain        = masterWetGainSmoothed.getNextValue();
         const float feedbackInternalGain = feedbackInternalGainSmoothed.getNextValue();
         const float feedbackCutoffHz     = feedbackDampingCutoffSmoothed.getNextValue();
+        const float sequencerVolumeGateGain = sequencerVolumeGateGainSmoothed.getNextValue(); // Stage 2 Phase 3.7 -- see PluginProcessor.h doc comment
 
         //=====================================================================
         // Stage 2 Phase 3.5: Glitch / Buffer Engine — per-sample cycle/
@@ -1290,6 +1338,15 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             // step 1, before Input Gain.
             float mixed = dry * masterDryGain + filterStageOutput * masterWetGain;
 
+            // Stage 2 Phase 3.7: Sequencer Volume+Gate lanes -- see
+            // updateSequencerStepAndContributions() for the combined-gain
+            // computation and PluginProcessor.h's Phase 3.7 doc comment for
+            // the "new destination, full range" scaling rationale. Applied
+            // here (post-Master-Mix, pre-Output-Gain, pre-final-finite-
+            // check) so a corrupt combined gain is still caught by the
+            // existing isfinite() guard immediately below.
+            mixed *= sequencerVolumeGateGain;
+
             // Final output-stage guard: catches a non-finite value arriving
             // via the raw host input itself (e.g. a misbehaving upstream
             // plugin) or generated anywhere in the now-real, nonlinear
@@ -1342,6 +1399,174 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // channels rather than leaving them unprocessed.
     for (int channel = numChannels; channel < buffer.getNumChannels(); ++channel)
         buffer.copyFrom(channel, 0, buffer, 0, 0, numSamples);
+}
+
+//==============================================================================
+// Stage 2 Phase 3.7: Rhythmic Sequencer — helper method implementation.
+// See PluginProcessor.h's Phase 3.7 doc comment for the full design
+// rationale (double-buffered snapshot mechanism, host-sync + no-transport
+// fallback, per-block step-boundary resolution, destination wiring, and
+// per-lane modulation-depth scaling).
+//==============================================================================
+void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
+{
+    auto* enabledParam = parameters.getRawParameterValue("sequencerEnabled");
+    auto* rateParam     = parameters.getRawParameterValue("sequencerRate");
+    auto* stepsParam    = parameters.getRawParameterValue("sequencerSteps");
+
+    sequencerEnabledFlag = enabledParam->load() > 0.5f;
+    sequencerRateIndex   = static_cast<int>(rateParam->load());
+    sequencerNumSteps    = (static_cast<int>(stepsParam->load()) == 1) ? 32 : 16; // sequencerSteps choice index 0="16", 1="32"
+
+    // Host-synced step-rate divisions, expressed as a fraction of one
+    // quarter note (beats) — matches parameter-spec.md's sequencerRate
+    // choice order exactly: 1/4, 1/8, 1/16, 1/32, 1/4T, 1/8T, 1/16T.
+    static constexpr std::array<double, 7> kSequencerRateBeats {
+        1.0, 0.5, 0.25, 0.125, (1.0 / 1.5), (0.5 / 1.5), (0.25 / 1.5)
+    };
+    const double stepLengthBeats = kSequencerRateBeats[(size_t) juce::jlimit(0, 6, sequencerRateIndex)];
+
+    // Host sync (architecture.md component #5): uses the SAME JUCE 8
+    // std::optional<PositionInfo> AudioPlayHead::getPosition() API Phase
+    // 3.5 already established for glitchHostBpm's per-block read (getBpm())
+    // — here reading getIsPlaying()/getPpqPosition() instead. This method
+    // runs BEFORE Phase 3.5's own per-block BPM read further down in
+    // processBlock(), so it issues its own getPosition() call rather than
+    // sharing Phase 3.5's; both are cheap, allocation-free, real-time-safe
+    // stack-based std::optional reads, so querying getPosition() twice per
+    // block has no meaningful cost — this reuses the SAME established API
+    // pattern, not a second different playhead-query mechanism.
+    //
+    // NO-TRANSPORT FALLBACK (architecture.md, explicit MVP requirement,
+    // verified here as an EXPLICIT branch, not an accidental fallthrough):
+    // if the host provides no AudioPlayHead, no PositionInfo, isPlaying()
+    // is false, or the host doesn't report ppqPosition, `transportValid`
+    // stays false and the sequencer FREEZES AT STEP 0 below — the simpler,
+    // unambiguous option of architecture.md's "freeze at step 0 / hold
+    // last value" phrasing (see PluginProcessor.h's Phase 3.7 doc comment
+    // for the full reasoning).
+    int stepIndex = 0;
+    bool transportValid = false;
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto position = playHead->getPosition())
+        {
+            if (position->getIsPlaying())
+            {
+                if (const auto ppq = position->getPpqPosition())
+                {
+                    const double stepIndexRaw = std::floor(*ppq / stepLengthBeats);
+                    const int wrapped = static_cast<int>(std::fmod(stepIndexRaw, static_cast<double>(sequencerNumSteps)));
+                    stepIndex = wrapped < 0 ? wrapped + sequencerNumSteps : wrapped;
+                    transportValid = true;
+                }
+            }
+        }
+    }
+    if (! transportValid)
+        stepIndex = 0; // explicit freeze-at-step-0 fallback (see comment above) — not a default left over from an untaken branch
+
+    sequencerLastStepIndex = stepIndex;
+
+    //=========================================================================
+    // PER-BLOCK (not per-sample) step-boundary resolution — FLAGGED DESIGN
+    // RESOLUTION: architecture.md does not specify per-sample vs. per-block
+    // granularity for sequencer step advancement. This method is called
+    // exactly ONCE per processBlock() (see the call site above), unlike
+    // Phase 3.5's Glitch Engine cycle counter (which advances per-SAMPLE
+    // from a per-block BPM read). Reasoning:
+    //   1. Even the fastest rate division (1/32T) at realistic tempos is
+    //      still many samples long relative to a typical block size (64-
+    //      1024 samples) — a step boundary landing mid-block is rare, and
+    //      its audible impact is already bounded by the existing per-
+    //      destination SmoothedValue ramps each consumed lane feeds into
+    //      (driveGainSmoothed, masterDryGainSmoothed/masterWetGainSmoothed,
+    //      sequencerVolumeGateGainSmoothed) — the same click-avoidance
+    //      mechanism already relied on for ordinary host automation of
+    //      those same parameters.
+    //   2. This matches this file's OTHER established per-block-cache
+    //      convention for "discrete, changes-are-relatively-rare" control
+    //      state (glitchMode/filterTypeIndex change-detection, both
+    //      resolved once per block), rather than the per-sample-counter
+    //      convention reserved specifically for the Glitch Engine's own
+    //      continuously-recirculating, self-timed cycle state.
+    //   3. plan.md's Phase 3.7 test criterion is "steps advance correctly
+    //      synced to host tempo/PPQ at all 7 rate divisions" — it does not
+    //      require sample-accurate step-boundary placement, only correct
+    //      tempo/PPQ synchronization, which this satisfies (the step index
+    //      is computed directly from the host's live ppqPosition every
+    //      block, not from a free-running internal counter that could
+    //      drift out of sync).
+    //=========================================================================
+
+    const auto* snapshot = rhythmicSequencer.getActiveSnapshot(); // single relaxed atomic load, real-time-safe
+
+    auto laneValue = [&](int laneIndex) -> float
+    {
+        if (snapshot == nullptr)
+            return RhythmicSequencer::laneDefaultValue(laneIndex);
+        const int s = juce::jlimit(0, RhythmicSequencer::kMaxSteps - 1, stepIndex);
+        return snapshot->values[(size_t) laneIndex][(size_t) s];
+    };
+
+    // sequencerEnabled=false -> every lane reads as its own neutral/default
+    // value (0 for bipolar lanes, 1.0/"fully open" for Gate) — matches
+    // sequencerEnabled's documented ENABLE semantic (parameter-spec.md:
+    // "module off -> modulation output disabled entirely").
+    const float driveRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneDrive)             : 0.0f;
+    const float mixRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneMix)               : 0.0f;
+    const float filterCutoffRaw = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneFilterCutoff)      : 0.0f;
+    const float bitDepthRaw     = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneBitDepth)          : 0.0f;
+    const float sampleRateRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneSampleRate)        : 0.0f;
+    const float glitchProbRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneGlitchProbability) : 0.0f;
+    const float volumeRaw       = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneVolume)            : 0.0f;
+    const float panRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePan)               : 0.0f;
+    const float pitchRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePitch)             : 0.0f;
+    const float gateRaw         = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneGate)
+                                                        : RhythmicSequencer::laneDefaultValue(RhythmicSequencer::laneGate);
+
+    //=========================================================================
+    // Per-lane raw-value -> destination-units scaling (FLAGGED DESIGN
+    // RESOLUTION — architecture.md does not specify modulation depth per
+    // lane; see PluginProcessor.h's Phase 3.7 doc comment for the full
+    // rationale of the two conventions used below).
+    //=========================================================================
+    sequencerDriveContributionDb              = driveRaw        * (40.0f    - 0.0f)  * kSequencerModDepthFraction;
+    sequencerMixContributionPct               = mixRaw          * (200.0f   - 0.0f)  * kSequencerModDepthFraction;
+    sequencerFilterCutoffContributionHz       = filterCutoffRaw * (20000.0f - 20.0f) * kSequencerModDepthFraction;
+    sequencerBitDepthContributionBits         = bitDepthRaw     * (16.0f    - 1.0f)  * kSequencerModDepthFraction;
+    sequencerSampleRateContributionFactor     = sampleRateRaw   * (48.0f    - 1.0f)  * kSequencerModDepthFraction;
+    sequencerGlitchProbabilityContributionPct = glitchProbRaw   * (100.0f   - 0.0f)  * kSequencerModDepthFraction;
+
+    // Volume (new destination, base=0dB/unity, full +/-kSequencerVolumeRangeDb
+    // range) + Gate (new destination, base=1.0/fully-open, full 0..1 range)
+    // both combine via ModulationAccumulator too, per this phase's
+    // "sequencer output enters modulation ONLY through accumulate()"
+    // requirement, even though there's no separate Mod Matrix/Macro/
+    // Performance Trigger contributor for either yet (all stubbed at
+    // 0/false, same as every other lane above — Phase 3.8/3.9's job to add
+    // real contributions).
+    const float modulatedVolumeDb = ModulationAccumulator::accumulate(
+        0.0f, volumeRaw * kSequencerVolumeRangeDb, 0.0f, 0.0f, false, 0.0f, -kSequencerVolumeRangeDb, kSequencerVolumeRangeDb);
+    const float modulatedGate = ModulationAccumulator::accumulate(
+        1.0f, gateRaw - 1.0f, 0.0f, 0.0f, false, 0.0f, 0.0f, 1.0f);
+
+    sequencerVolumeGateGainTarget = juce::Decibels::decibelsToGain(modulatedVolumeDb) * modulatedGate;
+    sequencerVolumeGateGainSmoothed.setTargetValue(sequencerVolumeGateGainTarget);
+
+    // Pan / Pitch: NOT YET CONSUMED — Stereo and Pitch/Frequency FX are
+    // explicitly post-MVP per architecture.md's Scope Reconciliation Note
+    // ("Pitch/Frequency FX and Stereo... are explicitly post-MVP"). Still
+    // computed and clamped through the SAME ModulationAccumulator path as
+    // every consumed lane, stored in diagnostic atomics for when a future
+    // Stage wires a real destination — matches Phase 3.2's own "computed
+    // but not yet applied to any DSP" precedent exactly.
+    const float modulatedPan = ModulationAccumulator::accumulate(
+        0.0f, panRaw * 100.0f, 0.0f, 0.0f, false, 0.0f, -100.0f, 100.0f);
+    const float modulatedPitch = ModulationAccumulator::accumulate(
+        0.0f, pitchRaw * 24.0f, 0.0f, 0.0f, false, 0.0f, -24.0f, 24.0f);
+    sequencerPanObservation.store(modulatedPan, std::memory_order_relaxed);
+    sequencerPitchObservation.store(modulatedPitch, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -2096,6 +2321,29 @@ void CORRUPTRAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     xml->setAttribute("corruptrStateVersion", 1);
     xml->setAttribute("glitchRandomSeed", juce::String(glitchRandomSeedAtomic.load(std::memory_order_relaxed)));
 
+    //=========================================================================
+    // Stage 2 Phase 3.7: Rhythmic Sequencer pattern persistence.
+    //
+    // architecture.md's State Persistence section: "Custom state: nested
+    // juce::ValueTree merged into the same state blob returned from
+    // getStateInformation(), following the DrumRoulette pattern (APVTS
+    // ValueTree + custom child ValueTree combined into one XML document)."
+    // Extends the exact same custom-state mechanism Phase 3.5 established
+    // for glitchRandomSeed (a plain attribute on this same root element),
+    // but for the Sequencer's much larger pattern data (10 lanes x 32
+    // steps) a full nested child XML element is used instead of a single
+    // attribute — matching architecture.md's own DrumRoulette-pattern
+    // description precisely, now that the state is large/structured enough
+    // to warrant it. Message-thread only (getStateInformation() always
+    // runs on the message thread) — see dsp/RhythmicSequencer.h's
+    // toValueTree() for the actual serialization format.
+    //=========================================================================
+    {
+        const juce::ValueTree patternTree = rhythmicSequencer.toValueTree();
+        if (std::unique_ptr<juce::XmlElement> patternXml { patternTree.createXml() })
+            xml->addChildElement(patternXml.release());
+    }
+
     copyXmlToBinary(*xml, destData);
 }
 
@@ -2145,6 +2393,27 @@ void CORRUPTRAudioProcessor::setStateInformation(const void* data, int sizeInByt
         {
             glitchRandomSeedAtomic.store(juce::Random::getSystemRandom().nextInt64(), std::memory_order_relaxed);
         }
+
+        //=====================================================================
+        // Stage 2 Phase 3.7: Rhythmic Sequencer pattern restore.
+        //
+        // architecture.md Restore Behavior: "Missing/corrupt custom state:
+        // fall back to a default empty pattern... never crash on malformed
+        // preset data." RhythmicSequencer::fromValueTree() already
+        // implements this fallback internally (see dsp/RhythmicSequencer.h)
+        // — if no child element is found here at all (e.g. a preset saved
+        // before this phase existed), fromValueTree() is called with a
+        // default-constructed (invalid) ValueTree, which its own internal
+        // tag-name/validity check turns into the same "default empty
+        // pattern" fallback, so this call site never needs a separate
+        // empty-state branch. fromValueTree() also republishes the restored
+        // (or default) pattern to the audio thread internally.
+        //=====================================================================
+        const auto* patternXml = xmlState->getChildByName("SequencerPattern");
+        const juce::ValueTree patternTree = patternXml != nullptr
+                                                 ? juce::ValueTree::fromXml(*patternXml)
+                                                 : juce::ValueTree();
+        rhythmicSequencer.fromValueTree(patternTree);
     }
 }
 
