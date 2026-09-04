@@ -119,7 +119,8 @@
     background-repeat: no-repeat; background-position: right 8px center; padding-right: 22px;
   }
   .meter{ width: 25px; height: 32px; border-radius: 3px; background: #e2e2e5; border: 1px solid var(--divider); position: relative; overflow: hidden; flex: 0 0 auto; }
-  .meter .fill{ position: absolute; left:0; right:0; bottom:0; height: 55%; background: var(--text-primary); opacity: .8; }
+  .meter .fill{ position: absolute; left:0; right:0; bottom:0; height: 55%; background: #34c759; opacity: .9; }
+  .meter .fill.clip{ background: #ff3b30; } /* red while clipping (>= 0 dBFS, ~700ms hold) */
   .tag-dots{ display:flex; gap: 6px; align-items:center; }
   .tag-dots span{ width:6px; height:6px; border-radius:50%; background: var(--text-tertiary); }
 
@@ -1917,6 +1918,7 @@
     const outputFill = document.querySelector('#output_meter_topbar .fill');
     let targetInPct = 0, targetOutPct = 0;
     let currentInPct = 0, currentOutPct = 0;
+    let inClipUntil = 0, outClipUntil = 0; // clip-hold timestamps (ms)
 
     function linearPeakToPct(peak){
       const db = peak > 0.00001 ? 20 * Math.log10(peak) : METER_MIN_DB;
@@ -1930,6 +1932,9 @@
       currentOutPct += (targetOutPct - currentOutPct) * outSpeed;
       if (inputFill) inputFill.style.height = currentInPct.toFixed(2) + '%';
       if (outputFill) outputFill.style.height = currentOutPct.toFixed(2) + '%';
+      const now = performance.now();
+      if (inputFill) inputFill.classList.toggle('clip', now < inClipUntil);
+      if (outputFill) outputFill.classList.toggle('clip', now < outClipUntil);
       requestAnimationFrame(animateMeters);
     }
     animateMeters();
@@ -2016,6 +2021,11 @@
       if (!payload) return;
       targetInPct = linearPeakToPct(payload.inputPeak || 0);
       targetOutPct = linearPeakToPct(payload.outputPeak || 0);
+      // Clip detection: linear peak at/above 0 dBFS turns the meter red,
+      // held ~700ms so brief overs stay visible.
+      const nowMs = performance.now();
+      if ((payload.inputPeak || 0) >= 1.0)  inClipUntil = nowMs + 700;
+      if ((payload.outputPeak || 0) >= 1.0) outClipUntil = nowMs + 700;
       updatePlayhead(typeof payload.seqStep === 'number' ? payload.seqStep : -1);
       updateModIndicators(payload);
     });
