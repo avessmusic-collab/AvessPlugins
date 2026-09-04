@@ -287,6 +287,12 @@
   /* NEW in v5: minimal icon-button row + power/enable toggle in each card's
      header, matching the main-unit modules' icon-row chrome exactly. */
   .card-header-row{ display:flex; align-items:center; gap: 10px; }
+  /* Collapsible sections (Sequencer / Mod Matrix): chevron in the header
+     toggles the card body; state persists per-browser via localStorage. */
+  .collapse-btn{ margin-left:auto; cursor:pointer; }
+  .collapse-btn svg{ transition: transform .18s ease; }
+  .collapse-btn.collapsed svg{ transform: rotate(-90deg); }
+  .card-body.collapsed{ display:none; }
   .card-body{ display:flex; flex-direction:column; gap: 16px; transition: opacity .15s ease; }
   .card-body.dimmed{ opacity: 0.4; }
   .card-controls-row{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
@@ -780,6 +786,9 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
             </button>
             <div class="section-label">Rhythmic Sequencer</div>
+            <button class="icon-btn collapse-btn" data-collapse-target="sequencer_body" title="Collapse/expand section">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
           </div>
           <div class="card-body" id="sequencer_body">
             <div class="card-controls-row">
@@ -812,6 +821,9 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
             </button>
             <div class="section-label">Modulation Matrix</div>
+            <button class="icon-btn collapse-btn" data-collapse-target="mod_matrix_body" title="Collapse/expand section">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
           </div>
           <div class="card-body" id="mod_matrix_body">
             <div class="lfo-row" id="lfoPanelRow"></div>
@@ -1527,6 +1539,31 @@
     bindCombos(list);
     bindKnobs(list);
     bindToggles(list);
+  })();
+
+  // ===================================================================
+  // Collapsible sections (Sequencer / Mod Matrix) — pure UI convenience,
+  // no parameter involved. Collapse state persists via localStorage
+  // (guarded: storage can be unavailable inside some WebView contexts).
+  // ===================================================================
+  (function(){
+    document.querySelectorAll('.collapse-btn[data-collapse-target]').forEach(btn => {
+      const body = document.getElementById(btn.dataset.collapseTarget);
+      if(!body) return;
+      const key = 'collapse:' + btn.dataset.collapseTarget;
+      function apply(collapsed){
+        body.classList.toggle('collapsed', collapsed);
+        btn.classList.toggle('collapsed', collapsed);
+      }
+      let saved = null;
+      try { saved = localStorage.getItem(key); } catch(e){}
+      apply(saved === '1');
+      btn.addEventListener('click', () => {
+        const collapsed = !body.classList.contains('collapsed');
+        apply(collapsed);
+        try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch(e){}
+      });
+    });
   })();
 
   // ===== Initial bind pass over statically-authored markup =====
