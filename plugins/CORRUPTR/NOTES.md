@@ -1,7 +1,7 @@
 # CORRUPTR Notes
 
 ## Status
-- **Current Status:** 🚧 Stage 1 (Foundation + Shell Complete)
+- **Current Status:** 🚧 Stage 2 (DSP Implementation Complete — all 9 phases, all 14 architecture.md components wired)
 - **Version:** N/A
 - **Type:** Audio Effect (Multi-Distortion/Glitch)
 - **Complexity:** 5.0 (capped) / 19.0 (uncapped raw score) — see `.ideas/plan.md`
@@ -12,6 +12,7 @@
 - **2026-09-01 (Stage 0):** Research & Planning complete — DSP architecture documented (14 core components across distortion, glitch, sequencer, mod matrix, macros, feedback routing, oversampling, limiter), complexity assessed (5.0 capped / 19.0 uncapped). Recommendation: split into Wave 1 (MVP-of-MVP) and Wave 2 (full feature set) implementation efforts rather than one continuous phased pass — see `.ideas/plan.md`.
 - **2026-09-02:** UI mockup finalized (v5) and `parameter-spec.md` locked at v2 (94 parameters — the 56 mockup-bound v1 parameters plus 38 architecture-required additions: per-LFO shape/sync x4 and the 8-slot Mod Matrix's source/destination/amount/enable fields).
 - **2026-09-02 (Stage 1):** Foundation + Shell complete — CMakeLists.txt (VST3/AU/Standalone) and full APVTS with all 94 locked parameters implemented in exact spec order, zero drift. `processBlock()` is an intentional pass-through stub; Stage 2 DSP owns all processing.
+- **2026-09-03/04 (Stage 2):** DSP Implementation complete — all 9 phased sub-phases (3.1-3.9) delivered: Feedback Routing safety validation + integration, the Unified Modulation Accumulator, the core 12-algorithm Distortion/Bitcrush/7-topology Filter/Master Mix/dual-mode Limiter chain, the 18-mode Glitch/Buffer Engine (Tier 1 + Tier 2), the host-synced Rhythmic Sequencer (10 lanes, 10 pattern operations), the 8-slot Mod Matrix + 4 LFOs (9 shapes each) + 8-macro Macro System, and finally the XY Pad (with inertia), 7 MIDI-triggerable Performance Mode triggers, and the ECO/NORMAL/HIGH/EXTREME/AUTO Oversampling/Quality Engine (per-sample `juce::dsp::Oversampling` calls around Distortion+Bitcrush, preserving the Feedback Routing Path's sample-accurate causality). All 14 architecture.md Core Components now have real, wired DSP. Build/pluginval verification remains the orchestrator's `build-automation` follow-up (no dsp-agent session in this build had shell/execution tool access). Next: Stage 3 GUI (WebView UI, 6 phased sub-phases per `.ideas/plan.md`).
 
 ## Known Issues
 

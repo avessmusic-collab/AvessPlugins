@@ -518,7 +518,411 @@ private:
     std::atomic<float> modMatrixPitchObservation { 0.0f };
     std::atomic<float> modMatrixWidthObservation { 0.0f }; // combines the Mod Matrix's own "Width" destination total + macroWidth's contribution (both target the same not-yet-existing Stereo-width parameter)
 
-    void resolveModMatrixAndMacroContributions(double blockDurationSeconds); // called once per block from processBlock(), BEFORE updateSequencerStepAndContributions() -- see "CALL ORDER" doc comment above
+    void resolveModMatrixAndMacroContributions(double blockDurationSeconds, int numSamples); // called once per block from processBlock(), BEFORE updateSequencerStepAndContributions() -- see "CALL ORDER" doc comment above. `numSamples` added in Phase 3.9 so this method can tick the XY Pad SmoothedValues via skip() at the correct base-rate pace before folding their contribution into macroDamage/macroGlitch -- see "Phase 3.9" doc comment below.
+
+    //=========================================================================
+    // Stage 2 Phase 3.9 (FINAL DSP phase): XY Pad, Performance Mode Triggers,
+    // Oversampling/Quality Engine -- architecture.md components #10 ("XY Pad
+    // with Inertia"), #11 ("Performance Mode Triggers"), #12
+    // ("Oversampling/Quality Engine"), plan.md's "Phase 3.9: XY Pad,
+    // Performance Triggers, Oversampling/Quality Modes".
+    //
+    // ---- XY PAD (component #10) ----
+    // `xyPadX`/`xyPadY`/`xyPadSmoothing` are ALREADY declared APVTS
+    // parameters (Stage 1). This phase adds the actual glide mechanism:
+    // two `juce::SmoothedValue<float>` (0-100, matching the parameters'
+    // own %-range), target set from the raw APVTS value each block, ramp
+    // LENGTH controlled by `xyPadSmoothing` (0-500ms). Per architecture.md:
+    // "C++ side calls SmoothedValue::setTargetValue() and lets the built-in
+    // ramp glide toward it every block -- the standard, correct JUCE
+    // mechanism." Ticked via `skip(numSamples)` (NOT `getNextValue()` in a
+    // per-sample loop) because the two consumers of this value
+    // (`resolveModMatrixAndMacroContributions()`'s macroDamage/macroGlitch
+    // blend) run at CONTROL RATE, once per block -- `skip()` is the
+    // JUCE-idiomatic way to advance a per-sample-model SmoothedValue by N
+    // samples at once and read its resulting value, without generating (or
+    // needing) per-sample output, exactly analogous to how Lfo.h's
+    // control-rate consumers already work (see that file's own "CONTROL-
+    // RATE RESOLUTION" doc comment) -- but unlike Lfo.h's OWN internal
+    // phase accumulator (which is deliberately NOT sample-rate-based),
+    // `juce::SmoothedValue` genuinely IS a per-sample model, so `skip()` is
+    // the correct API for this specific case, not a workaround.
+    //
+    // RAMP-LENGTH CHANGE HANDLING (FLAGGED DESIGN RESOLUTION):
+    // `xyPadSmoothing` is itself a live-automatable parameter, but
+    // `juce::SmoothedValue::reset(sampleRate, newRampSeconds)` -- the ONLY
+    // API to change a SmoothedValue's ramp length -- also SNAPS
+    // current-value-to-target (via its internal `setCurrentAndTargetValue`
+    // call), which would defeat the whole "glide, not snap" purpose if
+    // called every block. This implementation change-detects
+    // `xyPadSmoothing` (matching this file's established
+    // `lastFilterTypeIndex`/`lastGlitchModeIndex`-style per-block
+    // change-detection convention) and, ONLY on an actual change, captures
+    // the CURRENT (mid-glide) value, calls `reset()` with the new ramp
+    // length, then immediately restores the captured current value via
+    // `setCurrentAndTargetValue()` before re-applying the real target --
+    // this preserves the in-flight glide position (no snap-to-target
+    // artifact) while still picking up the new ramp length for FUTURE
+    // target changes. `reset()` itself is allocation-free (pure arithmetic
+    // -- recomputes an internal ramp-length-in-samples value), so calling
+    // it occasionally from the audio thread (only on an actual parameter
+    // change, not every block) is real-time-safe.
+    //
+    // DEFAULT MAPPING (FLAGGED DESIGN RESOLUTION -- deviates from
+    // architecture.md's own RECOMMENDATION, not a locked requirement):
+    // architecture.md component #10 recommends "a small internal routing
+    // choice param (xyPadXTarget, xyPadYTarget)" so either axis can drive
+    // any macro/parameter. NO such parameter exists in the LOCKED
+    // parameter-spec.md (v2, immutable per its own "CRITICAL CONTRACT" --
+    // only xyPadX/xyPadY/xyPadSmoothing are declared, no XTarget/YTarget
+    // choices). Since the parameter spec is the authoritative, immutable
+    // contract and architecture.md's routing-param suggestion was only ever
+    // a "recommend," not a requirement it locked in, this implementation
+    // hardcodes architecture's own stated DEFAULT mapping instead: X ->
+    // macroDamage, Y -> macroGlitch (architecture.md component #10:
+    // "Default mapping: X->macroDamage, Y->macroGlitch"). A future mockup
+    // iteration adding XTarget/YTarget choice parameters could make this
+    // user-assignable without changing this phase's underlying glide
+    // mechanism.
+    //
+    // CONTRIBUTION DEPTH (FLAGGED -- architecture.md does not specify how
+    // strongly the pad should drive its target macro): reuses this file's
+    // established `kSequencerModDepthFraction`/`kModMatrixDepthFraction`
+    // half-of-full-range-swing convention (`kXyPadModDepthFraction`, same
+    // 0.5 value) so the pad can swing its target macro up to +/-50% of the
+    // macro's own 0-100% range around whatever the macro's OWN knob is
+    // currently set to, additively, via
+    // `resolveModMatrixAndMacroContributions()`'s macroDamagePct/
+    // macroGlitchPct computation (clamped 0-100 before MacroEngine::resolve()
+    // runs) -- never fully overriding the base macro knob, same
+    // non-destructive-blend philosophy as every other additive modulation
+    // source in this file.
+    //
+    // ---- PERFORMANCE MODE TRIGGERS (component #11, 7 triggers) ----
+    // All 7 `performanceKill`..`performanceChaos` `AudioParameterBool`s are
+    // ALREADY declared (Stage 1). Each trigger's boolean state is resolved
+    // fresh every block (matching this file's default per-block
+    // `getRawParameterValue()` convention -- not cached, since there are
+    // only 7 and they are not read in a hot per-sample loop) into LOCAL
+    // `bool` variables near the top of `processBlock()`, then threaded
+    // through to every accumulate() call site each trigger affects (drive
+    // was already wired in Phase 3.2 as the pattern's first exercise; this
+    // phase extends the SAME override-wins/releases-cleanly pattern to the
+    // other 6). "Preset diff" VALUES below are this implementation's own
+    // resolution (architecture.md names the CONCEPT -- "engages a
+    // predefined preset diff... for instant dramatic change" -- without
+    // pinning down concrete per-trigger numeric deltas), documented in full
+    // at each call site in `processBlock()`:
+    //   - performanceKill: hard-overrides the Gate lane's EXISTING
+    //     `ModulationAccumulator::accumulate()` call (Phase 3.7's
+    //     `updateSequencerStepAndContributions()`) to 0.0 (fully closed,
+    //     the Gate lane's own native 0-1 range) -- a genuine, guaranteed
+    //     full mute applied as the LAST multiplicative gain stage before
+    //     Master Mix's post-mix `isfinite()` guard, independent of
+    //     `outputGain`'s narrower -24..+24dB range (which could not reach
+    //     genuine silence).
+    //   - performanceGlitch: overrides `glitchProbability`'s existing
+    //     accumulate() call to 100% (guarantees a glitch event fires) and
+    //     shares `chaos`'s override (60%, see performanceChaos below).
+    //   - performanceDestroy: `drive`'s override (already wired, Phase
+    //     3.2/3.7/3.8, 40dB/max) is joined by NEW overrides on `fold`
+    //     (100%), `bitDepth` (1 bit, minimum), `sampleRateReduction` (48x,
+    //     maximum), and `feedbackAmount` (90%) -- all via their EXISTING
+    //     accumulate() call sites. SAFETY NOTE: `feedbackAmount`'s override
+    //     still passes through the tanh soft-clamp (`kFeedbackMaxSafeGain`)
+    //     downstream exactly as any other value would -- Performance
+    //     Triggers are a HIGH-PRIORITY override within the modulation
+    //     accumulator layer, not a bypass of Phase 3.1's independent safety
+    //     layer beneath it.
+    //   - performanceFreeze / performanceReverse / performanceStutter: these
+    //     three target the DISCRETE `glitchMode`/`glitchBufferLength`
+    //     Choice parameters, which `ModulationAccumulator` cannot express
+    //     (it only combines CONTINUOUS float ranges) -- FLAGGED DEVIATION:
+    //     implemented as a direct, highest-priority override of the
+    //     already-block-resolved `glitchModeIndex`/`glitchBufferLengthIndex`
+    //     LOCAL variables (see the glitch per-block section in
+    //     processBlock()), the natural discrete-parameter equivalent of the
+    //     accumulator's override-wins-then-releases-instantly semantic
+    //     (re-evaluated fresh from the boolean flag every block, never
+    //     latched). Name-to-mode pairing is intuitive by design
+    //     (performanceFreeze forces glitchMode=Freeze, performanceReverse
+    //     forces glitchMode=Reverse, performanceStutter forces
+    //     glitchMode=Stutter) -- matching architecture.md's OWN explicit
+    //     worked example ("performanceFreeze forces glitchMode=Freeze +
+    //     near-zero glitch buffer length"). performanceFreeze ALSO forces
+    //     `glitchBufferLengthIndex=0` ("near-zero," per that same worked
+    //     example). All three ALSO force `glitchProbability` to 100%
+    //     (joining performanceGlitch/performanceChaos in that shared OR'd
+    //     override condition below) -- otherwise a user with
+    //     `glitchProbability=0%` (the parameter's own default) would see
+    //     NO audible effect from forcing just the mode/buffer-length, which
+    //     would contradict "instant dramatic change." MULTI-TRIGGER
+    //     PRECEDENCE (FLAGGED, architecture.md does not specify): if more
+    //     than one of these three is simultaneously active (e.g. two MIDI
+    //     notes held at once), first-match-wins in the fixed order
+    //     Freeze > Reverse > Stutter.
+    //   - performanceChaos: overrides `chaos`'s existing accumulate() call
+    //     to 100% (maximum unpredictability) and shares `glitchProbability`'s
+    //     100% override (joining the OR'd condition above). If
+    //     performanceGlitch is ALSO active simultaneously, performanceChaos's
+    //     100% chaos value takes precedence over performanceGlitch's own
+    //     60% (higher-intensity trigger wins on a shared destination,
+    //     FLAGGED, architecture.md does not specify multi-trigger
+    //     precedence for a shared continuous destination either).
+    //
+    // MIDI mapping (architecture.md MIDI Routing section: "fixed or
+    // user-assignable MIDI CC/Note -> AudioParameterBool::setValueNotifyingHost()
+    // (custom mapping table, no built-in JUCE MIDI-learn)"): NO per-trigger
+    // MIDI-mapping parameter exists in the locked parameter-spec.md (same
+    // "no sub-selector parameter exists" gap Phase 3.8 already documented
+    // for the Mod Matrix's MIDI CC source and Macro source) -- a FIXED
+    // Note-On/Note-Off mapping table (`kPerformanceTriggerMidiNotes`, notes
+    // 36-42, the General-MIDI low-percussion/"finger-drum-pad" range, a
+    // common convention for physical performance-trigger controllers) is
+    // used instead, MOMENTARY semantics (Note-On -> true, Note-Off ->
+    // false, matching "Momentary or toggle... recommend a simple internal
+    // flag per trigger" per architecture.md component #11 -- Momentary
+    // chosen as the simpler, more obviously "instant/dramatic,
+    // hold-to-engage" live-performance feel; toggle behavior remains
+    // available via the WebView UI / host automation regardless of this
+    // MIDI mapping's own semantics, once Stage 3 adds the UI). Cached
+    // `juce::RangedAudioParameter*` pointers (NOT `getRawParameterValue()`'s
+    // read-only atomic<float>*) are required here since MIDI-driven writes
+    // need the full parameter object's `setValueNotifyingHost()` API --
+    // fetched once in the constructor (same caching justification/pattern
+    // as Phase 3.8's 53 cached pointers: repeated string-keyed
+    // `getParameter()` lookups inside a MIDI-message loop would be needless
+    // repeated hashing). Extends Phase 3.8's EXISTING single MIDI scan loop
+    // in `processBlock()` (one scan, not two) -- Note-On/Note-Off messages
+    // are dispatched inside the SAME loop that already handles CC messages
+    // (Mod Matrix's MIDI CC source + this phase's own XY-Pad MIDI CC
+    // handling below), just a different `juce::MidiMessage` predicate
+    // branch.
+    //
+    // ---- OVERSAMPLING / QUALITY ENGINE (component #12) ----
+    // `qualityMode` (ECO/NORMAL/HIGH/EXTREME/AUTO) is ALREADY declared
+    // (Stage 1). Factor mapping: ECO=1x (no oversampling instance used at
+    // all -- the fast, zero-overhead path), NORMAL=2x, HIGH=4x, EXTREME=8x.
+    // Three `juce::dsp::Oversampling<float>` instances are PREALLOCATED in
+    // `prepareToPlay()` (one each for 2x/4x/8x -- `oversamplers[0..2]`) and
+    // SWITCHED BETWEEN at runtime (per the task's explicit constraint:
+    // "preallocate all factor variants... switch between them, documenting
+    // the memory tradeoff") -- REJECTED the alternative architecture.md
+    // itself suggests ("message-thread-triggered prepare() call on a NEW
+    // instance, atomic pointer swap") as unnecessary added complexity
+    // (cross-thread pointer-swap machinery) given the simpler preallocate-
+    // all-variants approach already satisfies both "never resize/reallocate
+    // the currently-in-use instance from the audio thread" (each variant's
+    // OWN instance is never touched while another is active) and avoids any
+    // new cross-thread communication mechanism.
+    //
+    // MEMORY TRADEOFF (explicitly flagged per the task's instruction):
+    // three simultaneously-live `Oversampling<float>` instances (2x+4x+8x)
+    // cost roughly 2+4+8=14x a single stereo sample's worth of internal
+    // FIR/IIR polyphase filter state and staging buffers, ALL held for the
+    // lifetime of the plugin regardless of which `qualityMode` is currently
+    // selected -- a modest, fixed, small RAM cost (each instance is
+    // `initProcessing(1)`-sized, see below, NOT `initProcessing(samplesPerBlock)`
+    // -- further shrinking this footprint since only a 1-sample-per-channel
+    // staging block is ever needed, see "PER-SAMPLE OVERSAMPLING CALLS"
+    // below) traded for ZERO runtime allocation/re-`prepare()`/pointer-swap
+    // complexity on any `qualityMode` change.
+    //
+    // CLICK-SAFETY ON RUNTIME FACTOR SWITCHING (explicitly flagged): when
+    // the resolved factor changes block-to-block (detected via
+    // `lastActiveOversamplingFactor`, matching this file's established
+    // change-detection convention), the NEWLY-activated instance's internal
+    // filter state reflects whatever it was doing the LAST time it was
+    // active (potentially stale/silent for a long time) -- this
+    // implementation calls `.reset()` on the newly-active instance at the
+    // moment of the switch (allocation-free, bounded, real-time-safe),
+    // clearing it to a clean zero rather than leaving spurious old energy
+    // in its filters. This is CLICK-SAFE (bounded, deterministic) but NOT
+    // perfectly glitch-free (a full crossfade between two simultaneously-
+    // live oversampled streams would eliminate even that residual
+    // transient, at meaningfully higher CPU/complexity cost) -- an accepted
+    // MVP tradeoff since `qualityMode` changes are an infrequent, deliberate
+    // user action (not something expected to be automated every block),
+    // analogous to (and no worse than) this file's existing
+    // `lastFilterTypeIndex`-triggered filter `.reset()` on `filterType`
+    // changes.
+    //
+    // LATENCY REPORTING (architecture.md, "CRITICAL... easy to forget"):
+    // `setLatencySamples()` is called ONLY when the resolved factor
+    // actually changes (not every block -- `AudioProcessor::setLatencySamples()`
+    // internally notifies the host via `updateHostDisplay()`, which is
+    // heavier-weight than a lock-free atomic store; calling it only on a
+    // genuine, infrequent user-initiated quality-mode change -- rather than
+    // every block -- is the standard, accepted JUCE pattern for
+    // dynamically-latent plugins and keeps this off the audio thread's hot
+    // path). ECO (1x) reports 0 latency. `useIntegerLatency=true` is passed
+    // to every `Oversampling` instance specifically so `getLatencyInSamples()`
+    // returns a clean whole-sample value for `setLatencySamples()` (an int
+    // API) with no truncation ambiguity.
+    //
+    // AUTO HEURISTIC (architecture.md's own admission: "the vaguest-
+    // specified parameter... needs a concrete decision rule" -- FLAGGED,
+    // this implementation's own resolution, per plan.md's own recommended
+    // "scale oversampling factor with current Drive/Fold intensity"
+    // approach): computed from the ALREADY-modulated, current-block
+    // `phase32DriveModulationObservation` (post- Sequencer/Mod-Matrix/
+    // Macro/Performance-Trigger drive value, not the raw base parameter --
+    // "current" intensity, matching plan.md's own wording) and
+    // `distortionFoldPct` (likewise already-modulated), normalized and
+    // averaged into a single 0-1 `intensity` value, then quantized into one
+    // of the 4 factors via fixed thresholds (`kAutoOversamplingThresholds`).
+    // KNOWN LIMITATION (flagged): since `drive`/`fold` can themselves be
+    // continuously modulated (LFOs, Mod Matrix, etc.), AUTO's resolved
+    // factor can in principle change every block, which -- combined with
+    // the click-safety `.reset()` above -- could produce audible flutter
+    // under heavy modulation of those two specific parameters. No hysteresis/
+    // smoothing is applied to AUTO's factor selection in this MVP (an
+    // explicitly deferred future improvement, noted in the JSON report) --
+    // AUTO mode's own underspecified nature (architecture.md's own words)
+    // makes this an acceptable scope boundary for this phase rather than a
+    // regression against a previously-more-precise spec.
+    //
+    // PER-SAMPLE OVERSAMPLING CALLS (the core restructuring, HIGHEST-RISK
+    // integration of this phase -- see `processOversampledDistortionAndBitcrush()`'s
+    // own doc comment at its definition in PluginProcessor.cpp for the full
+    // causality argument): `juce::dsp::Oversampling::processSamplesUp()`/
+    // `processSamplesDown()` are called with a 1-SAMPLE-PER-CHANNEL block,
+    // ONCE PER BASE-RATE SAMPLE (not once per host block), rather than
+    // batching the whole block through Oversampling in one call. This is a
+    // deliberate, FLAGGED deviation from the "efficient" batched-block
+    // oversampling pattern most examples show, REQUIRED because the
+    // Feedback Routing Path's delay line can have a delay time (`microDelayTime`,
+    // 0.1-50ms) SHORTER than a single host block -- meaning sample N's
+    // Distortion-Engine input can depend on sample (N - delaySamples)'s
+    // FULLY-COMPUTED (through Filter Stage) feedback output from EARLIER
+    // IN THE SAME BLOCK, a genuine sample-accurate causal dependency that a
+    // single batched up-sample-whole-block-then-process-then-down-sample
+    // pass cannot express without either breaking that causality or
+    // requiring a much more complex two-pass/lookahead buffering scheme.
+    // Per-sample `Oversampling` calls are numerically CORRECT (JUCE's
+    // internal FIR/IIR polyphase filters are continuous, causal filters --
+    // processing them 1 sample at a time produces bit-identical output to
+    // processing a whole block at once, as long as samples are never
+    // skipped or reordered between calls) and fully real-time-safe
+    // (`processSamplesUp()`/`processSamplesDown()` never allocate once
+    // `initProcessing()` has run) -- the tradeoff is purely CPU overhead
+    // (more function-call/loop overhead than a single batched call per
+    // block), an ACCEPTED, EXPLICITLY-FLAGGED cost given architecture.md
+    // ALREADY anticipates Oversampling as the plugin's single highest CPU
+    // cost at EXTREME/8x regardless of batching strategy, and given
+    // correctness (preserving the Feedback Routing Path's exact existing
+    // causal semantics, per this phase's own "do not silently change the
+    // rate at which any existing per-sample bookkeeping advances" task
+    // constraint) is prioritized over raw efficiency for this MVP. A future
+    // optimization pass could investigate batching within a single
+    // delay-line-length's worth of samples if profiling shows this is a
+    // genuine bottleneck (noted in the JSON report).
+    //
+    // SCOPE: EXACTLY Distortion Engine (#2) + Bitcrusher/SRR (#3) are
+    // wrapped, per architecture.md component #12's explicit scope list
+    // ("Distortion Engine, Bitcrusher/SRR, and the nonlinear elements
+    // inside Feedback Routing -- NOT Glitch... or Filter/Sequencer/Mod
+    // Matrix"). FLAGGED RESOLUTION for "the nonlinear elements inside
+    // Feedback Routing": Phase 3.4's own tap-point resolution already
+    // established that the loop's actual implemented "copy of the Filter
+    // stage" is a LINEAR one-pole damping filter (not a second nonlinear
+    // waveshaper), and its RMS-envelope limiter/tanh gain-clamp operate on
+    // the ALREADY-post-Filter-Stage (base-rate, by architecture's own
+    // explicit exclusion) signal -- there is no SEPARATE nonlinear
+    // audio-rate waveshaping stage inside the feedback loop distinct from
+    // Distortion Engine itself. Architecture's Integration Points section
+    // clarifies the INTENT: Distortion + Bitcrush + "the feedback loop's
+    // own nonlinear content" must be "processed inside the SAME oversampled
+    // block... to avoid phase mismatches between the feedback-forward and
+    // feedback-return paths." This implementation satisfies that intent
+    // STRUCTURALLY: the feedback tap's recirculated sample
+    // (`delayedFeedback`, popped from the delay line) is summed into the
+    // Distortion Engine's input (`s = dry + delayedFeedback`) BEFORE the
+    // up-sample boundary (see the restructured per-sample loop), so the
+    // recirculated feedback content is processed THROUGH THE SAME
+    // oversampled Distortion+Bitcrush pass as the forward-path signal --
+    // no second, separate `Oversampling` instance wrapping the feedback
+    // loop's own damping/soft-clamp/RMS-limiter machinery is needed or
+    // built (that machinery correctly stays at base rate, consistent with
+    // Filter Stage's explicit exclusion, since it operates strictly
+    // downstream of Filter Stage's real, base-rate output).
+    //
+    // RATE-DEPENDENT INTERNAL STATE (Distortion Engine's tone-tilt filter /
+    // DC blocker, Bitcrusher's SRR hold counter, Ring-Mod's carrier
+    // oscillator) now run at up to 8x the base sample rate when oversampling
+    // is active, and their existing single-scalar coefficients (computed
+    // once in `prepareToPlay()` against the BASE rate only) would be WRONG
+    // at an oversampled rate. Resolved by precomputing FOUR variants (one
+    // per factor: 1x/2x/4x/8x) of each rate-dependent coefficient in
+    // `prepareToPlay()` (`distortionToneLpCoeffByFactor`/
+    // `distortionDcBlockerRByFactor`, indexed by `activeOversamplingFactorIndex`
+    // each block) -- zero per-block trig/exp recomputation needed, just an
+    // array lookup. Bitcrusher's SRR hold-counter is handled via a
+    // per-block-computed `bitcrushEffectiveHoldSamples = bitcrushHoldSamples
+    // * activeOversamplingFactor` (holding for N samples of the OVERSAMPLED
+    // stream reproduces the SAME musical/audible hold duration relative to
+    // the base rate that `sampleRateReduction`'s own units describe -- the
+    // bitcrush QUANTIZER itself, `round(x*levels)/levels`, has no rate
+    // dependency at all and needs no per-factor variant). Ring-Mod's
+    // `juce::dsp::Oscillator` carrier is re-`prepare()`d once per block at
+    // the current oversampled rate (`ringModOsc[ch].prepare(...)` -- cheap/
+    // allocation-free per JUCE's documented `Oscillator::prepare()`
+    // behavior, which only updates an internally-stored sample-rate value
+    // used by `setFrequency()`'s phase-increment math -- it does NOT
+    // regenerate the lookup table baked once by `initialise()` in
+    // `prepareToPlay()`).
+    //
+    // driveGainSmoothed/distortionMixSmoothed still tick EXACTLY ONCE per
+    // BASE-RATE sample (unchanged from Phase 3.3/3.4 -- see the outer
+    // per-sample loop) -- their single resulting value for this base
+    // sample is held CONSTANT across all `factor` oversampled sub-samples
+    // within `processOversampledDistortionAndBitcrush()`'s inner loop, per
+    // this phase's explicit "do not change the rate at which existing
+    // per-sample bookkeeping (SmoothedValue ramps) advances" constraint --
+    // no interpolation across oversampled sub-samples is performed for
+    // these two values (their smoothing resolution was already coarser
+    // than per-sample; holding constant across a handful of oversampled
+    // sub-samples introduces no audible discontinuity).
+    //
+    // Real-time safety (summary): `Oversampling::initProcessing()`/
+    // constructor allocation happens ONLY in `prepareToPlay()`.
+    // `processSamplesUp()`/`processSamplesDown()`/`.reset()` are all
+    // documented allocation-free. `oversampleScratchBuffer` is a
+    // preallocated `juce::AudioBuffer<float>` (sized `numChannels x 1` in
+    // `prepareToPlay()`, never resized in `processBlock()`). The one
+    // deliberate exception to "no host-notification calls on the audio
+    // thread" is `setLatencySamples()`, called only on an actual factor
+    // change (see "LATENCY REPORTING" above) -- explicitly flagged, not an
+    // oversight.
+    //=========================================================================
+    juce::SmoothedValue<float> xyPadXSmoothed, xyPadYSmoothed; // 0-100 range, matching xyPadX/xyPadY's own %-range
+    float lastXyPadSmoothingMs = -1.0f; // change-detection sentinel (see "RAMP-LENGTH CHANGE HANDLING" above); -1 forces a clean first-block init
+    juce::RangedAudioParameter* xyPadXParamForMidi = nullptr; // cached write-capable pointer (MIDI CC -> setValueNotifyingHost()), separate from the plain getRawParameterValue() read used for the glide target each block
+    juce::RangedAudioParameter* xyPadYParamForMidi = nullptr;
+    static constexpr int kXyPadMidiCcX = 2; // FLAGGED fixed CC (CC1 already claimed by Mod Matrix's MIDI CC source, Phase 3.8's kModMatrixMidiCcNumber)
+    static constexpr int kXyPadMidiCcY = 3;
+    static constexpr float kXyPadModDepthFraction = 0.5f; // reuses kSequencerModDepthFraction/kModMatrixDepthFraction's established half-range-swing convention (see "CONTRIBUTION DEPTH" doc comment above)
+
+    static constexpr int kNumPerformanceTriggers = 7;
+    std::array<juce::RangedAudioParameter*, kNumPerformanceTriggers> performanceTriggerParams {}; // cached write-capable pointers, order matches kPerformanceTriggerIds/kPerformanceTriggerMidiNotes below
+    static constexpr std::array<const char*, kNumPerformanceTriggers> kPerformanceTriggerIds {
+        "performanceKill", "performanceGlitch", "performanceDestroy", "performanceFreeze",
+        "performanceReverse", "performanceStutter", "performanceChaos"
+    };
+    static constexpr std::array<int, kNumPerformanceTriggers> kPerformanceTriggerMidiNotes { 36, 37, 38, 39, 40, 41, 42 }; // FLAGGED fixed table -- see "MIDI mapping" doc comment above
+
+    std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 3> oversamplers; // index 0=2x(NORMAL), 1=4x(HIGH), 2=8x(EXTREME); ECO(1x)/AUTO-resolved-to-1x use no instance at all
+    int activeOversamplingFactor = 1;        // 1/2/4/8, resolved once per block (see "AUTO HEURISTIC" above)
+    int activeOversamplingFactorIndex = 0;   // 0=1x,1=2x,2=4x,3=8x -- indexes distortionToneLpCoeffByFactor/distortionDcBlockerRByFactor
+    int lastActiveOversamplingFactor = -1;   // change-detection sentinel (see "CLICK-SAFETY" above); -1 forces a clean first-block resolve + initial setLatencySamples() call
+    juce::AudioBuffer<float> oversampleScratchBuffer; // numChannels x 1, preallocated in prepareToPlay -- see "PER-SAMPLE OVERSAMPLING CALLS" above
+    std::array<float, 4> distortionToneLpCoeffByFactor { 0.0f, 0.0f, 0.0f, 0.0f };   // index matches activeOversamplingFactorIndex (1x/2x/4x/8x)
+    std::array<float, 4> distortionDcBlockerRByFactor { 0.0f, 0.0f, 0.0f, 0.0f };
+    int bitcrushEffectiveHoldSamples = 1; // bitcrushHoldSamples * activeOversamplingFactor, recomputed once per block
+    static constexpr std::array<float, 4> kAutoOversamplingThresholds { 0.25f, 0.5f, 0.75f, 1.0f }; // intensity breakpoints -> 1x/2x/4x/8x (see "AUTO HEURISTIC" above)
+
+    void processOversampledDistortionAndBitcrush(const float* inputPerChannel, float* outputPerChannel,
+                                                   int numChannelsThisCall, float driveGain, float distortionMixAmt);
 
     //=========================================================================
     // Stage 2 Phase 3.3: Core Linear Chain
@@ -558,8 +962,13 @@ private:
     std::array<float, 2> distortionDcBlockerX1 { 0.0f, 0.0f };  // DC blocker x[n-1] (per channel)
     std::array<float, 2> distortionDcBlockerY1 { 0.0f, 0.0f };  // DC blocker y[n-1] (per channel)
     std::array<juce::dsp::Oscillator<float>, 2> ringModOsc;     // Ring-Mod carrier (per channel, sine, lookup-table mode)
-    float distortionToneLpCoeff = 0.0f; // computed in prepareToPlay from a fixed 1kHz tilt-filter pole
-    float distortionDcBlockerR = 0.0f;  // computed in prepareToPlay from a fixed ~5Hz DC-blocker pole
+    // AS OF PHASE 3.9: the tone-tilt filter / DC-blocker one-pole
+    // coefficients are no longer single scalars — Distortion Engine now
+    // runs at up to 8x the base rate inside the Oversampling wrapper, so
+    // FOUR per-factor variants are precomputed in prepareToPlay instead
+    // (`distortionToneLpCoeffByFactor`/`distortionDcBlockerRByFactor`, see
+    // the Phase 3.9 doc comment's "RATE-DEPENDENT INTERNAL STATE" section,
+    // indexed by `activeOversamplingFactorIndex`).
     juce::SmoothedValue<float> driveGainSmoothed;     // smoothed linear gain from `drive` (dB) — avoids zipper on automation
     juce::SmoothedValue<float> distortionMixSmoothed; // smoothed 0-1 stage-local dry/wet (`distortionMix`)
 
@@ -579,7 +988,7 @@ private:
     std::array<int, 2> bitcrushHoldCounter { 0, 0 };
     bool bitcrushBypassed = false;
     float bitcrushLevels = 65535.0f;
-    int bitcrushHoldSamples = 1;
+    int bitcrushHoldSamples = 1; // in units of BASE-rate samples (sampleRateReduction's own units); AS OF PHASE 3.9, processBitcrusher() actually holds for `bitcrushEffectiveHoldSamples` (this value * activeOversamplingFactor) since it now runs at the oversampled rate — see the Phase 3.9 doc comment's "RATE-DEPENDENT INTERNAL STATE" section.
 
     float processBitcrusher(float xIn, int channel);
 
@@ -591,9 +1000,16 @@ private:
     // Positioned between Bitcrusher/SRR (#3) and Filter Stage (#6) in the
     // per-sample chain, per the Processing Chain ASCII diagram and
     // Sequential DSP chain step 8 (Glitch runs on Bitcrusher's OUTPUT,
-    // feeds the Filter Stage's INPUT — the Oversampling bracket around
-    // Distortion+Bitcrush is not built yet, per Phase 3.3/3.4's scope, so
-    // Glitch simply follows Bitcrusher's real output directly).
+    // feeds the Filter Stage's INPUT — at the time this phase was written
+    // (3.5), the Oversampling bracket around Distortion+Bitcrush was not
+    // yet built, so Glitch simply followed Bitcrusher's real output
+    // directly. AS OF PHASE 3.9: the Oversampling wrapper now brackets
+    // Distortion+Bitcrush internally (up-sample -> Distortion -> Bitcrush
+    // -> down-sample, all inside `processOversampledDistortionAndBitcrush()`),
+    // but Glitch/Filter/Sequencer/Mod-Matrix stay explicitly OUTSIDE that
+    // bracket per architecture.md's own scope list — Glitch still reads
+    // Bitcrusher's (now down-sampled-back-to-base-rate) real output
+    // directly, unchanged from this phase's original design).
     //
     // Scope: EXACTLY 6 Tier-1 modes per plan.md's explicit list — Stutter
     // (glitchMode index 1), Repeat (2), Reverse (3), Freeze (5), Retrigger
