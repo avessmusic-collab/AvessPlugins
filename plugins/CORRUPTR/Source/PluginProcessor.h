@@ -1024,6 +1024,10 @@ private:
     std::array<int, 2> bitcrushHoldCounter { 0, 0 };
     bool bitcrushBypassed = false;
     float bitcrushLevels = 65535.0f;
+    // v3 addition: selectable quantize character (see processBitcrusher).
+    // Dedicated fixed-seed RNG for Dither mode - never touches glitchRandom.
+    int bitcrushModeIndex = 0;
+    juce::Random bitcrushDitherRandom { 0x5EEDC0DE };
     int bitcrushHoldSamples = 1; // in units of BASE-rate samples (sampleRateReduction's own units); AS OF PHASE 3.9, processBitcrusher() actually holds for `bitcrushEffectiveHoldSamples` (this value * activeOversamplingFactor) since it now runs at the oversampled rate — see the Phase 3.9 doc comment's "RATE-DEPENDENT INTERNAL STATE" section.
 
     float processBitcrusher(float xIn, int channel);

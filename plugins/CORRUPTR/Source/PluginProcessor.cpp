@@ -477,6 +477,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
             false));
     }
 
+    // -------------------------------------------------------------------------
+    // v3 spec addition (post-Stage-3 user request, 2026-09-05): Bitcrush
+    // character mode. Appended at the END of the layout so every pre-existing
+    // parameter's creation order is untouched. See parameter-spec.md v3 note.
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "bitcrushMode", 1 },
+        "Bitcrush Mode",
+        juce::StringArray { "Classic", "Dither", "Asymmetric", "Mid-Rise", "Bit Flip", "Gate Crush" },
+        0)); // Classic = Phase 3.3's original round-to-nearest behavior
+
     return layout;
 }
 
@@ -1210,6 +1220,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     auto* graphBypassBCParam       = parameters.getRawParameterValue("graphBypassBitcrush");
     auto* bitDepthParam            = parameters.getRawParameterValue("bitDepth");
     auto* srrParam                 = parameters.getRawParameterValue("sampleRateReduction");
+    auto* bitcrushModeParam        = parameters.getRawParameterValue("bitcrushMode"); // v3 addition
     auto* graphBypassGlitchParam   = parameters.getRawParameterValue("graphBypassGlitch");
     auto* glitchModeParam          = parameters.getRawParameterValue("glitchMode");
     auto* glitchBufferLenParam     = parameters.getRawParameterValue("glitchBufferLength");
@@ -1256,6 +1267,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     distortionMixSmoothed.setTargetValue(juce::jlimit(0.0f, 100.0f, distortionMixParam->load()) / 100.0f);
 
     bitcrushBypassed = graphBypassBCParam->load() > 0.5f;
+    bitcrushModeIndex = juce::jlimit(0, 5, (int) bitcrushModeParam->load()); // v3 addition
     {
         // Stage 2 Phase 3.7/3.8: bitDepth's Sequencer + Mod Matrix +
         // macroCrush ("Bit Depth" target, negative weight) contributions
@@ -2478,7 +2490,35 @@ float CORRUPTRAudioProcessor::processBitcrusher(float xIn, int channel)
     --counter;
 
     // architecture.md Algorithm Details: "y[n] = quantize(hold(x[n], srrFactor), bitDepth)".
-    return std::round(held * bitcrushLevels) / bitcrushLevels;
+    // v3 addition: the quantize step now has 6 selectable characters
+    // (`bitcrushMode`). Every path is allocation-free; `bitcrushDitherRandom`
+    // is a dedicated fixed-seed instance so the Dither mode can never perturb
+    // `glitchRandom`'s preset-reproducible draw sequence (Phase 3.5 invariant).
+    const float lv = bitcrushLevels;
+    switch (bitcrushModeIndex)
+    {
+        case 1: // Dither: TPDF noise (+/-1 LSB) before rounding decorrelates the staircase
+        {
+            const float d = bitcrushDitherRandom.nextFloat() - bitcrushDitherRandom.nextFloat();
+            return std::round(held * lv + d) / lv;
+        }
+        case 2: // Asymmetric: floor above zero, ceil below - even-harmonic crunch
+            return (held >= 0.0f ? std::floor(held * lv) : std::ceil(held * lv)) / lv;
+        case 3: // Mid-Rise: half-step-offset staircase - silence never passes cleanly
+            return (std::floor(held * lv) + 0.5f) / lv;
+        case 4: // Bit Flip: XOR the lowest level bit - digital mangle (audible at low depths)
+        {
+            const int q = (int) std::round(held * lv);
+            return (float) (q ^ 1) / lv;
+        }
+        case 5: // Gate Crush: quantize, then hard-mute within +/-2 steps of zero
+        {
+            const float q = std::round(held * lv);
+            return std::abs(q) < 2.0f ? 0.0f : q / lv;
+        }
+        case 0: default: // Classic: round-to-nearest (original Phase 3.3 behavior)
+            return std::round(held * lv) / lv;
+    }
 }
 
 //==============================================================================

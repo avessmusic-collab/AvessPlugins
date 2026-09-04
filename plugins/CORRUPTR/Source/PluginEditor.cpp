@@ -25,6 +25,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     // --- Filter & EQ ---
     graphBypassFilterRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassFilter");
     filterTypeRelay = std::make_unique<juce::WebComboBoxRelay>("filterType");
+    bitcrushModeRelay = std::make_unique<juce::WebComboBoxRelay>("bitcrushMode");
     filterCutoffRelay = std::make_unique<juce::WebSliderRelay>("filterCutoff");
     filterResonanceRelay = std::make_unique<juce::WebSliderRelay>("filterResonance");
 
@@ -141,6 +142,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*graphBypassWaveshaperRelay)
             .withOptionsFrom(*graphBypassFilterRelay)
             .withOptionsFrom(*filterTypeRelay)
+            .withOptionsFrom(*bitcrushModeRelay)
             .withOptionsFrom(*filterCutoffRelay)
             .withOptionsFrom(*filterResonanceRelay)
             .withOptionsFrom(*mixRelay)
@@ -322,6 +324,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("graphBypassFilter"), *graphBypassFilterRelay, nullptr);
     filterTypeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
         *processorRef.getAPVTS().getParameter("filterType"), *filterTypeRelay, nullptr);
+    bitcrushModeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("bitcrushMode"), *bitcrushModeRelay, nullptr);
     filterCutoffAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("filterCutoff"), *filterCutoffRelay, nullptr);
     filterResonanceAttachment = std::make_unique<juce::WebSliderParameterAttachment>(

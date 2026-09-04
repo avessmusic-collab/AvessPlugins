@@ -1,6 +1,14 @@
 # Parameter Specification: CORRUPTR
 
-**Status:** 🔒 Locked (immutable contract for implementation) - **v2** (reconciled — full architecture scope)
+**Status:** 🔒 Locked (immutable contract for implementation) - **v3** (v2 + one post-Stage-3 addition)
+
+> **v3 addendum (2026-09-05, user-requested):** one parameter appended — `bitcrushMode`
+> (Choice, 6 options: `Classic | Dither | Asymmetric | Mid-Rise | Bit Flip | Gate Crush`,
+> default `Classic`), the Bitcrush module's selectable quantize character, bound to the
+> module's mode tile in the production UI. Appended at the END of `createParameterLayout()`
+> so all 94 pre-existing parameters' creation order is untouched; old saved states load
+> fine (missing param -> default). Total parameter count is now **95** (bound: 87).
+> `Classic` reproduces the original Phase 3.3 round-to-nearest behavior bit-exactly.
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 
