@@ -283,6 +283,13 @@
   /* NEW in v5: minimal icon-button row + power/enable toggle in each card's
      header, matching the main-unit modules' icon-row chrome exactly. */
   .card-header-row{ display:flex; align-items:center; gap: 10px; }
+  .tile-menu{ position:fixed; z-index:1000; background:#1c1c1e; border-radius:10px; padding:6px 0;
+              box-shadow:0 8px 24px rgba(0,0,0,0.35); max-height:320px; overflow-y:auto; min-width:170px; }
+  .tile-menu-item{ padding:7px 16px; font-size:10px; font-weight:800; letter-spacing:1.2px;
+                   text-transform:uppercase; color:rgba(255,255,255,0.72); cursor:pointer; white-space:nowrap; }
+  .tile-menu-item:hover{ background:rgba(255,255,255,0.08); color:#fff; }
+  .tile-menu-item.active{ color:#fff; background:rgba(255,255,255,0.14); }
+  .mode-tile[data-param]{ cursor:pointer; }
   .collapse-btn{ margin-left:auto; cursor:pointer; }
   .collapse-btn svg{ transition: transform .18s ease; }
   .collapse-btn.collapsed svg{ transform: rotate(-90deg); }

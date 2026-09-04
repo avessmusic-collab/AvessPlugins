@@ -286,6 +286,15 @@
   /* NEW in v5: minimal icon-button row + power/enable toggle in each card's
      header, matching the main-unit modules' icon-row chrome exactly. */
   .card-header-row{ display:flex; align-items:center; gap: 10px; }
+  /* Direct-pick menu for mode tiles: click the tile to choose a type from a
+     list instead of arrow-cycling. Monochrome, matches the tile aesthetic. */
+  .tile-menu{ position:fixed; z-index:1000; background:#1c1c1e; border-radius:10px; padding:6px 0;
+              box-shadow:0 8px 24px rgba(0,0,0,0.35); max-height:320px; overflow-y:auto; min-width:170px; }
+  .tile-menu-item{ padding:7px 16px; font-size:10px; font-weight:800; letter-spacing:1.2px;
+                   text-transform:uppercase; color:rgba(255,255,255,0.72); cursor:pointer; white-space:nowrap; }
+  .tile-menu-item:hover{ background:rgba(255,255,255,0.08); color:#fff; }
+  .tile-menu-item.active{ color:#fff; background:rgba(255,255,255,0.14); }
+  .mode-tile[data-param]{ cursor:pointer; }
   /* Collapsible sections (Sequencer / Mod Matrix): chevron in the header
      toggles the card body; state persists per-browser via localStorage. */
   .collapse-btn{ margin-left:auto; cursor:pointer; }
@@ -1250,6 +1259,40 @@
   // ===================================================================
   // Mode tiles (icon-tile + chevron-cycle combo, e.g. distortionAlgorithm)
   // ===================================================================
+  // ===================================================================
+  // Direct-pick tile menu: shared popup for all choice-bearing mode tiles.
+  // Skipped choice indices (data-skip) are omitted from the list.
+  // ===================================================================
+  let tileMenuEl = null, tileMenuFor = null, tileMenuSuppress = null;
+  function closeTileMenu(){ if(tileMenuEl){ tileMenuEl.remove(); tileMenuEl = null; tileMenuFor = null; } }
+  document.addEventListener('pointerdown', e => {
+    if (tileMenuEl && !tileMenuEl.contains(e.target)){
+      tileMenuSuppress = (tileMenuFor && tileMenuFor.contains(e.target)) ? tileMenuFor : null;
+      closeTileMenu();
+    }
+  }, true);
+  function openTileMenu(tile, choices, skip, getIndex, choose){
+    closeTileMenu();
+    const menu = document.createElement('div');
+    menu.className = 'tile-menu';
+    choices.forEach((c, i) => {
+      if (skip.includes(i)) return;
+      const it = document.createElement('div');
+      it.className = 'tile-menu-item' + (i === getIndex() ? ' active' : '');
+      it.textContent = c;
+      it.addEventListener('click', ev => { ev.stopPropagation(); choose(i); closeTileMenu(); });
+      menu.appendChild(it);
+    });
+    const r = tile.getBoundingClientRect();
+    menu.style.left = r.left + 'px';
+    menu.style.top = (r.bottom + 6) + 'px';
+    document.body.appendChild(menu);
+    const mr = menu.getBoundingClientRect();
+    if (mr.bottom > window.innerHeight - 8) menu.style.top = Math.max(8, r.top - mr.height - 6) + 'px';
+    if (mr.right > window.innerWidth - 8) menu.style.left = Math.max(8, window.innerWidth - 8 - mr.width) + 'px';
+    tileMenuEl = menu; tileMenuFor = tile;
+  }
+
   function bindModeTiles(scope){
     scope.querySelectorAll('.mode-tile[data-param]:not([data-bound])').forEach(tile => {
       tile.setAttribute('data-bound','1');
@@ -1305,6 +1348,15 @@
       // Reflect host automation / preset recall back into the tile
       // (valueChangedEvent fires with NO callback arguments - Pattern #15).
       state.valueChangedEvent.addListener(() => { index = state.getChoiceIndex(); render(); });
+
+      // Direct-pick menu: click the tile itself to choose from a list.
+      tile.addEventListener('click', () => {
+        if (tileMenuSuppress === tile){ tileMenuSuppress = null; return; } // toggle-close
+        openTileMenu(tile, choices, skip, () => index, (i) => {
+          index = i; render(); state.setChoiceIndex(i);
+          updateDebugMonitor(param, choices[i], i / (choices.length - 1));
+        });
+      });
     });
   }
 
