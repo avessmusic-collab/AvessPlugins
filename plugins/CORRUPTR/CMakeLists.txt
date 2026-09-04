@@ -7,6 +7,7 @@ juce_add_plugin(CORRUPTR
     PLUGIN_CODE Corr
     FORMATS VST3 AU Standalone
     PRODUCT_NAME "CORRUPTR"
+    NEEDS_WEB_BROWSER TRUE
 )
 
 # Source files
@@ -47,17 +48,19 @@ target_link_libraries(CORRUPTR
 # Generate JuceHeader.h (JUCE 8 requirement)
 juce_generate_juce_header(CORRUPTR)
 
-# WebView UI Resources (uncommented by gui-agent if WebView UI used)
-# juce_add_binary_data(CORRUPTR_UIResources
-#     SOURCES
-#         Source/ui/public/index.html
-#         Source/ui/public/js/juce/index.js
-# )
-#
-# target_link_libraries(CORRUPTR
-#     PRIVATE
-#         CORRUPTR_UIResources
-# )
+# WebView UI Resources
+juce_add_binary_data(CORRUPTR_UIResources
+    SOURCES
+        Source/ui/public/index.html
+        Source/ui/public/js/juce/index.js
+        Source/ui/public/js/juce/check_native_interop.js
+)
+
+target_link_libraries(CORRUPTR
+    PRIVATE
+        CORRUPTR_UIResources
+        juce::juce_gui_extra
+)
 
 # Compile definitions
 target_compile_definitions(CORRUPTR
@@ -65,9 +68,9 @@ target_compile_definitions(CORRUPTR
         JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
-# WebView support (uncommented by gui-agent if WebView UI used)
-# target_compile_definitions(CORRUPTR
-#     PUBLIC
-#         JUCE_WEB_BROWSER=1
-#         JUCE_USE_CURL=0
-# )
+# WebView support
+target_compile_definitions(CORRUPTR
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_CURL=0
+)

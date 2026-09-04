@@ -264,6 +264,7 @@ CORRUPTR's UI concept (Distortion Graph routing view, large XY pad, dedicated Gl
 **Goal:** Large XY pad with glide feel, 7 Performance Mode trigger buttons.
 
 **Test Criteria:**
+- [ ] XY pad streams `xyPadX`/`xyPadY` parameter updates CONTINUOUSLY during the drag gesture (pointermove-driven, with beginChangeGesture/endChangeGesture bracketing the drag) — values audibly change in real time while dragging, never only on release
 - [ ] XY pad drag produces smooth glide (not snap) matching `xyPadSmoothing`
 - [ ] Performance Mode buttons trigger correctly, visually indicate active state
 - [ ] MIDI-triggered Performance Mode reflected in UI state

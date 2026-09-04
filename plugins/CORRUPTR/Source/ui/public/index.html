@@ -844,13 +844,21 @@
         if(valueEl) valueEl.textContent = text;
         document.querySelectorAll(`[data-value-for="${param}"]`).forEach(el => { el.textContent = text; });
       }
+      // NOTE: do NOT proactively push this local placeholder default into
+      // the backend here - the relay's real properties/value round-trip
+      // (sendInitialUpdate(), fired from the C++ attachment's constructor)
+      // arrives asynchronously via the valueChangedEvent listener below and
+      // is the source of truth. Writing here races that round-trip using
+      // the SliderState's still-default {start:0,end:1,skew:1} properties
+      // and can corrupt the real APVTS value on load (e.g. clamp
+      // skewed/wide-range parameters to their minimum).
       render();
-      state.setNormalisedValue(normFromValue(value, min, max));
 
       let dragging = false, startY = 0, startVal = 0;
       knob.addEventListener('mousedown', e => {
         dragging = true; startY = e.clientY; startVal = value;
         document.body.style.cursor = 'ns-resize'; e.preventDefault();
+        state.sliderDragStarted();
       });
       window.addEventListener('mousemove', e => {
         if(!dragging) return;
@@ -861,8 +869,14 @@
         state.setNormalisedValue(n);
         updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
       });
-      window.addEventListener('mouseup', () => { dragging = false; document.body.style.cursor = 'default'; });
-      state.valueChangedEvent.addListener(n => { value = valueFromNorm(n, min, max); render(); });
+      window.addEventListener('mouseup', () => {
+        if(dragging) state.sliderDragEnded();
+        dragging = false; document.body.style.cursor = 'default';
+      });
+      // NOTE: valueChangedEvent fires with NO callback arguments (JUCE 8
+      // pattern #15) - read the current value from `state` itself, not
+      // from a listener argument.
+      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max); render(); });
     });
   }
 
@@ -891,8 +905,10 @@
         const text = fmtValue(value, decimals, unit);
         if(readout) readout.textContent = text;
       }
+      // Do NOT proactively push the local placeholder default into the
+      // backend here (see bindKnobs' identical note above) - the real
+      // value arrives asynchronously via the valueChangedEvent listener.
       render();
-      state.setNormalisedValue(normFromValue(value, min, max));
 
       let dragging = false;
       function setFromClientY(clientY){
@@ -904,10 +920,12 @@
         state.setNormalisedValue(n);
         updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
       }
-      fader.addEventListener('mousedown', e => { dragging = true; setFromClientY(e.clientY); e.preventDefault(); });
+      fader.addEventListener('mousedown', e => { dragging = true; state.sliderDragStarted(); setFromClientY(e.clientY); e.preventDefault(); });
       window.addEventListener('mousemove', e => { if(dragging) setFromClientY(e.clientY); });
-      window.addEventListener('mouseup', () => { dragging = false; });
-      state.valueChangedEvent.addListener(n => { value = valueFromNorm(n, min, max); render(); });
+      window.addEventListener('mouseup', () => { if(dragging) state.sliderDragEnded(); dragging = false; });
+      // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+      // read the current value from `state` itself.
+      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max); render(); });
     });
   }
 
@@ -933,8 +951,9 @@
           thumb.style.left = `${n * usable}px`;
           if(readout) readout.textContent = choices[index];
         }
+        // Do NOT proactively push the local placeholder default index into
+        // the backend here (see bindKnobs' identical note above).
         render();
-        state.setChoiceIndex(index);
         function setFromClientX(clientX){
           const rect = hs.getBoundingClientRect();
           const usable = rect.width - 10;
@@ -948,6 +967,8 @@
         hs.addEventListener('mousedown', e => { dragging = true; setFromClientX(e.clientX); e.preventDefault(); });
         window.addEventListener('mousemove', e => { if(dragging) setFromClientX(e.clientX); });
         window.addEventListener('mouseup', () => { dragging = false; });
+        // valueChangedEvent fires with NO callback arguments (Pattern #15).
+        state.valueChangedEvent.addListener(() => { index = state.getChoiceIndex(); render(); });
       } else {
         // continuous float slider (e.g. micro delay time)
         const min = parseFloat(hs.dataset.min);
@@ -962,8 +983,9 @@
           thumb.style.left = `${n * usable}px`;
           if(readout) readout.textContent = fmtValue(value, decimals, unit);
         }
+        // Do NOT proactively push the local placeholder default into the
+        // backend here (see bindKnobs' identical note above).
         render();
-        state.setNormalisedValue(normFromValue(value, min, max));
         function setFromClientX(clientX){
           const rect = hs.getBoundingClientRect();
           const usable = rect.width - 10;
@@ -974,10 +996,12 @@
           updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
         }
         let dragging = false;
-        hs.addEventListener('mousedown', e => { dragging = true; setFromClientX(e.clientX); e.preventDefault(); });
+        hs.addEventListener('mousedown', e => { dragging = true; state.sliderDragStarted(); setFromClientX(e.clientX); e.preventDefault(); });
         window.addEventListener('mousemove', e => { if(dragging) setFromClientX(e.clientX); });
-        window.addEventListener('mouseup', () => { dragging = false; });
-        state.valueChangedEvent.addListener(n => { value = valueFromNorm(n, min, max); render(); });
+        window.addEventListener('mouseup', () => { if(dragging) state.sliderDragEnded(); dragging = false; });
+        // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+        // read the current value from `state` itself.
+        state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max); render(); });
       }
     });
   }
@@ -994,7 +1018,8 @@
       function render(){ t.classList.toggle('on', on); }
       render();
       t.addEventListener('click', () => { on = !on; render(); state.setValue(on); updateDebugMonitor(param, on, on?1:0); });
-      state.valueChangedEvent.addListener(v => { on = !!v; render(); });
+      // valueChangedEvent fires with NO callback arguments (Pattern #15).
+      state.valueChangedEvent.addListener(() => { on = !!state.getValue(); render(); });
     });
 
     document.getElementById('ab_toggle').addEventListener('click', function(){
@@ -1018,7 +1043,8 @@
       function render(){ btn.classList.toggle('on', on); }
       render();
       btn.addEventListener('click', () => { on = !on; render(); state.setValue(on); updateDebugMonitor(param, on, on?1:0); });
-      state.valueChangedEvent.addListener(v => { on = !!v; render(); });
+      // valueChangedEvent fires with NO callback arguments (Pattern #15).
+      state.valueChangedEvent.addListener(() => { on = !!state.getValue(); render(); });
     });
   }
 
@@ -1090,8 +1116,9 @@
         labelEl.textContent = choices[index];
         Array.from(dotsEl.children).forEach((d,i) => d.classList.toggle('active', i === index));
       }
+      // Do NOT proactively push the local placeholder default index into
+      // the backend here (see bindKnobs' identical note above).
       render();
-      state.setChoiceIndex(index);
 
       document.querySelectorAll(`.chevron[data-for="${id}"]`).forEach(chev => {
         chev.addEventListener('click', () => {
@@ -1102,6 +1129,10 @@
           updateDebugMonitor(param, choices[index], index/(choices.length-1));
         });
       });
+
+      // Reflect host automation / preset recall back into the tile
+      // (valueChangedEvent fires with NO callback arguments - Pattern #15).
+      state.valueChangedEvent.addListener(() => { index = state.getChoiceIndex(); render(); });
     });
   }
 
@@ -1125,11 +1156,17 @@
       sel.setAttribute('data-bound','1');
       const param = sel.dataset.param;
       const state = Juce.getComboBoxState(param);
-      state.setChoiceIndex(sel.selectedIndex);
+      // Do NOT proactively push the HTML's static default selectedIndex
+      // into the backend here (see bindKnobs' identical note above) - the
+      // real value arrives asynchronously via the valueChangedEvent
+      // listener below.
       sel.addEventListener('change', () => {
         state.setChoiceIndex(sel.selectedIndex);
         updateDebugMonitor(param, sel.value, sel.selectedIndex/Math.max(1, sel.options.length-1));
       });
+      // Reflect host automation / preset recall back into the <select>
+      // (valueChangedEvent fires with NO callback arguments - Pattern #15).
+      state.valueChangedEvent.addListener(() => { sel.selectedIndex = state.getChoiceIndex(); });
     });
   }
 
