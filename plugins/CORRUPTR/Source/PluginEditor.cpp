@@ -49,6 +49,65 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     sequencerRateRelay = std::make_unique<juce::WebComboBoxRelay>("sequencerRate");
     sequencerStepsRelay = std::make_unique<juce::WebComboBoxRelay>("sequencerSteps");
 
+    // --- Phase 5.3: Macros (8) ---
+    macroDamageRelay = std::make_unique<juce::WebSliderRelay>("macroDamage");
+    macroCrushRelay = std::make_unique<juce::WebSliderRelay>("macroCrush");
+    macroGlitchRelay = std::make_unique<juce::WebSliderRelay>("macroGlitch");
+    macroChaosRelay = std::make_unique<juce::WebSliderRelay>("macroChaos");
+    macroRhythmRelay = std::make_unique<juce::WebSliderRelay>("macroRhythm");
+    macroMovementRelay = std::make_unique<juce::WebSliderRelay>("macroMovement");
+    macroWidthRelay = std::make_unique<juce::WebSliderRelay>("macroWidth");
+    macroMixRelay = std::make_unique<juce::WebSliderRelay>("macroMix");
+
+    // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs ---
+    modMatrixEnabledRelay = std::make_unique<juce::WebToggleButtonRelay>("modMatrixEnabled");
+    lfo1RateRelay = std::make_unique<juce::WebSliderRelay>("lfo1Rate");
+    lfo1ShapeRelay = std::make_unique<juce::WebComboBoxRelay>("lfo1Shape");
+    lfo1SyncRelay = std::make_unique<juce::WebToggleButtonRelay>("lfo1Sync");
+    lfo2RateRelay = std::make_unique<juce::WebSliderRelay>("lfo2Rate");
+    lfo2ShapeRelay = std::make_unique<juce::WebComboBoxRelay>("lfo2Shape");
+    lfo2SyncRelay = std::make_unique<juce::WebToggleButtonRelay>("lfo2Sync");
+    lfo3RateRelay = std::make_unique<juce::WebSliderRelay>("lfo3Rate");
+    lfo3ShapeRelay = std::make_unique<juce::WebComboBoxRelay>("lfo3Shape");
+    lfo3SyncRelay = std::make_unique<juce::WebToggleButtonRelay>("lfo3Sync");
+    lfo4RateRelay = std::make_unique<juce::WebSliderRelay>("lfo4Rate");
+    lfo4ShapeRelay = std::make_unique<juce::WebComboBoxRelay>("lfo4Shape");
+    lfo4SyncRelay = std::make_unique<juce::WebToggleButtonRelay>("lfo4Sync");
+
+    // --- Phase 5.3: Mod Matrix slots (8 x {Source,Destination,Amount,Enable}) ---
+    modSlot1SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot1Source");
+    modSlot1DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot1Destination");
+    modSlot1AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot1Amount");
+    modSlot1EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot1Enable");
+    modSlot2SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot2Source");
+    modSlot2DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot2Destination");
+    modSlot2AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot2Amount");
+    modSlot2EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot2Enable");
+    modSlot3SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot3Source");
+    modSlot3DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot3Destination");
+    modSlot3AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot3Amount");
+    modSlot3EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot3Enable");
+    modSlot4SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot4Source");
+    modSlot4DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot4Destination");
+    modSlot4AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot4Amount");
+    modSlot4EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot4Enable");
+    modSlot5SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot5Source");
+    modSlot5DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot5Destination");
+    modSlot5AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot5Amount");
+    modSlot5EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot5Enable");
+    modSlot6SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot6Source");
+    modSlot6DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot6Destination");
+    modSlot6AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot6Amount");
+    modSlot6EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot6Enable");
+    modSlot7SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot7Source");
+    modSlot7DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot7Destination");
+    modSlot7AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot7Amount");
+    modSlot7EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot7Enable");
+    modSlot8SourceRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot8Source");
+    modSlot8DestinationRelay = std::make_unique<juce::WebComboBoxRelay>("modSlot8Destination");
+    modSlot8AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot8Amount");
+    modSlot8EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot8Enable");
+
     // ------------------------------------------------------------------------
     // STEP 2: CREATE WEBVIEW (with relay options + Phase 5.2's sequencer
     // pattern-data native-function bridge - see PluginEditor.h's "PHASE 5.2
@@ -83,6 +142,62 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*sequencerEnabledRelay)
             .withOptionsFrom(*sequencerRateRelay)
             .withOptionsFrom(*sequencerStepsRelay)
+
+            .withOptionsFrom(*macroDamageRelay)
+            .withOptionsFrom(*macroCrushRelay)
+            .withOptionsFrom(*macroGlitchRelay)
+            .withOptionsFrom(*macroChaosRelay)
+            .withOptionsFrom(*macroRhythmRelay)
+            .withOptionsFrom(*macroMovementRelay)
+            .withOptionsFrom(*macroWidthRelay)
+            .withOptionsFrom(*macroMixRelay)
+
+            .withOptionsFrom(*modMatrixEnabledRelay)
+            .withOptionsFrom(*lfo1RateRelay)
+            .withOptionsFrom(*lfo1ShapeRelay)
+            .withOptionsFrom(*lfo1SyncRelay)
+            .withOptionsFrom(*lfo2RateRelay)
+            .withOptionsFrom(*lfo2ShapeRelay)
+            .withOptionsFrom(*lfo2SyncRelay)
+            .withOptionsFrom(*lfo3RateRelay)
+            .withOptionsFrom(*lfo3ShapeRelay)
+            .withOptionsFrom(*lfo3SyncRelay)
+            .withOptionsFrom(*lfo4RateRelay)
+            .withOptionsFrom(*lfo4ShapeRelay)
+            .withOptionsFrom(*lfo4SyncRelay)
+
+            .withOptionsFrom(*modSlot1SourceRelay)
+            .withOptionsFrom(*modSlot1DestinationRelay)
+            .withOptionsFrom(*modSlot1AmountRelay)
+            .withOptionsFrom(*modSlot1EnableRelay)
+            .withOptionsFrom(*modSlot2SourceRelay)
+            .withOptionsFrom(*modSlot2DestinationRelay)
+            .withOptionsFrom(*modSlot2AmountRelay)
+            .withOptionsFrom(*modSlot2EnableRelay)
+            .withOptionsFrom(*modSlot3SourceRelay)
+            .withOptionsFrom(*modSlot3DestinationRelay)
+            .withOptionsFrom(*modSlot3AmountRelay)
+            .withOptionsFrom(*modSlot3EnableRelay)
+            .withOptionsFrom(*modSlot4SourceRelay)
+            .withOptionsFrom(*modSlot4DestinationRelay)
+            .withOptionsFrom(*modSlot4AmountRelay)
+            .withOptionsFrom(*modSlot4EnableRelay)
+            .withOptionsFrom(*modSlot5SourceRelay)
+            .withOptionsFrom(*modSlot5DestinationRelay)
+            .withOptionsFrom(*modSlot5AmountRelay)
+            .withOptionsFrom(*modSlot5EnableRelay)
+            .withOptionsFrom(*modSlot6SourceRelay)
+            .withOptionsFrom(*modSlot6DestinationRelay)
+            .withOptionsFrom(*modSlot6AmountRelay)
+            .withOptionsFrom(*modSlot6EnableRelay)
+            .withOptionsFrom(*modSlot7SourceRelay)
+            .withOptionsFrom(*modSlot7DestinationRelay)
+            .withOptionsFrom(*modSlot7AmountRelay)
+            .withOptionsFrom(*modSlot7EnableRelay)
+            .withOptionsFrom(*modSlot8SourceRelay)
+            .withOptionsFrom(*modSlot8DestinationRelay)
+            .withOptionsFrom(*modSlot8AmountRelay)
+            .withOptionsFrom(*modSlot8EnableRelay)
 
             // --- Phase 5.2: Rhythmic Sequencer pattern-data bridge (custom
             // state, NOT an APVTS parameter - cannot use a Relay/Attachment
@@ -219,6 +334,125 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("sequencerRate"), *sequencerRateRelay, nullptr);
     sequencerStepsAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
         *processorRef.getAPVTS().getParameter("sequencerSteps"), *sequencerStepsRelay, nullptr);
+
+    // --- Phase 5.3: Macros (8) ---
+    macroDamageAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroDamage"), *macroDamageRelay, nullptr);
+    macroCrushAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroCrush"), *macroCrushRelay, nullptr);
+    macroGlitchAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroGlitch"), *macroGlitchRelay, nullptr);
+    macroChaosAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroChaos"), *macroChaosRelay, nullptr);
+    macroRhythmAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroRhythm"), *macroRhythmRelay, nullptr);
+    macroMovementAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroMovement"), *macroMovementRelay, nullptr);
+    macroWidthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroWidth"), *macroWidthRelay, nullptr);
+    macroMixAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("macroMix"), *macroMixRelay, nullptr);
+
+    // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs ---
+    modMatrixEnabledAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modMatrixEnabled"), *modMatrixEnabledRelay, nullptr);
+    lfo1RateAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo1Rate"), *lfo1RateRelay, nullptr);
+    lfo1ShapeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo1Shape"), *lfo1ShapeRelay, nullptr);
+    lfo1SyncAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo1Sync"), *lfo1SyncRelay, nullptr);
+    lfo2RateAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo2Rate"), *lfo2RateRelay, nullptr);
+    lfo2ShapeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo2Shape"), *lfo2ShapeRelay, nullptr);
+    lfo2SyncAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo2Sync"), *lfo2SyncRelay, nullptr);
+    lfo3RateAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo3Rate"), *lfo3RateRelay, nullptr);
+    lfo3ShapeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo3Shape"), *lfo3ShapeRelay, nullptr);
+    lfo3SyncAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo3Sync"), *lfo3SyncRelay, nullptr);
+    lfo4RateAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo4Rate"), *lfo4RateRelay, nullptr);
+    lfo4ShapeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo4Shape"), *lfo4ShapeRelay, nullptr);
+    lfo4SyncAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("lfo4Sync"), *lfo4SyncRelay, nullptr);
+
+    // --- Phase 5.3: Mod Matrix slots (8 x {Source,Destination,Amount,Enable}) ---
+    modSlot1SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot1Source"), *modSlot1SourceRelay, nullptr);
+    modSlot1DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot1Destination"), *modSlot1DestinationRelay, nullptr);
+    modSlot1AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot1Amount"), *modSlot1AmountRelay, nullptr);
+    modSlot1EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot1Enable"), *modSlot1EnableRelay, nullptr);
+
+    modSlot2SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot2Source"), *modSlot2SourceRelay, nullptr);
+    modSlot2DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot2Destination"), *modSlot2DestinationRelay, nullptr);
+    modSlot2AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot2Amount"), *modSlot2AmountRelay, nullptr);
+    modSlot2EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot2Enable"), *modSlot2EnableRelay, nullptr);
+
+    modSlot3SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot3Source"), *modSlot3SourceRelay, nullptr);
+    modSlot3DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot3Destination"), *modSlot3DestinationRelay, nullptr);
+    modSlot3AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot3Amount"), *modSlot3AmountRelay, nullptr);
+    modSlot3EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot3Enable"), *modSlot3EnableRelay, nullptr);
+
+    modSlot4SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot4Source"), *modSlot4SourceRelay, nullptr);
+    modSlot4DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot4Destination"), *modSlot4DestinationRelay, nullptr);
+    modSlot4AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot4Amount"), *modSlot4AmountRelay, nullptr);
+    modSlot4EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot4Enable"), *modSlot4EnableRelay, nullptr);
+
+    modSlot5SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot5Source"), *modSlot5SourceRelay, nullptr);
+    modSlot5DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot5Destination"), *modSlot5DestinationRelay, nullptr);
+    modSlot5AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot5Amount"), *modSlot5AmountRelay, nullptr);
+    modSlot5EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot5Enable"), *modSlot5EnableRelay, nullptr);
+
+    modSlot6SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot6Source"), *modSlot6SourceRelay, nullptr);
+    modSlot6DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot6Destination"), *modSlot6DestinationRelay, nullptr);
+    modSlot6AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot6Amount"), *modSlot6AmountRelay, nullptr);
+    modSlot6EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot6Enable"), *modSlot6EnableRelay, nullptr);
+
+    modSlot7SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot7Source"), *modSlot7SourceRelay, nullptr);
+    modSlot7DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot7Destination"), *modSlot7DestinationRelay, nullptr);
+    modSlot7AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot7Amount"), *modSlot7AmountRelay, nullptr);
+    modSlot7EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot7Enable"), *modSlot7EnableRelay, nullptr);
+
+    modSlot8SourceAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot8Source"), *modSlot8SourceRelay, nullptr);
+    modSlot8DestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot8Destination"), *modSlot8DestinationRelay, nullptr);
+    modSlot8AmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot8Amount"), *modSlot8AmountRelay, nullptr);
+    modSlot8EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("modSlot8Enable"), *modSlot8EnableRelay, nullptr);
 
     // ------------------------------------------------------------------------
     // WEBVIEW SETUP

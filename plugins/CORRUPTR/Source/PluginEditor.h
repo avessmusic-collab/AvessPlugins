@@ -133,6 +133,74 @@
  * wiring is explicitly plan.md Phase 5.6 scope (Meters/Waveform/Modulation
  * Range Indicators), not this phase's; a static (no playhead) step-edit-only
  * grid is this phase's deliberate, task-sanctioned stopping point.
+ *
+ * ============================================================================
+ * PHASE 5.3 ADDITIONS ("Modulation Matrix, LFOs, and Macros")
+ * ============================================================================
+ * Adds 53 more ordinary APVTS relay/attachment pairs, bringing the bound
+ * total to 76 of 94:
+ *   - 8 Macro knobs (macroDamage..macroMix) - markup already existed in
+ *     v5-ui.html (Macros module, always-visible base row + ADV-revealed 2nd
+ *     row) with correct `data-param` attributes and was ALREADY being bound
+ *     by index.html's generic `bindKnobs(document)` call since Phase 5.1
+ *     (that call iterates every `.knob[data-param]` in the document
+ *     regardless of phase, same "fixed generic helper, zero JS changes"
+ *     precedent Phase 5.2's own state notes already established for
+ *     Bitcrush/Glitch/Sequencer) - this phase's work for Macros is 100% C++
+ *     relay/attachment wiring, ZERO JS/HTML changes.
+ *   - 12 LFO params (lfo1Rate/lfo1Shape/lfo1Sync .. lfo4Rate/lfo4Shape/
+ *     lfo4Sync) + `modMatrixEnabled` - the LFO mini-panel JS generator
+ *     (index.html's "4 LFO mini-panels" IIFE) ALREADY emitted all three
+ *     controls per LFO (Rate knob, Shape combo, Sync toggle) with correct
+ *     `data-param` attributes and already called `bindKnobs(row)`/
+ *     `bindToggles(row)`/`bindCombos(row)` on itself at the end of that
+ *     IIFE - contrary to this task's own brief, which anticipated possibly
+ *     having to "extend the generator with the missing controls," NO JS
+ *     changes were needed here either (verified by reading the file before
+ *     touching it - documented as a FLAGGED resolution of that anticipated-
+ *     but-not-actually-needed work). `modMatrixEnabled`'s power-btn markup
+ *     also pre-existed (shares the sequencerEnabled/graphBypass* power-btn
+ *     pattern, bound by the existing `bindPowerButtons`/`bindEnableButtons`
+ *     calls). Choice-index alignment verified against dsp/Lfo.h's `Shape`
+ *     enum (Sine=0..Random Walk=8) - the mockup's 9 `<option>` elements are
+ *     in that exact order.
+ *   - 32 Mod Matrix slot params (modSlot1Source/Destination/Amount/Enable
+ *     .. modSlot8Source/Destination/Amount/Enable) - v5-ui.html's
+ *     `#matrixTable` was PURELY DECORATIVE (a static source x destination
+ *     dot-grid with a hardcoded `activeCells` set, no `data-param`
+ *     anywhere - parameter-spec.md itself documents all 32 of these
+ *     params as "Not yet bound to a mockup control"). FLAGGED LAYOUT
+ *     INTERPRETATION (task-sanctioned - the brief explicitly names this as
+ *     an expected gap and directs "extend via JS generation consistent
+ *     with the design"): a new JS generator (index.html's "8-slot Mod
+ *     Matrix editor" IIFE) builds 8 real slot-editor rows into a new
+ *     `#modSlotList` container placed directly below the existing
+ *     decorative `#matrixTable` (which is left in place unchanged, exactly
+ *     as Phase 5.2 left the sequencer's orphaned `.step-bar.playhead` CSS
+ *     rule in place rather than removing still-harmless decoration) - each
+ *     row is a `Source` combo (10 choices), `Destination` combo (12
+ *     choices), a compact `Amount` knob (-100..+100%), and an `Enable`
+ *     toggle, all reusing this file's existing generic `bindCombos`/
+ *     `bindKnobs`/`bindToggles` helpers verbatim (same "fixed helpers, zero
+ *     bug-reintroduction risk" precedent as every prior phase). Choice-list
+ *     ORDER for both combos is copied character-for-character from
+ *     parameter-spec.md's `modSlot1Source`/`modSlot1Destination` Choices
+ *     lists and cross-checked against dsp/ModMatrix.h's `Source`/
+ *     `Destination` enums (`sourceLfo1=0..sourceMacro=9`,
+ *     `destDrive=0..destWidth=11`) - both enums' comments explicitly state
+ *     they match parameter-spec.md's order, confirmed by inspection; a
+ *     mismatch here would silently route the wrong source/destination with
+ *     no compiler error, so this was verified by direct side-by-side
+ *     reading, not assumed.
+ *
+ * NOT bound this phase: the 6 draft-only Float params (tone, bias,
+ * distortionMix, sampleRateReduction, chaos, xyPadSmoothing) - same "Not yet
+ * bound to a mockup control" status as every prior phase's identical
+ * skip-reasoning for this exact set, unrelated to Mod Matrix/LFO/Macro scope
+ * anyway. xyPadX/xyPadY and the 7 performanceXxx triggers are explicitly
+ * Phase 5.4 scope (plan.md), not touched here despite their markup already
+ * existing (same "markup exists everywhere, phases only add relays"
+ * intentional-inertness convention this whole rollout uses).
  */
 
 class CORRUPTRAudioProcessorEditor : public juce::AudioProcessorEditor
@@ -229,6 +297,65 @@ private:
     std::unique_ptr<juce::WebComboBoxRelay> sequencerRateRelay;
     std::unique_ptr<juce::WebComboBoxRelay> sequencerStepsRelay;
 
+    // --- Phase 5.3: Macros (8) ---
+    std::unique_ptr<juce::WebSliderRelay> macroDamageRelay;
+    std::unique_ptr<juce::WebSliderRelay> macroCrushRelay;
+    std::unique_ptr<juce::WebSliderRelay> macroGlitchRelay;
+    std::unique_ptr<juce::WebSliderRelay> macroChaosRelay;
+    std::unique_ptr<juce::WebSliderRelay> macroRhythmRelay;
+    std::unique_ptr<juce::WebSliderRelay> macroMovementRelay;
+    std::unique_ptr<juce::WebSliderRelay> macroWidthRelay;
+    std::unique_ptr<juce::WebSliderRelay> macroMixRelay;
+
+    // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs (rate/shape/sync) ---
+    std::unique_ptr<juce::WebToggleButtonRelay> modMatrixEnabledRelay;
+    std::unique_ptr<juce::WebSliderRelay> lfo1RateRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> lfo1ShapeRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> lfo1SyncRelay;
+    std::unique_ptr<juce::WebSliderRelay> lfo2RateRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> lfo2ShapeRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> lfo2SyncRelay;
+    std::unique_ptr<juce::WebSliderRelay> lfo3RateRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> lfo3ShapeRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> lfo3SyncRelay;
+    std::unique_ptr<juce::WebSliderRelay> lfo4RateRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> lfo4ShapeRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> lfo4SyncRelay;
+
+    // --- Phase 5.3: Mod Matrix slots (8 x {Source,Destination,Amount,Enable} = 32) ---
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot1SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot1DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot1AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot1EnableRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot2SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot2DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot2AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot2EnableRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot3SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot3DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot3AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot3EnableRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot4SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot4DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot4AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot4EnableRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot5SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot5DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot5AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot5EnableRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot6SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot6DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot6AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot6EnableRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot7SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot7DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot7AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot7EnableRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot8SourceRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> modSlot8DestinationRelay;
+    std::unique_ptr<juce::WebSliderRelay> modSlot8AmountRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> modSlot8EnableRelay;
+
     // ------------------------------------------------------------------------
     // 2️⃣ WEBVIEW SECOND
     // ------------------------------------------------------------------------
@@ -274,6 +401,65 @@ private:
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> sequencerEnabledAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> sequencerRateAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> sequencerStepsAttachment;
+
+    // --- Phase 5.3: Macros (8) ---
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroDamageAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroCrushAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroGlitchAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroChaosAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroRhythmAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroMovementAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroWidthAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> macroMixAttachment;
+
+    // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs (rate/shape/sync) ---
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modMatrixEnabledAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> lfo1RateAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> lfo1ShapeAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> lfo1SyncAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> lfo2RateAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> lfo2ShapeAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> lfo2SyncAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> lfo3RateAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> lfo3ShapeAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> lfo3SyncAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> lfo4RateAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> lfo4ShapeAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> lfo4SyncAttachment;
+
+    // --- Phase 5.3: Mod Matrix slots (8 x {Source,Destination,Amount,Enable} = 32) ---
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot1SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot1DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot1AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot1EnableAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot2SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot2DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot2AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot2EnableAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot3SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot3DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot3AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot3EnableAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot4SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot4DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot4AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot4EnableAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot5SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot5DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot5AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot5EnableAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot6SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot6DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot6AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot6EnableAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot7SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot7DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot7AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot7EnableAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot8SourceAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot8DestinationAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> modSlot8AmountAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot8EnableAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CORRUPTRAudioProcessorEditor)
 };

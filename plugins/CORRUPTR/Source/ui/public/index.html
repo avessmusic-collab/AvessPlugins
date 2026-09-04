@@ -320,6 +320,24 @@
   .lfo-controls-col{ display:flex; flex-direction:column; gap: 10px; padding-top: 4px; }
   .lfo-panel-label{ font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
 
+  /* Phase 5.3: Mod Matrix 8-slot editor (JS-created - see index.html's
+     "8-slot Mod Matrix editor" script section). Sits below the pre-existing
+     decorative #matrixTable dot-grid (left unchanged) as a real per-slot
+     Source/Destination/Amount/Enable row editor, matching this file's
+     established "small light card row" visual language (same background/
+     border treatment as .lfo-panel/.lane-chip above). */
+  .mod-slot-list{ display:flex; flex-direction:column; gap: 6px; }
+  .mod-slot-row{
+    display:flex; align-items:center; gap: 10px; padding: 8px 12px; border-radius: 10px;
+    background: #fafafb; border: 1px solid var(--divider);
+  }
+  .mod-slot-label{
+    width: 16px; flex: 0 0 auto; font-size: 9px; font-weight: 800; color: var(--text-tertiary);
+    text-align:center;
+  }
+  .mod-slot-row .knob-wrap{ margin-top: 0; flex: 0 0 auto; }
+  .mod-slot-row .toggle-row{ margin-top: 0; flex: 0 0 auto; }
+
   .matrix-wrap{ overflow-x: auto; }
   table.matrix{ border-collapse: collapse; width: 100%; }
   table.matrix th{ font-size: 8px; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 4px 6px; text-align:center; }
@@ -794,6 +812,7 @@
           <div class="card-body" id="mod_matrix_body">
             <div class="lfo-row" id="lfoPanelRow"></div>
             <div class="matrix-wrap"><table class="matrix" id="matrixTable"></table></div>
+            <div class="mod-slot-list" id="modSlotList"></div>
           </div>
         </div>
       </section>
@@ -1442,6 +1461,63 @@
       return `<tr><td class="row-label">${s}</td>${cells}</tr>`;
     }).join('');
     table.innerHTML = thead + rows;
+  })();
+
+  // ===================================================================
+  // Phase 5.3: 8-slot Mod Matrix editor (real Source/Destination/Amount/
+  // Enable controls - the block above this one is the pre-existing v5-ui.html
+  // decorative dot-grid, left in place unchanged). FLAGGED LAYOUT
+  // INTERPRETATION: v5-ui.html shipped no per-slot editor markup at all (the
+  // 32 modSlotN* params were all "Not yet bound to a mockup control" per
+  // parameter-spec.md) - this generator adds 8 real slot rows below the
+  // decorative grid, one per architecture.md/parameter-spec.md Mod Matrix
+  // slot, each with a Source combo, a Destination combo, a compact bipolar
+  // Amount knob, and an Enable toggle. Reuses bindCombos/bindKnobs/
+  // bindToggles verbatim (same fixed generic helpers every other phase's
+  // controls use), matching this file's established "JS-created controls
+  // call the same shared bind functions as static markup" convention (see
+  // the LFO mini-panel and Sequencer lane-chip generators above/nearby).
+  //
+  // CHOICE-LIST ORDER (CRITICAL - a mismatch here silently routes the wrong
+  // source/destination, no compiler error possible): both lists below are
+  // copied character-for-character from parameter-spec.md's modSlot1Source/
+  // modSlot1Destination Choices fields, and were cross-checked against
+  // dsp/ModMatrix.h's Source/Destination enums (sourceLfo1=0..sourceMacro=9,
+  // destDrive=0..destWidth=11) - both enums' own doc comments state they
+  // match parameter-spec.md's order exactly.
+  // ===================================================================
+  (function(){
+    const modSlotSources = ['LFO 1','LFO 2','LFO 3','LFO 4','Envelope','Audio Level','Sequencer','Random','MIDI CC','Macro'];
+    const modSlotDestinations = ['Drive','Mix','Filter Cutoff','Bit Depth','Sample Rate','Fold','Feedback','Glitch Probability','Glitch Size','Pitch','Pan','Width'];
+    const list = document.getElementById('modSlotList');
+
+    for (let i = 1; i <= 8; i++) {
+      const row = document.createElement('div');
+      row.className = 'mod-slot-row';
+      row.innerHTML = `
+        <span class="mod-slot-label">${i}</span>
+        <select class="combo-sm" id="mod_slot${i}_source" data-param="modSlot${i}Source" style="width:100px;height:26px;">
+          ${modSlotSources.map(s => `<option${s === 'LFO 1' ? ' selected' : ''}>${s}</option>`).join('')}
+        </select>
+        <select class="combo-sm" id="mod_slot${i}_destination" data-param="modSlot${i}Destination" style="width:130px;height:26px;">
+          ${modSlotDestinations.map(d => `<option${d === 'Drive' ? ' selected' : ''}>${d}</option>`).join('')}
+        </select>
+        <div class="knob-wrap">
+          <div class="knob" id="mod_slot${i}_amount" data-param="modSlot${i}Amount" data-min="-100" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:36px;height:36px;">
+            <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+          </div>
+          <div class="knob-value" data-value-for="modSlot${i}Amount">0%</div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-sw" id="mod_slot${i}_enable" data-param="modSlot${i}Enable" data-default="false"></div>
+          <span class="toggle-label">On</span>
+        </div>`;
+      list.appendChild(row);
+    }
+
+    bindCombos(list);
+    bindKnobs(list);
+    bindToggles(list);
   })();
 
   // ===== Initial bind pass over statically-authored markup =====
