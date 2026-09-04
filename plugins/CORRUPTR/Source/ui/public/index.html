@@ -256,14 +256,14 @@
     width: 90px; height: 44px; border-radius: 10px; border: 1px solid var(--divider);
     background: var(--perf-off); color: var(--perf-text-off);
     font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05); touch-action: none; user-select: none;
   }
   .perf-btn.on{ background: var(--perf-on); color: var(--perf-text-on); box-shadow: inset 0 2px 4px rgba(0,0,0,.3); }
 
   /* XY pad */
   .xy-card{
     width: 340px; height: 340px; border-radius: 16px; background: #fbfbfc; border: 1px solid var(--divider);
-    position: relative; margin-top: 20px; overflow: hidden; cursor: crosshair;
+    position: relative; margin-top: 20px; overflow: hidden; cursor: crosshair; touch-action: none;
     background-image:
       repeating-linear-gradient(0deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px),
       repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px);
@@ -1133,17 +1133,41 @@
   }
 
   // ===================================================================
-  // Perf trigger buttons
+  // Perf trigger buttons (Phase 5.4: MOMENTARY press-and-hold, matching the
+  // DSP's momentary accumulator-override design for performanceKill/Glitch/
+  // Destroy/Freeze/Reverse/Stutter/Chaos - true while held, false on
+  // release/cancel. Previously toggled (latched) on mousedown; fixed here.
   // ===================================================================
   function bindPerfButtons(scope){
     scope.querySelectorAll('.perf-btn[data-param]:not([data-bound])').forEach(btn => {
       btn.setAttribute('data-bound','1');
       const param = btn.dataset.param;
-      let on = btn.dataset.default === "true";
       const state = Juce.getToggleState(param);
-      function render(){ btn.classList.toggle('on', on); }
+      function render(){ btn.classList.toggle('on', !!state.getValue()); }
       render();
-      btn.addEventListener('mousedown', () => { on = !on; render(); state.setValue(on); updateDebugMonitor(param, on, on?1:0); });
+
+      function press(e){
+        state.setValue(true);
+        render();
+        updateDebugMonitor(param, true, 1);
+        try{ btn.setPointerCapture(e.pointerId); }catch(err){}
+      }
+      function release(e){
+        if(!btn.classList.contains('on')) return; // already released (e.g. pointercancel after pointerup)
+        state.setValue(false);
+        render();
+        updateDebugMonitor(param, false, 0);
+        try{ btn.releasePointerCapture(e.pointerId); }catch(err){}
+      }
+      btn.addEventListener('pointerdown', press);
+      btn.addEventListener('pointerup', release);
+      btn.addEventListener('pointercancel', release);
+
+      // Reflect MIDI-triggered (notes 36-42) or host-automated changes into
+      // the button's visual state even when no pointer touched it.
+      // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+      // read the current value from `state` itself.
+      state.valueChangedEvent.addListener(render);
     });
   }
 
@@ -1248,7 +1272,19 @@
   });
 
   // ===================================================================
-  // XY PAD
+  // XY PAD (Phase 5.4: continuous streaming during drag, hard requirement
+  // per plan.md - xyPadX/xyPadY must update on every pointermove, not just
+  // on release. Switched from mousedown/mousemove/mouseup to pointer events
+  // with setPointerCapture (so drag tracking survives the pointer leaving
+  // the pad's bounds mid-drag - clamp01 below still bounds the resulting
+  // normalised value to the pad's edges), and gesture-bracketed with
+  // sliderDragStarted()/sliderDragEnded() (Pattern from
+  // juce8-critical-patterns.md #"WebView Slider Gesture Bracketing" - so
+  // hosts' touch/latch automation-record modes and undo grouping work
+  // correctly, matching every other slider/knob/fader binding in this file).
+  // Deliberately does NOT add any UI-side smoothing of its own - the glide
+  // feel (matching xyPadSmoothing) is entirely DSP-side (SmoothedValue
+  // chasing this raw streamed position); the dot tracks the pointer exactly.
   // ===================================================================
   (function(){
     const pad = document.getElementById('xy_pad');
@@ -1256,17 +1292,57 @@
     const xState = Juce.getSliderState('xyPadX');
     const yState = Juce.getSliderState('xyPadY');
     let dragging = false;
+    let activePointerId = null;
+
+    function renderDot(xN, yN){
+      dot.style.left = (xN*100)+'%'; dot.style.bottom = (yN*100)+'%';
+    }
+
     function setFromClient(clientX, clientY){
       const rect = pad.getBoundingClientRect();
       const xN = clamp01((clientX - rect.left)/rect.width);
       const yN = clamp01(1 - (clientY - rect.top)/rect.height);
-      dot.style.left = (xN*100)+'%'; dot.style.bottom = (yN*100)+'%';
+      renderDot(xN, yN);
       xState.setNormalisedValue(xN); yState.setNormalisedValue(yN);
       updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
     }
-    pad.addEventListener('mousedown', e => { dragging = true; setFromClient(e.clientX, e.clientY); });
-    window.addEventListener('mousemove', e => { if(dragging) setFromClient(e.clientX, e.clientY); });
-    window.addEventListener('mouseup', () => { dragging = false; });
+
+    pad.addEventListener('pointerdown', e => {
+      dragging = true;
+      activePointerId = e.pointerId;
+      try{ pad.setPointerCapture(e.pointerId); }catch(err){}
+      xState.sliderDragStarted();
+      yState.sliderDragStarted();
+      setFromClient(e.clientX, e.clientY);
+      e.preventDefault();
+    });
+    pad.addEventListener('pointermove', e => {
+      if(!dragging || e.pointerId !== activePointerId) return;
+      setFromClient(e.clientX, e.clientY);
+    });
+    function endDrag(e){
+      if(!dragging) return;
+      if(e && e.pointerId !== activePointerId) return;
+      dragging = false;
+      xState.sliderDragEnded();
+      yState.sliderDragEnded();
+      try{ pad.releasePointerCapture(activePointerId); }catch(err){}
+      activePointerId = null;
+    }
+    pad.addEventListener('pointerup', endDrag);
+    pad.addEventListener('pointercancel', endDrag);
+
+    // Reflect host automation / preset recall / DSP-side changes (e.g. a
+    // Performance Mode trigger or Mod Matrix slot driving xyPadX/Y) back
+    // into the dot's position when NOT actively being dragged by the user.
+    // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+    // read the current values from the states themselves.
+    function reflectFromState(){
+      if(dragging) return;
+      renderDot(xState.getNormalisedValue(), yState.getNormalisedValue());
+    }
+    xState.valueChangedEvent.addListener(reflectFromState);
+    yState.valueChangedEvent.addListener(reflectFromState);
   })();
 
   // ===================================================================

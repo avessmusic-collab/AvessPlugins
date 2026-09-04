@@ -201,6 +201,49 @@
  * Phase 5.4 scope (plan.md), not touched here despite their markup already
  * existing (same "markup exists everywhere, phases only add relays"
  * intentional-inertness convention this whole rollout uses).
+ *
+ * ============================================================================
+ * PHASE 5.4 ADDITIONS ("XY Pad and Performance Mode")
+ * ============================================================================
+ * Adds 9 more ordinary APVTS relay/attachment pairs, bringing the bound
+ * total to 85 of 94:
+ *   - xyPadX / xyPadY (WebSliderRelay, Float 0-100%) - the XY Performance Pad
+ *     handle already existed and already streamed `setNormalisedValue()` on
+ *     every mousemove, but with NO relay registered it was pure local-only
+ *     JS state (silently inert, same "unknown to the backend" fallback every
+ *     prior phase's unbound controls hit) - this phase's C++ work is purely
+ *     the relay/attachment wiring; the JS-side pad logic itself is extended
+ *     (not rewritten) in index.html, see that file's own updated XY PAD
+ *     doc comment for the pointer-event/gesture-bracketing details satisfying
+ *     plan.md's hard requirement that the pad stream continuously during the
+ *     drag (not only on release).
+ *   - performanceKill/Glitch/Destroy/Freeze/Reverse/Stutter/Chaos (7x
+ *     WebToggleButtonRelay, Bool) - the 7 `.perf-btn` markup elements already
+ *     existed with correct `data-param` attributes and were already being
+ *     iterated by `bindPerfButtons(document)` (called unconditionally at
+ *     index.html's bottom since Phase 5.1, same "fixed generic helper wires
+ *     itself to whatever relays exist" precedent as every prior phase), but
+ *     that helper previously toggled the parameter to a LATCHING on/off state
+ *     on mousedown - dsp/PluginProcessor's Phase 3.9 performance-trigger
+ *     accumulator override is MOMENTARY-semantic (true while held, false on
+ *     release; DSP owns the "predefined processing-state combination" effect
+ *     for as long as the bool stays true), so this phase also fixes
+ *     `bindPerfButtons` itself to press-and-hold (pointerdown->true,
+ *     pointerup/pointercancel->false) to match. A `valueChangedEvent`
+ *     listener re-renders each button's `.on` class from `state.getValue()`
+ *     (Pattern #15: no callback arguments) so a MIDI note (36-42) held into
+ *     the DSP's momentary accumulator override visually lights the matching
+ *     button even though no pointer ever touched it.
+ *
+ * xyPadSmoothing remains unbound - parameter-spec.md still documents it as
+ * "Not yet bound to a mockup control" (no HTML element exists for it; same
+ * reasoning as every prior phase's identical skip-list). It does not need
+ * one for the glide/smoothing feel to work correctly: per plan.md's own
+ * Phase 5.4 test criteria, the glide the DSP already implements (dsp-side
+ * SmoothedValue chasing whatever raw xyPadX/xyPadY value this phase's UI now
+ * streams) is what produces "smooth glide (not snap)" - the UI is
+ * deliberately NOT adding any UI-side smoothing of its own, it streams the
+ * pointer's raw normalised position every pointermove exactly as before.
  */
 
 class CORRUPTRAudioProcessorEditor : public juce::AudioProcessorEditor
@@ -356,6 +399,19 @@ private:
     std::unique_ptr<juce::WebSliderRelay> modSlot8AmountRelay;
     std::unique_ptr<juce::WebToggleButtonRelay> modSlot8EnableRelay;
 
+    // --- Phase 5.4: XY Performance Pad (2) ---
+    std::unique_ptr<juce::WebSliderRelay> xyPadXRelay;
+    std::unique_ptr<juce::WebSliderRelay> xyPadYRelay;
+
+    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
+    std::unique_ptr<juce::WebToggleButtonRelay> performanceKillRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> performanceGlitchRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> performanceDestroyRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> performanceFreezeRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> performanceReverseRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> performanceStutterRelay;
+    std::unique_ptr<juce::WebToggleButtonRelay> performanceChaosRelay;
+
     // ------------------------------------------------------------------------
     // 2️⃣ WEBVIEW SECOND
     // ------------------------------------------------------------------------
@@ -460,6 +516,19 @@ private:
     std::unique_ptr<juce::WebComboBoxParameterAttachment> modSlot8DestinationAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> modSlot8AmountAttachment;
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot8EnableAttachment;
+
+    // --- Phase 5.4: XY Performance Pad (2) ---
+    std::unique_ptr<juce::WebSliderParameterAttachment> xyPadXAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> xyPadYAttachment;
+
+    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceKillAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceGlitchAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceDestroyAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceFreezeAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceReverseAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceStutterAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceChaosAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CORRUPTRAudioProcessorEditor)
 };

@@ -108,6 +108,19 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     modSlot8AmountRelay = std::make_unique<juce::WebSliderRelay>("modSlot8Amount");
     modSlot8EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot8Enable");
 
+    // --- Phase 5.4: XY Performance Pad (2) ---
+    xyPadXRelay = std::make_unique<juce::WebSliderRelay>("xyPadX");
+    xyPadYRelay = std::make_unique<juce::WebSliderRelay>("xyPadY");
+
+    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
+    performanceKillRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceKill");
+    performanceGlitchRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceGlitch");
+    performanceDestroyRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceDestroy");
+    performanceFreezeRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceFreeze");
+    performanceReverseRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceReverse");
+    performanceStutterRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceStutter");
+    performanceChaosRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceChaos");
+
     // ------------------------------------------------------------------------
     // STEP 2: CREATE WEBVIEW (with relay options + Phase 5.2's sequencer
     // pattern-data native-function bridge - see PluginEditor.h's "PHASE 5.2
@@ -198,6 +211,17 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*modSlot8DestinationRelay)
             .withOptionsFrom(*modSlot8AmountRelay)
             .withOptionsFrom(*modSlot8EnableRelay)
+
+            .withOptionsFrom(*xyPadXRelay)
+            .withOptionsFrom(*xyPadYRelay)
+
+            .withOptionsFrom(*performanceKillRelay)
+            .withOptionsFrom(*performanceGlitchRelay)
+            .withOptionsFrom(*performanceDestroyRelay)
+            .withOptionsFrom(*performanceFreezeRelay)
+            .withOptionsFrom(*performanceReverseRelay)
+            .withOptionsFrom(*performanceStutterRelay)
+            .withOptionsFrom(*performanceChaosRelay)
 
             // --- Phase 5.2: Rhythmic Sequencer pattern-data bridge (custom
             // state, NOT an APVTS parameter - cannot use a Relay/Attachment
@@ -453,6 +477,28 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("modSlot8Amount"), *modSlot8AmountRelay, nullptr);
     modSlot8EnableAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
         *processorRef.getAPVTS().getParameter("modSlot8Enable"), *modSlot8EnableRelay, nullptr);
+
+    // --- Phase 5.4: XY Performance Pad (2) ---
+    xyPadXAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("xyPadX"), *xyPadXRelay, nullptr);
+    xyPadYAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("xyPadY"), *xyPadYRelay, nullptr);
+
+    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
+    performanceKillAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceKill"), *performanceKillRelay, nullptr);
+    performanceGlitchAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceGlitch"), *performanceGlitchRelay, nullptr);
+    performanceDestroyAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceDestroy"), *performanceDestroyRelay, nullptr);
+    performanceFreezeAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceFreeze"), *performanceFreezeRelay, nullptr);
+    performanceReverseAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceReverse"), *performanceReverseRelay, nullptr);
+    performanceStutterAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceStutter"), *performanceStutterRelay, nullptr);
+    performanceChaosAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceChaos"), *performanceChaosRelay, nullptr);
 
     // ------------------------------------------------------------------------
     // WEBVIEW SETUP
