@@ -391,6 +391,7 @@
               <button class="chevron" data-dir="-1" data-for="node_algorithm_select">‹</button>
               <div class="mode-tile" id="node_algorithm_select" data-param="distortionAlgorithm"
                    data-choices="Saturation|Soft Clip|Hard Clip|Tube|Diode|Fuzz|Digital Distortion|Bitcrusher|Sample Rate Reducer|Wavefolder|Ring-Mod|Foldback"
+                   data-skip="7|8"
                    style="width:150px;height:118px;">
                 <div class="tile-glow"></div>
                 <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 24 L10 12 L14 30 L20 8 L24 32 L30 14 L36 24"/></svg>
@@ -449,6 +450,13 @@
               </div>
               <div class="knob-value" data-value-for="bitDepth">16 bit</div>
               <div class="knob-label">Bits</div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="node_srr_amount" data-param="sampleRateReduction" data-min="1" data-max="48" data-default="1" data-unit="x" data-decimals="0" style="width:66px;height:66px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="sampleRateReduction">1 x</div>
+              <div class="knob-label">Amount</div>
             </div>
             </div>
           </div>

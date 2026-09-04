@@ -37,6 +37,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     // --- Phase 5.2: Bitcrush ---
     graphBypassBitcrushRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassBitcrush");
     bitDepthRelay = std::make_unique<juce::WebSliderRelay>("bitDepth");
+    sampleRateReductionRelay = std::make_unique<juce::WebSliderRelay>("sampleRateReduction");
 
     // --- Phase 5.2: Glitch ---
     graphBypassGlitchRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassGlitch");
@@ -148,6 +149,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*outputGainRelay)
             .withOptionsFrom(*graphBypassBitcrushRelay)
             .withOptionsFrom(*bitDepthRelay)
+            .withOptionsFrom(*sampleRateReductionRelay)
             .withOptionsFrom(*graphBypassGlitchRelay)
             .withOptionsFrom(*glitchModeRelay)
             .withOptionsFrom(*glitchBufferLengthRelay)
@@ -340,6 +342,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("graphBypassBitcrush"), *graphBypassBitcrushRelay, nullptr);
     bitDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("bitDepth"), *bitDepthRelay, nullptr);
+    sampleRateReductionAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("sampleRateReduction"), *sampleRateReductionRelay, nullptr);
 
     // --- Phase 5.2: Glitch ---
     graphBypassGlitchAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
