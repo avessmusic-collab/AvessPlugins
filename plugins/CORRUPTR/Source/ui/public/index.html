@@ -296,6 +296,27 @@
   .card-body.dimmed{ opacity: 0.4; }
   .card-controls-row{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
 
+  /* Phase 5.5: Distortion Graph Visualization. v5 realized the "graph" as
+     the first-unit module chain itself (see PluginEditor.h's Phase 5.5 doc
+     comment) rather than a separate node/link canvas - these two rules are
+     that visualization's entire styling footprint, deliberately reusing the
+     existing .card-body.dimmed opacity idiom (module-body variant, for the
+     4 graphBypass* chain modules which have no separate "body" wrapper
+     until this phase) and the existing dot-based visual language (tile-dots/
+     tag-dots) for the modulation-target indicator, per the task's "subtle,
+     monochrome, no new heavy visuals" constraint - no new color introduced,
+     matching v5's "near-zero color except the filter graph's single accent
+     line" rule. */
+  .module-body{ display:flex; flex-direction:column; align-items:center; width:100%; transition: opacity .15s ease; }
+  .module-body.dimmed{ opacity: 0.4; }
+  .mod-indicator{
+    position: absolute; top: 10px; right: 10px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-primary); opacity: 0;
+    transition: opacity .15s ease; pointer-events: none;
+  }
+  .mod-indicator.active{ opacity: .55; }
+
   /* Phase 5.2: lane-selector chip row (JS-created, one per RhythmicSequencer
      lane - see index.html's Sequencer step-grid script section) */
   .lane-select-row{ display:flex; gap: 6px; flex-wrap: wrap; }
@@ -392,14 +413,16 @@
 
           <!-- DISTORTION -->
           <div class="module" style="width:185px;">
+            <span class="mod-indicator" id="mod_ind_distortion" title="Modulated by an active Mod Matrix slot"></span>
             <div class="icon-row">
-              <button class="icon-btn power-btn" id="node_bypass_saturation" data-param="graphBypassSaturation" data-default="false" data-invert="true" title="Bypass distortion stage">
+              <button class="icon-btn power-btn" id="node_bypass_saturation" data-param="graphBypassSaturation" data-default="false" data-invert="true" data-dim-target="distortion_body" title="Bypass distortion stage">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
               </button>
               <span class="icon-btn"><svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="6" r="1.4"/><circle cx="10" cy="6" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="4" cy="14" r="1.4"/><circle cx="10" cy="14" r="1.4"/><circle cx="16" cy="14" r="1.4"/></svg></span>
               <span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h9a5 5 0 0 1 0 10h-2"/><path d="M8 5 4 10l4 5"/></svg></span>
             </div>
 
+            <div class="module-body" id="distortion_body">
             <div class="mode-tile-wrap">
               <button class="chevron" data-dir="-1" data-for="node_algorithm_select">‹</button>
               <div class="mode-tile" id="node_algorithm_select" data-param="distortionAlgorithm"
@@ -436,16 +459,19 @@
                 <span class="toggle-label">Fold Byp.</span>
               </div>
             </div>
+            </div>
           </div>
 
           <!-- BITCRUSH -->
           <div class="module" style="width:115px;">
+            <span class="mod-indicator" id="mod_ind_bitcrush" title="Modulated by an active Mod Matrix slot"></span>
             <div class="icon-row">
-              <button class="icon-btn power-btn" id="node_bypass_bitcrush" data-param="graphBypassBitcrush" data-default="false" data-invert="true" title="Bypass bitcrush stage">
+              <button class="icon-btn power-btn" id="node_bypass_bitcrush" data-param="graphBypassBitcrush" data-default="false" data-invert="true" data-dim-target="bitcrush_body" title="Bypass bitcrush stage">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
               </button>
               <span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h9a5 5 0 0 1 0 10h-2"/><path d="M8 5 4 10l4 5"/></svg></span>
             </div>
+            <div class="module-body" id="bitcrush_body">
             <div class="mode-tile-wrap">
               <div class="mode-tile static" style="width:95px;height:118px;">
                 <div class="tile-glow"></div>
@@ -460,17 +486,20 @@
               <div class="knob-value" data-value-for="bitDepth">16 bit</div>
               <div class="knob-label">Bits</div>
             </div>
+            </div>
           </div>
 
           <!-- GLITCH -->
           <div class="module" style="width:185px;">
+            <span class="mod-indicator" id="mod_ind_glitch" title="Modulated by an active Mod Matrix slot"></span>
             <div class="icon-row">
-              <button class="icon-btn power-btn" id="node_bypass_glitch" data-param="graphBypassGlitch" data-default="false" data-invert="true" title="Bypass glitch stage">
+              <button class="icon-btn power-btn" id="node_bypass_glitch" data-param="graphBypassGlitch" data-default="false" data-invert="true" data-dim-target="glitch_body" title="Bypass glitch stage">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
               </button>
               <span class="icon-btn"><svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="6" r="1.4"/><circle cx="10" cy="6" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="4" cy="14" r="1.4"/><circle cx="10" cy="14" r="1.4"/><circle cx="16" cy="14" r="1.4"/></svg></span>
               <span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h9a5 5 0 0 1 0 10h-2"/><path d="M8 5 4 10l4 5"/></svg></span>
             </div>
+            <div class="module-body" id="glitch_body">
             <div class="mode-tile-wrap">
               <button class="chevron" data-dir="-1" data-for="glitch_mode">‹</button>
               <div class="mode-tile" id="glitch_mode" data-param="glitchMode"
@@ -511,10 +540,12 @@
                 <div class="knob-label">Prob Fine</div>
               </div>
             </div>
+            </div>
           </div>
 
           <!-- CENTER MASTER -->
           <div class="module" style="width:205px;">
+            <span class="mod-indicator" id="mod_ind_output" title="Modulated by an active Mod Matrix slot"></span>
             <div class="icon-row" style="justify-content:center;">
               <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
             </div>
@@ -551,13 +582,15 @@
 
           <!-- FILTER & EQ -->
           <div class="module" style="width:195px;">
+            <span class="mod-indicator" id="mod_ind_filter" title="Modulated by an active Mod Matrix slot"></span>
             <div class="icon-row">
-              <button class="icon-btn power-btn" id="node_bypass_filter" data-param="graphBypassFilter" data-default="false" data-invert="true" title="Bypass filter stage">
+              <button class="icon-btn power-btn" id="node_bypass_filter" data-param="graphBypassFilter" data-default="false" data-invert="true" data-dim-target="filter_body" title="Bypass filter stage">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
               </button>
               <span class="icon-btn"><svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="6" r="1.4"/><circle cx="10" cy="6" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="4" cy="14" r="1.4"/><circle cx="10" cy="14" r="1.4"/><circle cx="16" cy="14" r="1.4"/></svg></span>
               <span class="icon-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h9a5 5 0 0 1 0 10h-2"/><path d="M8 5 4 10l4 5"/></svg></span>
             </div>
+            <div class="module-body" id="filter_body">
             <div class="mode-tile-wrap">
               <button class="chevron" data-dir="-1" data-for="filter_type">‹</button>
               <div class="mode-tile" id="filter_type" data-param="filterType" data-choices="LP|HP|BP|Notch|Comb|Resonant LP|Resonant HP" style="width:158px;height:118px;">
@@ -607,10 +640,12 @@
                 <div class="knob-label">Cutoff Fine</div>
               </div>
             </div>
+            </div>
           </div>
 
           <!-- FEEDBACK + DELAY -->
           <div class="module" style="width:190px;">
+            <span class="mod-indicator" id="mod_ind_feedback" title="Modulated by an active Mod Matrix slot"></span>
             <div class="icon-row" style="justify-content:center;">
               <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
               <span class="icon-btn"><svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="6" r="1.4"/><circle cx="10" cy="6" r="1.4"/><circle cx="16" cy="6" r="1.4"/><circle cx="4" cy="14" r="1.4"/><circle cx="10" cy="14" r="1.4"/><circle cx="16" cy="14" r="1.4"/></svg></span>
@@ -1609,6 +1644,116 @@
     bindCombos(list);
     bindKnobs(list);
     bindToggles(list);
+  })();
+
+  // ===================================================================
+  // PHASE 5.5: Distortion Graph Visualization.
+  //
+  // SCOPE (flagged, per plan.md's own simplification clause and the
+  // reconciliation note already recorded in v5-ui.yaml: "The original
+  // brief's standalone 'Distortion Graph' routing-visualization concept was
+  // not carried into the finalized design — the module-map channel-strip
+  // layout... is what shipped instead"). v5 realizes the "Distortion Graph"
+  // AS the 6-module first-unit channel strip itself (Distortion, Bitcrush,
+  // Glitch, Center Master, Filter & EQ, Feedback+Delay), not as a separate
+  // node/link canvas. This phase's entire deliverable is therefore:
+  //   (1) chain-state — bypassed modules visually dim. Achieved with ZERO
+  //       new JS: the 4 graphBypass* power buttons above now carry a
+  //       data-dim-target attribute (new markup, this phase) pointing at
+  //       each module's new .module-body wrapper, which Phase 5.1's
+  //       existing bindEnableButtons() (unchanged, already generic over any
+  //       `.power-btn[data-dim-target]`) picks up in the "Initial bind
+  //       pass" below exactly like it already did for
+  //       sequencer_enable/mod_matrix_enable.
+  //   (2) modulation-target indication (this IIFE) — a small monochrome dot
+  //       (.mod-indicator, new CSS) lights up on a module's card when ANY
+  //       enabled Mod Matrix slot currently targets one of that module's
+  //       live-DSP-wired parameters.
+  // Free-form draggable link creation between nodes (the brief's original,
+  // most speculative vision) is explicitly NOT implemented, per plan.md's
+  // own "could be simplified to a static (non-interactive) routing diagram"
+  // allowance — the module cards ARE the nodes; this is that simplification.
+  //
+  // DESTINATION -> MODULE MAPPING (flagged resolution): of ModMatrix.h's 12
+  // Destination enum values (destDrive..destWidth), only 8 are wired to
+  // real, live DSP — PluginProcessor.cpp's own
+  // resolveModMatrixAndMacroContributions() comments the other 4 explicitly
+  // ("Destinations with no live DSP yet (Glitch Size / Pitch / Pan /
+  // Width)" — computed + clamped into an observation atomic for
+  // diagnostics/future use, per RhythmicSequencer's own Pan/Pitch
+  // precedent, but not consumed by any processing stage). Those 4 also have
+  // no single owning module card in this mockup (no Pitch/Pan/Width control
+  // exists anywhere; Glitch Size's closest thematic fit, the Glitch
+  // module's Buffer control, is not actually the DSP consumer of this
+  // destination) — indicating modulation on a card that produces no
+  // audible effect would be actively misleading, so all 4 are deliberately
+  // EXCLUDED from the map below. The remaining 8 live destinations map onto
+  // all 6 first-unit module cards with zero ambiguity: Drive+Fold ->
+  // Distortion, Bit Depth+Sample Rate -> Bitcrush, Glitch Probability ->
+  // Glitch, Filter Cutoff -> Filter & EQ, Feedback -> Feedback+Delay, Mix ->
+  // Center Master (Output).
+  //
+  // PERFORMANCE (test criterion 3): no timers/rAF/polling of any kind — the
+  // 8 slots' Destination + Enable states (16 Juce state objects; re-fetched
+  // fresh here via Juce.getComboBoxState()/getToggleState(), the same
+  // already-safe multi-subscription pattern this file already relies on
+  // elsewhere, e.g. glitchProbability being bound to two separate on-screen
+  // controls) each carry a valueChangedEvent listener (Pattern #15: fires
+  // with NO callback arguments, current value read fresh from `state`
+  // inside the listener) that recomputes one shared active-module Set and
+  // applies it via classList.toggle. All work is O(8) per event and only
+  // runs on an actual slot Destination/Enable change — never per-frame,
+  // never on a timer.
+  // ===================================================================
+  (function(){
+    const DEST_TO_MODULE_ID = {
+      0: 'mod_ind_distortion',  // Drive
+      5: 'mod_ind_distortion',  // Fold
+      3: 'mod_ind_bitcrush',    // Bit Depth
+      4: 'mod_ind_bitcrush',    // Sample Rate
+      7: 'mod_ind_glitch',      // Glitch Probability
+      2: 'mod_ind_filter',      // Filter Cutoff
+      6: 'mod_ind_feedback',    // Feedback
+      1: 'mod_ind_output',      // Mix
+      // 8 (Glitch Size), 9 (Pitch), 10 (Pan), 11 (Width): diagnostic-only,
+      // no live DSP consumer, no single owning card — deliberately
+      // unmapped, see doc comment above.
+    };
+    const allIndicatorIds = Array.from(new Set(Object.values(DEST_TO_MODULE_ID)));
+
+    const slots = [];
+    for (let i = 1; i <= 8; i++) {
+      slots.push({
+        destState: Juce.getComboBoxState('modSlot' + i + 'Destination'),
+        enableState: Juce.getToggleState('modSlot' + i + 'Enable'),
+      });
+    }
+
+    function recompute(){
+      const active = new Set();
+      slots.forEach(s => {
+        if (!!s.enableState.getValue()) {
+          const moduleId = DEST_TO_MODULE_ID[s.destState.getChoiceIndex()];
+          if (moduleId) active.add(moduleId);
+        }
+      });
+      allIndicatorIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', active.has(id));
+      });
+    }
+
+    slots.forEach(s => {
+      s.destState.valueChangedEvent.addListener(recompute);
+      s.enableState.valueChangedEvent.addListener(recompute);
+    });
+
+    // Initial pass — will show nothing lit until the relays' async
+    // sendInitialUpdate() values land and fire the listeners above (same
+    // documented cosmetic-flash precedent as every other control in this
+    // file; no proactive push here either, for the same corruption-avoidance
+    // reason Phase 5.1's fix documented for bindKnobs/bindCombos/etc).
+    recompute();
   })();
 
   // ===================================================================

@@ -244,6 +244,43 @@
  * streams) is what produces "smooth glide (not snap)" - the UI is
  * deliberately NOT adding any UI-side smoothing of its own, it streams the
  * pointer's raw normalised position every pointermove exactly as before.
+ *
+ * ============================================================================
+ * PHASE 5.5 ADDITIONS ("Distortion Graph Visualization") - ZERO new C++
+ * ============================================================================
+ * No new relays, attachments, or native functions this phase (bound total
+ * unchanged at 85 of 94) - every parameter this phase visualizes
+ * (graphBypassSaturation/Waveshaper/Filter/Bitcrush/Glitch, all 32
+ * modSlot1..8{Source,Destination,Amount,Enable}) already had a relay +
+ * attachment pair from Phase 5.1/5.3. This phase is pure JS/CSS work in
+ * index.html: a small "graph state" IIFE recomputes each module card's
+ * modulation-target indicator from the SAME cached Juce.getComboBoxState()/
+ * getToggleState() objects Phase 5.3's mod-slot editor already uses (the
+ * frontend library caches state objects per parameter name - see this
+ * file's own "NOTE ON DUAL-BINDING PAIR" comment above for the identical
+ * precedent), plus new data-dim-target markup on the 4 graphBypass* power
+ * buttons that Phase 5.1's existing, unmodified bindEnableButtons() already
+ * knows how to consume (same mechanism as sequencer_enable/mod_matrix_enable).
+ *
+ * SCOPE (flagged): v5-ui.yaml's own reconciliation note records that the
+ * creative brief's standalone "Distortion Graph" node/link canvas concept
+ * was NOT carried into the finalized v5 design - the first-unit module
+ * chain (Distortion/Bitcrush/Glitch/Center Master/Filter & EQ/
+ * Feedback+Delay) IS the shipped realization of that concept. This phase
+ * therefore satisfies plan.md's Phase 5.5 test criteria via that existing
+ * chain: (1) module bypass state -> card dims (data-dim-target, new markup
+ * only), (2) modulation links -> a subtle dot lights on a card when an
+ * enabled Mod Matrix slot targets one of its live-DSP-wired parameters
+ * (index.html's new IIFE, driven purely by valueChangedEvent listeners - no
+ * timers/rAF/polling, satisfying criterion 3). Free-form draggable link
+ * creation between nodes was explicitly NOT built, per plan.md's own
+ * pre-approved "simplify to a static (non-interactive) routing diagram"
+ * allowance for this specifically-flagged-speculative phase. Full
+ * before/after markup rationale and the destination-to-module mapping
+ * (including which 4 of ModMatrix.h's 12 destinations - Glitch Size/Pitch/
+ * Pan/Width - are deliberately excluded as diagnostic-only/no-live-DSP) are
+ * documented in index.html's own Phase 5.5 doc comment, immediately above
+ * the new IIFE.
  */
 
 class CORRUPTRAudioProcessorEditor : public juce::AudioProcessorEditor
