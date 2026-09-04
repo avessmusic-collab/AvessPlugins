@@ -34,8 +34,25 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     inputGainRelay = std::make_unique<juce::WebSliderRelay>("inputGain");
     outputGainRelay = std::make_unique<juce::WebSliderRelay>("outputGain");
 
+    // --- Phase 5.2: Bitcrush ---
+    graphBypassBitcrushRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassBitcrush");
+    bitDepthRelay = std::make_unique<juce::WebSliderRelay>("bitDepth");
+
+    // --- Phase 5.2: Glitch ---
+    graphBypassGlitchRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassGlitch");
+    glitchModeRelay = std::make_unique<juce::WebComboBoxRelay>("glitchMode");
+    glitchBufferLengthRelay = std::make_unique<juce::WebComboBoxRelay>("glitchBufferLength");
+    glitchProbabilityRelay = std::make_unique<juce::WebSliderRelay>("glitchProbability");
+
+    // --- Phase 5.2: Rhythmic Sequencer ---
+    sequencerEnabledRelay = std::make_unique<juce::WebToggleButtonRelay>("sequencerEnabled");
+    sequencerRateRelay = std::make_unique<juce::WebComboBoxRelay>("sequencerRate");
+    sequencerStepsRelay = std::make_unique<juce::WebComboBoxRelay>("sequencerSteps");
+
     // ------------------------------------------------------------------------
-    // STEP 2: CREATE WEBVIEW (with relay options)
+    // STEP 2: CREATE WEBVIEW (with relay options + Phase 5.2's sequencer
+    // pattern-data native-function bridge - see PluginEditor.h's "PHASE 5.2
+    // ADDITIONS" doc comment for the full design)
     // ------------------------------------------------------------------------
     webView = std::make_unique<juce::WebBrowserComponent>(
         juce::WebBrowserComponent::Options{}
@@ -57,6 +74,85 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*outputLimiterStyleRelay)
             .withOptionsFrom(*inputGainRelay)
             .withOptionsFrom(*outputGainRelay)
+            .withOptionsFrom(*graphBypassBitcrushRelay)
+            .withOptionsFrom(*bitDepthRelay)
+            .withOptionsFrom(*graphBypassGlitchRelay)
+            .withOptionsFrom(*glitchModeRelay)
+            .withOptionsFrom(*glitchBufferLengthRelay)
+            .withOptionsFrom(*glitchProbabilityRelay)
+            .withOptionsFrom(*sequencerEnabledRelay)
+            .withOptionsFrom(*sequencerRateRelay)
+            .withOptionsFrom(*sequencerStepsRelay)
+
+            // --- Phase 5.2: Rhythmic Sequencer pattern-data bridge (custom
+            // state, NOT an APVTS parameter - cannot use a Relay/Attachment
+            // pair, see PluginEditor.h's top doc comment for the full design) ---
+            .withNativeFunction("sequencerRequestPattern",
+                [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+                {
+                    emitSequencerPatternChanged();
+                    completion(true);
+                })
+            .withNativeFunction("sequencerSetStep",
+                [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+                {
+                    if (args.size() >= 3)
+                    {
+                        const int lane = static_cast<int>(args[0]);
+                        const int step = static_cast<int>(args[1]);
+                        const float value = static_cast<float>(args[2]);
+                        // setStep() alone does NOT publish (RhythmicSequencer.h's own
+                        // doc comment recommends batching many setStep() calls into one
+                        // publishSnapshot() per gesture) - this bridge deliberately
+                        // publishes on EVERY call instead, for immediate audible
+                        // feedback while drag-editing a step. publishSnapshot() is
+                        // real-time-safe by design (fixed-size struct copy + one
+                        // atomic store, no allocation), and this call site is only
+                        // ever reached from human mouse interaction (bounded to a few
+                        // hundred Hz at most, nowhere near audio-thread rates), so the
+                        // extra publish-per-cell cost is negligible.
+                        processorRef.getRhythmicSequencer().setStep(lane, step, value);
+                        processorRef.getRhythmicSequencer().publishSnapshot();
+                    }
+                    completion(true);
+                })
+            .withNativeFunction("sequencerPatternOp",
+                [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+                {
+                    if (args.size() >= 1)
+                    {
+                        const juce::String op = args[0].toString();
+                        const int numSteps = getCurrentSequencerNumSteps();
+                        auto& seq = processorRef.getRhythmicSequencer();
+
+                        // Only "random"/"mutate"/"reverse"/"mirror"/"shift"/"clear" have
+                        // markup buttons in index.html's Sequencer card this phase
+                        // (matching v5-ui.html's 6 action buttons) - "half"/"double"/
+                        // "syncopate"/"humanize" are wired here anyway (all 10 of
+                        // RhythmicSequencer's opXxx() operations, per its own API) so a
+                        // future mockup iteration can add buttons for them with zero
+                        // C++ changes, consistent with this phase's "extend, don't
+                        // redesign" markup constraint.
+                        if (op == "random")         seq.opRandom(numSteps);
+                        else if (op == "mutate")    seq.opMutate(numSteps);
+                        else if (op == "reverse")   seq.opReverse(numSteps);
+                        else if (op == "mirror")    seq.opMirror(numSteps);
+                        else if (op == "shift")     seq.opShift(numSteps, 1); // default +1 step; no shift-amount control exists in the mockup
+                        else if (op == "half")      seq.opHalf(numSteps);
+                        else if (op == "double")    seq.opDouble(numSteps);
+                        else if (op == "syncopate") seq.opSyncopate(numSteps);
+                        else if (op == "humanize")  seq.opHumanize(numSteps);
+                        else if (op == "clear")     seq.opClear(numSteps);
+                        // unrecognised op name: no-op (still falls through to the
+                        // refresh emit below, harmless - JS will just re-render the
+                        // pattern unchanged).
+                    }
+                    // Every opXxx() call above already published internally - this
+                    // event tells the JS side (which cannot predict the resulting
+                    // values) to re-fetch/re-render.
+                    emitSequencerPatternChanged();
+                    completion(true);
+                })
     );
 
     // ------------------------------------------------------------------------
@@ -99,6 +195,30 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("inputGain"), *inputGainRelay, nullptr);
     outputGainAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("outputGain"), *outputGainRelay, nullptr);
+
+    // --- Phase 5.2: Bitcrush ---
+    graphBypassBitcrushAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("graphBypassBitcrush"), *graphBypassBitcrushRelay, nullptr);
+    bitDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("bitDepth"), *bitDepthRelay, nullptr);
+
+    // --- Phase 5.2: Glitch ---
+    graphBypassGlitchAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("graphBypassGlitch"), *graphBypassGlitchRelay, nullptr);
+    glitchModeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("glitchMode"), *glitchModeRelay, nullptr);
+    glitchBufferLengthAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("glitchBufferLength"), *glitchBufferLengthRelay, nullptr);
+    glitchProbabilityAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("glitchProbability"), *glitchProbabilityRelay, nullptr);
+
+    // --- Phase 5.2: Rhythmic Sequencer ---
+    sequencerEnabledAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("sequencerEnabled"), *sequencerEnabledRelay, nullptr);
+    sequencerRateAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("sequencerRate"), *sequencerRateRelay, nullptr);
+    sequencerStepsAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("sequencerSteps"), *sequencerStepsRelay, nullptr);
 
     // ------------------------------------------------------------------------
     // WEBVIEW SETUP
@@ -187,4 +307,47 @@ std::optional<juce::WebBrowserComponent::Resource> CORRUPTRAudioProcessorEditor:
     }
 
     return std::nullopt;
+}
+
+//==============================================================================
+// Phase 5.2: Rhythmic Sequencer pattern-data bridge helpers
+// (see PluginEditor.h's "PHASE 5.2 ADDITIONS" doc comment for the full design)
+//==============================================================================
+
+juce::var CORRUPTRAudioProcessorEditor::buildSequencerPatternVar() const
+{
+    auto* obj = new juce::DynamicObject();
+    auto& seq = processorRef.getRhythmicSequencer();
+
+    juce::Array<juce::var> lanesArray;
+    for (int lane = 0; lane < RhythmicSequencer::kNumLanes; ++lane)
+    {
+        juce::Array<juce::var> laneArray;
+        for (int step = 0; step < RhythmicSequencer::kMaxSteps; ++step)
+            laneArray.add(seq.getStep(lane, step));
+        lanesArray.add(juce::var(laneArray));
+    }
+    obj->setProperty("lanes", lanesArray);
+
+    return juce::var(obj);
+}
+
+void CORRUPTRAudioProcessorEditor::emitSequencerPatternChanged()
+{
+    // Defensive null check only - by the time any JS-triggered native
+    // function callback can run, the page has already loaded, meaning the
+    // constructor (which assigns webView) has long since returned.
+    if (webView)
+        webView->emitEventIfBrowserIsVisible("sequencerPatternChanged", buildSequencerPatternVar());
+}
+
+int CORRUPTRAudioProcessorEditor::getCurrentSequencerNumSteps() const
+{
+    // Same formula as CORRUPTRAudioProcessor::updateSequencerStepAndContributions()'s
+    // own sequencerNumSteps resolution (PluginProcessor.cpp): AudioParameterChoice
+    // raw values are stored as their integer index (0="16"/1="32"), NOT a
+    // normalised 0-1 value.
+    if (auto* p = processorRef.getAPVTS().getRawParameterValue("sequencerSteps"))
+        return (static_cast<int>(p->load()) == 1) ? 32 : 16;
+    return 16;
 }

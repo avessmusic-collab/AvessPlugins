@@ -286,11 +286,34 @@
   .card-body{ display:flex; flex-direction:column; gap: 16px; transition: opacity .15s ease; }
   .card-body.dimmed{ opacity: 0.4; }
   .card-controls-row{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+
+  /* Phase 5.2: lane-selector chip row (JS-created, one per RhythmicSequencer
+     lane - see index.html's Sequencer step-grid script section) */
+  .lane-select-row{ display:flex; gap: 6px; flex-wrap: wrap; }
+  .lane-chip{
+    height: 24px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--divider);
+    background: #fff; color: var(--text-secondary);
+    font-size: 9px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase;
+    cursor: pointer; flex: 0 0 auto;
+  }
+  .lane-chip.active{ background: var(--text-primary); color: #fff; }
+  .step-grid-readout{
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); height: 14px;
+  }
+
   .step-grid{ display:flex; gap: 4px; height: 100px; align-items:flex-end; }
   .step-bar{ flex: 1 1 0; height:100%; background: #ececee; border-radius: 3px; position: relative; overflow:hidden; display:flex; align-items:flex-end; }
   .step-bar .fill{ width:100%; background: var(--text-primary); opacity: .85; border-radius: 3px 3px 0 0; }
   .step-bar.beat{ background: #e2e2e5; }
-  .step-bar.playhead{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
+  /* Phase 5.2: the grid is now a real editable control (was a static
+     decorative visual pre-5.2) - editable cursor + a center guideline for
+     bipolar (-1..+1) lanes so 0 (the "no modulation" default for every lane
+     except Gate) has a visible reference line. The old always-step-0
+     `.playhead` outline (fake, unrelated to real transport position) is
+     REMOVED - see PluginEditor.h's Phase 5.2 doc comment for why (real
+     playhead wiring is plan.md Phase 5.6 scope, not this phase's). */
+  .step-bar.editable{ cursor: ns-resize; }
+  .step-bar .center-line{ position:absolute; left:0; right:0; top:50%; height:1px; background: rgba(0,0,0,0.18); pointer-events:none; }
 
   .lfo-row{ display:flex; gap: 20px; }
   .lfo-panel{ flex: 1 1 0; display:flex; align-items:flex-start; gap: 14px; padding: 14px; border-radius: 12px; background: #fafafb; border: 1px solid var(--divider); }
@@ -752,6 +775,8 @@
               <button class="action-btn" id="seq_shift" data-action="shift_pattern">Shift</button>
               <button class="action-btn" id="seq_clear" data-action="clear_pattern">Clear</button>
             </div>
+            <div class="lane-select-row" id="lane_select_row"></div>
+            <div class="step-grid-readout" id="step_grid_readout">Drive — click/drag a bar to edit</div>
             <div class="step-grid" id="step_grid"></div>
           </div>
         </div>
@@ -1211,19 +1236,164 @@
   })();
 
   // ===================================================================
-  // 16-step sequencer visual
+  // Phase 5.2: RHYTHMIC SEQUENCER — real editable step grid.
+  //
+  // Pattern data (10 lanes x up to 32 steps) is RhythmicSequencer's custom,
+  // non-APVTS state - it cannot use Juce.getSliderState()/etc like every
+  // other control in this file. This block instead uses the native-
+  // function/event bridge PluginEditor.h/.cpp registers (see that header's
+  // "PHASE 5.2 ADDITIONS" doc comment for the full C++-side design):
+  //   - Juce.getNativeFunction('sequencerRequestPattern'/'sequencerSetStep'/
+  //     'sequencerPatternOp') for JS -> C++ commands.
+  //   - window.__JUCE__.backend.addEventListener('sequencerPatternChanged', ...)
+  //     for the C++ -> JS pattern-refresh push (initial load + after any
+  //     pattern operation).
+  //
+  // LANE-SELECTOR INTERPRETATION (flagged, per the task's own pre-approved
+  // "acceptable interpretation" for this ambiguity): v5-ui.html's step-grid
+  // is a single row of bars with no room in the card for 10 simultaneous
+  // lane rows without redesigning the card - rather than alter that layout,
+  // this shows ONE lane at a time (default: Drive) via a JS-created
+  // lane-selector chip row above the grid, reusing the grid's existing
+  // single-row visual language unchanged.
   // ===================================================================
   (function(){
+    // Order/semantics MUST match dsp/RhythmicSequencer.h's Lane enum and
+    // laneMinValue()/laneMaxValue() exactly.
+    const LANE_NAMES = ['Drive','Mix','Filter Cutoff','Bit Depth','Sample Rate','Glitch Probability','Volume','Pan','Pitch','Gate'];
+    const LANE_CHIPS = ['DRIVE','MIX','CUTOFF','BITS','S.RATE','GL.PROB','VOLUME','PAN','PITCH','GATE'];
+    const LANE_MIN   = [-1,-1,-1,-1,-1,-1,-1,-1,-1, 0]; // every lane bipolar -1..+1 EXCEPT Gate (index 9), unipolar 0..1
+    const LANE_MAX   = [ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+    const NUM_LANES = 10;
+    const MAX_STEPS = 32; // dsp/RhythmicSequencer.h kMaxSteps
+
     const grid = document.getElementById('step_grid');
-    const heights = [70,35,55,20,85,30,60,25,90,40,55,20,75,30,50,15];
-    for(let i=0;i<16;i++){
-      const step = document.createElement('div');
-      step.className = 'step-bar' + (i%4===0 ? ' beat':'') + (i===0 ? ' playhead':'');
-      const fill = document.createElement('div');
-      fill.className = 'fill'; fill.style.height = heights[i]+'%';
-      step.appendChild(fill);
-      grid.appendChild(step);
+    const laneRow = document.getElementById('lane_select_row');
+    const readout = document.getElementById('step_grid_readout');
+    const stepsState = Juce.getComboBoxState('sequencerSteps'); // choices "16"/"32", index 0/1
+
+    const seqRequestPattern = Juce.getNativeFunction('sequencerRequestPattern');
+    const seqSetStep = Juce.getNativeFunction('sequencerSetStep');
+    const seqPatternOp = Juce.getNativeFunction('sequencerPatternOp');
+
+    let currentLane = 0;
+    // Local mirror of the C++ pattern, [lane][step] - seeded with each
+    // lane's RhythmicSequencer::laneDefaultValue() (0, or 1.0 for Gate)
+    // until the initial "sequencerPatternChanged" event arrives below.
+    const pattern = [];
+    for (let l = 0; l < NUM_LANES; l++)
+      pattern.push(new Array(MAX_STEPS).fill(l === 9 ? 1 : 0));
+
+    function currentNumSteps(){ return stepsState.getChoiceIndex() === 1 ? 32 : 16; }
+    function heightPct(lane, value){
+      const lo = LANE_MIN[lane], hi = LANE_MAX[lane];
+      return clamp01((value - lo) / (hi - lo)) * 100;
     }
+
+    function buildLaneChips(){
+      laneRow.innerHTML = '';
+      LANE_CHIPS.forEach((label, i) => {
+        const chip = document.createElement('div');
+        chip.className = 'lane-chip' + (i === currentLane ? ' active' : '');
+        chip.textContent = label;
+        chip.addEventListener('click', () => { currentLane = i; buildLaneChips(); renderGrid(); });
+        laneRow.appendChild(chip);
+      });
+    }
+
+    function renderGrid(){
+      const n = currentNumSteps();
+      const lo = LANE_MIN[currentLane];
+      grid.innerHTML = '';
+      for (let i = 0; i < n; i++){
+        const bar = document.createElement('div');
+        bar.className = 'step-bar editable' + (i % 4 === 0 ? ' beat' : '');
+        if (lo < 0){
+          const center = document.createElement('div');
+          center.className = 'center-line';
+          bar.appendChild(center);
+        }
+        const fill = document.createElement('div');
+        fill.className = 'fill';
+        fill.style.height = heightPct(currentLane, pattern[currentLane][i]) + '%';
+        bar.appendChild(fill);
+        grid.appendChild(bar);
+      }
+      readout.textContent = `${LANE_NAMES[currentLane]} — click/drag a bar to edit`;
+    }
+
+    // Locates the step index under a client-X coordinate by directly
+    // querying each rendered bar's own bounding rect (correctly accounts
+    // for the grid's CSS `gap`, unlike a proportional width/n calculation).
+    function stepIndexFromClientX(clientX){
+      const bars = grid.children;
+      if (bars.length === 0) return 0;
+      for (let i = 0; i < bars.length; i++){
+        const r = bars[i].getBoundingClientRect();
+        if (clientX >= r.left && clientX < r.right) return i;
+      }
+      const firstRect = bars[0].getBoundingClientRect();
+      return clientX < firstRect.left ? 0 : bars.length - 1;
+    }
+
+    function valueFromClientY(clientY){
+      const rect = grid.getBoundingClientRect();
+      const n = clamp01(1 - (clientY - rect.top) / rect.height);
+      const lo = LANE_MIN[currentLane], hi = LANE_MAX[currentLane];
+      return lo + n * (hi - lo);
+    }
+
+    function applyEditAt(clientX, clientY){
+      const step = stepIndexFromClientX(clientX);
+      const value = valueFromClientY(clientY);
+      pattern[currentLane][step] = value;
+      // Local render first (same "render locally, then push to backend"
+      // convention every other bindXxx() helper in this file follows).
+      const bar = grid.children[step];
+      if (bar) {
+        const fill = bar.querySelector('.fill');
+        if (fill) fill.style.height = heightPct(currentLane, value) + '%';
+      }
+      readout.textContent = `${LANE_NAMES[currentLane]} — step ${step + 1}: ${value.toFixed(2)}`;
+      seqSetStep(currentLane, step, value);
+    }
+
+    let dragging = false;
+    grid.addEventListener('mousedown', e => { dragging = true; applyEditAt(e.clientX, e.clientY); e.preventDefault(); });
+    window.addEventListener('mousemove', e => { if (dragging) applyEditAt(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+
+    // sequencerSteps changing (host automation, preset recall, or the
+    // sequencer_steps <select> itself) only changes how many bars render -
+    // the underlying values are untouched.
+    stepsState.valueChangedEvent.addListener(() => renderGrid());
+
+    // C++ -> JS pattern refresh (initial load + after any pattern
+    // operation) - see PluginEditor.h's "PHASE 5.2 ADDITIONS" doc comment.
+    window.__JUCE__.backend.addEventListener('sequencerPatternChanged', (payload) => {
+      if (payload && Array.isArray(payload.lanes)) {
+        for (let l = 0; l < NUM_LANES && l < payload.lanes.length; l++)
+          pattern[l] = payload.lanes[l];
+      }
+      renderGrid();
+    });
+
+    // Pattern-operation buttons (index.html's Sequencer card ships 6 of
+    // RhythmicSequencer's 10 opXxx() operations - see PluginEditor.cpp's
+    // "sequencerPatternOp" native function for why all 10 op names are
+    // handled there regardless).
+    const opButtons = { seq_random:'random', seq_mutate:'mutate', seq_reverse:'reverse', seq_mirror:'mirror', seq_shift:'shift', seq_clear:'clear' };
+    Object.keys(opButtons).forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener('click', () => seqPatternOp(opButtons[id]));
+    });
+
+    buildLaneChips();
+    renderGrid();
+    // Request the REAL pattern from C++ (local lane defaults above render
+    // immediately so the grid is never blank; this call's reply replaces
+    // them, arriving well before a user could plausibly interact).
+    seqRequestPattern();
   })();
 
   // ===================================================================
