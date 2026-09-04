@@ -517,6 +517,13 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     // INTERNALLY within the WebView's .plugin-frame div - do NOT setSize(1200,1650).
     setSize(1200, 800);
     setResizable(false, false);
+
+    // Phase 5.6: start the ~30Hz visualization push (meters, sequencer
+    // playhead, modulation-range indicators - see this class's header doc
+    // comment, "PHASE 5.6 ADDITIONS"). Started LAST, after webView/relays/
+    // attachments all exist, so the very first timerCallback() (which can
+    // fire as soon as ~33ms from now) never races construction.
+    startTimerHz(30);
 }
 
 //==============================================================================
@@ -525,8 +532,17 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
 
 CORRUPTRAudioProcessorEditor::~CORRUPTRAudioProcessorEditor()
 {
-    // Members are automatically destroyed in reverse order of declaration:
-    // Attachments -> WebView -> Relays. No manual cleanup needed.
+    // Stop the Timer FIRST, before any member (webView in particular) starts
+    // tearing down - juce::Timer callbacks can in principle still fire
+    // during destruction otherwise. Explicit stopTimer() (rather than
+    // relying on ~Timer()'s own automatic stop, which only runs AFTER this
+    // derived class's members are already gone) guarantees timerCallback()
+    // can never touch a partially-destroyed webView.
+    stopTimer();
+
+    // Remaining members are automatically destroyed in reverse order of
+    // declaration: Attachments -> WebView -> Relays. No further manual
+    // cleanup needed.
 }
 
 //==============================================================================
@@ -630,4 +646,57 @@ int CORRUPTRAudioProcessorEditor::getCurrentSequencerNumSteps() const
     if (auto* p = processorRef.getAPVTS().getRawParameterValue("sequencerSteps"))
         return (static_cast<int>(p->load()) == 1) ? 32 : 16;
     return 16;
+}
+
+//==============================================================================
+// Phase 5.6: ~30Hz visualization push (see this class's header doc comment,
+// "PHASE 5.6 ADDITIONS", for the full design).
+//==============================================================================
+
+juce::var CORRUPTRAudioProcessorEditor::buildVisUpdateVar() const
+{
+    auto* obj = new juce::DynamicObject();
+
+    // Meters — linear peak (0..~few), converted to dB in JS (matches
+    // v5-ui.yaml's `input_meter_topbar`/`output_meter_topbar` [-60, 6] dB
+    // range declaration). Sent as raw linear peak, not pre-converted, so
+    // the JS-side ballistic-motion loop (Pattern #20) owns all of the
+    // dB-mapping/smoothing/interpolation math in one place.
+    obj->setProperty("inputPeak", processorRef.getVisInputPeakLevel());
+    obj->setProperty("outputPeak", processorRef.getVisOutputPeakLevel());
+
+    // Sequencer playhead — mirrors the SAME per-block step resolution the
+    // audio thread already computed (including the documented no-transport
+    // freeze-at-step-0 fallback), plus the current step COUNT (16/32) so
+    // the JS step-grid (which may be showing either) can correctly no-op
+    // an out-of-range index rather than mis-highlighting.
+    obj->setProperty("seqStep", processorRef.getVisSequencerStepIndex());
+    obj->setProperty("seqNumSteps", getCurrentSequencerNumSteps());
+
+    // Modulation-range indicators — 7 destinations with live DSP + a visible
+    // bound control in v5-ui.html (see header doc comment for the full
+    // scope list/rationale). Native units, matching each control's own
+    // data-min/data-max/data-current-value space exactly (no normalisation
+    // here — JS does the min/max mapping itself, consistent with how
+    // bindKnobs()/bindFaders() already render these same controls).
+    obj->setProperty("modDrive", processorRef.getVisModDriveDb());
+    obj->setProperty("modFold", processorRef.getVisModFoldPct());
+    obj->setProperty("modBitDepth", processorRef.getVisModBitDepth());
+    obj->setProperty("modFilterCutoff", processorRef.getVisModFilterCutoffHz());
+    obj->setProperty("modMix", processorRef.getVisModMixPct());
+    obj->setProperty("modFeedbackAmount", processorRef.getVisModFeedbackAmountPct());
+    obj->setProperty("modGlitchProbability", processorRef.getVisModGlitchProbabilityPct());
+
+    return juce::var(obj);
+}
+
+void CORRUPTRAudioProcessorEditor::timerCallback()
+{
+    // Defensive null check only, matching emitSequencerPatternChanged()'s
+    // identical precedent above - webView is always non-null by the time
+    // this Timer's callbacks can fire (started at the very end of the
+    // constructor, after webView is constructed), but the check costs
+    // nothing and guards against any future reordering.
+    if (webView)
+        webView->emitEventIfBrowserIsVisible("visUpdate", buildVisUpdateVar());
 }

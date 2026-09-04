@@ -40,6 +40,42 @@ public:
 
     juce::AudioProcessorValueTreeState& getAPVTS() { return parameters; }
 
+    //=========================================================================
+    // Stage 3 Phase 5.6: GUI Visualization Taps (meters, sequencer playhead,
+    // per-knob modulation-range indicators).
+    //
+    // STRICTLY ADDITIVE: every value below is a `std::memory_order_relaxed`
+    // atomic store of a quantity the DSP ALREADY computes each block for its
+    // own real processing (see each store site's own comment in
+    // PluginProcessor.cpp for exactly which existing local/member it
+    // mirrors) - no new buffers (beyond what prepareToPlay() already sizes),
+    // no allocation, no locks, no change to any DSP behavior, parameter
+    // semantic, or the RNG draw sequence. These getters are message-thread
+    // -only (called from PluginEditor's ~30Hz juce::Timer, see
+    // PluginEditor.h's Phase 5.6 doc comment) - never call them from the
+    // audio thread.
+    //=========================================================================
+    float getVisInputPeakLevel() const noexcept  { return visInputPeakLevel.load(std::memory_order_relaxed); }
+    float getVisOutputPeakLevel() const noexcept { return visOutputPeakLevel.load(std::memory_order_relaxed); }
+    int   getVisSequencerStepIndex() const noexcept { return visSequencerStepIndex.load(std::memory_order_relaxed); }
+
+    // Per-destination LIVE (post-modulation, native-unit) values for the 7
+    // Mod Matrix destinations that have real, live-wired DSP (see
+    // resolveModMatrixAndMacroContributions()'s own "Destinations with no
+    // live DSP yet" comment for the 4 that are excluded, same scope Phase
+    // 5.5 already established for its mod-indicator dots) - used by the
+    // editor to draw a modulation-range indicator on each destination's
+    // knob. `getVisModDriveDb()` reuses the pre-existing Phase 3.7 diagnostic
+    // atomic (`phase32DriveModulationObservation`) rather than duplicating
+    // it under a new name.
+    float getVisModDriveDb() const noexcept              { return phase32DriveModulationObservation.load(std::memory_order_relaxed); }
+    float getVisModFoldPct() const noexcept               { return visModFoldPct.load(std::memory_order_relaxed); }
+    float getVisModBitDepth() const noexcept              { return visModBitDepth.load(std::memory_order_relaxed); }
+    float getVisModFilterCutoffHz() const noexcept        { return visModFilterCutoffHz.load(std::memory_order_relaxed); }
+    float getVisModMixPct() const noexcept                { return visModMixPct.load(std::memory_order_relaxed); }
+    float getVisModFeedbackAmountPct() const noexcept     { return visModFeedbackAmountPct.load(std::memory_order_relaxed); }
+    float getVisModGlitchProbabilityPct() const noexcept  { return visModGlitchProbabilityPct.load(std::memory_order_relaxed); }
+
 private:
     //=========================================================================
     // Stage 2 Phase 3.1 (built) / Phase 3.4 (integrated): Feedback Routing
@@ -1494,6 +1530,25 @@ private:
     juce::dsp::Gain<float> outputGainDsp;
     juce::dsp::WaveShaper<float> coloredLimiterSaturation; // fixed, gentle, always-on-in-Colored-mode saturation before the limiter (architecture.md #13's recommended MVP approximation for GR-proportional coloring)
     juce::dsp::Limiter<float> outputLimiter;
+
+    //=========================================================================
+    // Stage 3 Phase 5.6: GUI Visualization Taps — atomic storage. See the
+    // public getters above (just below getAPVTS()) for the full doc comment;
+    // this is purely the backing storage. Written once per block from
+    // processBlock()/resolveModMatrixAndMacroContributions()/
+    // updateSequencerStepAndContributions() at the exact point each mirrored
+    // quantity is already computed for real DSP use — see each store call
+    // site's own inline comment in PluginProcessor.cpp.
+    //=========================================================================
+    std::atomic<float> visInputPeakLevel { 0.0f };
+    std::atomic<float> visOutputPeakLevel { 0.0f };
+    std::atomic<int>   visSequencerStepIndex { 0 };
+    std::atomic<float> visModFoldPct { 0.0f };
+    std::atomic<float> visModBitDepth { 16.0f };
+    std::atomic<float> visModFilterCutoffHz { 20000.0f };
+    std::atomic<float> visModMixPct { 100.0f };
+    std::atomic<float> visModFeedbackAmountPct { 0.0f };
+    std::atomic<float> visModGlitchProbabilityPct { 0.0f };
 
     juce::AudioProcessorValueTreeState parameters;
 

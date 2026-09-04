@@ -918,6 +918,16 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const int channelsToCapture = juce::jmin(buffer.getNumChannels(), dryBuffer.getNumChannels());
         for (int ch = 0; ch < channelsToCapture; ++ch)
             dryBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
+
+        // Stage 3 Phase 5.6: GUI visualization tap — input peak level, read
+        // from the SAME pre-Input-Gain samples just captured into dryBuffer
+        // above (identical values, `buffer` hasn't been touched yet this
+        // block). Additive only: one bounded getMagnitude() scan (no
+        // allocation) + one relaxed atomic store; does not affect `buffer`
+        // or any downstream DSP. Consumed by the editor's ~30Hz Timer via
+        // getVisInputPeakLevel() — see PluginProcessor.h's Phase 5.6 doc
+        // comment.
+        visInputPeakLevel.store(buffer.getMagnitude(0, buffer.getNumSamples()), std::memory_order_relaxed);
     }
 
     //=========================================================================
@@ -1152,6 +1162,9 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     const float feedbackAmountPct = ModulationAccumulator::accumulate(
         feedbackAmountParam->load(), 0.0f, modMatrixFeedbackContribution, macroContributions.feedbackAmountPct,
         performanceDestroyActive, 90.0f, 0.0f, 100.0f);
+    // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
+    // Feedback Amount %, for the knob's mod-range indicator.
+    visModFeedbackAmountPct.store(feedbackAmountPct, std::memory_order_relaxed);
     const float feedbackDampingPct = feedbackDampingParam->load();
     const float microDelayMs = microDelayTimeParam->load();
 
@@ -1228,6 +1241,9 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         distortionFoldPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
             foldParam->load(), 0.0f, modMatrixFoldContribution, macroContributions.foldPct,
             performanceDestroyActive, 100.0f, 0.0f, 100.0f));
+        // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
+        // Fold %, for the knob's mod-range indicator.
+        visModFoldPct.store(distortionFoldPct, std::memory_order_relaxed);
     }
 
     // Stage 2 Phase 3.7/3.8: consumes the modulated `drive` value computed
@@ -1253,6 +1269,9 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             macroContributions.bitDepthBits, performanceDestroyActive, 1.0f, 1.0f, 16.0f);
         const float bitDepth = juce::jlimit(1.0f, 16.0f, modulatedBitDepth);
         bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
+        // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
+        // Bit Depth, for the knob's mod-range indicator.
+        visModBitDepth.store(bitDepth, std::memory_order_relaxed);
     }
     {
         // Stage 2 Phase 3.7/3.8: sampleRateReduction's Sequencer + Mod
@@ -1322,6 +1341,9 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
         glitchProbabilityParam->load(), sequencerGlitchProbabilityContributionPct, modMatrixGlitchProbContribution,
         macroContributions.glitchProbabilityPct, anyTriggerWantsFullGlitchProbability, 100.0f, 0.0f, 100.0f));
+    // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
+    // Glitch Probability %, for the knob's mod-range indicator.
+    visModGlitchProbabilityPct.store(glitchProbabilityPct, std::memory_order_relaxed);
     // Stage 2 Phase 3.8: chaos's macroChaos ("global chaos param scaling")
     // contribution — a NEWLY added accumulate() call site (chaos had no
     // accumulate() call before this phase). No Mod Matrix destination named
@@ -1413,6 +1435,9 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float cutoffHz     = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
         const float resonancePct = juce::jlimit(0.0f, 100.0f, filterResonanceParam->load());
         updateFilterParameters(cutoffHz, resonancePct, getSampleRate());
+        // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
+        // Filter Cutoff Hz, for the knob's mod-range indicator.
+        visModFilterCutoffHz.store(cutoffHz, std::memory_order_relaxed);
     }
 
     if (filterTypeIndex != lastFilterTypeIndex)
@@ -1442,6 +1467,9 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             mixParam->load(), sequencerMixContributionPct, modMatrixMixContribution, macroContributions.mixPct,
             false, 0.0f, 0.0f, 200.0f);
         const float mixPct = juce::jlimit(0.0f, 200.0f, modulatedMix);
+        // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
+        // Mix %, for the knob's mod-range indicator.
+        visModMixPct.store(mixPct, std::memory_order_relaxed);
         float dryGain, wetGain;
         if (mixPct <= 100.0f)
         {
@@ -1868,6 +1896,14 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         outputLimiter.process(context);
     }
 
+    // Stage 3 Phase 5.6: GUI visualization tap — output peak level, read
+    // from the fully-processed `buffer` (post Output Gain + Output
+    // Limiter, the true final signal about to leave processBlock()).
+    // Additive only: one bounded getMagnitude() scan (no allocation) + one
+    // relaxed atomic store; does not modify `buffer`. Consumed by the
+    // editor's ~30Hz Timer via getVisOutputPeakLevel().
+    visOutputPeakLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
+
     // Defensive only (shouldn't occur for this stereo-in/stereo-out effect):
     // mirror channel 0's final processed result into any additional
     // channels rather than leaving them unprocessed.
@@ -1941,6 +1977,15 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
         stepIndex = 0; // explicit freeze-at-step-0 fallback (see comment above) — not a default left over from an untaken branch
 
     sequencerLastStepIndex = stepIndex;
+
+    // Stage 3 Phase 5.6: GUI visualization tap — mirrors the audio-thread-
+    // only `sequencerLastStepIndex` above into a message-thread-readable
+    // atomic (the plain `int` above is NOT safe to read cross-thread).
+    // Additive only, no DSP behavior change. Reflects the no-transport
+    // freeze-at-step-0 fallback exactly as documented above — the GUI
+    // playhead correctly shows a frozen step 0 when the host isn't playing,
+    // matching real DSP behavior rather than inventing a fake animation.
+    visSequencerStepIndex.store(stepIndex, std::memory_order_relaxed);
 
     //=========================================================================
     // PER-BLOCK (not per-sample) step-boundary resolution — FLAGGED DESIGN

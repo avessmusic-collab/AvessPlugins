@@ -316,6 +316,17 @@
   .step-bar.beat{ background: #e2e2e5; }
   .step-bar.playhead{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
 
+  /* Phase 5.6 (backported from Source/ui/public/index.html for CSS parity -
+     this mockup's own JS is known-stale, not updated to match): per-knob/
+     fader Modulation-Range indicators. Monochrome (opacity-only), matching
+     .mod-indicator's existing visual language. */
+  .mod-range-ring{ position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .15s ease; }
+  .mod-range-ring.active{ opacity:.6; }
+  .mod-range-ring .mrr-dot{ position:absolute; top:1px; left:50%; width:3px; height:3px; margin-left:-1.5px; border-radius:50%; background: var(--text-primary); }
+  .knob.hero .mod-range-ring .mrr-dot{ width:4px; height:4px; margin-left:-2px; top:4px; }
+  .mod-range-tick{ position:absolute; left:50%; width:32px; height:2px; margin-left:-16px; border-radius:1px; background: var(--text-primary); opacity:0; transition:opacity .15s ease; pointer-events:none; }
+  .mod-range-tick.active{ opacity:.55; }
+
   .lfo-row{ display:flex; gap: 20px; }
   .lfo-panel{ flex: 1 1 0; display:flex; align-items:flex-start; gap: 14px; padding: 14px; border-radius: 12px; background: #fafafb; border: 1px solid var(--divider); }
   .lfo-controls-col{ display:flex; flex-direction:column; gap: 10px; padding-top: 4px; }

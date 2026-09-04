@@ -317,6 +317,28 @@
   }
   .mod-indicator.active{ opacity: .55; }
 
+  /* Phase 5.6: Meters, Sequencer playhead, and per-knob/fader Modulation-
+     Range indicators. All monochrome (opacity-only), matching the existing
+     .mod-indicator/.tile-dots visual language and v5's "near-zero color"
+     rule - see index.html's own Phase 5.6 doc comment (below, above the new
+     IIFE) for the full design. .step-bar.playhead restores the ORIGINAL
+     v5-ui.html mockup's own playhead rule (present there since v4/v5, byte-
+     for-byte identical outline style) - Phase 5.2's step-grid rewrite
+     removed it from the LIVE index.html (its old always-step-0/fake
+     semantics were actively misleading before real pattern/transport data
+     existed - see that phase's own doc comment above the step-grid IIFE),
+     explicitly deferring REAL playhead wiring to this phase; this is that
+     deferred wiring, reusing the original design's exact visual treatment. */
+  .step-bar.playhead{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
+
+  .mod-range-ring{ position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .15s ease; }
+  .mod-range-ring.active{ opacity:.6; }
+  .mod-range-ring .mrr-dot{ position:absolute; top:1px; left:50%; width:3px; height:3px; margin-left:-1.5px; border-radius:50%; background: var(--text-primary); }
+  .knob.hero .mod-range-ring .mrr-dot{ width:4px; height:4px; margin-left:-2px; top:4px; }
+
+  .mod-range-tick{ position:absolute; left:50%; width:32px; height:2px; margin-left:-16px; border-radius:1px; background: var(--text-primary); opacity:0; transition:opacity .15s ease; pointer-events:none; }
+  .mod-range-tick.active{ opacity:.55; }
+
   /* Phase 5.2: lane-selector chip row (JS-created, one per RhythmicSequencer
      lane - see index.html's Sequencer step-grid script section) */
   .lane-select-row{ display:flex; gap: 6px; flex-wrap: wrap; }
@@ -936,6 +958,14 @@
         const text = fmtValue(value, decimals, unit);
         if(valueEl) valueEl.textContent = text;
         document.querySelectorAll(`[data-value-for="${param}"]`).forEach(el => { el.textContent = text; });
+        // Phase 5.6: stamp the current BASE (unmodulated) native-unit value
+        // onto the element itself - read by the Phase 5.6 modulation-range-
+        // indicator IIFE below (index.html's own doc comment, "Phase 5.6")
+        // so it can compare against the live post-modulation value in the
+        // SAME plain-linear native-unit space this render() uses, without
+        // duplicating this closure's private `value`/`normFromValue` logic.
+        // Pure attribute stamp - does not alter binding behavior.
+        knob.dataset.currentValue = String(value);
       }
       // NOTE: do NOT proactively push this local placeholder default into
       // the backend here - the relay's real properties/value round-trip
@@ -997,6 +1027,9 @@
         thumb.style.top = `${(1-n) * usable}px`;
         const text = fmtValue(value, decimals, unit);
         if(readout) readout.textContent = text;
+        // Phase 5.6: see bindKnobs()'s identical comment above - same
+        // current-BASE-value attribute stamp, fader variant.
+        fader.dataset.currentValue = String(value);
       }
       // Do NOT proactively push the local placeholder default into the
       // backend here (see bindKnobs' identical note above) - the real
@@ -1754,6 +1787,238 @@
     // file; no proactive push here either, for the same corruption-avoidance
     // reason Phase 5.1's fix documented for bindKnobs/bindCombos/etc).
     recompute();
+  })();
+
+  // ===================================================================
+  // PHASE 5.6: Meters, Sequencer Playhead, Modulation-Range Indicators,
+  // and a live Filter & EQ frequency-response curve — FINAL GUI PHASE.
+  //
+  // C++ SIDE: PluginEditor.cpp owns a ~30Hz juce::Timer that reads a small
+  // set of new read-only visualization atomics from CORRUPTRAudioProcessor
+  // (see PluginProcessor.h's "Phase 5.6: GUI Visualization Taps" doc
+  // comment) and pushes ONE compact JSON payload per tick via
+  // `window.__JUCE__.backend.addEventListener('visUpdate', ...)` below —
+  // one event stream, not many, per the task brief's architecture.
+  //
+  // SCOPE (flagged, same category of gap as Phase 5.5's "Distortion Graph"
+  // resolution above): plan.md's Phase 5.6 goal names "waveform/spectrum"
+  // as a surface, but v5-ui.yaml (the finalized, locked design) ships NO
+  // waveform/spectrum canvas anywhere in its `special_elements`/`controls`
+  // lists — only `input_meter_topbar`/`output_meter_topbar` (level bar
+  // meters) and `filter_eq_mini_graph` (the frequency-response mini-graph,
+  // v5's ONLY color accent). Per this task's explicit instruction ("don't
+  // invent new surfaces the design doesn't have"), no waveform/spectrum
+  // canvas is added here. The meters are wired live below; the filter
+  // mini-graph — previously a static decorative `#filter_eq_curve` path —
+  // is made genuinely live instead, redrawing from the real current
+  // filterType/filterCutoff/filterResonance values (a small per-topology
+  // magnitude-shape approximation, decorative precision rather than a
+  // bit-exact plot of the SVF/biquad transfer function, but a REAL
+  // real-time visualization of live parameter state, satisfying the spirit
+  // of test criterion 2 via the one shipped surface closest to it). The
+  // sequencer step-grid's real playhead — explicitly deferred here since
+  // Phase 5.2 (see that section's own doc comment above) — is wired from
+  // the same Timer payload's `seqStep`/`seqNumSteps` fields.
+  //
+  // METERS use Pattern #20 (ballistic motion: separate current/target +
+  // requestAnimationFrame interpolation, fast attack / slow decay) exactly
+  // as documented in troubleshooting/patterns/juce8-critical-patterns.md.
+  // MODULATION-RANGE INDICATORS compare each of the 7 live-DSP destinations'
+  // (drive, fold, bitDepth, filterCutoff x2, mix, feedbackAmount,
+  // glitchProbability x2) current post-modulation value against that same
+  // control's own current BASE value — read from the `data-current-value`
+  // attribute bindKnobs()/bindFaders() now stamp on every render() (a
+  // one-line addition to each of those two pre-existing generic helpers,
+  // added this phase; does not change their binding behavior for any
+  // control) — in the SAME plain-linear native-unit space those helpers
+  // already render in (deliberately NOT `state.getNormalisedValue()`,
+  // which for filterCutoff specifically lives in a differently-skewed 0-1
+  // space than the knob's own rotation angle uses, per this file's own
+  // `degFromNorm`/`normFromValue` — comparing in different spaces would
+  // visually mismatch the indicator against the knob it decorates).
+  // ===================================================================
+  (function(){
+    // ---- Meters: ballistic motion (Pattern #20) ----
+    const METER_MIN_DB = -60, METER_MAX_DB = 6; // v5-ui.yaml's declared input/output_meter_topbar range
+    const METER_ATTACK = 0.4, METER_DECAY = 0.15; // Pattern #20 tuning guide: responsive attack, readable decay
+    const inputFill = document.querySelector('#input_meter_topbar .fill');
+    const outputFill = document.querySelector('#output_meter_topbar .fill');
+    let targetInPct = 0, targetOutPct = 0;
+    let currentInPct = 0, currentOutPct = 0;
+
+    function linearPeakToPct(peak){
+      const db = peak > 0.00001 ? 20 * Math.log10(peak) : METER_MIN_DB;
+      return clamp01((db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)) * 100;
+    }
+
+    function animateMeters(){
+      const inSpeed = currentInPct < targetInPct ? METER_ATTACK : METER_DECAY;
+      currentInPct += (targetInPct - currentInPct) * inSpeed;
+      const outSpeed = currentOutPct < targetOutPct ? METER_ATTACK : METER_DECAY;
+      currentOutPct += (targetOutPct - currentOutPct) * outSpeed;
+      if (inputFill) inputFill.style.height = currentInPct.toFixed(2) + '%';
+      if (outputFill) outputFill.style.height = currentOutPct.toFixed(2) + '%';
+      requestAnimationFrame(animateMeters);
+    }
+    animateMeters();
+
+    // ---- Sequencer playhead ----
+    // Reuses Phase 5.2's `#step_grid` (see that section's own IIFE above) —
+    // `.step-bar` children are positional/index-based (renderGrid() rebuilds
+    // them on every sequencerSteps/pattern change), so indexing
+    // `grid.children[step]` directly stays correct on the very next tick
+    // after any rebuild without needing to hook into renderGrid() itself.
+    let lastPlayheadStep = -1;
+    function updatePlayhead(step){
+      const grid = document.getElementById('step_grid');
+      if (!grid) return;
+      if (lastPlayheadStep >= 0 && grid.children[lastPlayheadStep])
+        grid.children[lastPlayheadStep].classList.remove('playhead');
+      if (step >= 0 && step < grid.children.length)
+        grid.children[step].classList.add('playhead');
+      lastPlayheadStep = step;
+    }
+
+    // ---- Modulation-range indicators ----
+    // { DOM id, visUpdate payload key, control kind }. Covers both
+    // dual-bound instances of filterCutoff/glitchProbability (base knob +
+    // ADV-revealed fine mirror), matching this file's established
+    // dual-binding precedent (both instances share one underlying relay).
+    const MOD_TARGETS = [
+      { id: 'node_drive', key: 'modDrive', kind: 'fader' },
+      { id: 'node_fold', key: 'modFold', kind: 'knob' },
+      { id: 'node_bit_depth', key: 'modBitDepth', kind: 'knob' },
+      { id: 'filter_cutoff_detail', key: 'modFilterCutoff', kind: 'knob' },
+      { id: 'node_filter_cutoff', key: 'modFilterCutoff', kind: 'knob' },
+      { id: 'master_mix', key: 'modMix', kind: 'knob' },
+      { id: 'feedback_amount', key: 'modFeedbackAmount', kind: 'fader' },
+      { id: 'glitch_probability_detail', key: 'modGlitchProbability', kind: 'knob' },
+      { id: 'node_glitch_probability', key: 'modGlitchProbability', kind: 'knob' },
+    ];
+
+    // Indicator DOM is JS-created (one small child element per target,
+    // appended once at init) — no hand-edited markup added to the 9 target
+    // controls, same "generator builds it, markup stays untouched"
+    // convention as every prior phase's JS-generated content.
+    const modIndicators = MOD_TARGETS.map(t => {
+      const el = document.getElementById(t.id);
+      if (!el) return null;
+      const indicatorEl = document.createElement('div');
+      if (t.kind === 'knob') {
+        indicatorEl.className = 'mod-range-ring';
+        const dot = document.createElement('span');
+        dot.className = 'mrr-dot';
+        indicatorEl.appendChild(dot);
+      } else {
+        indicatorEl.className = 'mod-range-tick';
+      }
+      el.appendChild(indicatorEl);
+      return { el, indicatorEl, kind: t.kind, key: t.key,
+               min: parseFloat(el.dataset.min), max: parseFloat(el.dataset.max) };
+    }).filter(Boolean);
+
+    const MOD_EPSILON = 0.004; // normalised-fraction threshold before showing — avoids at-rest flicker from float rounding
+
+    function updateModIndicators(payload){
+      modIndicators.forEach(m => {
+        const liveVal = payload[m.key];
+        if (typeof liveVal !== 'number' || !isFinite(liveVal)) return;
+        const baseValRaw = m.el.dataset.currentValue;
+        const baseVal = baseValRaw !== undefined ? parseFloat(baseValRaw) : liveVal;
+        const liveNorm = clamp01((liveVal - m.min) / (m.max - m.min));
+        const baseNorm = clamp01((baseVal - m.min) / (m.max - m.min));
+        const isActive = Math.abs(liveNorm - baseNorm) > MOD_EPSILON;
+        m.indicatorEl.classList.toggle('active', isActive);
+        if (!isActive) return;
+        if (m.kind === 'knob') {
+          m.indicatorEl.style.transform = `rotate(${degFromNorm(liveNorm)}deg)`;
+        } else {
+          const usable = m.el.offsetHeight - 2; // tick is 2px tall, keep it fully inside the track like the thumb does
+          m.indicatorEl.style.top = `${(1 - liveNorm) * usable}px`;
+        }
+      });
+    }
+
+    // ---- Single "visUpdate" listener drives meters + playhead + mod indicators ----
+    window.__JUCE__.backend.addEventListener('visUpdate', (payload) => {
+      if (!payload) return;
+      targetInPct = linearPeakToPct(payload.inputPeak || 0);
+      targetOutPct = linearPeakToPct(payload.outputPeak || 0);
+      updatePlayhead(typeof payload.seqStep === 'number' ? payload.seqStep : -1);
+      updateModIndicators(payload);
+    });
+
+    // ---- Filter & EQ mini-graph: live frequency-response curve ----
+    // Event-driven only (Pattern #15/Phase 5.5 precedent) — NOT tied to the
+    // 30Hz visUpdate tick, since filterType/filterCutoff/filterResonance
+    // are already ordinary WebComboBoxRelay/WebSliderRelay-bound (Phase
+    // 5.1), so redrawing from their own valueChangedEvent listeners is
+    // zero-poll and only runs on an actual change.
+    const curvePath = document.getElementById('filter_eq_curve');
+    const filterTypeState = Juce.getComboBoxState('filterType');
+
+    // X axis: log-frequency across the graph's plotted region (20..160 in
+    // the `viewBox="0 0 165 80"` SVG, matching the "100Hz/1kHz/10kHz" axis
+    // labels below it). Y axis: dB, reusing the SAME two calibration points
+    // the existing grid lines already draw (y=10 -> +12dB, y=40 -> 0dB).
+    const GX0 = 20, GX1 = 160;
+    const FREQ_MIN = 20, FREQ_MAX = 20000;
+    function xToFreq(x){ const t = (x - GX0) / (GX1 - GX0); return FREQ_MIN * Math.pow(FREQ_MAX / FREQ_MIN, t); }
+    function dbToY(db){ return 40 - db * 2.5; } // slope calibrated from (0dB,y40)/(12dB,y10)
+
+    function magnitudeDb(typeIndex, freq, cutoffHz, resonancePct){
+      const ratio = freq / Math.max(1, cutoffHz);
+      const oct = Math.log2(Math.max(ratio, 1e-6));
+      const resNorm = clamp01(resonancePct / 100);
+      let db;
+      switch (typeIndex){
+        case 1: db = -12 * Math.max(0, -oct); break;                 // HP
+        case 2: db = -12 * Math.abs(oct) - 6; break;                 // BP
+        case 3: db = -22 * Math.exp(-(oct * oct) / 0.06); break;     // Notch — deep dip at cutoff
+        case 4: db = 6 * Math.sin(freq / Math.max(50, cutoffHz * 0.15)) - 4; break; // Comb — periodic ripple (decorative)
+        case 5: db = -12 * Math.max(0, oct); break;                  // Resonant LP
+        case 6: db = -12 * Math.max(0, -oct); break;                 // Resonant HP
+        default: db = -12 * Math.max(0, oct);                        // LP
+      }
+      // Resonance peak bump centered at the cutoff — narrower + taller at
+      // higher resonance. Skipped for Notch/Comb, which already have their
+      // own cutoff-centered shape.
+      if (typeIndex !== 3 && typeIndex !== 4) {
+        const sigma = 1.4 - resNorm * 1.1;
+        db += resNorm * 18 * Math.exp(-(oct * oct) / (2 * sigma * sigma));
+      }
+      return db;
+    }
+
+    function redrawFilterCurve(){
+      if (!curvePath) return;
+      const typeIndex = filterTypeState.getChoiceIndex();
+      // Reads the SAME plain-linear native-unit values bindKnobs() just
+      // rendered onto these two knobs (see this file's Phase 5.6 doc
+      // comment above for why this is preferred over re-deriving from
+      // getNormalisedValue()). Falls back to each knob's own data-default
+      // before the very first render() call has run.
+      const cutoffEl = document.getElementById('filter_cutoff_detail');
+      const resonanceEl = document.getElementById('filter_resonance');
+      const cutoffHz = cutoffEl ? parseFloat(cutoffEl.dataset.currentValue ?? cutoffEl.dataset.default) : 20000;
+      const resonancePct = resonanceEl ? parseFloat(resonanceEl.dataset.currentValue ?? resonanceEl.dataset.default) : 0;
+
+      const N = 24;
+      let d = '';
+      for (let i = 0; i <= N; i++){
+        const x = GX0 + (GX1 - GX0) * (i / N);
+        const freq = xToFreq(x);
+        const db = clamp(magnitudeDb(typeIndex, freq, cutoffHz, resonancePct), -12, 14);
+        const y = clamp(dbToY(db), 4, 76);
+        d += (i === 0 ? `M${x.toFixed(1)} ${y.toFixed(1)}` : ` L${x.toFixed(1)} ${y.toFixed(1)}`);
+      }
+      curvePath.setAttribute('d', d);
+    }
+
+    filterTypeState.valueChangedEvent.addListener(redrawFilterCurve);
+    Juce.getSliderState('filterCutoff').valueChangedEvent.addListener(redrawFilterCurve);
+    Juce.getSliderState('filterResonance').valueChangedEvent.addListener(redrawFilterCurve);
+    redrawFilterCurve(); // initial paint from data-default values, before any relay round-trip lands
   })();
 
   // ===================================================================

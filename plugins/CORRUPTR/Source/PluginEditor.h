@@ -281,9 +281,91 @@
  * Pan/Width - are deliberately excluded as diagnostic-only/no-live-DSP) are
  * documented in index.html's own Phase 5.5 doc comment, immediately above
  * the new IIFE.
+ *
+ * ============================================================================
+ * PHASE 5.6 ADDITIONS ("Meters, Waveform/Spectrum Display, Modulation Range
+ * Indicators") - FINAL GUI PHASE. ZERO new relays/attachments/native
+ * functions (bound total unchanged at 85 of 94) - this phase adds a THIRD
+ * kind of C++<->JS bridge, alongside the ordinary Relay/Attachment pairs
+ * above and Phase 5.2's native-function/event pattern: a plain
+ * `juce::Timer` (this class privately inherits it), ticking at ~30Hz,
+ * which reads a small set of NEW read-only visualization atomics from
+ * CORRUPTRAudioProcessor (see PluginProcessor.h's own "Phase 5.6: GUI
+ * Visualization Taps" doc comment for the full audio-thread-side design)
+ * and pushes ONE compact JSON payload per tick via
+ * `webView->emitEventIfBrowserIsVisible("visUpdate", ...)` - one event
+ * stream, not many, per the task brief's explicit architecture.
+ *
+ * SCOPE RESOLUTION (flagged): plan.md's Phase 5.6 goal names three surfaces
+ * ("input/output meters, waveform/spectrum, per-knob modulation-range
+ * rings"), but v5-ui.yaml (the finalized, locked design) ships exactly TWO
+ * live-data visualization surfaces plus one decorative-but-computable one:
+ *   - `input_meter_topbar`/`output_meter_topbar` (level-meter special
+ *     elements) - real bar meters, wired live this phase.
+ *   - `filter_eq_mini_graph` (frequency-response-graph special element) -
+ *     v5-ui.yaml's ONLY color accent in the entire UI. No separate
+ *     waveform/spectrum canvas exists ANYWHERE in v5-ui.yaml's
+ *     `special_elements` list or `controls` list - the creative brief's
+ *     general "waveform/spectrum display" concept was not carried into the
+ *     finalized design, the same category of gap Phase 5.5 already
+ *     documented for the brief's "Distortion Graph" concept (see that
+ *     phase's own SCOPE note above). Per this task's explicit instruction
+ *     ("implement THOSE; don't invent new surfaces the design doesn't
+ *     have"), NO new canvas/waveform/spectrum element is added. Instead,
+ *     the one shipped surface closest in spirit - the filter frequency-
+ *     response mini-graph, previously a static decorative SVG path
+ *     (`#filter_eq_curve`) - is made GENUINELY live this phase: its curve
+ *     now redraws from the real, current `filterType`/`filterCutoff`/
+ *     `filterResonance` parameter values (a small per-filter-topology
+ *     magnitude-shape approximation computed entirely in JS - decorative
+ *     precision, not a bit-exact plot of the biquad/SVF transfer function,
+ *     but genuinely reflects live parameter state as "a real-time
+ *     visualization renders" test criterion 2 asks for). This needs NO new
+ *     C++ tap at all - filterType/filterCutoff/filterResonance are already
+ *     WebComboBoxRelay/WebSliderRelay-bound (Phase 5.1), so the redraw is
+ *     driven by ordinary `valueChangedEvent` listeners on those SAME cached
+ *     Juce state objects (ZERO polling, matching Phase 5.5's own precedent
+ *     immediately above), independent of the ~30Hz Timer stream.
+ *   - `step_grid` (step-sequencer-visual) - explicitly deferred to this
+ *     phase already: Phase 5.2's own doc comment above (see that section)
+ *     states "real-time playhead-position wiring is explicitly plan.md
+ *     Phase 5.6 scope". Wired live this phase from the Timer's `seqStep`/
+ *     `seqNumSteps` payload fields (mirrors the audio-thread's OWN
+ *     transport-synced/no-transport-freeze-at-step-0 step resolution -
+ *     see `updateSequencerStepAndContributions()`'s doc comment - so a
+ *     host with no transport running correctly shows a frozen step-0
+ *     highlight, matching real DSP behavior rather than a fake animation).
+ *
+ * MODULATION-RANGE INDICATORS: scope = the 7 Mod Matrix destinations with
+ * BOTH live DSP AND a visible bound control in v5-ui.html per this phase's
+ * task brief - drive (fader), fold (knob), bitDepth (knob), filterCutoff
+ * (knob, both dual-bound instances), mix (hero knob), feedbackAmount
+ * (fader), glitchProbability (knob, both dual-bound instances). A thin
+ * monochrome marker (ring-dot for knobs, track-tick for faders) - built
+ * entirely in JS at index.html init time as a child of each target control,
+ * no new markup added to the HTML by hand - tracks each destination's LIVE
+ * (post-Sequencer/Mod-Matrix/Macro/Performance-Trigger accumulation)
+ * native-unit value from the Timer payload, and is shown only when that
+ * live value differs from the control's own current BASE value (read from
+ * a small new `data-current-value` attribute this phase adds to
+ * `bindKnobs()`/`bindFaders()`'s existing `render()` functions - one line
+ * each, does not change either helper's binding behavior for any control).
+ * Comparing in the SAME plain-linear native-unit space `bindKnobs()`/
+ * `bindFaders()` already use for their own rendering (rather than
+ * `state.getNormalisedValue()`, which for `filterCutoff` specifically
+ * would be in a DIFFERENT, skewed 0-1 space than the plain-linear space the
+ * knob's own rotation angle uses) keeps the indicator visually consistent
+ * with the control it decorates.
+ *
+ * See index.html's own Phase 5.6 doc comment (immediately above its meters/
+ * playhead/mod-range-indicator/filter-graph IIFE) for the full JS-side
+ * design, including the ballistic-motion meter implementation (Pattern #20:
+ * separate current/target + requestAnimationFrame interpolation loop,
+ * fast-attack/slow-decay).
  */
 
-class CORRUPTRAudioProcessorEditor : public juce::AudioProcessorEditor
+class CORRUPTRAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                      private juce::Timer
 {
 public:
     explicit CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcessor&);
@@ -327,6 +409,17 @@ private:
     // raw values are stored as their integer index, 0="16"/1="32", NOT a
     // normalised 0-1 value).
     int getCurrentSequencerNumSteps() const;
+
+    // ------------------------------------------------------------------------
+    // Phase 5.6: ~30Hz visualization push (see this header's top doc comment,
+    // "PHASE 5.6 ADDITIONS", for the full design). `juce::Timer` override -
+    // reads the processor's read-only visualization atomics (message-thread
+    // -safe getters, see PluginProcessor.h) and pushes one compact "visUpdate"
+    // JSON payload via emitEventIfBrowserIsVisible(). Never touches audio-
+    // thread state directly.
+    // ------------------------------------------------------------------------
+    void timerCallback() override;
+    juce::var buildVisUpdateVar() const;
 
     CORRUPTRAudioProcessor& processorRef;
 
