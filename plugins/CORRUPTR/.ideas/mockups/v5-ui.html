@@ -265,9 +265,8 @@
       repeating-linear-gradient(0deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px),
       repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px);
   }
-  .xy-trail{ position:absolute; width: 22px; height: 22px; border-radius:50%; background: rgba(28,28,30,0.10); transform: translate(-50%,50%); transition: left .18s ease-out, bottom .18s ease-out; pointer-events:none; }
   .xy-dot{ position:absolute; width: 16px; height: 16px; border-radius:50%; background: var(--text-primary);
-    box-shadow: 0 3px 8px rgba(0,0,0,0.3); transform: translate(-50%,50%); }
+    transform: translate(-50%,50%); }
   .xy-label{ position:absolute; top:10px; left:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-tertiary); text-transform:uppercase; }
 
   /* module titles for macros / performance / xy (below tile) */
@@ -724,7 +723,6 @@
           <div class="module" style="width:340px;">
             <div class="xy-card" id="xy_pad">
               <span class="xy-label">Performance XY</span>
-              <div class="xy-trail" id="xy_trail" style="left:20%;bottom:20%;"></div>
               <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
             </div>
           </div>
@@ -1168,7 +1166,6 @@
   (function(){
     const pad = document.getElementById('xy_pad');
     const dot = document.getElementById('xy_dot');
-    const trail = document.getElementById('xy_trail');
     const xState = Juce.getSliderState('xyPadX');
     const yState = Juce.getSliderState('xyPadY');
     let dragging = false;
@@ -1179,9 +1176,6 @@
       dot.style.left = (xN*100)+'%'; dot.style.bottom = (yN*100)+'%';
       xState.setNormalisedValue(xN); yState.setNormalisedValue(yN);
       updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
-      // Trail follows immediately; its CSS transition provides the lag, so it
-      // tracks continuously during the drag instead of freezing until idle.
-      trail.style.left = dot.style.left; trail.style.bottom = dot.style.bottom;
     }
     pad.addEventListener('mousedown', e => { dragging = true; setFromClient(e.clientX, e.clientY); });
     window.addEventListener('mousemove', e => { if(dragging) setFromClient(e.clientX, e.clientY); });
