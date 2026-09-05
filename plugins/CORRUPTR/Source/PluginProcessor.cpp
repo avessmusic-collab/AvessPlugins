@@ -38,7 +38,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         juce::ParameterID { "drive", 1 },
         "Drive",
         juce::NormalisableRange<float>(0.0f, 40.0f, 0.01f, 1.0f),
-        6.0f,
+        0.0f, // v4 defaults change (user request 2026-09-05): was 6.0 - saturation now unity at load
         "dB"));
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(

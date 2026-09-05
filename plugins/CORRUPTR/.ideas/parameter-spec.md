@@ -15,6 +15,9 @@
 > Sequencer's modulation output: additive/bipolar lanes scale toward 0, Gate toward its
 > fully-open neutral. 100% is bit-exact with Phase 3.7 behavior. Total count now **96**
 > (bound: 89). Appended at layout end; old saved states load fine.
+>
+> **v4 defaults change (2026-09-05, user-requested):** `drive` default changed 6.0 -> 0.0 dB
+> (saturation stage loads at unity instead of a +6 dB push). Range/ID unchanged.
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 
