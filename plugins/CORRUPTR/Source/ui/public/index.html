@@ -275,10 +275,10 @@
   /* Cmd+1 latch mode: badge + subtle outline while the pad follows hover */
   .xy-latch{ position:absolute; top:10px; right:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-primary); text-transform:uppercase; }
   .xy-card.latched{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
-  /* While latched, hide the OS cursor over the pad - the XY dot IS the
-     cursor there; two pointers tracking together reads as a glitch. The
-     cursor reappears as soon as it leaves the pad. */
-  .xy-card.latched, .xy-card.latched *{ cursor: none; }
+  /* Latch = full performance mode: the WHOLE window is the XY surface, so
+     the OS cursor is hidden everywhere (the XY dot is the pointer) and all
+     other controls are inert until Cmd+1 unlatches. */
+  body.xy-latch-live, body.xy-latch-live *{ cursor: none !important; }
   /* Hover tooltips: one shared element, shown after a short delay over any
      [data-tip] control. Monochrome, matches the tile-menu language. */
   .ui-tip{ position:fixed; z-index:1200; background:#1c1c1e; color:rgba(255,255,255,0.92);
@@ -1459,19 +1459,21 @@
     let dragging = false;
     let activePointerId = null;
 
-    // ---- Cmd+1 latch mode (user request 2026-09-05): toggles "latch" -
-    // while latched the pad follows the pointer on hover alone, no
-    // click/hold needed (trackpad-friendly performance mode). The
-    // automation gesture stays open for the whole latch so hosts record
-    // the full movement; pointerdown/endDrag below therefore skip their
-    // own gesture bracketing while latched (double-begin would confuse
-    // hosts). Latch state is session-local, never persisted.
+    // ---- Cmd+1 latch = full performance mode (user request 2026-09-05):
+    // while latched, the ENTIRE window maps to the pad's range - every
+    // pointer movement anywhere drives xyPadX/Y (full trackpad travel =
+    // full XY travel), the OS cursor is hidden, and every other control is
+    // click-proofed (capture-phase blockers) so live play can't misfire a
+    // knob or button. ONLY Cmd+1 unlatches. The automation gesture stays
+    // open for the whole latch so hosts record the full performance.
+    // Session-local, never persisted.
     let latched = false;
     const latchBadge = document.getElementById('xy_latch');
     function setLatch(on){
       if (latched === on) return;
       latched = on;
       pad.classList.toggle('latched', on);
+      document.body.classList.toggle('xy-latch-live', on);
       if (latchBadge) latchBadge.hidden = !on;
       if (on){ xState.sliderDragStarted(); yState.sliderDragStarted(); }
       else if (!dragging){ xState.sliderDragEnded(); yState.sliderDragEnded(); }
@@ -1482,6 +1484,23 @@
         setLatch(!latched);
       }
     });
+    // Whole-window -> pad mapping while latched.
+    function setFromViewport(clientX, clientY){
+      const xN = clamp01(clientX / window.innerWidth);
+      const yN = clamp01(1 - clientY / window.innerHeight);
+      renderDot(xN, yN);
+      xState.setNormalisedValue(xN); yState.setNormalisedValue(yN);
+      updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
+    }
+    document.addEventListener('pointermove', e => {
+      if (latched) setFromViewport(e.clientX, e.clientY);
+    });
+    // While latched, swallow every click-like event before it reaches any
+    // control - the only exit is Cmd+1.
+    for (const type of ['pointerdown','pointerup','click','dblclick','contextmenu'])
+      document.addEventListener(type, e => {
+        if (latched){ e.preventDefault(); e.stopPropagation(); }
+      }, true);
 
     function renderDot(xN, yN){
       dot.style.left = (xN*100)+'%'; dot.style.bottom = (yN*100)+'%';
@@ -1505,7 +1524,7 @@
       e.preventDefault();
     });
     pad.addEventListener('pointermove', e => {
-      if (latched && !dragging){ setFromClient(e.clientX, e.clientY); return; } // hover drives while latched
+      if (latched) return; // whole-window document listener drives while latched
       if(!dragging || e.pointerId !== activePointerId) return;
       setFromClient(e.clientX, e.clientY);
     });
@@ -2279,8 +2298,8 @@
     document.addEventListener('pointerover', e => {
       const t = e.target.closest ? e.target.closest('[data-tip]') : null;
       if (!t || t === tipTarget) return;
-      // No tooltips over the latched XY pad (cursor is hidden there).
-      if (t.closest('.xy-card.latched')) { hideTip(); return; }
+      // No tooltips at all in latch performance mode (cursor is hidden).
+      if (document.body.classList.contains('xy-latch-live')) { hideTip(); return; }
       hideTip();
       tipTarget = t;
       tipTimer = setTimeout(() => {
