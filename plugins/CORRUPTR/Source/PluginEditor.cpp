@@ -46,6 +46,10 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     sequencerDepthRelay = std::make_unique<juce::WebSliderRelay>("sequencerDepth");
     // Audit fix 2026-09-05: the Feedback module's three controls were never
     // given relays in any GUI phase - the card rendered but was inert.
+    toneRelay = std::make_unique<juce::WebSliderRelay>("tone");
+    biasRelay = std::make_unique<juce::WebSliderRelay>("bias");
+    distortionMixRelay = std::make_unique<juce::WebSliderRelay>("distortionMix");
+    chaosRelay = std::make_unique<juce::WebSliderRelay>("chaos");
     feedbackAmountRelay = std::make_unique<juce::WebSliderRelay>("feedbackAmount");
     feedbackDampingRelay = std::make_unique<juce::WebSliderRelay>("feedbackDamping");
     microDelayTimeRelay = std::make_unique<juce::WebSliderRelay>("microDelayTime");
@@ -170,6 +174,10 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*sampleRateReductionRelay)
             .withOptionsFrom(*xyPadSmoothingRelay)
             .withOptionsFrom(*sequencerDepthRelay)
+            .withOptionsFrom(*toneRelay)
+            .withOptionsFrom(*biasRelay)
+            .withOptionsFrom(*distortionMixRelay)
+            .withOptionsFrom(*chaosRelay)
             .withOptionsFrom(*feedbackAmountRelay)
             .withOptionsFrom(*feedbackDampingRelay)
             .withOptionsFrom(*microDelayTimeRelay)
@@ -382,6 +390,14 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("xyPadSmoothing"), *xyPadSmoothingRelay, nullptr);
     sequencerDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("sequencerDepth"), *sequencerDepthRelay, nullptr);
+    toneAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("tone"), *toneRelay, nullptr);
+    biasAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("bias"), *biasRelay, nullptr);
+    distortionMixAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("distortionMix"), *distortionMixRelay, nullptr);
+    chaosAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("chaos"), *chaosRelay, nullptr);
     feedbackAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("feedbackAmount"), *feedbackAmountRelay, nullptr);
     feedbackDampingAttachment = std::make_unique<juce::WebSliderParameterAttachment>(

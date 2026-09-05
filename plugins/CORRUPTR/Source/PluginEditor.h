@@ -465,6 +465,10 @@ private:
     std::unique_ptr<juce::WebSliderRelay> sampleRateReductionRelay; // Amount knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> xyPadSmoothingRelay; // ADV XY Glide knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> sequencerDepthRelay; // Seq Mix knob (post-5.6 user request)
+    std::unique_ptr<juce::WebSliderRelay> toneRelay;            // final-4: previously automation-only
+    std::unique_ptr<juce::WebSliderRelay> biasRelay;
+    std::unique_ptr<juce::WebSliderRelay> distortionMixRelay;
+    std::unique_ptr<juce::WebSliderRelay> chaosRelay;
     std::unique_ptr<juce::WebSliderRelay> feedbackAmountRelay;  // audit fix: Feedback card was unwired
     std::unique_ptr<juce::WebSliderRelay> feedbackDampingRelay; // audit fix
     std::unique_ptr<juce::WebSliderRelay> microDelayTimeRelay;  // audit fix
@@ -596,6 +600,10 @@ private:
     std::unique_ptr<juce::WebSliderParameterAttachment> sampleRateReductionAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> xyPadSmoothingAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> sequencerDepthAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> toneAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> biasAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> distortionMixAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> chaosAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> feedbackAmountAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> feedbackDampingAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> microDelayTimeAttachment;

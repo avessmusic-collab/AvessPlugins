@@ -504,6 +504,29 @@
               <div class="knob-value" data-value-for="fold">0%</div>
               <div class="knob-label">Fold</div>
             </div>
+            <div style="display:flex; gap:8px; justify-content:center; margin-top:10px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_tone" data-param="tone" data-min="-100" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:48px;height:48px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="tone">0 %</div>
+                <div class="knob-label">Tone</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_bias" data-param="bias" data-min="-100" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:48px;height:48px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="bias">0 %</div>
+                <div class="knob-label">Bias</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_distortionmix" data-param="distortionMix" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:48px;height:48px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="distortionMix">100 %</div>
+                <div class="knob-label">Dist Mix</div>
+              </div>
+            </div>
 
             <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-distortion"></div></div>
             <div class="adv-content" id="adv-distortion">
@@ -592,6 +615,13 @@
               <div class="knob-value" data-value-for="glitchProbability">0%</div>
               <div class="knob-label">Probability</div>
             </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_chaos" data-param="chaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="chaos">0 %</div>
+                <div class="knob-label">Chaos</div>
+              </div>
 
             <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-glitch"></div></div>
             </div>
@@ -2308,6 +2338,9 @@
       glitchBufferLength: 'Glitch cycle length, synced to host tempo',
       glitchProbability: 'Chance a glitch event fires each cycle',
       chaos: 'Randomizes glitch timing and length per cycle',
+      tone: 'Post-distortion tilt — dark to bright around 1 kHz',
+      bias: 'Pre-shaper DC offset — asymmetric, adds even harmonics',
+      distortionMix: 'Blend of shaped vs clean signal within the distortion stage',
       graphBypassFilter: 'Filter stage on/off',
       filterType: 'Filter topology — click to pick (LP, HP, Notch, Comb…)',
       filterCutoff: 'Filter cutoff frequency',
@@ -2477,22 +2510,54 @@
     for (const c of Object.keys(CODE_TO_PARAM))
       states[c] = Juce.getToggleState(CODE_TO_PARAM[c]);
     function clearAll(){ for (const c of Object.keys(states)) states[c].setValue(false); }
+    // Held-key ledger + auto-repeat heartbeat watchdog (fix for
+    // occasionally-lost keyup events leaving a trigger stuck on): while a
+    // key is physically held, macOS delivers repeated keydowns - each one
+    // re-asserts the trigger AND stamps a heartbeat. If a key that HAS
+    // been heartbeating goes silent for >1.2s without a keyup, the keyup
+    // was lost - force-release it. Keys that never repeat (key-repeat
+    // disabled in System Settings) are exempt from the watchdog.
+    const held = new Map(); // code -> { sawRepeat, last }
+    let watchdog = null;
+    function stopWatchdogIfIdle(){ if (held.size === 0 && watchdog){ clearInterval(watchdog); watchdog = null; } }
+    function releaseCode(code){
+      const st = states[code];
+      if (st) st.setValue(false);
+      held.delete(code);
+      stopWatchdogIfIdle();
+    }
     document.addEventListener('keydown', e => {
-      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-      if (document.body.dataset.page !== '4') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const st = states[e.code];
       if (!st) return;
+      if (e.repeat){
+        const rec = held.get(e.code);
+        if (rec){ rec.sawRepeat = true; rec.last = performance.now(); }
+        st.setValue(true); // self-healing re-assert while held
+        e.preventDefault();
+        return;
+      }
+      if (document.body.dataset.page !== '4') return;
       e.preventDefault();
+      held.set(e.code, { sawRepeat: false, last: performance.now() });
       st.setValue(true);
+      if (!watchdog)
+        watchdog = setInterval(() => {
+          const now = performance.now();
+          for (const [code, rec] of held)
+            if (rec.sawRepeat && now - rec.last > 1200) releaseCode(code); // lost keyup
+        }, 300);
     });
-    document.addEventListener('keyup', e => {
-      const st = states[e.code];
-      if (st) st.setValue(false); // release always clears, whatever the modifiers
-    });
+    window.addEventListener('keyup', e => {
+      if (states[e.code]) releaseCode(e.code); // capture phase: nothing can swallow it
+    }, true);
+    // Esc = performance panic: clears every trigger (and the XY latch handler
+    // already unlatches on Esc independently).
+    document.addEventListener('keydown', e => { if (e.key === 'Escape'){ clearAll(); held.clear(); stopWatchdogIfIdle(); } });
     // Focus lost mid-hold (window switch, latch toggle, host stealing keys):
     // keyup may never arrive - clear every trigger rather than leave one stuck.
-    window.addEventListener('blur', clearAll);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) clearAll(); });
+    window.addEventListener('blur', () => { clearAll(); held.clear(); stopWatchdogIfIdle(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden){ clearAll(); held.clear(); stopWatchdogIfIdle(); } });
   })();
 
   // ===== Initial bind pass over statically-authored markup =====
