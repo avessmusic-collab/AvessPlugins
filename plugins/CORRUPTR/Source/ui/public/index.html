@@ -275,6 +275,10 @@
   /* Cmd+1 latch mode: badge + subtle outline while the pad follows hover */
   .xy-latch{ position:absolute; top:10px; right:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-primary); text-transform:uppercase; }
   .xy-card.latched{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
+  /* While latched, hide the OS cursor over the pad - the XY dot IS the
+     cursor there; two pointers tracking together reads as a glitch. The
+     cursor reappears as soon as it leaves the pad. */
+  .xy-card.latched, .xy-card.latched *{ cursor: none; }
 
   /* module titles for macros / performance / xy (below tile) */
   .module-title{ margin-top: 10px; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
