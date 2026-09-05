@@ -517,6 +517,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         juce::ParameterID { "filterSlope", 1 }, "Filter Slope",
         juce::StringArray { "12 dB", "24 dB" }, 0));
 
+    // v7 spec addition (user request 2026-09-05): Ableton-style output
+    // limiter controls for the existing unconditional end-of-chain limiter.
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "limiterCeiling", 1 }, "Limiter Ceiling",
+        juce::NormalisableRange<float> (-20.0f, 0.0f, 0.1f), -0.3f, "dB"));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "limiterRelease", 1 }, "Limiter Release",
+        juce::NormalisableRange<float> (1.0f, 1000.0f, 1.0f, 0.4f), 300.0f, "ms"));
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID { "limiterAutoRelease", 1 }, "Limiter Auto Release", true));
+
     return layout;
 }
 
@@ -873,6 +884,9 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     outputLimiter.reset();
     outputLimiter.setThreshold(-0.3f);
     outputLimiter.setRelease(50.0f);
+    limiterCeilingPostGain.prepare(spec);
+    limiterCeilingPostGain.setRampDurationSeconds(0.02);
+    limiterCeilingPostGain.setGainDecibels(-0.3f);
 
     //=========================================================================
     // Stage 2 Phase 3.9: XY Pad glide + Oversampling / Quality Engine. See
@@ -1953,7 +1967,54 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         juce::dsp::ProcessContextReplacing<float> context(block);
         if (coloredLimiterMode)
             coloredLimiterSaturation.process(context);
+
+        // v7 (Ableton-style limiter controls): ceiling + release applied
+        // per block. Auto release derives a program-dependent release from
+        // this block's crest factor (peak/RMS): transient-heavy material
+        // recovers fast (~60ms), dense material releases slow (~500ms) -
+        // the same fast-on-transients / slow-on-program behavior Ableton's
+        // Auto mode is known for, approximated cheaply and allocation-free.
+        {
+            auto* ceilingParam = parameters.getRawParameterValue("limiterCeiling");
+            auto* releaseParam = parameters.getRawParameterValue("limiterRelease");
+            auto* autoRelParam = parameters.getRawParameterValue("limiterAutoRelease");
+            // juce::dsp::Limiter applies internal makeup gain back to 0 dBFS
+            // (its outputVolume stage), so threshold alone cannot act as a
+            // ceiling. Ableton semantics = threshold AT the ceiling (so the
+            // makeup boost is exactly -ceiling) + a compensating post-gain
+            // of +ceiling dB after the limiter: signal below the ceiling
+            // passes at unity, peaks brickwall exactly at the ceiling.
+            const float ceilingDb = juce::jlimit(-20.0f, 0.0f, ceilingParam->load());
+            outputLimiter.setThreshold(ceilingDb);
+            limiterCeilingPostGain.setGainDecibels(ceilingDb);
+            float releaseMs = juce::jlimit(1.0f, 1000.0f, releaseParam->load());
+            if (autoRelParam->load() > 0.5f)
+            {
+                double sumSq = 0.0; float pk = 0.0f;
+                const int nCh = juce::jmin(2, buffer.getNumChannels());
+                for (int ch = 0; ch < nCh; ++ch)
+                {
+                    const float* d = buffer.getReadPointer(ch);
+                    for (int i = 0; i < numSamples; ++i)
+                    {
+                        const float a = std::abs(d[i]);
+                        pk = juce::jmax(pk, a);
+                        sumSq += (double) d[i] * d[i];
+                    }
+                }
+                const float rms = (float) std::sqrt(sumSq / juce::jmax(1, numSamples * nCh));
+                const float crest = pk / juce::jmax(1.0e-6f, rms); // ~1.4 sine .. >4 transients
+                const float t = juce::jlimit(0.0f, 1.0f, (crest - 1.4f) / 3.0f);
+                releaseMs = juce::jmap(t, 500.0f, 60.0f); // dense -> slow, transient -> fast
+                // Smooth the auto release so block-to-block crest jitter
+                // doesn't zipper the limiter's recovery behavior.
+                limiterAutoReleaseSmoothedMs += (releaseMs - limiterAutoReleaseSmoothedMs) * 0.2f;
+                releaseMs = limiterAutoReleaseSmoothedMs;
+            }
+            outputLimiter.setRelease(releaseMs);
+        }
         outputLimiter.process(context);
+        limiterCeilingPostGain.process(context); // see ceiling comment above
     }
 
     // Stage 3 Phase 5.6: GUI visualization tap — output peak level, read

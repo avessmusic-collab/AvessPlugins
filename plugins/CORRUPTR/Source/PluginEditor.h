@@ -465,6 +465,9 @@ private:
     std::unique_ptr<juce::WebSliderRelay> sampleRateReductionRelay; // Amount knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> xyPadSmoothingRelay; // ADV XY Glide knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> sequencerDepthRelay; // Seq Mix knob (post-5.6 user request)
+    std::unique_ptr<juce::WebSliderRelay> limiterCeilingRelay; // v7 addition
+    std::unique_ptr<juce::WebSliderRelay> limiterReleaseRelay; // v7 addition
+    std::unique_ptr<juce::WebToggleButtonRelay> limiterAutoReleaseRelay; // v7 addition
 
     // --- Phase 5.2: Glitch ---
     std::unique_ptr<juce::WebToggleButtonRelay> graphBypassGlitchRelay;
@@ -590,6 +593,9 @@ private:
     std::unique_ptr<juce::WebSliderParameterAttachment> sampleRateReductionAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> xyPadSmoothingAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> sequencerDepthAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> limiterCeilingAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> limiterReleaseAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> limiterAutoReleaseAttachment;
 
     // --- Phase 5.2: Glitch ---
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> graphBypassGlitchAttachment;

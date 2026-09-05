@@ -614,6 +614,26 @@
             <select class="combo-sm" id="output_limiter_style" data-param="outputLimiterStyle" style="width:108px;height:26px;margin-top:12px;">
               <option selected>Transparent</option><option>Colored</option>
             </select>
+            <div style="display:flex; gap:14px; align-items:flex-start; margin-top:12px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_limiter_ceiling" data-param="limiterCeiling" data-min="-20" data-max="0" data-default="-0.3" data-unit="dB" data-decimals="1" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="limiterCeiling">-0.3 dB</div>
+                <div class="knob-label">Ceiling</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_limiter_release" data-param="limiterRelease" data-min="1" data-max="1000" data-default="300" data-unit="ms" data-decimals="0" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="limiterRelease">300 ms</div>
+                <div class="knob-label">Release</div>
+              </div>
+              <div class="toggle-row" style="margin-top:8px;">
+                <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
+                <span class="toggle-label">Auto</span>
+              </div>
+            </div>
 
             <div style="display:flex; gap:20px; margin-top:16px;">
               <div class="fader-wrap" style="margin-top:0;">
@@ -2262,6 +2282,9 @@
       outputGain: 'Output trim after the limiter',
       mix: 'Master dry/wet — above 100% overdrives the wet signal (up to +6 dB)',
       outputLimiterStyle: 'Output limiter: Transparent catches peaks; Colored adds saturation first',
+      limiterCeiling: 'Limiter ceiling — output never exceeds this level',
+      limiterRelease: 'Limiter recovery speed (ignored while Auto is on)',
+      limiterAutoRelease: 'Auto release — fast on transients, slow on dense material',
       graphBypassSaturation: 'Distortion stage on/off',
       distortionAlgorithm: 'Distortion type — click to pick from the list, arrows to step',
       drive: 'Distortion input gain (0–40 dB) — pushes harder into the curve',
@@ -2430,26 +2453,37 @@
   // alone so Cmd+Z latch etc. still work.
   // ===================================================================
   (function(){
-    const KEY_TO_PARAM = {
-      '1': 'performanceKill', '2': 'performanceGlitch', '3': 'performanceDestroy',
-      '4': 'performanceFreeze', '5': 'performanceReverse', '6': 'performanceStutter',
-      '7': 'performanceChaos'
+    // Keyed by e.code (PHYSICAL key, modifier-independent) - e.key changes
+    // to '!' etc. if Shift is touched mid-hold, which made keyup miss the
+    // lookup and left the trigger stuck on (user-reported bug, 2026-09-05).
+    const CODE_TO_PARAM = {
+      Digit1: 'performanceKill',   Digit2: 'performanceGlitch',  Digit3: 'performanceDestroy',
+      Digit4: 'performanceFreeze', Digit5: 'performanceReverse', Digit6: 'performanceStutter',
+      Digit7: 'performanceChaos',
+      Numpad1: 'performanceKill',   Numpad2: 'performanceGlitch',  Numpad3: 'performanceDestroy',
+      Numpad4: 'performanceFreeze', Numpad5: 'performanceReverse', Numpad6: 'performanceStutter',
+      Numpad7: 'performanceChaos'
     };
     const states = {};
-    for (const k of Object.keys(KEY_TO_PARAM))
-      states[k] = Juce.getToggleState(KEY_TO_PARAM[k]);
+    for (const c of Object.keys(CODE_TO_PARAM))
+      states[c] = Juce.getToggleState(CODE_TO_PARAM[c]);
+    function clearAll(){ for (const c of Object.keys(states)) states[c].setValue(false); }
     document.addEventListener('keydown', e => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
       if (document.body.dataset.page !== '4') return;
-      const st = states[e.key];
+      const st = states[e.code];
       if (!st) return;
       e.preventDefault();
       st.setValue(true);
     });
     document.addEventListener('keyup', e => {
-      const st = states[e.key];
-      if (st) st.setValue(false); // release always clears
+      const st = states[e.code];
+      if (st) st.setValue(false); // release always clears, whatever the modifiers
     });
+    // Focus lost mid-hold (window switch, latch toggle, host stealing keys):
+    // keyup may never arrive - clear every trigger rather than leave one stuck.
+    window.addEventListener('blur', clearAll);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) clearAll(); });
   })();
 
   // ===== Initial bind pass over statically-authored markup =====

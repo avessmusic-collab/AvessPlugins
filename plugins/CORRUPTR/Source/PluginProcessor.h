@@ -1540,6 +1540,8 @@ private:
     juce::dsp::Gain<float> outputGainDsp;
     juce::dsp::WaveShaper<float> coloredLimiterSaturation; // fixed, gentle, always-on-in-Colored-mode saturation before the limiter (architecture.md #13's recommended MVP approximation for GR-proportional coloring)
     juce::dsp::Limiter<float> outputLimiter;
+    float limiterAutoReleaseSmoothedMs = 300.0f; // v7: auto-release smoothing state
+    juce::dsp::Gain<float> limiterCeilingPostGain; // v7: +ceiling dB after the limiter (see processBlock comment)
 
     //=========================================================================
     // Stage 3 Phase 5.6: GUI Visualization Taps — atomic storage. See the

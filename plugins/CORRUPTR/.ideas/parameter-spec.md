@@ -31,6 +31,13 @@
 > (SVF pair for LP/HP/BP/Resonant variants, second biquad for Notch); Comb ignores slope.
 > Filter state resets on slope change (same click-safety convention as filterType).
 > Total count now **99** (bound: 92).
+>
+> **v7 addendum (2026-09-05, user-requested):** three parameters appended for Ableton-style
+> control of the (already-unconditional) end-of-chain output limiter — `limiterCeiling`
+> (Float, -20..0 dB, default -0.3), `limiterRelease` (Float, 1-1000 ms, skewed, default 300,
+> ignored while Auto is on), `limiterAutoRelease` (Bool, default true: program-dependent
+> release derived from block crest factor — fast on transients, slow on dense material).
+> Total count now **102** (bound: 95).
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 
