@@ -279,6 +279,13 @@
      cursor there; two pointers tracking together reads as a glitch. The
      cursor reappears as soon as it leaves the pad. */
   .xy-card.latched, .xy-card.latched *{ cursor: none; }
+  /* Hover tooltips: one shared element, shown after a short delay over any
+     [data-tip] control. Monochrome, matches the tile-menu language. */
+  .ui-tip{ position:fixed; z-index:1200; background:#1c1c1e; color:rgba(255,255,255,0.92);
+           border-radius:8px; padding:7px 12px; font-size:10px; font-weight:600; letter-spacing:.4px;
+           max-width:240px; line-height:1.45; box-shadow:0 6px 18px rgba(0,0,0,0.30);
+           pointer-events:none; opacity:0; transition:opacity .12s ease; }
+  .ui-tip.show{ opacity:1; }
 
   /* module titles for macros / performance / xy (below tile) */
   .module-title{ margin-top: 10px; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
@@ -2157,6 +2164,131 @@
         try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch(e){}
       });
     });
+  })();
+
+  // ===================================================================
+  // Hover tooltips: descriptions keyed by data-param / data-action / id,
+  // applied as data-tip attributes, rendered by one shared .ui-tip element
+  // (450ms hover delay, follows in near the cursor, viewport-clamped).
+  // ===================================================================
+  (function(){
+    const PARAM_TIPS = {
+      qualityMode: 'Oversampling quality — ECO to EXTREME; AUTO adapts to drive intensity',
+      inputGain: 'Input trim (−24 to +24 dB) into the chain',
+      outputGain: 'Output trim after the limiter',
+      mix: 'Master dry/wet — above 100% overdrives the wet signal (up to +6 dB)',
+      outputLimiterStyle: 'Output limiter: Transparent catches peaks; Colored adds saturation first',
+      graphBypassSaturation: 'Distortion stage on/off',
+      distortionAlgorithm: 'Distortion type — click to pick from the list, arrows to step',
+      drive: 'Distortion input gain (0–40 dB) — pushes harder into the curve',
+      fold: 'Fold amount (Wavefolder/Foldback) — sets carrier frequency for Ring-Mod',
+      graphBypassWaveshaper: 'Bypass only the shaping curve; drive/tone stay active',
+      graphBypassBitcrush: 'Bitcrush stage on/off',
+      bitcrushMode: 'Crush character — click to pick (Classic, Dither, Bit Flip…)',
+      bitDepth: 'Bit depth (1–16) — lower = coarser, harsher steps',
+      sampleRateReduction: 'Sample-rate crush amount — 0% clean, 100% = 48× hold',
+      graphBypassGlitch: 'Glitch engine on/off',
+      glitchMode: 'Glitch mode (17 types) — click to pick',
+      glitchBufferLength: 'Glitch cycle length, synced to host tempo',
+      glitchProbability: 'Chance a glitch event fires each cycle',
+      chaos: 'Randomizes glitch timing and length per cycle',
+      graphBypassFilter: 'Filter stage on/off',
+      filterType: 'Filter topology — click to pick (LP, HP, Notch, Comb…)',
+      filterCutoff: 'Filter cutoff frequency',
+      filterResonance: 'Resonance — emphasis at the cutoff',
+      feedbackAmount: 'Feedback loop intensity — internally limited, cannot run away',
+      feedbackDamping: 'Darkens the feedback tail (higher = duller repeats)',
+      microDelayTime: 'Feedback loop delay time — flanger-tight to slapback',
+      sequencerEnabled: 'Rhythmic sequencer on/off',
+      sequencerRate: 'Step rate, host-synced (incl. triplets)',
+      sequencerSteps: 'Pattern length (16 or 32 steps)',
+      modMatrixEnabled: 'Modulation matrix + LFOs on/off',
+      macroDamage: 'Macro: cranks drive + crush together for instant destruction',
+      macroGlitch: 'Macro: raises glitch probability and intensity',
+      macroCrush: 'Macro: deepens bit/sample-rate crushing',
+      macroChaos: 'Macro: adds randomness across the engine',
+      macroMovement: 'Macro: increases modulation depth and motion',
+      macroRhythm: 'Macro: intensifies sequencer-driven rhythm',
+      macroWidth: 'Macro: stereo width treatment',
+      macroMix: 'Macro: overall wet balance',
+      performanceKill: 'Hold to hard-mute the output (MIDI note 36)',
+      performanceGlitch: 'Hold to force glitching (MIDI note 37)',
+      performanceDestroy: 'Hold to slam drive to maximum (MIDI note 38)',
+      performanceFreeze: 'Hold to freeze the audio buffer (MIDI note 39)',
+      performanceReverse: 'Hold for reverse playback (MIDI note 40)',
+      performanceStutter: 'Hold for stutter repeats (MIDI note 41)',
+      performanceChaos: 'Hold to spike randomness (MIDI note 42)'
+    };
+    const ACTION_TIPS = {
+      randomize_pattern: 'Randomize every step of the current lane’s pattern',
+      mutate_pattern: 'Nudge the pattern — small random variations',
+      reverse_pattern: 'Reverse the step order',
+      mirror_pattern: 'Mirror the first half onto the second',
+      shift_pattern: 'Rotate the pattern one step',
+      clear_pattern: 'Reset the current lane to defaults'
+    };
+    const ID_TIPS = {
+      xy_pad: 'Drag to morph Damage (X) + Glitch (Y) — ⌘1 latches so hover alone drives it',
+      input_meter_topbar: 'Input level — red = clipping at the input',
+      output_meter_topbar: 'Output level — red = clipping (limiter beaten)',
+      step_grid: 'Click/drag bars to edit the selected lane’s steps',
+      lane_select_row: 'Pick which modulation lane the grid edits',
+      modSlotList: 'Route a source to a destination; Amount sets bipolar depth',
+      filter_eq_mini_graph: 'Live filter response for the current settings'
+    };
+    for (const [p, tip] of Object.entries(PARAM_TIPS))
+      document.querySelectorAll(`[data-param="${p}"]`).forEach(el => el.setAttribute('data-tip', tip));
+    for (const [a, tip] of Object.entries(ACTION_TIPS))
+      document.querySelectorAll(`[data-action="${a}"]`).forEach(el => el.setAttribute('data-tip', tip));
+    for (const [id, tip] of Object.entries(ID_TIPS))
+      { const el = document.getElementById(id); if (el) el.setAttribute('data-tip', tip); }
+    // LFO panels + mod slots are JS-generated: pattern-match their params.
+    document.querySelectorAll('[data-param]').forEach(el => {
+      const p = el.dataset.param;
+      if (el.hasAttribute('data-tip')) return;
+      let m;
+      if ((m = p.match(/^lfo(\d)Rate$/)))  el.setAttribute('data-tip', `LFO ${m[1]} speed (free Hz or synced)`);
+      else if ((m = p.match(/^lfo(\d)Shape$/))) el.setAttribute('data-tip', `LFO ${m[1]} waveform (9 shapes)`);
+      else if ((m = p.match(/^lfo(\d)Sync$/)))  el.setAttribute('data-tip', `Sync LFO ${m[1]} to host tempo`);
+      else if ((m = p.match(/^modSlot(\d)Source$/)))      el.setAttribute('data-tip', `Slot ${m[1]}: modulation source`);
+      else if ((m = p.match(/^modSlot(\d)Destination$/))) el.setAttribute('data-tip', `Slot ${m[1]}: parameter to modulate`);
+      else if ((m = p.match(/^modSlot(\d)Amount$/)))      el.setAttribute('data-tip', `Slot ${m[1]}: depth (−100% to +100%)`);
+      else if ((m = p.match(/^modSlot(\d)Enable$/)))      el.setAttribute('data-tip', `Slot ${m[1]}: on/off`);
+    });
+
+    // Native title attributes would render a second (OS) tooltip on top of
+    // ours - strip them wherever a data-tip now exists.
+    document.querySelectorAll('[data-tip][title]').forEach(el => el.removeAttribute('title'));
+
+    // Shared tooltip element + delegated hover handling
+    const tip = document.createElement('div');
+    tip.className = 'ui-tip';
+    document.body.appendChild(tip);
+    let tipTimer = null, tipTarget = null;
+    function hideTip(){ clearTimeout(tipTimer); tipTimer = null; tipTarget = null; tip.classList.remove('show'); }
+    document.addEventListener('pointerover', e => {
+      const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+      if (!t || t === tipTarget) return;
+      // No tooltips over the latched XY pad (cursor is hidden there).
+      if (t.closest('.xy-card.latched')) { hideTip(); return; }
+      hideTip();
+      tipTarget = t;
+      tipTimer = setTimeout(() => {
+        tip.textContent = t.dataset.tip;
+        const r = t.getBoundingClientRect();
+        tip.style.left = '0px'; tip.style.top = '0px';
+        tip.classList.add('show');
+        const mr = tip.getBoundingClientRect();
+        let x = Math.min(Math.max(8, r.left + r.width/2 - mr.width/2), window.innerWidth - mr.width - 8);
+        let y = r.bottom + 8;
+        if (y + mr.height > window.innerHeight - 8) y = r.top - mr.height - 8;
+        tip.style.left = x + 'px'; tip.style.top = Math.max(8, y) + 'px';
+      }, 450);
+    });
+    document.addEventListener('pointerout', e => {
+      if (tipTarget && (!e.relatedTarget || !tipTarget.contains(e.relatedTarget))) hideTip();
+    });
+    document.addEventListener('pointerdown', hideTip, true);
   })();
 
   // ===== Initial bind pass over statically-authored markup =====
