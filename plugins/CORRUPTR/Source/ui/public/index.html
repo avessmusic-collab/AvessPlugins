@@ -293,6 +293,7 @@
              background:#e2e2e5; color:var(--text-tertiary); }
   .page-tab.active{ background:#1c1c1e; color:#fff; }
   .page-hidden{ display:none !important; }
+  [hidden]{ display:none !important; } /* audit fix: .ab-toggle/input display rules were overriding the hidden attribute */
 
   /* module titles for macros / performance / xy (below tile) */
   .module-title{ margin-top: 10px; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
@@ -992,8 +993,15 @@
 
   function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
   function clamp01(v){ return clamp(v,0,1); }
-  function normFromValue(v,min,max){ return (v-min)/(max-min); }
-  function valueFromNorm(n,min,max){ return min + n*(max-min); }
+  // Skew-aware conversions (audit fix 2026-09-05): parameters with a
+  // non-linear NormalisableRange (filterCutoff skew 0.3, limiterRelease
+  // skew 0.4) were displayed AND set with linear math, so mid-range knob
+  // values disagreed with the actual parameter (e.g. Release showed 618ms
+  // for an actual 300ms). Skew arrives via the relay's properties
+  // round-trip; before it lands, skewOf() returns 1 (safe linear).
+  function skewOf(state){ try { return (state && state.properties && state.properties.skew) || 1; } catch(e){ return 1; } }
+  function normFromValue(v,min,max,skew){ const p=(v-min)/(max-min); return (!skew || skew===1) ? p : Math.pow(Math.max(0,p), skew); }
+  function valueFromNorm(n,min,max,skew){ const p=(!skew || skew===1) ? n : Math.pow(Math.max(0,n), 1/skew); return min + p*(max-min); }
   function degFromNorm(n){ return -135 + n*270; }
   function fmtValue(v, decimals, unit){
     const s = v.toFixed(decimals);
@@ -1020,7 +1028,7 @@
       const state = Juce.getSliderState(param);
 
       function render(){
-        const n = clamp01(normFromValue(value, min, max));
+        const n = clamp01(normFromValue(value, min, max, skewOf(state)));
         body.style.transform = `rotate(${degFromNorm(n)}deg)`;
         const text = fmtValue(value, decimals, unit);
         if(valueEl) valueEl.textContent = text;
@@ -1059,7 +1067,7 @@
         const sens = ((max-min)/200) * (fineMode ? 0.08 : 1); // shift = micro adjustments
         value = clamp(startVal + dy * sens, min, max);
         render();
-        const n = normFromValue(value, min, max);
+        const n = normFromValue(value, min, max, skewOf(state));
         state.setNormalisedValue(n);
         updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
       });
@@ -1068,7 +1076,7 @@
         e.preventDefault();
         value = parseFloat(knob.dataset.default);
         render();
-        const n = normFromValue(value, min, max);
+        const n = normFromValue(value, min, max, skewOf(state));
         state.sliderDragStarted(); state.setNormalisedValue(n); state.sliderDragEnded();
         updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
       });
@@ -1079,7 +1087,7 @@
       // NOTE: valueChangedEvent fires with NO callback arguments (JUCE 8
       // pattern #15) - read the current value from `state` itself, not
       // from a listener argument.
-      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max); render(); });
+      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max, skewOf(state)); render(); });
     });
   }
 
@@ -1101,7 +1109,7 @@
       const state = Juce.getSliderState(param);
 
       function render(){
-        const n = clamp01(normFromValue(value, min, max));
+        const n = clamp01(normFromValue(value, min, max, skewOf(state)));
         // Size-independent: correct even if the fader was hidden (page
         // switched away) when this ran - equals (1-n)*(height-10).
         thumb.style.top = `calc(${((1-n)*100).toFixed(3)}% - ${((1-n)*10).toFixed(2)}px)`;
@@ -1119,7 +1127,7 @@
       let dragging = false, fStartY = 0, fStartVal = 0, fFine = false;
       function pushValue(){
         render();
-        const n = clamp01(normFromValue(value, min, max));
+        const n = clamp01(normFromValue(value, min, max, skewOf(state)));
         state.setNormalisedValue(n);
         updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
       }
@@ -1127,7 +1135,7 @@
         const rect = fader.getBoundingClientRect();
         const usable = rect.height - 10;
         const n = clamp01(1 - ((clientY - rect.top - 5) / usable));
-        value = valueFromNorm(n, min, max);
+        value = valueFromNorm(n, min, max, skewOf(state));
         pushValue();
       }
       fader.addEventListener('mousedown', e => {
@@ -1157,7 +1165,7 @@
       });
       // valueChangedEvent fires with NO callback arguments (Pattern #15) -
       // read the current value from `state` itself.
-      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max); render(); });
+      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max, skewOf(state)); render(); });
     });
   }
 
@@ -1209,7 +1217,7 @@
         let value = parseFloat(hs.dataset.default);
         const state = Juce.getSliderState(param);
         function render(){
-          const n = clamp01(normFromValue(value, min, max));
+          const n = clamp01(normFromValue(value, min, max, skewOf(state)));
           thumb.style.left = `calc(${(n*100).toFixed(3)}% - ${(n*10).toFixed(2)}px)`; // size-independent
           if(readout) readout.textContent = fmtValue(value, decimals, unit);
         }
@@ -1220,7 +1228,7 @@
           const rect = hs.getBoundingClientRect();
           const usable = rect.width - 10;
           const n = clamp01((clientX - rect.left - 5)/usable);
-          value = valueFromNorm(n, min, max);
+          value = valueFromNorm(n, min, max, skewOf(state));
           render();
           state.setNormalisedValue(n);
           updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
@@ -1231,7 +1239,7 @@
         window.addEventListener('mouseup', () => { if(dragging) state.sliderDragEnded(); dragging = false; });
         // valueChangedEvent fires with NO callback arguments (Pattern #15) -
         // read the current value from `state` itself.
-        state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max); render(); });
+        state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max, skewOf(state)); render(); });
       }
     });
   }

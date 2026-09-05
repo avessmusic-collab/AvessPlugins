@@ -849,6 +849,9 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     notchX1.fill(0.0f); notchX2.fill(0.0f);
     notchY1.fill(0.0f); notchY2.fill(0.0f);
     notch2X1.fill(0.0f); notch2X2.fill(0.0f);
+    bitcrushLevelsSmoothed.reset(sampleRate, 0.015);
+    bitcrushLevelsSmoothed.setCurrentAndTargetValue(65535.0f);
+    bitcrushLevelsCurrent = 65535.0f;
     notch2Y1.fill(0.0f); notch2Y2.fill(0.0f);
 
     combMaxDelaySamples = static_cast<int>(std::ceil(0.025 * sampleRate)) + 4; // 25ms headroom for the ~1-20ms comb spacing range
@@ -1332,6 +1335,10 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             macroContributions.bitDepthBits, performanceDestroyActive, 1.0f, 1.0f, 16.0f);
         const float bitDepth = juce::jlimit(1.0f, 16.0f, modulatedBitDepth);
         bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
+        // Audit fix 2026-09-05: ramp the quantizer's level count (~15ms)
+        // instead of snapping it - an instant 16-bit -> 1-bit jump (e.g.
+        // the Destroy trigger slamming bitDepth) produced a hard click.
+        bitcrushLevelsSmoothed.setTargetValue(bitcrushLevels);
         // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
         // Bit Depth, for the knob's mod-range indicator.
         visModBitDepth.store(bitDepth, std::memory_order_relaxed);
@@ -1777,6 +1784,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // ramp below) even if bypass is engaged mid-window, rather than an abrupt cut.
         const bool glitchWantsWet = glitchEventActiveThisCycle && ! glitchBypassed;
         glitchActiveMixSmoothed.setTargetValue(glitchWantsWet ? 1.0f : 0.0f);
+        bitcrushLevelsCurrent = bitcrushLevelsSmoothed.getNextValue(); // once per base-rate sample
         const float glitchMixAmt = glitchActiveMixSmoothed.getNextValue();
 
         // Stage 2 Phase 3.6: shared (NOT per-channel) once-per-sample
@@ -2647,7 +2655,7 @@ float CORRUPTRAudioProcessor::processBitcrusher(float xIn, int channel)
     // (`bitcrushMode`). Every path is allocation-free; `bitcrushDitherRandom`
     // is a dedicated fixed-seed instance so the Dither mode can never perturb
     // `glitchRandom`'s preset-reproducible draw sequence (Phase 3.5 invariant).
-    const float lv = bitcrushLevels;
+    const float lv = bitcrushLevelsCurrent; // smoothed - see the per-block ramp comment
     switch (bitcrushModeIndex)
     {
         case 1: // Dither: TPDF noise (+/-1 LSB) before rounding decorrelates the staircase

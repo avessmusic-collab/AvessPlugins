@@ -1024,6 +1024,8 @@ private:
     std::array<int, 2> bitcrushHoldCounter { 0, 0 };
     bool bitcrushBypassed = false;
     float bitcrushLevels = 65535.0f;
+    juce::SmoothedValue<float> bitcrushLevelsSmoothed; // audit fix: click-free level ramps (Destroy trigger)
+    float bitcrushLevelsCurrent = 65535.0f;
     // v3 addition: selectable quantize character (see processBitcrusher).
     // Dedicated fixed-seed RNG for Dither mode - never touches glitchRandom.
     int bitcrushModeIndex = 0;
