@@ -595,15 +595,6 @@
             </div>
 
             <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-glitch"></div></div>
-            <div class="adv-content" id="adv-glitch">
-              <div class="knob-wrap" style="margin-top:0;">
-                <div class="knob" id="node_glitch_probability" data-param="glitchProbability" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="glitchProbability">0%</div>
-                <div class="knob-label">Prob Fine</div>
-              </div>
-            </div>
             </div>
           </div>
 
@@ -695,15 +686,6 @@
             </div>
 
             <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-filter"></div></div>
-            <div class="adv-content" id="adv-filter">
-              <div class="knob-wrap" style="margin-top:0;">
-                <div class="knob" id="node_filter_cutoff" data-param="filterCutoff" data-min="20" data-max="20000" data-default="20000" data-unit="Hz" data-decimals="0" style="width:56px;height:56px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="filterCutoff">20000 Hz</div>
-                <div class="knob-label">Cutoff Fine</div>
-              </div>
-            </div>
             </div>
           </div>
 
@@ -1064,13 +1046,13 @@
       const thumb = fader.querySelector('.fader-thumb');
       const wrap = fader.closest('.fader-wrap');
       const readout = wrap ? wrap.querySelector('.fader-readout') : null;
-      const h = fader.offsetHeight;
       const state = Juce.getSliderState(param);
 
       function render(){
         const n = clamp01(normFromValue(value, min, max));
-        const usable = h - 10;
-        thumb.style.top = `${(1-n) * usable}px`;
+        // Size-independent: correct even if the fader was hidden (page
+        // switched away) when this ran - equals (1-n)*(height-10).
+        thumb.style.top = `calc(${((1-n)*100).toFixed(3)}% - ${((1-n)*10).toFixed(2)}px)`;
         const text = fmtValue(value, decimals, unit);
         if(readout) readout.textContent = text;
         // Phase 5.6: see bindKnobs()'s identical comment above - same
@@ -1119,8 +1101,7 @@
         const state = Juce.getComboBoxState(param);
         function render(){
           const n = choices.length > 1 ? index/(choices.length-1) : 0;
-          const usable = hs.offsetWidth - 10;
-          thumb.style.left = `${n * usable}px`;
+          thumb.style.left = `calc(${(n*100).toFixed(3)}% - ${(n*10).toFixed(2)}px)`; // size-independent
           if(readout) readout.textContent = choices[index];
         }
         // Do NOT proactively push the local placeholder default index into
@@ -1151,8 +1132,7 @@
         const state = Juce.getSliderState(param);
         function render(){
           const n = clamp01(normFromValue(value, min, max));
-          const usable = hs.offsetWidth - 10;
-          thumb.style.left = `${n * usable}px`;
+          thumb.style.left = `calc(${(n*100).toFixed(3)}% - ${(n*10).toFixed(2)}px)`; // size-independent
           if(readout) readout.textContent = fmtValue(value, decimals, unit);
         }
         // Do NOT proactively push the local placeholder default into the
