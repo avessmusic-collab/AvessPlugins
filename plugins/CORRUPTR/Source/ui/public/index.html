@@ -1010,19 +1010,32 @@
       // skewed/wide-range parameters to their minimum).
       render();
 
-      let dragging = false, startY = 0, startVal = 0;
+      let dragging = false, startY = 0, startVal = 0, fineMode = false;
       knob.addEventListener('mousedown', e => {
-        dragging = true; startY = e.clientY; startVal = value;
+        dragging = true; startY = e.clientY; startVal = value; fineMode = e.shiftKey;
         document.body.style.cursor = 'ns-resize'; e.preventDefault();
         state.sliderDragStarted();
       });
       window.addEventListener('mousemove', e => {
         if(!dragging) return;
+        // Shift toggled mid-drag: rebase the anchor at the CURRENT value so
+        // the knob continues smoothly from where it is - never snaps back.
+        if (e.shiftKey !== fineMode){ fineMode = e.shiftKey; startY = e.clientY; startVal = value; }
         const dy = startY - e.clientY;
-        value = clamp(startVal + dy * ((max-min)/200), min, max);
+        const sens = ((max-min)/200) * (fineMode ? 0.08 : 1); // shift = micro adjustments
+        value = clamp(startVal + dy * sens, min, max);
         render();
         const n = normFromValue(value, min, max);
         state.setNormalisedValue(n);
+        updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
+      });
+      // Double-click resets to the parameter's default value.
+      knob.addEventListener('dblclick', e => {
+        e.preventDefault();
+        value = parseFloat(knob.dataset.default);
+        render();
+        const n = normFromValue(value, min, max);
+        state.sliderDragStarted(); state.setNormalisedValue(n); state.sliderDragEnded();
         updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
       });
       window.addEventListener('mouseup', () => {
@@ -1069,19 +1082,45 @@
       // value arrives asynchronously via the valueChangedEvent listener.
       render();
 
-      let dragging = false;
+      let dragging = false, fStartY = 0, fStartVal = 0, fFine = false;
+      function pushValue(){
+        render();
+        const n = clamp01(normFromValue(value, min, max));
+        state.setNormalisedValue(n);
+        updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
+      }
       function setFromClientY(clientY){
         const rect = fader.getBoundingClientRect();
         const usable = rect.height - 10;
         const n = clamp01(1 - ((clientY - rect.top - 5) / usable));
         value = valueFromNorm(n, min, max);
-        render();
-        state.setNormalisedValue(n);
-        updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
+        pushValue();
       }
-      fader.addEventListener('mousedown', e => { dragging = true; state.sliderDragStarted(); setFromClientY(e.clientY); e.preventDefault(); });
-      window.addEventListener('mousemove', e => { if(dragging) setFromClientY(e.clientY); });
+      fader.addEventListener('mousedown', e => {
+        dragging = true; state.sliderDragStarted();
+        setFromClientY(e.clientY);                       // click-to-position, as before
+        fStartY = e.clientY; fStartVal = value; fFine = e.shiftKey;
+        e.preventDefault();
+      });
+      window.addEventListener('mousemove', e => {
+        if(!dragging) return;
+        // Anchored delta drag: identical feel to absolute tracking at 1x,
+        // but lets Shift scale to micro adjustments with a rebase on toggle
+        // so the fader continues from its current value (no snap-back).
+        if (e.shiftKey !== fFine){ fFine = e.shiftKey; fStartY = e.clientY; fStartVal = value; }
+        const rect = fader.getBoundingClientRect();
+        const usable = Math.max(1, rect.height - 10);
+        const sens = ((max-min)/usable) * (fFine ? 0.08 : 1);
+        value = clamp(fStartVal + (fStartY - e.clientY) * sens, min, max);
+        pushValue();
+      });
       window.addEventListener('mouseup', () => { if(dragging) state.sliderDragEnded(); dragging = false; });
+      // Double-click resets to the parameter's default value.
+      fader.addEventListener('dblclick', e => {
+        e.preventDefault();
+        value = parseFloat(fader.dataset.default);
+        state.sliderDragStarted(); pushValue(); state.sliderDragEnded();
+      });
       // valueChangedEvent fires with NO callback arguments (Pattern #15) -
       // read the current value from `state` itself.
       state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max); render(); });
