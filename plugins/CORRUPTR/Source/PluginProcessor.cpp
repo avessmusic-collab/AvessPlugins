@@ -849,6 +849,8 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     notchX1.fill(0.0f); notchX2.fill(0.0f);
     notchY1.fill(0.0f); notchY2.fill(0.0f);
     notch2X1.fill(0.0f); notch2X2.fill(0.0f);
+    stereoWidthSmoothed.reset(sampleRate, 0.02);
+    stereoWidthSmoothed.setCurrentAndTargetValue(1.0f);
     bitcrushLevelsSmoothed.reset(sampleRate, 0.015);
     bitcrushLevelsSmoothed.setCurrentAndTargetValue(65535.0f);
     bitcrushLevelsCurrent = 65535.0f;
@@ -1976,6 +1978,27 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         if (coloredLimiterMode)
             coloredLimiterSaturation.process(context);
 
+        // Audit fix 2026-09-05: stereo width (macroWidth's real DSP) - M/S
+        // scale applied to the final stereo pair, pre-limiter. Skipped for
+        // mono. Allocation-free; smoothed per sample.
+        if (buffer.getNumChannels() >= 2)
+        {
+            float* l = buffer.getWritePointer(0);
+            float* r = buffer.getWritePointer(1);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float w = stereoWidthSmoothed.getNextValue();
+                const float mid  = (l[i] + r[i]) * 0.5f;
+                const float side = (l[i] - r[i]) * 0.5f * w;
+                l[i] = mid + side;
+                r[i] = mid - side;
+            }
+        }
+        else
+        {
+            stereoWidthSmoothed.skip(numSamples);
+        }
+
         // v7 (Ableton-style limiter controls): ceiling + release applied
         // per block. Auto release derives a program-dependent release from
         // this block's crest factor (peak/RMS): transient-heavy material
@@ -2398,6 +2421,12 @@ void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockD
 
     macroContributions = MacroEngine::resolve(macroDamagePct, macroCrushPct, macroGlitchPct, macroChaosPct,
                                                macroRhythmPct, macroMovementPct, macroWidthPct, macroMixPct);
+
+    // Audit fix 2026-09-05: macroWidth now drives REAL stereo width (M/S)
+    // instead of the deferred diagnostic-only observation. widthObservation
+    // is -50..+50 around the knob's 50% neutral -> width factor 0..2
+    // (0 = mono, 1 = unchanged, 2 = extra wide), smoothed 20ms.
+    stereoWidthSmoothed.setTargetValue(juce::jlimit(0.0f, 2.0f, 1.0f + macroContributions.widthObservation / 50.0f));
 
     // Macro — FLAGGED: no per-slot "which of the 8 macros" parameter exists
     // (same "no sub-selector parameter exists" gap as MIDI CC above) — the

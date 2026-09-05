@@ -1544,6 +1544,7 @@ private:
     juce::dsp::Limiter<float> outputLimiter;
     float limiterAutoReleaseSmoothedMs = 300.0f; // v7: auto-release smoothing state
     juce::dsp::Gain<float> limiterCeilingPostGain; // v7: +ceiling dB after the limiter (see processBlock comment)
+    juce::SmoothedValue<float> stereoWidthSmoothed; // audit fix: macroWidth's real M/S width (1.0 = neutral)
 
     //=========================================================================
     // Stage 3 Phase 5.6: GUI Visualization Taps — atomic storage. See the
