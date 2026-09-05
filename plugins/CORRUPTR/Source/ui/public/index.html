@@ -662,6 +662,8 @@
                 <line x1="20" y1="40" x2="160" y2="40" stroke="var(--graph-grid)" stroke-width="1"/>
                 <line x1="20" y1="65" x2="160" y2="65" stroke="var(--graph-grid)" stroke-width="1"/>
                 <path id="filter_eq_curve" d="M20 55 C 60 55, 70 20, 100 18 C 125 16, 140 30, 160 34" fill="none" stroke="var(--accent-line)" stroke-width="1.6"/>
+                <line id="filter_cutoff_marker" x1="160" y1="8" x2="160" y2="76" stroke="var(--graph-grid)" stroke-width="1" stroke-dasharray="2 2"/>
+                <text id="filter_cutoff_hz_label" x="158" y="16" text-anchor="end" font-size="7.5" font-weight="700" fill="var(--text-tertiary)">20.0 kHz</text>
               </svg>
               <div class="graph-axis-x"><span>100Hz</span><span>1kHz</span><span>10kHz</span></div>
             </div>
@@ -2176,35 +2178,67 @@
       return db;
     }
 
-    function redrawFilterCurve(){
-      if (!curvePath) return;
-      const typeIndex = filterTypeState.getChoiceIndex();
-      // Reads the SAME plain-linear native-unit values bindKnobs() just
-      // rendered onto these two knobs (see this file's Phase 5.6 doc
-      // comment above for why this is preferred over re-deriving from
-      // getNormalisedValue()). Falls back to each knob's own data-default
-      // before the very first render() call has run.
+    // Smoothly animated: the DISPLAYED cutoff/resonance ease toward their
+    // targets each frame (cutoff in log-frequency space so sweeps look
+    // even across the log X axis), so opening/closing the filter draws a
+    // glide instead of stepping. rAF runs only while values are moving.
+    const cutoffMarker = document.getElementById('filter_cutoff_marker');
+    const cutoffHzLabel = document.getElementById('filter_cutoff_hz_label');
+    function freqToX(f){ return GX0 + (GX1 - GX0) * (Math.log(f / FREQ_MIN) / Math.log(FREQ_MAX / FREQ_MIN)); }
+    function fmtHz(f){ return f >= 1000 ? (f/1000).toFixed(f >= 10000 ? 1 : 2) + ' kHz' : Math.round(f) + ' Hz'; }
+
+    function targets(){
       const cutoffEl = document.getElementById('filter_cutoff_detail');
       const resonanceEl = document.getElementById('filter_resonance');
-      const cutoffHz = cutoffEl ? parseFloat(cutoffEl.dataset.currentValue ?? cutoffEl.dataset.default) : 20000;
-      const resonancePct = resonanceEl ? parseFloat(resonanceEl.dataset.currentValue ?? resonanceEl.dataset.default) : 0;
+      return {
+        cutoffHz: cutoffEl ? parseFloat(cutoffEl.dataset.currentValue ?? cutoffEl.dataset.default) : 20000,
+        resonancePct: resonanceEl ? parseFloat(resonanceEl.dataset.currentValue ?? resonanceEl.dataset.default) : 0
+      };
+    }
+    let disp = targets();          // displayed (eased) values
+    let animating = false;
 
+    function drawCurve(){
+      if (!curvePath) return;
+      const typeIndex = filterTypeState.getChoiceIndex();
       const N = 24;
       let d = '';
       for (let i = 0; i <= N; i++){
         const x = GX0 + (GX1 - GX0) * (i / N);
         const freq = xToFreq(x);
-        const db = clamp(magnitudeDb(typeIndex, freq, cutoffHz, resonancePct), -12, 14);
+        const db = clamp(magnitudeDb(typeIndex, freq, disp.cutoffHz, disp.resonancePct), -12, 14);
         const y = clamp(dbToY(db), 4, 76);
         d += (i === 0 ? `M${x.toFixed(1)} ${y.toFixed(1)}` : ` L${x.toFixed(1)} ${y.toFixed(1)}`);
       }
       curvePath.setAttribute('d', d);
+      // Cutoff marker + live Hz readout track the DISPLAYED (eased) cutoff.
+      if (cutoffMarker){
+        const cx = clamp(freqToX(Math.max(FREQ_MIN, disp.cutoffHz)), GX0, GX1);
+        cutoffMarker.setAttribute('x1', cx.toFixed(1));
+        cutoffMarker.setAttribute('x2', cx.toFixed(1));
+      }
+      if (cutoffHzLabel) cutoffHzLabel.textContent = fmtHz(disp.cutoffHz);
     }
 
-    filterTypeState.valueChangedEvent.addListener(redrawFilterCurve);
-    Juce.getSliderState('filterCutoff').valueChangedEvent.addListener(redrawFilterCurve);
-    Juce.getSliderState('filterResonance').valueChangedEvent.addListener(redrawFilterCurve);
-    redrawFilterCurve(); // initial paint from data-default values, before any relay round-trip lands
+    function animate(){
+      const t = targets();
+      // Ease cutoff in log space, resonance linearly (~120ms feel at 60fps).
+      const logDisp = Math.log(Math.max(FREQ_MIN, disp.cutoffHz));
+      const logTgt  = Math.log(Math.max(FREQ_MIN, t.cutoffHz));
+      const newLog  = logDisp + (logTgt - logDisp) * 0.22;
+      disp.cutoffHz = Math.exp(newLog);
+      disp.resonancePct += (t.resonancePct - disp.resonancePct) * 0.22;
+      drawCurve();
+      const done = Math.abs(newLog - logTgt) < 0.002 && Math.abs(t.resonancePct - disp.resonancePct) < 0.1;
+      if (done){ disp = t; drawCurve(); animating = false; return; }
+      requestAnimationFrame(animate);
+    }
+    function kick(){ if (!animating){ animating = true; requestAnimationFrame(animate); } }
+
+    filterTypeState.valueChangedEvent.addListener(() => drawCurve()); // type changes snap (discrete)
+    Juce.getSliderState('filterCutoff').valueChangedEvent.addListener(kick);
+    Juce.getSliderState('filterResonance').valueChangedEvent.addListener(kick);
+    drawCurve(); // initial paint from data-default values, before any relay round-trip lands
   })();
 
   // ===================================================================
