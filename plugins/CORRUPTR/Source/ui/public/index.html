@@ -272,6 +272,9 @@
   .xy-dot{ position:absolute; width: 16px; height: 16px; border-radius:50%; background: var(--text-primary);
     transform: translate(-50%,50%); }
   .xy-label{ position:absolute; top:10px; left:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-tertiary); text-transform:uppercase; }
+  /* Cmd+1 latch mode: badge + subtle outline while the pad follows hover */
+  .xy-latch{ position:absolute; top:10px; right:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-primary); text-transform:uppercase; }
+  .xy-card.latched{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
 
   /* module titles for macros / performance / xy (below tile) */
   .module-title{ margin-top: 10px; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
@@ -847,6 +850,7 @@
           <div class="module" style="width:340px;">
             <div class="xy-card" id="xy_pad">
               <span class="xy-label">Performance XY</span>
+              <span class="xy-latch" id="xy_latch" hidden>&#8984;1 LATCH</span>
               <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
             </div>
           </div>
@@ -1435,6 +1439,30 @@
     let dragging = false;
     let activePointerId = null;
 
+    // ---- Cmd+1 latch mode (user request 2026-09-05): toggles "latch" -
+    // while latched the pad follows the pointer on hover alone, no
+    // click/hold needed (trackpad-friendly performance mode). The
+    // automation gesture stays open for the whole latch so hosts record
+    // the full movement; pointerdown/endDrag below therefore skip their
+    // own gesture bracketing while latched (double-begin would confuse
+    // hosts). Latch state is session-local, never persisted.
+    let latched = false;
+    const latchBadge = document.getElementById('xy_latch');
+    function setLatch(on){
+      if (latched === on) return;
+      latched = on;
+      pad.classList.toggle('latched', on);
+      if (latchBadge) latchBadge.hidden = !on;
+      if (on){ xState.sliderDragStarted(); yState.sliderDragStarted(); }
+      else if (!dragging){ xState.sliderDragEnded(); yState.sliderDragEnded(); }
+    }
+    document.addEventListener('keydown', e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '1'){
+        e.preventDefault();
+        setLatch(!latched);
+      }
+    });
+
     function renderDot(xN, yN){
       dot.style.left = (xN*100)+'%'; dot.style.bottom = (yN*100)+'%';
     }
@@ -1452,12 +1480,12 @@
       dragging = true;
       activePointerId = e.pointerId;
       try{ pad.setPointerCapture(e.pointerId); }catch(err){}
-      xState.sliderDragStarted();
-      yState.sliderDragStarted();
+      if (!latched){ xState.sliderDragStarted(); yState.sliderDragStarted(); } // latch already holds the gesture open
       setFromClient(e.clientX, e.clientY);
       e.preventDefault();
     });
     pad.addEventListener('pointermove', e => {
+      if (latched && !dragging){ setFromClient(e.clientX, e.clientY); return; } // hover drives while latched
       if(!dragging || e.pointerId !== activePointerId) return;
       setFromClient(e.clientX, e.clientY);
     });
@@ -1465,8 +1493,7 @@
       if(!dragging) return;
       if(e && e.pointerId !== activePointerId) return;
       dragging = false;
-      xState.sliderDragEnded();
-      yState.sliderDragEnded();
+      if (!latched){ xState.sliderDragEnded(); yState.sliderDragEnded(); } // latch keeps the gesture open
       try{ pad.releasePointerCapture(activePointerId); }catch(err){}
       activePointerId = null;
     }
