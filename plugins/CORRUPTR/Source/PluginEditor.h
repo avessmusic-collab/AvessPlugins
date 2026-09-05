@@ -460,6 +460,7 @@ private:
     std::unique_ptr<juce::WebToggleButtonRelay> graphBypassBitcrushRelay;
     std::unique_ptr<juce::WebSliderRelay> bitDepthRelay;
     std::unique_ptr<juce::WebSliderRelay> sampleRateReductionRelay; // Amount knob (post-5.6 user request)
+    std::unique_ptr<juce::WebSliderRelay> xyPadSmoothingRelay; // ADV XY Glide knob (post-5.6 user request)
 
     // --- Phase 5.2: Glitch ---
     std::unique_ptr<juce::WebToggleButtonRelay> graphBypassGlitchRelay;
@@ -580,6 +581,7 @@ private:
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> graphBypassBitcrushAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> bitDepthAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> sampleRateReductionAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> xyPadSmoothingAttachment;
 
     // --- Phase 5.2: Glitch ---
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> graphBypassGlitchAttachment;

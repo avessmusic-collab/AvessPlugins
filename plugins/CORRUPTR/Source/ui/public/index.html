@@ -854,7 +854,16 @@
               <button class="perf-btn" id="perf_chaos" data-param="performanceChaos" data-default="false">Chaos</button>
             </div>
 
-            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" id="adv_pill_performance"></div></div>
+            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" id="adv_pill_performance" data-target="adv-performance"></div></div>
+            <div class="adv-content" id="adv-performance">
+              <div class="knob-wrap">
+                <div class="knob" id="node_xy_glide" data-param="xyPadSmoothing" data-min="0" data-max="500" data-default="80" data-unit="ms" data-decimals="0" style="width:60px;height:60px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="xyPadSmoothing">80 ms</div>
+                <div class="knob-label">XY Glide</div>
+              </div>
+            </div>
           </div>
 
           <!-- XY PAD -->
@@ -2217,7 +2226,8 @@
       performanceFreeze: 'Hold to freeze the audio buffer (MIDI note 39)',
       performanceReverse: 'Hold for reverse playback (MIDI note 40)',
       performanceStutter: 'Hold for stutter repeats (MIDI note 41)',
-      performanceChaos: 'Hold to spike randomness (MIDI note 42)'
+      performanceChaos: 'Hold to spike randomness (MIDI note 42)',
+      xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)'
     };
     const ACTION_TIPS = {
       randomize_pattern: 'Randomize every step of the current lane’s pattern',
