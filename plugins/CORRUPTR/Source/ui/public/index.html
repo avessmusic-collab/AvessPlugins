@@ -286,6 +286,13 @@
            max-width:240px; line-height:1.45; box-shadow:0 6px 18px rgba(0,0,0,0.30);
            pointer-events:none; opacity:0; transition:opacity .12s ease; }
   .ui-tip.show{ opacity:1; }
+  /* Page tabs: MAIN / SEQUENCER / MATRIX / PERFORM */
+  .page-tabs{ display:flex; gap:8px; padding:14px 28px 2px; }
+  .page-tab{ border:none; border-radius:9px; padding:8px 18px; font-size:10px; font-weight:800;
+             letter-spacing:1.4px; text-transform:uppercase; cursor:pointer;
+             background:#e2e2e5; color:var(--text-tertiary); }
+  .page-tab.active{ background:#1c1c1e; color:#fff; }
+  .page-hidden{ display:none !important; }
 
   /* module titles for macros / performance / xy (below tile) */
   .module-title{ margin-top: 10px; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
@@ -453,6 +460,12 @@
     </header>
 
     <main>
+      <nav class="page-tabs" id="page_tabs">
+        <button class="page-tab active" data-page="1">Main</button>
+        <button class="page-tab" data-page="2">Sequencer</button>
+        <button class="page-tab" data-page="3">Matrix</button>
+        <button class="page-tab" data-page="4">Perform</button>
+      </nav>
       <!-- ===================== MAIN CHANNEL-STRIP UNIT ===================== -->
       <section class="strip-wrap">
         <div class="unit">
@@ -870,7 +883,7 @@
           <div class="module" style="width:340px;">
             <div class="xy-card" id="xy_pad">
               <span class="xy-label">Performance XY</span>
-              <span class="xy-latch" id="xy_latch" hidden>&#8984;1 LATCH</span>
+              <span class="xy-latch" id="xy_latch" hidden>&#8984;Z LATCH</span>
               <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
             </div>
           </div>
@@ -1479,8 +1492,8 @@
       else if (!dragging){ xState.sliderDragEnded(); yState.sliderDragEnded(); }
     }
     document.addEventListener('keydown', e => {
-      if ((e.metaKey || e.ctrlKey) && e.key === '1'){
-        e.preventDefault();
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z')){
+        e.preventDefault(); // also stops the WebView's own text-undo
         setLatch(!latched);
       }
     });
@@ -2239,13 +2252,13 @@
       macroRhythm: 'Macro: intensifies sequencer-driven rhythm',
       macroWidth: 'Macro: stereo width treatment',
       macroMix: 'Macro: overall wet balance',
-      performanceKill: 'Hold to hard-mute the output (MIDI note 36)',
-      performanceGlitch: 'Hold to force glitching (MIDI note 37)',
-      performanceDestroy: 'Hold to slam drive to maximum (MIDI note 38)',
-      performanceFreeze: 'Hold to freeze the audio buffer (MIDI note 39)',
-      performanceReverse: 'Hold for reverse playback (MIDI note 40)',
-      performanceStutter: 'Hold for stutter repeats (MIDI note 41)',
-      performanceChaos: 'Hold to spike randomness (MIDI note 42)',
+      performanceKill: 'Hold to hard-mute the output (key 1 on Perform page, MIDI note 36)',
+      performanceGlitch: 'Hold to force glitching (key 2, MIDI note 37)',
+      performanceDestroy: 'Hold to slam drive to maximum (key 3, MIDI note 38)',
+      performanceFreeze: 'Hold to freeze the audio buffer (key 4, MIDI note 39)',
+      performanceReverse: 'Hold for reverse playback (key 5, MIDI note 40)',
+      performanceStutter: 'Hold for stutter repeats (key 6, MIDI note 41)',
+      performanceChaos: 'Hold to spike randomness (key 7, MIDI note 42)',
       xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)'
     };
     const ACTION_TIPS = {
@@ -2257,7 +2270,7 @@
       clear_pattern: 'Reset the current lane to defaults'
     };
     const ID_TIPS = {
-      xy_pad: 'Drag to morph Damage (X) + Glitch (Y) — ⌘1 latches so hover alone drives it',
+      xy_pad: 'Drag to morph Damage (X) + Glitch (Y) — ⌘Z latches the whole window as the pad',
       input_meter_topbar: 'Input level — red = clipping at the input',
       output_meter_topbar: 'Output level — red = clipping (limiter beaten)',
       step_grid: 'Click/drag bars to edit the selected lane’s steps',
@@ -2318,6 +2331,75 @@
       if (tipTarget && (!e.relatedTarget || !tipTarget.contains(e.relatedTarget))) hideTip();
     });
     document.addEventListener('pointerdown', hideTip, true);
+  })();
+
+  // ===================================================================
+  // 4-page layout (user request 2026-09-05): 1 Main (chain + macros),
+  // 2 Rhythmic Sequencer, 3 Modulation Matrix, 4 Live Performance
+  // (performance triggers + XY pad, moved out of the second unit at load -
+  // listeners travel with the DOM nodes). Last page remembered per-browser.
+  // ===================================================================
+  (function(){
+    const unit1Section  = document.getElementById('node_algorithm_select').closest('section');
+    const unit2Section  = document.getElementById('xy_pad').closest('section');
+    const seqSection    = document.getElementById('sequencer_body').closest('section');
+    const matrixSection = document.getElementById('mod_matrix_body').closest('section');
+    const perfModule    = document.getElementById('perf_kill').closest('.module');
+    const xyModule      = document.getElementById('xy_pad').closest('.module');
+
+    // Build the Live Performance page as a clone of the unit-strip structure
+    const perfSection = document.createElement('section');
+    perfSection.className = 'strip-wrap';
+    const perfUnit = document.createElement('div');
+    perfUnit.className = 'unit';
+    perfSection.appendChild(perfUnit);
+    perfUnit.appendChild(perfModule);
+    perfUnit.appendChild(xyModule);
+    matrixSection.after(perfSection);
+
+    const PAGES = { 1: [unit1Section, unit2Section], 2: [seqSection], 3: [matrixSection], 4: [perfSection] };
+    const tabs = document.querySelectorAll('#page_tabs .page-tab');
+    function showPage(n){
+      for (const k of Object.keys(PAGES))
+        PAGES[k].forEach(sec => sec.classList.toggle('page-hidden', k !== String(n)));
+      tabs.forEach(t => t.classList.toggle('active', t.dataset.page === String(n)));
+      document.body.dataset.page = String(n);
+      try { localStorage.setItem('corruptr-page', String(n)); } catch(e){}
+    }
+    tabs.forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
+    let start = '1';
+    try { start = localStorage.getItem('corruptr-page') || '1'; } catch(e){}
+    showPage(start);
+  })();
+
+  // ===================================================================
+  // Live-performance number keys (user request 2026-09-05): while the
+  // Perform page is active, digits 1-7 hold their performance trigger for
+  // as long as the key is held (auto-repeat ignored; release always
+  // clears, even if the page changed mid-hold). Modifier chords are left
+  // alone so Cmd+Z latch etc. still work.
+  // ===================================================================
+  (function(){
+    const KEY_TO_PARAM = {
+      '1': 'performanceKill', '2': 'performanceGlitch', '3': 'performanceDestroy',
+      '4': 'performanceFreeze', '5': 'performanceReverse', '6': 'performanceStutter',
+      '7': 'performanceChaos'
+    };
+    const states = {};
+    for (const k of Object.keys(KEY_TO_PARAM))
+      states[k] = Juce.getToggleState(KEY_TO_PARAM[k]);
+    document.addEventListener('keydown', e => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      if (document.body.dataset.page !== '4') return;
+      const st = states[e.key];
+      if (!st) return;
+      e.preventDefault();
+      st.setValue(true);
+    });
+    document.addEventListener('keyup', e => {
+      const st = states[e.key];
+      if (st) st.setValue(false); // release always clears
+    });
   })();
 
   // ===== Initial bind pass over statically-authored markup =====
