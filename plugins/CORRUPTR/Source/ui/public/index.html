@@ -884,6 +884,13 @@
               <select class="combo-sm" id="sequencer_steps" data-param="sequencerSteps" style="width:90px;height:32px;">
                 <option selected>16</option><option>32</option>
               </select>
+              <div class="knob-wrap" style="margin:0 0 0 10px;">
+                <div class="knob" id="node_seq_depth" data-param="sequencerDepth" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="sequencerDepth">100 %</div>
+                <div class="knob-label">Seq Mix</div>
+              </div>
               <span style="flex:1 1 auto;"></span>
               <button class="action-btn" id="seq_random" data-action="randomize_pattern">Random</button>
               <button class="action-btn" id="seq_mutate" data-action="mutate_pattern">Mutate</button>
@@ -2193,6 +2200,7 @@
       sequencerEnabled: 'Rhythmic sequencer on/off',
       sequencerRate: 'Step rate, host-synced (incl. triplets)',
       sequencerSteps: 'Pattern length (16 or 32 steps)',
+      sequencerDepth: 'Sequencer mix — how strongly all lanes modulate the sound (0% = off)',
       modMatrixEnabled: 'Modulation matrix + LFOs on/off',
       macroDamage: 'Macro: cranks drive + crush together for instant destruction',
       macroGlitch: 'Macro: raises glitch probability and intensity',

@@ -40,6 +40,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     bitDepthRelay = std::make_unique<juce::WebSliderRelay>("bitDepth");
     sampleRateReductionRelay = std::make_unique<juce::WebSliderRelay>("sampleRateReduction");
     xyPadSmoothingRelay = std::make_unique<juce::WebSliderRelay>("xyPadSmoothing");
+    sequencerDepthRelay = std::make_unique<juce::WebSliderRelay>("sequencerDepth");
 
     // --- Phase 5.2: Glitch ---
     graphBypassGlitchRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassGlitch");
@@ -154,6 +155,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*bitDepthRelay)
             .withOptionsFrom(*sampleRateReductionRelay)
             .withOptionsFrom(*xyPadSmoothingRelay)
+            .withOptionsFrom(*sequencerDepthRelay)
             .withOptionsFrom(*graphBypassGlitchRelay)
             .withOptionsFrom(*glitchModeRelay)
             .withOptionsFrom(*glitchBufferLengthRelay)
@@ -352,6 +354,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("sampleRateReduction"), *sampleRateReductionRelay, nullptr);
     xyPadSmoothingAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("xyPadSmoothing"), *xyPadSmoothingRelay, nullptr);
+    sequencerDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("sequencerDepth"), *sequencerDepthRelay, nullptr);
 
     // --- Phase 5.2: Glitch ---
     graphBypassGlitchAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(

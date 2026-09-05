@@ -487,6 +487,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         juce::StringArray { "Classic", "Dither", "Asymmetric", "Mid-Rise", "Bit Flip", "Gate Crush" },
         0)); // Classic = Phase 3.3's original round-to-nearest behavior
 
+    // v4 spec addition (user request 2026-09-05): master depth for the
+    // Rhythmic Sequencer's modulation output ("Seq Mix"). 100% = Phase 3.7
+    // behavior bit-exact; 0% = sequencer contributes nothing.
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "sequencerDepth", 1 },
+        "Sequencer Depth",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+
     return layout;
 }
 
@@ -2044,17 +2052,25 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
     // value (0 for bipolar lanes, 1.0/"fully open" for Gate) — matches
     // sequencerEnabled's documented ENABLE semantic (parameter-spec.md:
     // "module off -> modulation output disabled entirely").
-    const float driveRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneDrive)             : 0.0f;
-    const float mixRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneMix)               : 0.0f;
-    const float filterCutoffRaw = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneFilterCutoff)      : 0.0f;
-    const float bitDepthRaw     = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneBitDepth)          : 0.0f;
-    const float sampleRateRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneSampleRate)        : 0.0f;
-    const float glitchProbRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneGlitchProbability) : 0.0f;
-    const float volumeRaw       = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneVolume)            : 0.0f;
-    const float panRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePan)               : 0.0f;
-    const float pitchRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePitch)             : 0.0f;
-    const float gateRaw         = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneGate)
-                                                        : RhythmicSequencer::laneDefaultValue(RhythmicSequencer::laneGate);
+    // v4 addition (sequencerDepth / "Seq Mix"): one master depth scaling the
+    // whole sequencer's modulation output. Additive/bipolar lanes scale
+    // toward 0 (their neutral); Gate scales toward its own neutral (fully
+    // open). depth=1 reproduces Phase 3.7 behavior bit-exactly.
+    auto* seqDepthParam = parameters.getRawParameterValue("sequencerDepth");
+    const float seqDepth = juce::jlimit(0.0f, 1.0f, seqDepthParam->load() / 100.0f);
+
+    const float driveRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneDrive)             * seqDepth : 0.0f;
+    const float mixRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneMix)               * seqDepth : 0.0f;
+    const float filterCutoffRaw = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneFilterCutoff)      * seqDepth : 0.0f;
+    const float bitDepthRaw     = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneBitDepth)          * seqDepth : 0.0f;
+    const float sampleRateRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneSampleRate)        * seqDepth : 0.0f;
+    const float glitchProbRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneGlitchProbability) * seqDepth : 0.0f;
+    const float volumeRaw       = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneVolume)            * seqDepth : 0.0f;
+    const float panRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePan)               * seqDepth : 0.0f;
+    const float pitchRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePitch)             * seqDepth : 0.0f;
+    const float gateNeutral     = RhythmicSequencer::laneDefaultValue(RhythmicSequencer::laneGate);
+    const float gateRaw         = sequencerEnabledFlag ? gateNeutral + (laneValue(RhythmicSequencer::laneGate) - gateNeutral) * seqDepth
+                                                        : gateNeutral;
 
     //=========================================================================
     // Per-lane raw-value -> destination-units scaling (FLAGGED DESIGN

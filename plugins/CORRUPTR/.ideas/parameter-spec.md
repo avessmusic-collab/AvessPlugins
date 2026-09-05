@@ -9,6 +9,12 @@
 > so all 94 pre-existing parameters' creation order is untouched; old saved states load
 > fine (missing param -> default). Total parameter count is now **95** (bound: 87).
 > `Classic` reproduces the original Phase 3.3 round-to-nearest behavior bit-exactly.
+>
+> **v4 addendum (2026-09-05, user-requested):** one more parameter appended — `sequencerDepth`
+> (Float, 0-100%, default 100), a master depth ("Seq Mix") scaling the whole Rhythmic
+> Sequencer's modulation output: additive/bipolar lanes scale toward 0, Gate toward its
+> fully-open neutral. 100% is bit-exact with Phase 3.7 behavior. Total count now **96**
+> (bound: 89). Appended at layout end; old saved states load fine.
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 
