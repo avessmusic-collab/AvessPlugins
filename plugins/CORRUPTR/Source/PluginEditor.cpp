@@ -44,6 +44,11 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     sampleRateReductionRelay = std::make_unique<juce::WebSliderRelay>("sampleRateReduction");
     xyPadSmoothingRelay = std::make_unique<juce::WebSliderRelay>("xyPadSmoothing");
     sequencerDepthRelay = std::make_unique<juce::WebSliderRelay>("sequencerDepth");
+    // Audit fix 2026-09-05: the Feedback module's three controls were never
+    // given relays in any GUI phase - the card rendered but was inert.
+    feedbackAmountRelay = std::make_unique<juce::WebSliderRelay>("feedbackAmount");
+    feedbackDampingRelay = std::make_unique<juce::WebSliderRelay>("feedbackDamping");
+    microDelayTimeRelay = std::make_unique<juce::WebSliderRelay>("microDelayTime");
     limiterCeilingRelay = std::make_unique<juce::WebSliderRelay>("limiterCeiling");
     limiterReleaseRelay = std::make_unique<juce::WebSliderRelay>("limiterRelease");
     limiterAutoReleaseRelay = std::make_unique<juce::WebToggleButtonRelay>("limiterAutoRelease");
@@ -165,6 +170,9 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*sampleRateReductionRelay)
             .withOptionsFrom(*xyPadSmoothingRelay)
             .withOptionsFrom(*sequencerDepthRelay)
+            .withOptionsFrom(*feedbackAmountRelay)
+            .withOptionsFrom(*feedbackDampingRelay)
+            .withOptionsFrom(*microDelayTimeRelay)
             .withOptionsFrom(*limiterCeilingRelay)
             .withOptionsFrom(*limiterReleaseRelay)
             .withOptionsFrom(*limiterAutoReleaseRelay)
@@ -374,6 +382,12 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("xyPadSmoothing"), *xyPadSmoothingRelay, nullptr);
     sequencerDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("sequencerDepth"), *sequencerDepthRelay, nullptr);
+    feedbackAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("feedbackAmount"), *feedbackAmountRelay, nullptr);
+    feedbackDampingAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("feedbackDamping"), *feedbackDampingRelay, nullptr);
+    microDelayTimeAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("microDelayTime"), *microDelayTimeRelay, nullptr);
     limiterCeilingAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("limiterCeiling"), *limiterCeilingRelay, nullptr);
     limiterReleaseAttachment = std::make_unique<juce::WebSliderParameterAttachment>(

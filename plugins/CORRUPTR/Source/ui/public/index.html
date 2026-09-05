@@ -436,13 +436,13 @@
     <header class="top-bar">
       <div class="search-field">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1c1c1e" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-        <input type="text" id="preset_search" placeholder="Search presets…" />
+        <input hidden type="text" id="preset_search" placeholder="Search presets…" />
       </div>
       <div class="wordmark">CORRUPTR</div>
       <div class="spacer"></div>
-      <button class="btn action-btn" id="save_button" data-action="save_preset">Save</button>
-      <button class="btn action-btn" id="random_button" data-action="randomize_all">Random</button>
-      <div class="ab-toggle" id="ab_toggle" data-param="abCompareState" data-default="false">A/B</div>
+      <button class="btn action-btn" hidden id="save_button" data-action="save_preset">Save</button>
+      <button class="btn action-btn" hidden id="random_button" data-action="randomize_all">Random</button>
+      <div class="ab-toggle" hidden id="ab_toggle" data-param="abCompareState" data-default="false">A/B</div>
       <select class="combo" id="quality_mode" data-param="qualityMode">
         <option>ECO</option><option selected>NORMAL</option><option>HIGH</option><option>EXTREME</option><option>AUTO</option>
       </select>
