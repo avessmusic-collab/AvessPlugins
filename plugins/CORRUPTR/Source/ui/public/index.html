@@ -683,6 +683,12 @@
                 <div class="knob-value" data-value-for="filterResonance">0%</div>
                 <div class="knob-label">Resonance</div>
               </div>
+              <div class="knob-wrap" style="justify-content:center;">
+                <select class="combo-sm" id="filter_slope" data-param="filterSlope" style="width:80px;height:26px;">
+                  <option selected>12 dB</option><option>24 dB</option>
+                </select>
+                <div class="knob-label" style="margin-top:6px;">Slope</div>
+              </div>
             </div>
 
             <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-filter"></div></div>
@@ -2154,19 +2160,21 @@
     function xToFreq(x){ const t = (x - GX0) / (GX1 - GX0); return FREQ_MIN * Math.pow(FREQ_MAX / FREQ_MIN, t); }
     function dbToY(db){ return 40 - db * 2.5; } // slope calibrated from (0dB,y40)/(12dB,y10)
 
+    const filterSlopeState = Juce.getComboBoxState('filterSlope');
     function magnitudeDb(typeIndex, freq, cutoffHz, resonancePct){
+      const slopeMul = filterSlopeState.getChoiceIndex() === 1 ? 2 : 1; // 12 vs 24 dB/oct
       const ratio = freq / Math.max(1, cutoffHz);
       const oct = Math.log2(Math.max(ratio, 1e-6));
       const resNorm = clamp01(resonancePct / 100);
       let db;
       switch (typeIndex){
-        case 1: db = -12 * Math.max(0, -oct); break;                 // HP
-        case 2: db = -12 * Math.abs(oct) - 6; break;                 // BP
+        case 1: db = -12 * slopeMul * Math.max(0, -oct); break;      // HP
+        case 2: db = -12 * slopeMul * Math.abs(oct) - 6; break;      // BP
         case 3: db = -22 * Math.exp(-(oct * oct) / 0.06); break;     // Notch — deep dip at cutoff
         case 4: db = 6 * Math.sin(freq / Math.max(50, cutoffHz * 0.15)) - 4; break; // Comb — periodic ripple (decorative)
-        case 5: db = -12 * Math.max(0, oct); break;                  // Resonant LP
-        case 6: db = -12 * Math.max(0, -oct); break;                 // Resonant HP
-        default: db = -12 * Math.max(0, oct);                        // LP
+        case 5: db = -12 * slopeMul * Math.max(0, oct); break;       // Resonant LP
+        case 6: db = -12 * slopeMul * Math.max(0, -oct); break;      // Resonant HP
+        default: db = -12 * slopeMul * Math.max(0, oct);             // LP
       }
       // Resonance peak bump centered at the cutoff — narrower + taller at
       // higher resonance. Skipped for Notch/Comb, which already have their
@@ -2236,6 +2244,7 @@
     function kick(){ if (!animating){ animating = true; requestAnimationFrame(animate); } }
 
     filterTypeState.valueChangedEvent.addListener(() => drawCurve()); // type changes snap (discrete)
+    filterSlopeState.valueChangedEvent.addListener(() => drawCurve()); // slope changes snap too
     Juce.getSliderState('filterCutoff').valueChangedEvent.addListener(kick);
     Juce.getSliderState('filterResonance').valueChangedEvent.addListener(kick);
     drawCurve(); // initial paint from data-default values, before any relay round-trip lands
@@ -2271,6 +2280,7 @@
       filterType: 'Filter topology — click to pick (LP, HP, Notch, Comb…)',
       filterCutoff: 'Filter cutoff frequency',
       filterResonance: 'Resonance — emphasis at the cutoff',
+      filterSlope: 'Filter steepness — 12 dB/oct gentle, 24 dB/oct steep (Comb unaffected)',
       feedbackAmount: 'Feedback loop intensity — internally limited, cannot run away',
       feedbackDamping: 'Darkens the feedback tail (higher = duller repeats)',
       microDelayTime: 'Feedback loop delay time — flanger-tight to slapback',

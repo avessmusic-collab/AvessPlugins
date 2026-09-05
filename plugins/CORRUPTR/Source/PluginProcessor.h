@@ -1506,6 +1506,12 @@ private:
 
     // --- Component #6: Filter Stage (7 topologies) ---
     std::array<juce::dsp::StateVariableTPTFilter<float>, 2> svfFilter; // LP/HP/BP/Resonant LP/Resonant HP
+    // v6 (filterSlope): second identical stage, engaged in series at 24 dB.
+    std::array<juce::dsp::StateVariableTPTFilter<float>, 2> svfFilterStage2;
+    std::array<float, 2> notch2X1 { 0.0f, 0.0f }, notch2X2 { 0.0f, 0.0f };
+    std::array<float, 2> notch2Y1 { 0.0f, 0.0f }, notch2Y2 { 0.0f, 0.0f };
+    int filterSlopeIndex = 0;
+    int lastFilterSlopeIndex = -1;
     std::array<float, 2> notchX1 { 0.0f, 0.0f }, notchX2 { 0.0f, 0.0f };
     std::array<float, 2> notchY1 { 0.0f, 0.0f }, notchY2 { 0.0f, 0.0f };
     float notchB0 = 1.0f, notchB1 = 0.0f, notchB2 = 0.0f, notchA1 = 0.0f, notchA2 = 0.0f; // manual biquad coeffs (see rationale above)

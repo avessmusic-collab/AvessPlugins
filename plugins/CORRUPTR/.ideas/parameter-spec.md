@@ -25,6 +25,12 @@
 > X=Damage Macro, Y=Glitch Macro = the Phase 3.9 fixed mapping). Direct destinations inject
 > the axis into the Mod Matrix's normalized per-destination totals at half-range depth.
 > Total count now **98** (bound: 91).
+>
+> **v6 addendum (2026-09-05, user-requested):** one parameter appended — `filterSlope`
+> (Choice: 12 dB | 24 dB, default 12 dB). 24 dB cascades a second identical filter stage
+> (SVF pair for LP/HP/BP/Resonant variants, second biquad for Notch); Comb ignores slope.
+> Filter state resets on slope change (same click-safety convention as filterType).
+> Total count now **99** (bound: 92).
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 

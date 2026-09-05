@@ -28,6 +28,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     bitcrushModeRelay = std::make_unique<juce::WebComboBoxRelay>("bitcrushMode");
     xyPadXDestinationRelay = std::make_unique<juce::WebComboBoxRelay>("xyPadXDestination");
     xyPadYDestinationRelay = std::make_unique<juce::WebComboBoxRelay>("xyPadYDestination");
+    filterSlopeRelay = std::make_unique<juce::WebComboBoxRelay>("filterSlope");
     filterCutoffRelay = std::make_unique<juce::WebSliderRelay>("filterCutoff");
     filterResonanceRelay = std::make_unique<juce::WebSliderRelay>("filterResonance");
 
@@ -149,6 +150,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*bitcrushModeRelay)
             .withOptionsFrom(*xyPadXDestinationRelay)
             .withOptionsFrom(*xyPadYDestinationRelay)
+            .withOptionsFrom(*filterSlopeRelay)
             .withOptionsFrom(*filterCutoffRelay)
             .withOptionsFrom(*filterResonanceRelay)
             .withOptionsFrom(*mixRelay)
@@ -338,6 +340,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("xyPadXDestination"), *xyPadXDestinationRelay, nullptr);
     xyPadYDestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
         *processorRef.getAPVTS().getParameter("xyPadYDestination"), *xyPadYDestinationRelay, nullptr);
+    filterSlopeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("filterSlope"), *filterSlopeRelay, nullptr);
     filterCutoffAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("filterCutoff"), *filterCutoffRelay, nullptr);
     filterResonanceAttachment = std::make_unique<juce::WebSliderParameterAttachment>(

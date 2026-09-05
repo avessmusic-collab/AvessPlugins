@@ -510,6 +510,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
             juce::ParameterID { "xyPadYDestination", 1 }, "XY Pad Y Destination", xyDests, 1));
     }
 
+    // v6 spec addition (user request 2026-09-05): filter slope. 24 dB
+    // cascades a second identical stage (SVF pair / second notch biquad);
+    // Comb ignores slope (not slope-defined).
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "filterSlope", 1 }, "Filter Slope",
+        juce::StringArray { "12 dB", "24 dB" }, 0));
+
     return layout;
 }
 
@@ -823,8 +830,15 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
         f.prepare(monoSpec);
         f.reset();
     }
+    for (auto& f : svfFilterStage2) // v6: 24 dB/oct cascade stage
+    {
+        f.prepare(monoSpec);
+        f.reset();
+    }
     notchX1.fill(0.0f); notchX2.fill(0.0f);
     notchY1.fill(0.0f); notchY2.fill(0.0f);
+    notch2X1.fill(0.0f); notch2X2.fill(0.0f);
+    notch2Y1.fill(0.0f); notch2Y2.fill(0.0f);
 
     combMaxDelaySamples = static_cast<int>(std::ceil(0.025 * sampleRate)) + 4; // 25ms headroom for the ~1-20ms comb spacing range
     for (auto& d : combDelay)
@@ -1475,7 +1489,14 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         visModFilterCutoffHz.store(cutoffHz, std::memory_order_relaxed);
     }
 
-    if (filterTypeIndex != lastFilterTypeIndex)
+    {
+        // v6: filter slope (12/24 dB) — per-block read, same convention as
+        // filterTypeIndex above.
+        auto* filterSlopeParam = parameters.getRawParameterValue("filterSlope");
+        filterSlopeIndex = juce::jlimit(0, 1, (int) filterSlopeParam->load());
+    }
+
+    if (filterTypeIndex != lastFilterTypeIndex || filterSlopeIndex != lastFilterSlopeIndex)
     {
         // architecture.md: "Filter must reset state on filterType change to
         // prevent transient bursts" — reset ALL topology states regardless
@@ -1485,10 +1506,14 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // StateVariableTPTFilter::reset() clear their already-allocated
         // internal buffers; the Notch state is just four floats).
         for (auto& f : svfFilter) f.reset();
+        for (auto& f : svfFilterStage2) f.reset();
         notchX1.fill(0.0f); notchX2.fill(0.0f);
         notchY1.fill(0.0f); notchY2.fill(0.0f);
+        notch2X1.fill(0.0f); notch2X2.fill(0.0f);
+        notch2Y1.fill(0.0f); notch2Y2.fill(0.0f);
         for (auto& d : combDelay) d.reset();
         lastFilterTypeIndex = filterTypeIndex;
+        lastFilterSlopeIndex = filterSlopeIndex;
     }
 
     // Master Mix target gains (0-200% per architecture.md component #14)
@@ -3177,6 +3202,12 @@ void CORRUPTRAudioProcessor::updateFilterParameters(float cutoffHz, float resona
         f.setCutoffFrequency(cutoffHz);
         f.setResonance(svfResonance);
     }
+    for (auto& f : svfFilterStage2) // v6: identical settings; engaged only at 24 dB
+    {
+        f.setType(svfType);
+        f.setCutoffFrequency(cutoffHz);
+        f.setResonance(svfResonance);
+    }
 
     // Notch (custom biquad, manual RBJ formula — see PluginProcessor.h for
     // why this avoids juce::dsp::IIR::Filter::makeNotch()'s heap allocation).
@@ -3221,6 +3252,15 @@ float CORRUPTRAudioProcessor::processFilterStage(float xIn, int channel)
             const float y = notchB0 * xIn + notchB1 * x1 + notchB2 * x2 - notchA1 * y1 - notchA2 * y2;
             x2 = x1; x1 = xIn;
             y2 = y1; y1 = y;
+            if (filterSlopeIndex == 1) // v6: 24 dB — second identical notch biquad in series
+            {
+                auto& u1 = notch2X1[(size_t) channel]; auto& u2 = notch2X2[(size_t) channel];
+                auto& v1 = notch2Y1[(size_t) channel]; auto& v2 = notch2Y2[(size_t) channel];
+                const float y2nd = notchB0 * y + notchB1 * u1 + notchB2 * u2 - notchA1 * v1 - notchA2 * v2;
+                u2 = u1; u1 = y;
+                v2 = v1; v1 = y2nd;
+                return y2nd;
+            }
             return y;
         }
 
@@ -3234,7 +3274,12 @@ float CORRUPTRAudioProcessor::processFilterStage(float xIn, int channel)
         }
 
         default: // LP(0)/HP(1)/BP(2)/Resonant LP(5)/Resonant HP(6) via StateVariableTPTFilter
-            return svfFilter[(size_t) channel].processSample(0, xIn);
+        {
+            const float y = svfFilter[(size_t) channel].processSample(0, xIn);
+            if (filterSlopeIndex == 1) // v6: 24 dB — second identical SVF in series
+                return svfFilterStage2[(size_t) channel].processSample(0, y);
+            return y;
+        }
     }
 }
 
