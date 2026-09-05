@@ -877,7 +877,7 @@
           <div class="module" style="width:340px;">
             <div class="xy-card" id="xy_pad">
               <span class="xy-label">Performance XY</span>
-              <span class="xy-latch" id="xy_latch" hidden>&#8963;L LATCH</span>
+              <span class="xy-latch" id="xy_latch" hidden>&#8984;L LATCH</span>
               <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
             </div>
           </div>
@@ -1480,9 +1480,9 @@
       else if (!dragging){ xState.sliderDragEnded(); yState.sliderDragEnded(); }
     }
     document.addEventListener('keydown', e => {
-      // Ctrl+L toggles latch (deliberately NOT a Cmd combo - hosts grab
-      // those as menu accelerators; bare Ctrl chords are host-safe on mac).
-      if (e.ctrlKey && !e.metaKey && (e.key === 'l' || e.key === 'L')){
+      // Cmd+L toggles latch (user-chosen final binding; Ctrl+L kept as a
+      // fallback for hosts that swallow Cmd chords).
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')){
         e.preventDefault();
         setLatch(!latched);
       }
@@ -2240,7 +2240,7 @@
       clear_pattern: 'Reset the current lane to defaults'
     };
     const ID_TIPS = {
-      xy_pad: 'Drag to morph Damage (X) + Glitch (Y). Ctrl+L latches: the whole window becomes the pad, no click needed. Ctrl+L or Esc unlatches.',
+      xy_pad: 'Drag to morph Damage (X) + Glitch (Y). Cmd+L latches: the whole window becomes the pad, no click needed. Cmd+L or Esc unlatches.',
       input_meter_topbar: 'Input level — red = clipping at the input',
       output_meter_topbar: 'Output level — red = clipping (limiter beaten)',
       step_grid: 'Click/drag bars to edit the selected lane’s steps',
