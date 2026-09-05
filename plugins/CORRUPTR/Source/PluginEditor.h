@@ -447,6 +447,8 @@ private:
     std::unique_ptr<juce::WebToggleButtonRelay> graphBypassFilterRelay;
     std::unique_ptr<juce::WebComboBoxRelay> filterTypeRelay;
     std::unique_ptr<juce::WebComboBoxRelay> bitcrushModeRelay; // v3 addition
+    std::unique_ptr<juce::WebComboBoxRelay> xyPadXDestinationRelay; // v5 addition
+    std::unique_ptr<juce::WebComboBoxRelay> xyPadYDestinationRelay; // v5 addition
     std::unique_ptr<juce::WebSliderRelay> filterCutoffRelay;
     std::unique_ptr<juce::WebSliderRelay> filterResonanceRelay;
 
@@ -569,6 +571,8 @@ private:
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> graphBypassFilterAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> filterTypeAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> bitcrushModeAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> xyPadXDestinationAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> xyPadYDestinationAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> filterCutoffAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> filterResonanceAttachment;
 

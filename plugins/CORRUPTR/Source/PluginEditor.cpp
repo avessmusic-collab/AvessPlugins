@@ -26,6 +26,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     graphBypassFilterRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassFilter");
     filterTypeRelay = std::make_unique<juce::WebComboBoxRelay>("filterType");
     bitcrushModeRelay = std::make_unique<juce::WebComboBoxRelay>("bitcrushMode");
+    xyPadXDestinationRelay = std::make_unique<juce::WebComboBoxRelay>("xyPadXDestination");
+    xyPadYDestinationRelay = std::make_unique<juce::WebComboBoxRelay>("xyPadYDestination");
     filterCutoffRelay = std::make_unique<juce::WebSliderRelay>("filterCutoff");
     filterResonanceRelay = std::make_unique<juce::WebSliderRelay>("filterResonance");
 
@@ -145,6 +147,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*graphBypassFilterRelay)
             .withOptionsFrom(*filterTypeRelay)
             .withOptionsFrom(*bitcrushModeRelay)
+            .withOptionsFrom(*xyPadXDestinationRelay)
+            .withOptionsFrom(*xyPadYDestinationRelay)
             .withOptionsFrom(*filterCutoffRelay)
             .withOptionsFrom(*filterResonanceRelay)
             .withOptionsFrom(*mixRelay)
@@ -330,6 +334,10 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("filterType"), *filterTypeRelay, nullptr);
     bitcrushModeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
         *processorRef.getAPVTS().getParameter("bitcrushMode"), *bitcrushModeRelay, nullptr);
+    xyPadXDestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("xyPadXDestination"), *xyPadXDestinationRelay, nullptr);
+    xyPadYDestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("xyPadYDestination"), *xyPadYDestinationRelay, nullptr);
     filterCutoffAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("filterCutoff"), *filterCutoffRelay, nullptr);
     filterResonanceAttachment = std::make_unique<juce::WebSliderParameterAttachment>(

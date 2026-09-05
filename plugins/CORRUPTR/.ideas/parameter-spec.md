@@ -18,6 +18,13 @@
 >
 > **v4 defaults change (2026-09-05, user-requested):** `drive` default changed 6.0 -> 0.0 dB
 > (saturation stage loads at unity instead of a +6 dB push). Range/ID unchanged.
+>
+> **v5 addendum (2026-09-05, user-requested):** two parameters appended — `xyPadXDestination`
+> / `xyPadYDestination` (Choice, 10 options: Damage Macro | Glitch Macro | Drive | Mix |
+> Filter Cutoff | Bit Depth | Sample Rate | Fold | Feedback | Glitch Probability; defaults
+> X=Damage Macro, Y=Glitch Macro = the Phase 3.9 fixed mapping). Direct destinations inject
+> the axis into the Mod Matrix's normalized per-destination totals at half-range depth.
+> Total count now **98** (bound: 91).
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 

@@ -495,6 +495,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         "Sequencer Depth",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
 
+    // v5 spec addition (user request 2026-09-05): assignable XY pad axes.
+    // Choices 0/1 reproduce the Phase 3.9 fixed mapping (X->Damage macro,
+    // Y->Glitch macro); the rest route the axis directly into the Mod
+    // Matrix's normalized per-destination totals (half-range depth, same
+    // kXyPadModDepthFraction convention).
+    {
+        const juce::StringArray xyDests { "Damage Macro", "Glitch Macro", "Drive", "Mix",
+                                          "Filter Cutoff", "Bit Depth", "Sample Rate", "Fold",
+                                          "Feedback", "Glitch Probability" };
+        layout.add(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID { "xyPadXDestination", 1 }, "XY Pad X Destination", xyDests, 0));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID { "xyPadYDestination", 1 }, "XY Pad Y Destination", xyDests, 1));
+    }
+
     return layout;
 }
 
@@ -2273,10 +2288,19 @@ void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockD
     // 0-100% range before MacroEngine::resolve() ever sees it (never fully
     // overrides the macro's own knob — see PluginProcessor.h's "CONTRIBUTION
     // DEPTH" doc comment).
+    // v5 (assignable XY axes): each axis blends into a macro ONLY when that
+    // macro is its selected destination; direct-parameter destinations are
+    // injected into modMatrixDestinationTotals after resolve() below.
+    auto* xyXDestParam = parameters.getRawParameterValue("xyPadXDestination");
+    auto* xyYDestParam = parameters.getRawParameterValue("xyPadYDestination");
+    const int xyXDest = juce::jlimit(0, 9, (int) xyXDestParam->load());
+    const int xyYDest = juce::jlimit(0, 9, (int) xyYDestParam->load());
+    const float xyDamageAdd = (xyXDest == 0 ? xyPadXCurrentPct : 0.0f) + (xyYDest == 0 ? xyPadYCurrentPct : 0.0f);
+    const float xyGlitchAdd = (xyXDest == 1 ? xyPadXCurrentPct : 0.0f) + (xyYDest == 1 ? xyPadYCurrentPct : 0.0f);
     const float macroDamagePct = juce::jlimit(0.0f, 100.0f,
-        macroDamagePctBase + xyPadXCurrentPct * kXyPadModDepthFraction);
+        macroDamagePctBase + xyDamageAdd * kXyPadModDepthFraction);
     const float macroGlitchPct = juce::jlimit(0.0f, 100.0f,
-        macroGlitchPctBase + xyPadYCurrentPct * kXyPadModDepthFraction);
+        macroGlitchPctBase + xyGlitchAdd * kXyPadModDepthFraction);
 
     macroContributions = MacroEngine::resolve(macroDamagePct, macroCrushPct, macroGlitchPct, macroChaosPct,
                                                macroRhythmPct, macroMovementPct, macroWidthPct, macroMixPct);
@@ -2312,6 +2336,33 @@ void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockD
     else
     {
         modMatrixDestinationTotals.fill(0.0f);
+    }
+
+    // v5 (assignable XY axes): direct-parameter destinations add the axis
+    // (0..1) into the normalized per-destination totals — the existing call
+    // sites scale by range * kModMatrixDepthFraction (half-range), matching
+    // the macro-blend depth convention. Independent of modMatrixEnabled
+    // (the XY pad is its own control, not a matrix slot).
+    {
+        auto xyChoiceToDest = [](int choice) -> int
+        {
+            switch (choice)
+            {
+                case 2: return ModMatrix::destDrive;
+                case 3: return ModMatrix::destMix;
+                case 4: return ModMatrix::destFilterCutoff;
+                case 5: return ModMatrix::destBitDepth;
+                case 6: return ModMatrix::destSampleRate;
+                case 7: return ModMatrix::destFold;
+                case 8: return ModMatrix::destFeedback;
+                case 9: return ModMatrix::destGlitchProbability;
+                default: return -1; // 0/1 = macro destinations, handled above
+            }
+        };
+        const int xd = xyChoiceToDest(xyXDest);
+        const int yd = xyChoiceToDest(xyYDest);
+        if (xd >= 0) modMatrixDestinationTotals[(size_t) xd] += xyPadXCurrentPct / 100.0f;
+        if (yd >= 0) modMatrixDestinationTotals[(size_t) yd] += xyPadYCurrentPct / 100.0f;
     }
 
     //=========================================================================

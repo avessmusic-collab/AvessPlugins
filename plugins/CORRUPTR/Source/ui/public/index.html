@@ -860,6 +860,12 @@
               <span class="xy-latch" id="xy_latch" hidden>&#8984;L LATCH</span>
               <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
             </div>
+            <div class="xy-dest-row" style="display:flex; gap:10px; align-items:center; margin-top:10px;">
+              <span class="knob-label" style="margin:0;">X &#8594;</span>
+              <select class="combo-sm" id="xy_x_dest" data-param="xyPadXDestination" style="width:130px;height:26px;"><option selected>Damage Macro</option><option>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
+              <span class="knob-label" style="margin:0 0 0 8px;">Y &#8594;</span>
+              <select class="combo-sm" id="xy_y_dest" data-param="xyPadYDestination" style="width:130px;height:26px;"><option>Damage Macro</option><option selected>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
+            </div>
           </div>
 
         </div>
@@ -2254,7 +2260,9 @@
       performanceReverse: 'Hold for reverse playback (key 5, MIDI note 40)',
       performanceStutter: 'Hold for stutter repeats (key 6, MIDI note 41)',
       performanceChaos: 'Hold to spike randomness (key 7, MIDI note 42)',
-      xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)'
+      xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)',
+      xyPadXDestination: 'What the X axis (left-right) controls',
+      xyPadYDestination: 'What the Y axis (up-down) controls' 
     };
     const ACTION_TIPS = {
       randomize_pattern: 'Randomize every step of the current lane’s pattern',
