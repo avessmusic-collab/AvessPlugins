@@ -224,13 +224,13 @@
   .toggle-label{ font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
 
   /* ADV row */
-  .adv-row{ margin-top: auto; padding-top: 14px; display:flex; align-items:center; gap: 8px; }
+  .adv-row{ display:none; } /* ADV pills retired - all controls always visible */
   .adv-label{ font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); }
   .adv-pill{ width: 30px; height: 16px; border-radius: 9px; background: var(--adv-off); position: relative; cursor: pointer; }
   .adv-pill::after{ content:""; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.3); transition: left .12s; }
   .adv-pill.on{ background: var(--adv-on); }
   .adv-pill.on::after{ left: 14px; }
-  .adv-content{ max-height: 0; overflow: hidden; opacity: 0; transition: max-height .22s ease, opacity .18s ease; display:flex; flex-direction:column; align-items:center; width:100%; }
+  .adv-content{ overflow: visible; opacity: 1; display:flex; flex-direction:column; align-items:center; width:100%; } /* always revealed - ADV pills retired */
   .adv-content.open{ max-height: 400px; opacity: 1; }
 
   /* frequency response mini graph (only colored element in the UI) */
@@ -317,12 +317,6 @@
   .tile-menu-item:hover{ background:rgba(255,255,255,0.08); color:#fff; }
   .tile-menu-item.active{ color:#fff; background:rgba(255,255,255,0.14); }
   .mode-tile[data-param]{ cursor:pointer; }
-  /* Collapsible sections (Sequencer / Mod Matrix): chevron in the header
-     toggles the card body; state persists per-browser via localStorage. */
-  .collapse-btn{ margin-left:auto; cursor:pointer; }
-  .collapse-btn svg{ transition: transform .18s ease; }
-  .collapse-btn.collapsed svg{ transform: rotate(-90deg); }
-  .card-body.collapsed{ display:none; }
   .card-body{ display:flex; flex-direction:column; gap: 16px; transition: opacity .15s ease; }
   .card-body.dimmed{ opacity: 0.4; }
   .card-controls-row{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
@@ -464,7 +458,7 @@
         <button class="page-tab active" data-page="1">Main</button>
         <button class="page-tab" data-page="2">Sequencer</button>
         <button class="page-tab" data-page="3">Matrix</button>
-        <button class="page-tab" data-page="4">Perform</button>
+        <button class="page-tab" data-page="4">Performance</button>
       </nav>
       <!-- ===================== MAIN CHANNEL-STRIP UNIT ===================== -->
       <section class="strip-wrap">
@@ -899,9 +893,6 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
             </button>
             <div class="section-label">Rhythmic Sequencer</div>
-            <button class="icon-btn collapse-btn" data-collapse-target="sequencer_body" title="Collapse/expand section">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
           </div>
           <div class="card-body" id="sequencer_body">
             <div class="card-controls-row">
@@ -934,9 +925,6 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
             </button>
             <div class="section-label">Modulation Matrix</div>
-            <button class="icon-btn collapse-btn" data-collapse-target="mod_matrix_body" title="Collapse/expand section">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
           </div>
           <div class="card-body" id="mod_matrix_body">
             <div class="lfo-row" id="lfoPanelRow"></div>
@@ -2183,31 +2171,6 @@
   })();
 
   // ===================================================================
-  // Collapsible sections (Sequencer / Mod Matrix) — pure UI convenience,
-  // no parameter involved. Collapse state persists via localStorage
-  // (guarded: storage can be unavailable inside some WebView contexts).
-  // ===================================================================
-  (function(){
-    document.querySelectorAll('.collapse-btn[data-collapse-target]').forEach(btn => {
-      const body = document.getElementById(btn.dataset.collapseTarget);
-      if(!body) return;
-      const key = 'collapse:' + btn.dataset.collapseTarget;
-      function apply(collapsed){
-        body.classList.toggle('collapsed', collapsed);
-        btn.classList.toggle('collapsed', collapsed);
-      }
-      let saved = null;
-      try { saved = localStorage.getItem(key); } catch(e){}
-      apply(saved === '1');
-      btn.addEventListener('click', () => {
-        const collapsed = !body.classList.contains('collapsed');
-        apply(collapsed);
-        try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch(e){}
-      });
-    });
-  })();
-
-  // ===================================================================
   // Hover tooltips: descriptions keyed by data-param / data-action / id,
   // applied as data-tip attributes, rendered by one shared .ui-tip element
   // (450ms hover delay, follows in near the cursor, viewport-clamped).
@@ -2353,11 +2316,14 @@
     const perfUnit = document.createElement('div');
     perfUnit.className = 'unit';
     perfSection.appendChild(perfUnit);
+    const macrosModule = document.querySelector('[data-param="macroDamage"]').closest('.module');
+    perfUnit.appendChild(macrosModule);
     perfUnit.appendChild(perfModule);
     perfUnit.appendChild(xyModule);
     matrixSection.after(perfSection);
+    unit2Section.remove(); // all three of its modules now live on the Performance page
 
-    const PAGES = { 1: [unit1Section, unit2Section], 2: [seqSection], 3: [matrixSection], 4: [perfSection] };
+    const PAGES = { 1: [unit1Section], 2: [seqSection], 3: [matrixSection], 4: [perfSection] };
     const tabs = document.querySelectorAll('#page_tabs .page-tab');
     function showPage(n){
       for (const k of Object.keys(PAGES))
