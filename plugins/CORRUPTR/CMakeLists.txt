@@ -78,5 +78,6 @@ target_compile_definitions(CORRUPTR
 target_compile_definitions(CORRUPTR
     PUBLIC
         JUCE_WEB_BROWSER=1
+        JUCE_USE_WIN_WEBVIEW2=1 # Windows: enables the WebView2 backend (resource provider API); no effect on macOS
         JUCE_USE_CURL=0
 )
