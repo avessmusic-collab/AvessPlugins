@@ -634,7 +634,18 @@
               <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
             </div>
 
-            <div class="knob-wrap" style="margin-top:18px;">
+            <div style="display:flex; gap:18px; justify-content:center; margin-top:10px;">
+              <div class="toggle-row">
+                <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
+                <span class="toggle-label">Auto</span>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-sw on" id="auto_gain_toggle" data-param="autoGain" data-default="true"></div>
+                <span class="toggle-label">Balance</span>
+              </div>
+            </div>
+
+            <div class="knob-wrap" style="margin-top:12px;">
               <div class="knob hero" id="master_mix" data-param="mix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:120px;height:120px;">
                 <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
               </div>
@@ -659,14 +670,6 @@
                 </div>
                 <div class="knob-value" data-value-for="limiterRelease">300 ms</div>
                 <div class="knob-label">Release</div>
-              </div>
-              <div class="toggle-row" style="margin-top:8px;">
-                <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
-                <span class="toggle-label">Auto</span>
-              </div>
-              <div class="toggle-row" style="margin-top:8px;">
-                <div class="toggle-sw on" id="auto_gain_toggle" data-param="autoGain" data-default="true"></div>
-                <span class="toggle-label">Balance</span>
               </div>
             </div>
 
