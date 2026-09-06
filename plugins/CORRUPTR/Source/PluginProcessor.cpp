@@ -2246,6 +2246,14 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
     if (! transportValid)
         stepIndex = 0; // explicit freeze-at-step-0 fallback (see comment above) — not a default left over from an untaken branch
 
+    // v9.1 (user request 2026-09-06): the sequencer MODULATES only while the
+    // transport is actually playing. Previously the frozen step-0 values
+    // were still applied with the transport stopped, producing constant
+    // phantom modulation (and permanently-lit mod markers) whenever step 0
+    // held non-neutral values (e.g. after RANDOM). The playhead visual
+    // still shows the frozen step 0.
+    const bool seqModulating = sequencerEnabledFlag && transportValid;
+
     sequencerLastStepIndex = stepIndex;
 
     // Stage 3 Phase 5.6: GUI visualization tap — mirrors the audio-thread-
@@ -2309,18 +2317,18 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
     auto* seqDepthParam = parameters.getRawParameterValue("sequencerDepth");
     const float seqDepth = juce::jlimit(0.0f, 1.0f, seqDepthParam->load() / 100.0f);
 
-    const float driveRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneDrive)             * seqDepth : 0.0f;
-    const float mixRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneMix)               * seqDepth : 0.0f;
-    const float filterCutoffRaw = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneFilterCutoff)      * seqDepth : 0.0f;
-    const float bitDepthRaw     = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneBitDepth)          * seqDepth : 0.0f;
-    const float sampleRateRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneSampleRate)        * seqDepth : 0.0f;
-    const float glitchProbRaw   = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneGlitchProbability) * seqDepth : 0.0f;
-    const float volumeRaw       = sequencerEnabledFlag ? laneValue(RhythmicSequencer::laneVolume)            * seqDepth : 0.0f;
-    const float panRaw          = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePan)               * seqDepth : 0.0f;
-    const float pitchRaw        = sequencerEnabledFlag ? laneValue(RhythmicSequencer::lanePitch)             * seqDepth : 0.0f;
+    const float driveRaw        = seqModulating ? laneValue(RhythmicSequencer::laneDrive)             * seqDepth : 0.0f;
+    const float mixRaw          = seqModulating ? laneValue(RhythmicSequencer::laneMix)               * seqDepth : 0.0f;
+    const float filterCutoffRaw = seqModulating ? laneValue(RhythmicSequencer::laneFilterCutoff)      * seqDepth : 0.0f;
+    const float bitDepthRaw     = seqModulating ? laneValue(RhythmicSequencer::laneBitDepth)          * seqDepth : 0.0f;
+    const float sampleRateRaw   = seqModulating ? laneValue(RhythmicSequencer::laneSampleRate)        * seqDepth : 0.0f;
+    const float glitchProbRaw   = seqModulating ? laneValue(RhythmicSequencer::laneGlitchProbability) * seqDepth : 0.0f;
+    const float volumeRaw       = seqModulating ? laneValue(RhythmicSequencer::laneVolume)            * seqDepth : 0.0f;
+    const float panRaw          = seqModulating ? laneValue(RhythmicSequencer::lanePan)               * seqDepth : 0.0f;
+    const float pitchRaw        = seqModulating ? laneValue(RhythmicSequencer::lanePitch)             * seqDepth : 0.0f;
     const float gateNeutral     = RhythmicSequencer::laneDefaultValue(RhythmicSequencer::laneGate);
-    const float gateRaw         = sequencerEnabledFlag ? gateNeutral + (laneValue(RhythmicSequencer::laneGate) - gateNeutral) * seqDepth
-                                                        : gateNeutral;
+    const float gateRaw         = seqModulating ? gateNeutral + (laneValue(RhythmicSequencer::laneGate) - gateNeutral) * seqDepth
+                                                  : gateNeutral;
 
     //=========================================================================
     // Per-lane raw-value -> destination-units scaling (FLAGGED DESIGN
