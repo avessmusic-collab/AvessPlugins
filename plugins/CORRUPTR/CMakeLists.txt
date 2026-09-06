@@ -1,13 +1,19 @@
 cmake_minimum_required(VERSION 3.15)
 
-# Plugin formats: VST3, AU, Standalone
+# Plugin formats: VST3 + Standalone everywhere; AU is macOS-only.
+# NEEDS_WEBVIEW2 bundles the WebView2 loader on Windows (ignored on macOS).
+set(CORRUPTR_FORMATS VST3 Standalone)
+if(APPLE)
+    list(APPEND CORRUPTR_FORMATS AU)
+endif()
 juce_add_plugin(CORRUPTR
     COMPANY_NAME "VST Factory"
     PLUGIN_MANUFACTURER_CODE Vstf
     PLUGIN_CODE Corr
-    FORMATS VST3 AU Standalone
+    FORMATS ${CORRUPTR_FORMATS}
     PRODUCT_NAME "CORRUPTR"
     NEEDS_WEB_BROWSER TRUE
+    NEEDS_WEBVIEW2 TRUE
 )
 
 # Source files
