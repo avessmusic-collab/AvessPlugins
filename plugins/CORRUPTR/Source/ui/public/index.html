@@ -294,6 +294,19 @@
              background:#e2e2e5; color:var(--text-tertiary); }
   .page-tab.active{ background:#1c1c1e; color:#fff; }
   .page-hidden{ display:none !important; }
+  /* Collapsible LFO panels: click the label chip to fold */
+  .lfo-panel-label{ cursor:pointer; user-select:none; }
+  .lfo-panel.collapsed .knob-wrap, .lfo-panel.collapsed select, .lfo-panel.collapsed .toggle-row{ display:none; }
+  .lfo-panel.collapsed{ padding:8px 14px; }
+  /* Mod slot management: removable strips + an add button */
+  .mod-slot-row.slot-hidden{ display:none; }
+  .slot-remove{ margin-left:auto; border:none; background:none; color:var(--text-tertiary); font-size:13px;
+                cursor:pointer; padding:2px 8px; border-radius:6px; }
+  .slot-remove:hover{ color:#c33; background:rgba(0,0,0,0.05); }
+  .slot-add{ display:flex; align-items:center; justify-content:center; gap:8px; height:34px; margin-top:8px;
+             border:1px dashed var(--divider); border-radius:10px; cursor:pointer; color:var(--text-tertiary);
+             font-size:11px; font-weight:800; letter-spacing:1.2px; user-select:none; }
+  .slot-add:hover{ color:var(--text-primary); border-color:var(--text-tertiary); }
   [hidden]{ display:none !important; } /* audit fix: .ab-toggle/input display rules were overriding the hidden attribute */
 
   /* module titles for macros / performance / xy (below tile) */
@@ -1901,6 +1914,13 @@
             <span class="toggle-label">Sync</span>
           </div>
         </div>`;
+      // Collapsible (user request 2026-09-06): clicking the "LFO n" label
+      // folds the panel to a slim chip; state remembered per-browser.
+      panel.querySelector('.lfo-panel-label').addEventListener('click', () => {
+        const collapsed = panel.classList.toggle('collapsed');
+        try { localStorage.setItem('lfo-collapsed-' + i, collapsed ? '1' : '0'); } catch(e){}
+      });
+      try { if (localStorage.getItem('lfo-collapsed-' + i) === '1') panel.classList.add('collapsed'); } catch(e){}
       row.appendChild(panel);
     }
     bindKnobs(row); bindToggles(row); bindCombos(row);
@@ -1961,6 +1981,50 @@
     bindCombos(list);
     bindKnobs(list);
     bindToggles(list);
+
+    // Slot management (user request 2026-09-06): 4 strips shown by default;
+    // the x on a strip hides it AND disables its slot (no invisible
+    // modulation); + reveals the next strip (up to the engine's 8). A slot
+    // that loads enabled from saved state is always shown. Visibility
+    // remembered per-browser.
+    const rows = Array.from(list.children);
+    const addBtn = document.createElement('div');
+    addBtn.className = 'slot-add';
+    addBtn.textContent = '+ Add Slot';
+    list.after(addBtn);
+    function visibleCount(){ return rows.filter(r => !r.classList.contains('slot-hidden')).length; }
+    function saveVis(){ try { localStorage.setItem('mod-slots-visible', rows.map(r => r.classList.contains('slot-hidden') ? '0' : '1').join('')); } catch(e){} }
+    function refreshAdd(){ addBtn.style.display = rows.every(r => !r.classList.contains('slot-hidden')) ? 'none' : 'flex'; }
+    rows.forEach((rowEl, idx) => {
+      const btn = document.createElement('button');
+      btn.className = 'slot-remove';
+      btn.textContent = '\u00d7';
+      btn.title = 'Remove this slot (disables it)';
+      btn.addEventListener('click', () => {
+        rowEl.classList.add('slot-hidden');
+        Juce.getToggleState('modSlot' + (idx + 1) + 'Enable').setValue(false);
+        saveVis(); refreshAdd();
+      });
+      rowEl.appendChild(btn);
+    });
+    addBtn.addEventListener('click', () => {
+      const next = rows.find(r => r.classList.contains('slot-hidden'));
+      if (next){ next.classList.remove('slot-hidden'); saveVis(); refreshAdd(); }
+    });
+    let vis = null;
+    try { vis = localStorage.getItem('mod-slots-visible'); } catch(e){}
+    rows.forEach((rowEl, idx) => {
+      const remembered = vis && vis.length === 8 ? vis[idx] === '1' : idx < 4; // default: first 4
+      if (!remembered) rowEl.classList.add('slot-hidden');
+    });
+    // A slot enabled in restored plugin state must never be invisibly active.
+    rows.forEach((rowEl, idx) => {
+      const st = Juce.getToggleState('modSlot' + (idx + 1) + 'Enable');
+      st.valueChangedEvent.addListener(() => {
+        if (st.getValue()) { rowEl.classList.remove('slot-hidden'); refreshAdd(); }
+      });
+    });
+    refreshAdd();
   })();
 
   // ===================================================================
