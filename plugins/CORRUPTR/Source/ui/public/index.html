@@ -293,6 +293,13 @@
              letter-spacing:1.4px; text-transform:uppercase; cursor:pointer;
              background:#e2e2e5; color:var(--text-tertiary); }
   .page-tab.active{ background:#1c1c1e; color:#fff; }
+  .preset-strip{ display:flex; justify-content:center; align-items:center; gap:10px; padding:10px 0 2px; }
+  .preset-arrow{ border:none; background:#e2e2e5; color:var(--text-primary); width:26px; height:26px;
+                 border-radius:8px; font-size:15px; line-height:1; cursor:pointer; }
+  .preset-arrow:hover{ background:#d6d6da; }
+  .preset-name{ min-width:200px; text-align:center; padding:6px 18px; border-radius:9px; background:#1c1c1e;
+                color:#fff; font-size:11px; font-weight:800; letter-spacing:1.2px; text-transform:uppercase;
+                cursor:pointer; user-select:none; }
   .page-hidden{ display:none !important; }
   /* Collapsible LFO panels: click the label chip to fold */
   .lfo-panel-label{ cursor:pointer; user-select:none; }
@@ -465,6 +472,11 @@
         <button class="page-tab" data-page="2">Sequencer</button>
         <button class="page-tab" data-page="4">Performance</button>
       </nav>
+      <div class="preset-strip">
+        <button class="preset-arrow" id="preset_prev" title="Previous preset">&#8249;</button>
+        <div class="preset-name" id="preset_name" title="Click to choose a preset">Init &#9662;</div>
+        <button class="preset-arrow" id="preset_next" title="Next preset">&#8250;</button>
+      </div>
       <!-- ===================== MAIN CHANNEL-STRIP UNIT ===================== -->
       <section class="strip-wrap">
         <div class="unit">
@@ -2694,6 +2706,119 @@
     // keyup may never arrive - clear every trigger rather than leave one stuck.
     window.addEventListener('blur', () => { clearAll(); held.clear(); stopWatchdogIfIdle(); });
     document.addEventListener('visibilitychange', () => { if (document.hidden){ clearAll(); held.clear(); stopWatchdogIfIdle(); } });
+  })();
+
+  // ===================================================================
+  // PRESET SYSTEM v1 (user request 2026-09-06): factory presets applied
+  // entirely through the existing parameter states (no native bridge).
+  // Strip: prev/next arrows + click-the-name dropdown (tile-menu styling).
+  // A preset = defaults + overrides; unspecified params return to default.
+  // Sequencer PATTERNS are not part of presets (custom state, by design).
+  // ===================================================================
+  (function(){
+    // ---- typed registry + canonical defaults (natural units) ----
+    const SLIDERS = {
+      inputGain:0, drive:0, tone:0, bias:0, fold:0, distortionMix:100,
+      bitDepth:16, sampleRateReduction:1, glitchProbability:0, chaos:0,
+      filterCutoff:20000, filterResonance:0, feedbackAmount:0, feedbackDamping:50,
+      microDelayTime:10, mix:100, outputGain:0, limiterCeiling:-0.3, limiterRelease:300,
+      sequencerDepth:100, xyPadX:0, xyPadY:0, xyPadSmoothing:80,
+      macroDamage:0, macroCrush:0, macroGlitch:0, macroChaos:0,
+      macroRhythm:0, macroMovement:0, macroWidth:50, macroMix:100,
+      performanceKillAmount:100, performanceGlitchAmount:100, performanceDestroyAmount:100,
+      performanceFreezeAmount:100, performanceReverseAmount:100, performanceStutterAmount:100,
+      performanceChaosAmount:100
+    };
+    for (let i=1;i<=4;i++) SLIDERS['lfo'+i+'Rate'] = 1;
+    for (let i=1;i<=8;i++) SLIDERS['modSlot'+i+'Amount'] = 0;
+    const COMBOS = {
+      qualityMode:1, distortionAlgorithm:0, bitcrushMode:0, glitchMode:0, glitchBufferLength:4,
+      filterType:0, filterSlope:0, outputLimiterStyle:0, sequencerRate:2, sequencerSteps:0,
+      xyPadXDestination:0, xyPadYDestination:1
+    };
+    for (let i=1;i<=4;i++) COMBOS['lfo'+i+'Shape'] = 0;
+    for (let i=1;i<=8;i++){ COMBOS['modSlot'+i+'Source'] = 0; COMBOS['modSlot'+i+'Destination'] = 0; }
+    const TOGGLES = {
+      graphBypassSaturation:false, graphBypassWaveshaper:false, graphBypassBitcrush:false,
+      graphBypassGlitch:false, graphBypassFilter:false, sequencerEnabled:false, modMatrixEnabled:false,
+      limiterAutoRelease:true, autoGain:true,
+      performanceKill:false, performanceGlitch:false, performanceDestroy:false, performanceFreeze:false,
+      performanceReverse:false, performanceStutter:false, performanceChaos:false
+    };
+    for (let i=1;i<=4;i++) TOGGLES['lfo'+i+'Sync'] = false;
+    for (let i=1;i<=8;i++) TOGGLES['modSlot'+i+'Enable'] = false;
+
+    // ---- factory bank ----
+    const PRESETS = [
+      { name:'Init', p:{} },
+      // — saturation & warmth —
+      { name:'Warm Tape',      p:{ drive:8, tone:-25, distortionAlgorithm:0, mix:85 } },
+      { name:'Tube Glow',      p:{ drive:10, bias:35, distortionAlgorithm:3, tone:-10 } },
+      { name:'Console Crunch', p:{ drive:6, distortionAlgorithm:1, distortionMix:70, macroWidth:65 } },
+      { name:'Diode Grit',     p:{ drive:14, distortionAlgorithm:4, tone:15, filterType:0, filterCutoff:9000 } },
+      // — aggressive —
+      { name:'Big Fuzz Wall',  p:{ drive:20, distortionAlgorithm:5, tone:-15, filterCutoff:7500 } },
+      { name:'Foldback Snarl', p:{ drive:16, fold:55, distortionAlgorithm:11, mix:90 } },
+      { name:'Ring Modulator', p:{ drive:8, fold:62, distortionAlgorithm:10, mix:75 } },
+      { name:'Total Damage',   p:{ macroDamage:80, macroCrush:45, drive:12, distortionAlgorithm:5 } },
+      // — lo-fi —
+      { name:'8-Bit Arcade',   p:{ bitDepth:5, sampleRateReduction:8, bitcrushMode:0, distortionAlgorithm:6, drive:6 } },
+      { name:'VHS Memories',   p:{ bitDepth:10, sampleRateReduction:4, bitcrushMode:1, tone:-35, filterCutoff:8000, macroWidth:60 } },
+      { name:'Telephone Call', p:{ filterType:2, filterCutoff:1800, filterResonance:35, bitDepth:8, drive:9 } },
+      { name:'Broken Speaker', p:{ bitcrushMode:5, bitDepth:6, drive:12, distortionAlgorithm:2, filterCutoff:5000 } },
+      { name:'Bit Mangler',    p:{ bitcrushMode:4, bitDepth:7, sampleRateReduction:6, drive:8 } },
+      // — glitch —
+      { name:'Stutter Step',   p:{ glitchMode:1, glitchProbability:65, glitchBufferLength:3 } },
+      { name:'Buffer Overflow',p:{ glitchMode:17, glitchProbability:80, chaos:45, glitchBufferLength:2 } },
+      { name:'Tape Eater',     p:{ glitchMode:10, glitchProbability:45, glitchBufferLength:5, tone:-20 } },
+      { name:'Granular Cloud', p:{ glitchMode:9, glitchProbability:75, glitchBufferLength:4, mix:80, macroWidth:70 } },
+      { name:'Pitch Gremlin',  p:{ glitchMode:16, glitchProbability:55, glitchBufferLength:3, chaos:30 } },
+      // — feedback —
+      { name:'Metal Tank',     p:{ feedbackAmount:65, microDelayTime:2, feedbackDamping:25, drive:10 } },
+      { name:'Dying Echo',     p:{ feedbackAmount:55, microDelayTime:38, feedbackDamping:75, mix:85 } },
+      { name:'The Screamer',   p:{ feedbackAmount:78, microDelayTime:1.2, feedbackDamping:10, filterType:5, filterCutoff:2400, filterResonance:60 } },
+      // — filter & motion —
+      { name:'Talk Box',       p:{ filterType:7, filterCutoff:900, filterResonance:70, drive:12, distortionAlgorithm:3 } },
+      { name:'Acid Bath',      p:{ filterType:5, filterCutoff:1200, filterResonance:75, filterSlope:1, drive:14, distortionAlgorithm:0 } },
+      { name:'Auto Wah',       p:{ filterType:5, filterResonance:65, modMatrixEnabled:true, modSlot1Source:4, modSlot1Destination:2, modSlot1Amount:70, modSlot1Enable:true } },
+      { name:'Wobble Machine', p:{ filterType:0, filterCutoff:2500, filterResonance:55, modMatrixEnabled:true, lfo1Rate:2.2, lfo1Shape:0, modSlot1Source:0, modSlot1Destination:2, modSlot1Amount:80, modSlot1Enable:true } },
+      { name:'Vowel Movement', p:{ filterType:7, filterResonance:80, modMatrixEnabled:true, lfo1Rate:0.4, lfo1Shape:7, modSlot1Source:0, modSlot1Destination:2, modSlot1Amount:90, modSlot1Enable:true, drive:8 } }
+    ];
+
+    // ---- apply machinery ----
+    function setSlider(id, v){
+      const st = Juce.getSliderState(id);
+      const pr = st.properties || {};
+      const start = (typeof pr.start === 'number') ? pr.start : 0;
+      const end   = (typeof pr.end   === 'number' && pr.end !== start) ? pr.end : 1;
+      const sk    = pr.skew || 1;
+      const n = clamp01(Math.pow(Math.max(0, (v - start) / (end - start)), sk));
+      st.setNormalisedValue(n);
+    }
+    function applyPreset(idx){
+      current = ((idx % PRESETS.length) + PRESETS.length) % PRESETS.length;
+      const o = PRESETS[current].p;
+      for (const id of Object.keys(SLIDERS)) setSlider(id, (id in o) ? o[id] : SLIDERS[id]);
+      for (const id of Object.keys(COMBOS))  Juce.getComboBoxState(id).setChoiceIndex((id in o) ? o[id] : COMBOS[id]);
+      for (const id of Object.keys(TOGGLES)) Juce.getToggleState(id).setValue((id in o) ? !!o[id] : TOGGLES[id]);
+      nameEl.innerHTML = PRESETS[current].name.toUpperCase() + ' ▾';
+      try { localStorage.setItem('corruptr-preset', String(current)); } catch(e){}
+    }
+
+    // ---- strip wiring ----
+    const nameEl = document.getElementById('preset_name');
+    let current = 0;
+    document.getElementById('preset_prev').addEventListener('click', () => applyPreset(current - 1));
+    document.getElementById('preset_next').addEventListener('click', () => applyPreset(current + 1));
+    nameEl.addEventListener('click', () => {
+      openTileMenu(nameEl, PRESETS.map(pr => pr.name), [], () => current, (i) => applyPreset(i));
+    });
+    // Restore the strip LABEL only - never auto-apply on load (the host's
+    // saved plugin state is the source of truth for parameter values).
+    try {
+      const saved = parseInt(localStorage.getItem('corruptr-preset'));
+      if (!isNaN(saved) && PRESETS[saved]) { current = saved; nameEl.innerHTML = PRESETS[saved].name.toUpperCase() + ' ▾'; }
+    } catch(e){}
   })();
 
   // ===== Initial bind pass over statically-authored markup =====
