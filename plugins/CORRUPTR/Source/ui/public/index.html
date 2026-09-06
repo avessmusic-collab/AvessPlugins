@@ -457,7 +457,6 @@
       <nav class="page-tabs" id="page_tabs">
         <button class="page-tab active" data-page="1">Main</button>
         <button class="page-tab" data-page="2">Sequencer</button>
-        <button class="page-tab" data-page="3">Matrix</button>
         <button class="page-tab" data-page="4">Performance</button>
       </nav>
       <!-- ===================== MAIN CHANNEL-STRIP UNIT ===================== -->
@@ -2537,7 +2536,10 @@
     matrixSection.after(perfSection);
     unit2Section.remove(); // all three of its modules now live on the Performance page
 
-    const PAGES = { 1: [unit1Section], 2: [seqSection], 3: [matrixSection], 4: [perfSection] };
+    // Matrix page removed (user request 2026-09-06): the section is hidden
+    // permanently; LFO/mod-slot parameters stay host-automatable.
+    matrixSection.classList.add('page-hidden');
+    const PAGES = { 1: [unit1Section], 2: [seqSection], 4: [perfSection] };
     const tabs = document.querySelectorAll('#page_tabs .page-tab');
     function showPage(n){
       for (const k of Object.keys(PAGES))
@@ -2549,6 +2551,7 @@
     tabs.forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
     let start = '1';
     try { start = localStorage.getItem('corruptr-page') || '1'; } catch(e){}
+    if (!(start in PAGES)) start = '1'; // e.g. a remembered, since-removed page
     showPage(start);
   })();
 
