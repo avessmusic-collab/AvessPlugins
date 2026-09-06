@@ -12,7 +12,9 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 DefaultDirName={commoncf64}\VST3
-DisableDirPage=yes
+AppendDefaultDirName=no
+DisableDirPage=no
+DirExistsWarning=no
 DisableProgramGroupPage=yes
 OutputBaseFilename=CORRUPTR-{#AppVersion}-Windows
 Compression=lzma2
@@ -33,8 +35,11 @@ Name: "standalone"; Description: "Standalone application"; Types: full
 
 [Files]
 ; Build output paths - adjust if your build directory differs
+; The VST3 goes into the user-chosen folder (defaults to the standard
+; C:\Program Files\Common Files\VST3 - keep the default unless your DAW
+; scans a custom VST3 path).
 Source: "..\..\..\..\build-win\plugins\CORRUPTR\CORRUPTR_artefacts\Release\VST3\CORRUPTR.vst3\*"; \
-    DestDir: "{commoncf64}\VST3\CORRUPTR.vst3"; Components: vst3; \
+    DestDir: "{app}\CORRUPTR.vst3"; Components: vst3; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\..\..\build-win\plugins\CORRUPTR\CORRUPTR_artefacts\Release\Standalone\CORRUPTR.exe"; \
     DestDir: "{autopf}\Avess\CORRUPTR"; Components: standalone; Flags: ignoreversion
