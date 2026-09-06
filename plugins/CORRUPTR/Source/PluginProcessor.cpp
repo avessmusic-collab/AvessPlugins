@@ -1453,6 +1453,21 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     {
         glitchModeIndex = 1;         // Stutter
     }
+    // v8.1 (user feedback: Glitch/Chaos triggers too subtle): these two
+    // previously forced only PROBABILITY, which is inaudible with
+    // glitchMode=Off and merely densifies the chosen mode otherwise.
+    // Chaos now forces the most chaotic mode outright; Glitch supplies a
+    // default mode whenever none is selected (a user-chosen mode is kept,
+    // the trigger just makes it fire every cycle).
+    else if (performanceChaosActive)
+    {
+        glitchModeIndex = 7;         // Random Slice: randomized slice order, maximum chaos
+        glitchBufferLengthIndex = 1; // short cycles: dense, rapid-fire slicing
+    }
+    else if (performanceGlitchActive && glitchModeIndex == 0)
+    {
+        glitchModeIndex = 1;         // mode was Off: force Stutter so the trigger always bites
+    }
 
     // Stage 2 Phase 3.7/3.8: glitchProbability's Sequencer + Mod Matrix +
     // macroGlitch/macroRhythm (both target Glitch Probability per
