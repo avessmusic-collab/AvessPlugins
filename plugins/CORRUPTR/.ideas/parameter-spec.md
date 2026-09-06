@@ -38,6 +38,14 @@
 > ignored while Auto is on), `limiterAutoRelease` (Bool, default true: program-dependent
 > release derived from block crest factor — fast on transients, slow on dense material).
 > Total count now **102** (bound: 95).
+>
+> **v8 addendum (2026-09-06, user-requested):** seven parameters appended —
+> `performance{Kill,Glitch,Destroy,Freeze,Reverse,Stutter,Chaos}Amount` (Float 0-100%,
+> default 100 = the original hard-override behavior bit-exact). Each scales its trigger's
+> intensity: Kill = mute depth; Destroy = blend of all five destinations toward their
+> extremes; Glitch/Freeze/Reverse/Stutter = forced glitch-probability level (strongest
+> active trigger wins); Chaos = held chaos level. Total count now **109** (bound: 109 —
+> every parameter has a UI control).
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 

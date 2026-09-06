@@ -908,6 +908,58 @@
             </div>
 
             <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" id="adv_pill_performance" data-target="adv-performance"></div></div>
+            <div class="section-label" style="margin-top:14px; font-size:9px;">Trigger Amount</div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:8px;">
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancekillamount" data-param="performanceKillAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceKillAmount">100 %</div>
+                  <div class="knob-label">Kill</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performanceglitchamount" data-param="performanceGlitchAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceGlitchAmount">100 %</div>
+                  <div class="knob-label">Gltch</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancedestroyamount" data-param="performanceDestroyAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceDestroyAmount">100 %</div>
+                  <div class="knob-label">Dstry</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancefreezeamount" data-param="performanceFreezeAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceFreezeAmount">100 %</div>
+                  <div class="knob-label">Frz</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancereverseamount" data-param="performanceReverseAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceReverseAmount">100 %</div>
+                  <div class="knob-label">Rev</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancestutteramount" data-param="performanceStutterAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceStutterAmount">100 %</div>
+                  <div class="knob-label">Stut</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancechaosamount" data-param="performanceChaosAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceChaosAmount">100 %</div>
+                  <div class="knob-label">Chaos</div>
+                </div>
+            </div>
             <div class="adv-content" id="adv-performance">
               <div class="knob-wrap">
                 <div class="knob" id="node_xy_glide" data-param="xyPadSmoothing" data-min="0" data-max="500" data-default="80" data-unit="ms" data-decimals="0" style="width:60px;height:60px;">
@@ -2375,6 +2427,13 @@
       performanceReverse: 'Hold for reverse playback (key 5, MIDI note 40)',
       performanceStutter: 'Hold for stutter repeats (key 6, MIDI note 41)',
       performanceChaos: 'Hold to spike randomness (key 7, MIDI note 42)',
+      performanceKillAmount: 'Kill depth — 100% full mute, lower = partial duck',
+      performanceGlitchAmount: 'Glitch trigger intensity (forced probability level)',
+      performanceDestroyAmount: 'Destroy intensity — how far drive/crush/feedback slam toward max',
+      performanceFreezeAmount: 'Freeze trigger intensity (forced probability level)',
+      performanceReverseAmount: 'Reverse trigger intensity (forced probability level)',
+      performanceStutterAmount: 'Stutter trigger intensity (forced probability level)',
+      performanceChaosAmount: 'Chaos trigger intensity (chaos level while held)',
       xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)',
       xyPadXDestination: 'What the X axis (left-right) controls',
       xyPadYDestination: 'What the Y axis (up-down) controls' 

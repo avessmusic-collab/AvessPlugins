@@ -465,6 +465,13 @@ private:
     std::unique_ptr<juce::WebSliderRelay> sampleRateReductionRelay; // Amount knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> xyPadSmoothingRelay; // ADV XY Glide knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> sequencerDepthRelay; // Seq Mix knob (post-5.6 user request)
+    std::unique_ptr<juce::WebSliderRelay> performanceKillAmountRelay; // v8
+    std::unique_ptr<juce::WebSliderRelay> performanceGlitchAmountRelay; // v8
+    std::unique_ptr<juce::WebSliderRelay> performanceDestroyAmountRelay; // v8
+    std::unique_ptr<juce::WebSliderRelay> performanceFreezeAmountRelay; // v8
+    std::unique_ptr<juce::WebSliderRelay> performanceReverseAmountRelay; // v8
+    std::unique_ptr<juce::WebSliderRelay> performanceStutterAmountRelay; // v8
+    std::unique_ptr<juce::WebSliderRelay> performanceChaosAmountRelay; // v8
     std::unique_ptr<juce::WebSliderRelay> toneRelay;            // final-4: previously automation-only
     std::unique_ptr<juce::WebSliderRelay> biasRelay;
     std::unique_ptr<juce::WebSliderRelay> distortionMixRelay;
@@ -600,6 +607,13 @@ private:
     std::unique_ptr<juce::WebSliderParameterAttachment> sampleRateReductionAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> xyPadSmoothingAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> sequencerDepthAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> performanceKillAmountAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> performanceGlitchAmountAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> performanceDestroyAmountAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> performanceFreezeAmountAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> performanceReverseAmountAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> performanceStutterAmountAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> performanceChaosAmountAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> toneAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> biasAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> distortionMixAttachment;

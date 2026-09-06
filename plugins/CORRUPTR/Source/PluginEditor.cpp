@@ -46,6 +46,13 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     sequencerDepthRelay = std::make_unique<juce::WebSliderRelay>("sequencerDepth");
     // Audit fix 2026-09-05: the Feedback module's three controls were never
     // given relays in any GUI phase - the card rendered but was inert.
+    performanceKillAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceKillAmount");
+    performanceGlitchAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceGlitchAmount");
+    performanceDestroyAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceDestroyAmount");
+    performanceFreezeAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceFreezeAmount");
+    performanceReverseAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceReverseAmount");
+    performanceStutterAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceStutterAmount");
+    performanceChaosAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceChaosAmount");
     toneRelay = std::make_unique<juce::WebSliderRelay>("tone");
     biasRelay = std::make_unique<juce::WebSliderRelay>("bias");
     distortionMixRelay = std::make_unique<juce::WebSliderRelay>("distortionMix");
@@ -174,6 +181,13 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*sampleRateReductionRelay)
             .withOptionsFrom(*xyPadSmoothingRelay)
             .withOptionsFrom(*sequencerDepthRelay)
+            .withOptionsFrom(*performanceKillAmountRelay)
+            .withOptionsFrom(*performanceGlitchAmountRelay)
+            .withOptionsFrom(*performanceDestroyAmountRelay)
+            .withOptionsFrom(*performanceFreezeAmountRelay)
+            .withOptionsFrom(*performanceReverseAmountRelay)
+            .withOptionsFrom(*performanceStutterAmountRelay)
+            .withOptionsFrom(*performanceChaosAmountRelay)
             .withOptionsFrom(*toneRelay)
             .withOptionsFrom(*biasRelay)
             .withOptionsFrom(*distortionMixRelay)
@@ -390,6 +404,20 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("xyPadSmoothing"), *xyPadSmoothingRelay, nullptr);
     sequencerDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("sequencerDepth"), *sequencerDepthRelay, nullptr);
+    performanceKillAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceKillAmount"), *performanceKillAmountRelay, nullptr);
+    performanceGlitchAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceGlitchAmount"), *performanceGlitchAmountRelay, nullptr);
+    performanceDestroyAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceDestroyAmount"), *performanceDestroyAmountRelay, nullptr);
+    performanceFreezeAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceFreezeAmount"), *performanceFreezeAmountRelay, nullptr);
+    performanceReverseAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceReverseAmount"), *performanceReverseAmountRelay, nullptr);
+    performanceStutterAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceStutterAmount"), *performanceStutterAmountRelay, nullptr);
+    performanceChaosAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("performanceChaosAmount"), *performanceChaosAmountRelay, nullptr);
     toneAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("tone"), *toneRelay, nullptr);
     biasAttachment = std::make_unique<juce::WebSliderParameterAttachment>(

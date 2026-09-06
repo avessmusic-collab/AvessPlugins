@@ -528,6 +528,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID { "limiterAutoRelease", 1 }, "Limiter Auto Release", true));
 
+    // v8 spec addition (user request 2026-09-06): per-trigger intensity.
+    // 100% = the original hard-override behavior, bit-exact.
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "performanceKillAmount", 1 }, "Kill Amount",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "performanceGlitchAmount", 1 }, "Glitch Amount",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "performanceDestroyAmount", 1 }, "Destroy Amount",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "performanceFreezeAmount", 1 }, "Freeze Amount",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "performanceReverseAmount", 1 }, "Reverse Amount",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "performanceStutterAmount", 1 }, "Stutter Amount",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "performanceChaosAmount", 1 }, "Chaos Amount",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
+
     return layout;
 }
 
@@ -1076,7 +1100,23 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         performanceGlitchActive || performanceFreezeActive || performanceReverseActive
         || performanceStutterActive || performanceChaosActive;
     const bool anyTriggerWantsChaosOverride = performanceChaosActive || performanceGlitchActive;
-    const float chaosOverrideValue = performanceChaosActive ? 100.0f : 60.0f; // Chaos wins over Glitch if both active
+
+    // v8 (per-trigger amounts): each trigger's intensity knob, 0..1.
+    auto perfAmt = [this](const char* id){ return juce::jlimit(0.0f, 1.0f, parameters.getRawParameterValue(id)->load() / 100.0f); };
+    const float destroyAmt = perfAmt("performanceDestroyAmount");
+    const float glitchAmt  = perfAmt("performanceGlitchAmount");
+    const float freezeAmt  = perfAmt("performanceFreezeAmount");
+    const float reverseAmt = perfAmt("performanceReverseAmount");
+    const float stutterAmt = perfAmt("performanceStutterAmount");
+    const float chaosAmt   = perfAmt("performanceChaosAmount");
+    // Forced glitch probability scales with the STRONGEST active trigger's amount.
+    float triggerForcedProbNorm = 0.0f;
+    if (performanceGlitchActive)  triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, glitchAmt);
+    if (performanceFreezeActive)  triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, freezeAmt);
+    if (performanceReverseActive) triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, reverseAmt);
+    if (performanceStutterActive) triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, stutterAmt);
+    if (performanceChaosActive)   triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, chaosAmt);
+    const float chaosOverrideValue = (performanceChaosActive ? 100.0f * chaosAmt : 60.0f * glitchAmt); // Chaos wins over Glitch if both active
 
     //=========================================================================
     // Stage 2 Phase 3.8: Modulation Matrix (8 slots) + 4 LFOs + Macro System
@@ -1155,15 +1195,18 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
         const float performanceDestroyOverrideValue = driveRangeMax; // "Destroy" -> max drive (AS OF PHASE 3.9: the real, final diff, not a placeholder)
 
-        const float modulatedDrive = ModulationAccumulator::accumulate(
+        // v8: Destroy blends toward its extreme by its amount knob (100% =
+        // original hard override) - same pattern at every Destroy site below.
+        const float driveNoOverride = ModulationAccumulator::accumulate(
             driveBase,
             sequencerDriveContributionDb,  // REAL Sequencer `drive`-lane contribution (Phase 3.7)
             modMatrixDriveContribution,    // REAL Mod Matrix `drive`-destination total (Phase 3.8)
             macroContributions.driveDb,    // REAL macroDamage routing (Phase 3.8)
-            performanceDestroyActive,
-            performanceDestroyOverrideValue,
-            driveRangeMin,
-            driveRangeMax);
+            false, 0.0f, driveRangeMin, driveRangeMax);
+        const float modulatedDrive = performanceDestroyActive
+            ? juce::jlimit(driveRangeMin, driveRangeMax,
+                            driveNoOverride + (performanceDestroyOverrideValue - driveNoOverride) * destroyAmt)
+            : driveNoOverride;
 
         phase32DriveModulationObservation.store(modulatedDrive, std::memory_order_relaxed);
     }
@@ -1225,9 +1268,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // beneath it — see PluginProcessor.h's Phase 3.9 doc comment).
     const float modMatrixFeedbackContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFeedback]
                                                      * 100.0f * kModMatrixDepthFraction;
-    const float feedbackAmountPct = ModulationAccumulator::accumulate(
+    const float feedbackNoOverride = ModulationAccumulator::accumulate(
         feedbackAmountParam->load(), 0.0f, modMatrixFeedbackContribution, macroContributions.feedbackAmountPct,
-        performanceDestroyActive, 90.0f, 0.0f, 100.0f);
+        false, 0.0f, 0.0f, 100.0f);
+    const float feedbackAmountPct = performanceDestroyActive
+        ? juce::jlimit(0.0f, 100.0f, feedbackNoOverride + (90.0f - feedbackNoOverride) * destroyAmt)
+        : feedbackNoOverride;
     // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
     // Feedback Amount %, for the knob's mod-range indicator.
     visModFeedbackAmountPct.store(feedbackAmountPct, std::memory_order_relaxed);
@@ -1305,9 +1351,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // maximum destruction).
         const float modMatrixFoldContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFold]
                                                      * 100.0f * kModMatrixDepthFraction;
-        distortionFoldPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
+        const float foldNoOverride = ModulationAccumulator::accumulate(
             foldParam->load(), 0.0f, modMatrixFoldContribution, macroContributions.foldPct,
-            performanceDestroyActive, 100.0f, 0.0f, 100.0f));
+            false, 0.0f, 0.0f, 100.0f);
+        distortionFoldPct = juce::jlimit(0.0f, 100.0f, performanceDestroyActive
+            ? foldNoOverride + (100.0f - foldNoOverride) * destroyAmt
+            : foldNoOverride);
         // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
         // Fold %, for the knob's mod-range indicator.
         visModFoldPct.store(distortionFoldPct, std::memory_order_relaxed);
@@ -1332,9 +1381,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // maximum destruction).
         const float modMatrixBitDepthContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destBitDepth]
                                                           * (16.0f - 1.0f) * kModMatrixDepthFraction;
-        const float modulatedBitDepth = ModulationAccumulator::accumulate(
+        const float bitDepthNoOverride = ModulationAccumulator::accumulate(
             bitDepthParam->load(), sequencerBitDepthContributionBits, modMatrixBitDepthContribution,
-            macroContributions.bitDepthBits, performanceDestroyActive, 1.0f, 1.0f, 16.0f);
+            macroContributions.bitDepthBits, false, 0.0f, 1.0f, 16.0f);
+        const float modulatedBitDepth = performanceDestroyActive
+            ? juce::jlimit(1.0f, 16.0f, bitDepthNoOverride + (1.0f - bitDepthNoOverride) * destroyAmt)
+            : bitDepthNoOverride;
         const float bitDepth = juce::jlimit(1.0f, 16.0f, modulatedBitDepth);
         bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
         // Audit fix 2026-09-05: ramp the quantizer's level count (~15ms)
@@ -1353,9 +1405,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // maximum — maximum destruction).
         const float modMatrixSrrContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destSampleRate]
                                                      * (48.0f - 1.0f) * kModMatrixDepthFraction;
-        const float modulatedSrr = ModulationAccumulator::accumulate(
+        const float srrNoOverride = ModulationAccumulator::accumulate(
             srrParam->load(), sequencerSampleRateContributionFactor, modMatrixSrrContribution,
-            macroContributions.sampleRateFactor, performanceDestroyActive, 48.0f, 1.0f, 48.0f);
+            macroContributions.sampleRateFactor, false, 0.0f, 1.0f, 48.0f);
+        const float modulatedSrr = performanceDestroyActive
+            ? juce::jlimit(1.0f, 48.0f, srrNoOverride + (48.0f - srrNoOverride) * destroyAmt)
+            : srrNoOverride;
         const float srr = juce::jlimit(1.0f, 48.0f, modulatedSrr);
         bitcrushHoldSamples = juce::jmax(1, static_cast<int>(std::round(srr)));
     }
@@ -1410,9 +1465,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // change" intent).
     const float modMatrixGlitchProbContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destGlitchProbability]
                                                         * 100.0f * kModMatrixDepthFraction;
-    glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
+    const float probNoOverride = ModulationAccumulator::accumulate(
         glitchProbabilityParam->load(), sequencerGlitchProbabilityContributionPct, modMatrixGlitchProbContribution,
-        macroContributions.glitchProbabilityPct, anyTriggerWantsFullGlitchProbability, 100.0f, 0.0f, 100.0f));
+        macroContributions.glitchProbabilityPct, false, 0.0f, 0.0f, 100.0f);
+    glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, anyTriggerWantsFullGlitchProbability
+        ? probNoOverride + (100.0f - probNoOverride) * triggerForcedProbNorm
+        : probNoOverride);
     // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
     // Glitch Probability %, for the knob's mod-range indicator.
     visModGlitchProbabilityPct.store(glitchProbabilityPct, std::memory_order_relaxed);
@@ -2249,8 +2307,11 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
     // a single bool already resolved once in processBlock() but not passed
     // down to this helper).
     const bool performanceKillActive = parameters.getRawParameterValue("performanceKill")->load() > 0.5f;
-    const float modulatedGate = ModulationAccumulator::accumulate(
-        1.0f, gateRaw - 1.0f, 0.0f, macroContributions.gateGainOffset, performanceKillActive, 0.0f, 0.0f, 1.0f);
+    const float killAmt = juce::jlimit(0.0f, 1.0f, parameters.getRawParameterValue("performanceKillAmount")->load() / 100.0f);
+    const float gateNoOverride = ModulationAccumulator::accumulate(
+        1.0f, gateRaw - 1.0f, 0.0f, macroContributions.gateGainOffset, false, 0.0f, 0.0f, 1.0f);
+    // v8: Kill's amount = mute depth (100% = full mute, 50% = half duck).
+    const float modulatedGate = performanceKillActive ? gateNoOverride * (1.0f - killAmt) : gateNoOverride;
 
     sequencerVolumeGateGainTarget = juce::Decibels::decibelsToGain(modulatedVolumeDb) * modulatedGate;
     sequencerVolumeGateGainSmoothed.setTargetValue(sequencerVolumeGateGainTarget);
