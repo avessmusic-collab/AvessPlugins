@@ -401,7 +401,7 @@
 
   /* Phase 5.3: Mod Matrix 8-slot editor (JS-created - see index.html's
      "8-slot Mod Matrix editor" script section). Sits below the pre-existing
-     decorative #matrixTable dot-grid (left unchanged) as a real per-slot
+     (formerly below a decorative dot-grid, since removed) as a real per-slot
      Source/Destination/Amount/Enable row editor, matching this file's
      established "small light card row" visual language (same background/
      border treatment as .lfo-panel/.lane-chip above). */
@@ -417,13 +417,6 @@
   .mod-slot-row .knob-wrap{ margin-top: 0; flex: 0 0 auto; }
   .mod-slot-row .toggle-row{ margin-top: 0; flex: 0 0 auto; }
 
-  .matrix-wrap{ overflow-x: auto; }
-  table.matrix{ border-collapse: collapse; width: 100%; }
-  table.matrix th{ font-size: 8px; color: var(--text-secondary); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; padding: 4px 6px; text-align:center; }
-  table.matrix td{ text-align:center; padding: 4px 6px; border-top: 1px solid var(--divider); }
-  table.matrix td.row-label{ text-align:left; font-size: 9px; color: var(--text-secondary); font-weight:700; text-transform:uppercase; white-space:nowrap; }
-  .matrix-dot{ display:inline-block; width: 7px; height:7px; border-radius:50%; background: #e2e2e5; }
-  .matrix-dot.active{ background: var(--text-primary); }
 
   .section-label{ font-size: 11px; font-weight: 800; letter-spacing: 2px; color: var(--text-primary); text-transform: uppercase; }
 
@@ -1045,7 +1038,6 @@
           </div>
           <div class="card-body" id="mod_matrix_body">
             <div class="lfo-row" id="lfoPanelRow"></div>
-            <div class="matrix-wrap"><table class="matrix" id="matrixTable"></table></div>
             <div class="mod-slot-list" id="modSlotList"></div>
           </div>
         </div>
@@ -1915,22 +1907,6 @@
   })();
 
   // ===================================================================
-  // Modulation matrix grid
-  // ===================================================================
-  (function(){
-    const sources = ['LFO 1','LFO 2','LFO 3','LFO 4','Envelope','Sequencer','Random'];
-    const destinations = ['Drive','Filter','Bits','Fold','Feedback','Gl.Prob','Pitch','Width'];
-    const activeCells = new Set(['0-0','0-1','1-2','2-5','3-6','4-0','5-3','6-4','2-1','3-4']);
-    const table = document.getElementById('matrixTable');
-    let thead = '<tr><th></th>' + destinations.map(d => `<th>${d}</th>`).join('') + '</tr>';
-    let rows = sources.map((s,r) => {
-      const cells = destinations.map((d,c) => `<td><span class="matrix-dot${activeCells.has(r+'-'+c) ? ' active':''}"></span></td>`).join('');
-      return `<tr><td class="row-label">${s}</td>${cells}</tr>`;
-    }).join('');
-    table.innerHTML = thead + rows;
-  })();
-
-  // ===================================================================
   // Phase 5.3: 8-slot Mod Matrix editor (real Source/Destination/Amount/
   // Enable controls - the block above this one is the pre-existing v5-ui.html
   // decorative dot-grid, left in place unchanged). FLAGGED LAYOUT
@@ -2544,10 +2520,9 @@
     matrixSection.after(perfSection);
     unit2Section.remove(); // all three of its modules now live on the Performance page
 
-    // Matrix page removed (user request 2026-09-06): the section is hidden
-    // permanently; LFO/mod-slot parameters stay host-automatable.
-    matrixSection.classList.add('page-hidden');
-    const PAGES = { 1: [unit1Section], 2: [seqSection], 4: [perfSection] };
+    // Modulation lives WITH the sequencer (user request 2026-09-06): the
+    // LFO row + compact 8-slot editor share page 2 as one "motion" page.
+    const PAGES = { 1: [unit1Section], 2: [seqSection, matrixSection], 4: [perfSection] };
     const tabs = document.querySelectorAll('#page_tabs .page-tab');
     function showPage(n){
       for (const k of Object.keys(PAGES))
