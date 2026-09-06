@@ -241,7 +241,8 @@
   .graph-card svg{ width:100%; height:100%; display:block; }
   .graph-axis-y{ position:absolute; left:4px; top:4px; bottom:16px; display:flex; flex-direction:column; justify-content:space-between; }
   .graph-axis-y span, .graph-axis-x span{ font-family: var(--font-mono); font-size: 6.5px; color: var(--graph-axis); }
-  .graph-axis-x{ position:absolute; left:20px; right:4px; bottom:2px; display:flex; justify-content:space-between; }
+  .graph-axis-x{ position:absolute; left:0; right:0; bottom:2px; }
+  .graph-axis-x span{ position:absolute; transform:translateX(-50%); } /* log-correct positions, 20Hz-20kHz */
 
   /* buttons row (top bar action + sequencer pattern buttons) */
   .action-btn{
@@ -264,7 +265,7 @@
   /* XY pad */
   .xy-card{
     width: 340px; height: 340px; border-radius: 16px; background: #fbfbfc; border: 1px solid var(--divider);
-    position: relative; margin-top: 20px; overflow: hidden; cursor: crosshair; touch-action: none;
+    position: relative; margin: 20px auto 0; overflow: hidden; cursor: crosshair; touch-action: none;
     background-image:
       repeating-linear-gradient(0deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px),
       repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px);
@@ -716,7 +717,12 @@
                 <line id="filter_cutoff_marker" x1="160" y1="8" x2="160" y2="76" stroke="var(--graph-grid)" stroke-width="1" stroke-dasharray="2 2"/>
                 <text id="filter_cutoff_hz_label" x="158" y="16" text-anchor="end" font-size="7.5" font-weight="700" fill="var(--text-tertiary)">20.0 kHz</text>
               </svg>
-              <div class="graph-axis-x"><span>100Hz</span><span>1kHz</span><span>10kHz</span></div>
+              <div class="graph-axis-x">
+                <span style="left:31.9%;">100</span>
+                <span style="left:60.2%;">1k</span>
+                <span style="left:88.5%;">10k</span>
+                <span style="left:97%;">20k</span>
+              </div>
             </div>
 
             <div style="display:flex; gap:10px; margin-top:14px;">
@@ -914,13 +920,13 @@
           </div>
 
           <!-- XY PAD -->
-          <div class="module" style="width:340px;">
+          <div class="module" style="width:384px;">
             <div class="xy-card" id="xy_pad">
               <span class="xy-label">Performance XY</span>
               <span class="xy-latch" id="xy_latch" hidden>&#8984;L LATCH</span>
               <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
             </div>
-            <div class="xy-dest-row" style="display:flex; gap:10px; align-items:center; margin-top:10px;">
+            <div class="xy-dest-row" style="display:flex; gap:10px; align-items:center; justify-content:center; margin-top:10px;">
               <span class="knob-label" style="margin:0;">X &#8594;</span>
               <select class="combo-sm" id="xy_x_dest" data-param="xyPadXDestination" style="width:130px;height:26px;"><option selected>Damage Macro</option><option>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
               <span class="knob-label" style="margin:0 0 0 8px;">Y &#8594;</span>
