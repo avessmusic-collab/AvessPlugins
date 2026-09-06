@@ -16,9 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install WebView2 SDK (required by the plugin's WebView UI)
+        shell: pwsh
+        run: nuget install Microsoft.Web.WebView2 -Version 1.0.1901.177 -OutputDirectory "$env:GITHUB_WORKSPACE\webview2"
+
       - name: Configure (CORRUPTR only, fetches JUCE 8)
         # No -G pin: use whatever Visual Studio the runner image ships
-        run: cmake -B build-win -A x64 -DONLY_PLUGIN=CORRUPTR
+        shell: pwsh
+        run: cmake -B build-win -A x64 -DONLY_PLUGIN=CORRUPTR "-DJUCE_WEBVIEW2_PACKAGE_LOCATION=$env:GITHUB_WORKSPACE\webview2"
 
       - name: Build VST3 + Standalone (Release)
         run: cmake --build build-win --config Release --target CORRUPTR_VST3 CORRUPTR_Standalone
