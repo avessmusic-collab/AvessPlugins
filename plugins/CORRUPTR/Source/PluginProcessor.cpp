@@ -340,7 +340,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID { "sequencerEnabled", 1 },
         "Sequencer Enabled",
-        true));
+        false)); // v10 defaults change (user request 2026-09-06): OFF by default
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "sequencerRate", 1 },
@@ -360,7 +360,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID { "modMatrixEnabled", 1 },
         "Mod Matrix Enabled",
-        true));
+        false)); // v10 defaults change (user request 2026-09-06): OFF by default
 
     const juce::StringArray lfoShapeChoices { "Sine", "Triangle", "Saw", "Reverse Saw", "Square",
                                                "S&H", "Random", "Smooth Random", "Random Walk" };

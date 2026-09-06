@@ -1005,7 +1005,7 @@
       <section class="strip-wrap">
         <div class="card">
           <div class="card-header-row">
-            <button class="icon-btn power-btn on" id="sequencer_enable" data-param="sequencerEnabled" data-default="true" data-dim-target="sequencer_body" title="Enable/disable sequencer module">
+            <button class="icon-btn power-btn" id="sequencer_enable" data-param="sequencerEnabled" data-default="false" data-dim-target="sequencer_body" title="Enable/disable sequencer module">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
             </button>
             <div class="section-label">Rhythmic Sequencer</div>
@@ -1044,7 +1044,7 @@
       <section class="strip-wrap">
         <div class="card">
           <div class="card-header-row">
-            <button class="icon-btn power-btn on" id="mod_matrix_enable" data-param="modMatrixEnabled" data-default="true" data-dim-target="mod_matrix_body" title="Enable/disable mod matrix module">
+            <button class="icon-btn power-btn" id="mod_matrix_enable" data-param="modMatrixEnabled" data-default="false" data-dim-target="mod_matrix_body" title="Enable/disable mod matrix module">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
             </button>
             <div class="section-label">Modulation Matrix</div>
@@ -2265,7 +2265,7 @@
         indicatorEl.className = 'mod-range-tick';
       }
       el.appendChild(indicatorEl);
-      return { el, indicatorEl, kind: t.kind, key: t.key,
+      return { el, indicatorEl, kind: t.kind, key: t.key, param: el.dataset.param,
                min: parseFloat(el.dataset.min), max: parseFloat(el.dataset.max) };
     }).filter(Boolean);
 
@@ -2277,8 +2277,12 @@
         if (typeof liveVal !== 'number' || !isFinite(liveVal)) return;
         const baseValRaw = m.el.dataset.currentValue;
         const baseVal = baseValRaw !== undefined ? parseFloat(baseValRaw) : liveVal;
-        const liveNorm = clamp01((liveVal - m.min) / (m.max - m.min));
-        const baseNorm = clamp01((baseVal - m.min) / (m.max - m.min));
+        // Skew-aware (audit fix): markers must use the SAME normalization the
+        // knob's own render uses, or skewed params (cutoff) draw the marker
+        // at the wrong angle relative to the pointer.
+        const sk = skewOf(Juce.getSliderState(m.param));
+        const liveNorm = clamp01(normFromValue(liveVal, m.min, m.max, sk));
+        const baseNorm = clamp01(normFromValue(baseVal, m.min, m.max, sk));
         const isActive = Math.abs(liveNorm - baseNorm) > MOD_EPSILON;
         m.indicatorEl.classList.toggle('active', isActive);
         if (!isActive) return;

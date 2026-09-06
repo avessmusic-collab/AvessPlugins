@@ -52,6 +52,10 @@
 > to the clean input's, attenuate-only (never boosts, never fights Kill/gate ducking, never
 > re-breaches the limiter ceiling; correction floor -24 dB). Cancels drive/mix boosts and
 > the JUCE Limiter's own fixed makeup. Total count now **110** (bound: 110).
+>
+> **v10 defaults change (2026-09-06, user-requested):** `sequencerEnabled` and
+> `modMatrixEnabled` now default **false** (both modules off until switched on). Count
+> unchanged (110/110).
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 
