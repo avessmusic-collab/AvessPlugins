@@ -1,0 +1,55 @@
+name: Build CORRUPTR (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'plugins/CORRUPTR/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-windows.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (CORRUPTR only, fetches JUCE 8)
+        run: cmake -B build-win -G "Visual Studio 17 2022" -A x64 -DONLY_PLUGIN=CORRUPTR
+
+      - name: Build VST3 + Standalone (Release)
+        run: cmake --build build-win --config Release --target CORRUPTR_VST3 CORRUPTR_Standalone
+
+      - name: Download pluginval
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval-bin
+
+      - name: Validate VST3 (pluginval strictness 10)
+        shell: pwsh
+        run: |
+          & "pluginval-bin/pluginval.exe" --strictness-level 10 --timeout-ms 300000 --validate "build-win/plugins/CORRUPTR/CORRUPTR_artefacts/Release/VST3/CORRUPTR.vst3"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "plugins\CORRUPTR\dist\windows\CORRUPTR.iss"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: CORRUPTR-Windows-Installer
+          path: plugins/CORRUPTR/dist/windows/Output/*.exe
+
+      - name: Upload raw VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: CORRUPTR-Windows-VST3
+          path: build-win/plugins/CORRUPTR/CORRUPTR_artefacts/Release/VST3/CORRUPTR.vst3
