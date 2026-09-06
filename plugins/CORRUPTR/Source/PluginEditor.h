@@ -482,6 +482,7 @@ private:
     std::unique_ptr<juce::WebSliderRelay> limiterCeilingRelay; // v7 addition
     std::unique_ptr<juce::WebSliderRelay> limiterReleaseRelay; // v7 addition
     std::unique_ptr<juce::WebToggleButtonRelay> limiterAutoReleaseRelay; // v7 addition
+    std::unique_ptr<juce::WebToggleButtonRelay> autoGainRelay; // v9 addition
 
     // --- Phase 5.2: Glitch ---
     std::unique_ptr<juce::WebToggleButtonRelay> graphBypassGlitchRelay;
@@ -624,6 +625,7 @@ private:
     std::unique_ptr<juce::WebSliderParameterAttachment> limiterCeilingAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> limiterReleaseAttachment;
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> limiterAutoReleaseAttachment;
+    std::unique_ptr<juce::WebToggleButtonParameterAttachment> autoGainAttachment;
 
     // --- Phase 5.2: Glitch ---
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> graphBypassGlitchAttachment;

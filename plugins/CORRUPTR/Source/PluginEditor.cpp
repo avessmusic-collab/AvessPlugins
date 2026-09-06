@@ -63,6 +63,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     limiterCeilingRelay = std::make_unique<juce::WebSliderRelay>("limiterCeiling");
     limiterReleaseRelay = std::make_unique<juce::WebSliderRelay>("limiterRelease");
     limiterAutoReleaseRelay = std::make_unique<juce::WebToggleButtonRelay>("limiterAutoRelease");
+    autoGainRelay = std::make_unique<juce::WebToggleButtonRelay>("autoGain");
 
     // --- Phase 5.2: Glitch ---
     graphBypassGlitchRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassGlitch");
@@ -198,6 +199,7 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*limiterCeilingRelay)
             .withOptionsFrom(*limiterReleaseRelay)
             .withOptionsFrom(*limiterAutoReleaseRelay)
+            .withOptionsFrom(*autoGainRelay)
             .withOptionsFrom(*graphBypassGlitchRelay)
             .withOptionsFrom(*glitchModeRelay)
             .withOptionsFrom(*glitchBufferLengthRelay)
@@ -438,6 +440,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("limiterRelease"), *limiterReleaseRelay, nullptr);
     limiterAutoReleaseAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
         *processorRef.getAPVTS().getParameter("limiterAutoRelease"), *limiterAutoReleaseRelay, nullptr);
+    autoGainAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("autoGain"), *autoGainRelay, nullptr);
 
     // --- Phase 5.2: Glitch ---
     graphBypassGlitchAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(

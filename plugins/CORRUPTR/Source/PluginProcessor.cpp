@@ -552,6 +552,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         juce::ParameterID { "performanceChaosAmount", 1 }, "Chaos Amount",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
 
+    // v9 spec addition (user request 2026-09-06): auto gain balancer -
+    // continuously matches processed loudness to the clean input's, so
+    // drive/distortion changes character, not volume. Default ON.
+    layout.add(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID { "autoGain", 1 }, "Auto Gain Balance", true));
+
     return layout;
 }
 
@@ -873,6 +879,9 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     notchX1.fill(0.0f); notchX2.fill(0.0f);
     notchY1.fill(0.0f); notchY2.fill(0.0f);
     notch2X1.fill(0.0f); notch2X2.fill(0.0f);
+    autoGainDryEnv = 0.0f; autoGainWetEnv = 0.0f;
+    autoGainSmoothed.reset(sampleRate, 0.05);
+    autoGainSmoothed.setCurrentAndTargetValue(1.0f);
     stereoWidthSmoothed.reset(sampleRate, 0.02);
     stereoWidthSmoothed.setCurrentAndTargetValue(1.0f);
     bitcrushLevelsSmoothed.reset(sampleRate, 0.015);
@@ -2119,6 +2128,42 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         }
         outputLimiter.process(context);
         limiterCeilingPostGain.process(context); // see ceiling comment above
+
+        // v9: auto gain balancer - at the TRUE end of the chain so it
+        // cancels every upstream gain (drive, mix overdrive, and the JUCE
+        // Limiter's own hard-coded +1.875dB makeup + first-stage
+        // compressor). ATTENUATE-ONLY (gain capped at unity): it prevents
+        // the processed signal from getting LOUDER than the clean input,
+        // but never fights intentional quiet (Kill/gate ducking) and can
+        // never push the output back above the limiter ceiling. Slow
+        // (~300ms) RMS envelopes; held near-silence; allocation-free.
+        {
+            auto* autoGainParam = parameters.getRawParameterValue("autoGain");
+            const int nCh = juce::jmin(2, buffer.getNumChannels());
+            double drySum = 0.0, wetSum = 0.0;
+            for (int ch = 0; ch < nCh; ++ch)
+            {
+                const float* d = dryBuffer.getReadPointer(ch);
+                const float* w = buffer.getReadPointer(ch);
+                for (int i = 0; i < numSamples; ++i) { drySum += (double) d[i]*d[i]; wetSum += (double) w[i]*w[i]; }
+            }
+            const int n = juce::jmax(1, numSamples * nCh);
+            const float dryRms = (float) std::sqrt(drySum / n);
+            const float wetRms = (float) std::sqrt(wetSum / n);
+            const float alpha = 1.0f - std::exp((float) (-(double) numSamples / (getSampleRate() * 0.3)));
+            autoGainDryEnv += (dryRms - autoGainDryEnv) * alpha;
+            autoGainWetEnv += (wetRms - autoGainWetEnv) * alpha;
+            float targetGain = 1.0f;
+            if (autoGainParam->load() > 0.5f && autoGainDryEnv > 1.0e-4f && autoGainWetEnv > 1.0e-4f)
+                targetGain = juce::jlimit(0.0631f, 1.0f, autoGainDryEnv / autoGainWetEnv); // attenuate-only, floor -24dB
+            autoGainSmoothed.setTargetValue(targetGain);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float g = autoGainSmoothed.getNextValue();
+                for (int ch = 0; ch < nCh; ++ch)
+                    buffer.getWritePointer(ch)[i] *= g;
+            }
+        }
     }
 
     // Stage 3 Phase 5.6: GUI visualization tap — output peak level, read

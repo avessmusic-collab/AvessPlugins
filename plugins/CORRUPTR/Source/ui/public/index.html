@@ -664,6 +664,10 @@
                 <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
                 <span class="toggle-label">Auto</span>
               </div>
+              <div class="toggle-row" style="margin-top:8px;">
+                <div class="toggle-sw on" id="auto_gain_toggle" data-param="autoGain" data-default="true"></div>
+                <span class="toggle-label">Balance</span>
+              </div>
             </div>
 
             <div style="display:flex; gap:20px; margin-top:16px;">
@@ -2381,6 +2385,7 @@
       limiterCeiling: 'Limiter ceiling — output never exceeds this level',
       limiterRelease: 'Limiter recovery speed (ignored while Auto is on)',
       limiterAutoRelease: 'Auto release — fast on transients, slow on dense material',
+      autoGain: 'Loudness balancer — output matches input level, so drive adds character not volume',
       graphBypassSaturation: 'Distortion stage on/off',
       distortionAlgorithm: 'Distortion type — click to pick from the list, arrows to step',
       drive: 'Distortion input gain (0–40 dB) — pushes harder into the curve',

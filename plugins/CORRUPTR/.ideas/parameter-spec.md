@@ -46,6 +46,12 @@
 > extremes; Glitch/Freeze/Reverse/Stutter = forced glitch-probability level (strongest
 > active trigger wins); Chaos = held chaos level. Total count now **109** (bound: 109 —
 > every parameter has a UI control).
+>
+> **v9 addendum (2026-09-06, user-requested):** `autoGain` (Bool, default ON) — loudness
+> balancer at the true end of the chain (post-limiter): slow-RMS matches processed loudness
+> to the clean input's, attenuate-only (never boosts, never fights Kill/gate ducking, never
+> re-breaches the limiter ceiling; correction floor -24 dB). Cancels drive/mix boosts and
+> the JUCE Limiter's own fixed makeup. Total count now **110** (bound: 110).
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 
