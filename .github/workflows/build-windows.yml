@@ -34,10 +34,13 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip" -OutFile pluginval.zip
           Expand-Archive pluginval.zip -DestinationPath pluginval-bin
 
+      # GUI tests skipped: WebView2 editors cannot open on a headless CI
+      # runner (all DSP/state/automation tests still run). The editor gets
+      # its GUI validation on real machines (macOS pluginval opens it fully).
       - name: Validate VST3 (pluginval strictness 10)
         shell: pwsh
         run: |
-          & "pluginval-bin/pluginval.exe" --strictness-level 10 --timeout-ms 300000 --validate "build-win/plugins/CORRUPTR/CORRUPTR_artefacts/Release/VST3/CORRUPTR.vst3"
+          & "pluginval-bin/pluginval.exe" --strictness-level 10 --skip-gui-tests --timeout-ms 300000 --validate "build-win/plugins/CORRUPTR/CORRUPTR_artefacts/Release/VST3/CORRUPTR.vst3"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Install Inno Setup
