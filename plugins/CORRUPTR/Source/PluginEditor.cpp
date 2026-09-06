@@ -159,6 +159,17 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withResourceProvider([this](const auto& url) { return getResource(url); })
             .withKeepPageLoadedWhenBrowserIsHidden()
 
+            // Windows/WebView2: give the runtime an explicit WRITABLE user-data
+            // folder. Without this it defaults to a folder beside the host
+            // executable - often the DAW's Program Files directory, which is
+            // read-only, so WebView2 fails to initialise and the editor shows
+            // "Navigation to the webpage was canceled". A per-user temp
+            // subfolder is always writable. Ignored on macOS (WKWebView).
+            .withWinWebView2Options(
+                juce::WebBrowserComponent::Options::WinWebView2{}
+                    .withUserDataFolder(juce::File::getSpecialLocation(
+                        juce::File::tempDirectory).getChildFile("CORRUPTR-WebView2")))
+
             .withOptionsFrom(*qualityModeRelay)
             .withOptionsFrom(*graphBypassSaturationRelay)
             .withOptionsFrom(*distortionAlgorithmRelay)
