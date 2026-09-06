@@ -1,4 +1,4 @@
-CORRUPTR by TÂCHES — v1.0.0
+CORRUPTR by Avess — v1.0.0
 Installation Guide
 ===========================
 
@@ -7,7 +7,8 @@ WHAT'S IN THE BOX
 
 HOW TO INSTALL
 1. Double-click CORRUPTR.pkg
-2. Follow the installer (Continue → Install)
+2. Follow the installer — on the Installation Type step you can
+   untick VST3 or AU if you only want one format
 3. The plugin installs into YOUR user plugin folders:
    ~/Library/Audio/Plug-Ins/VST3/CORRUPTR.vst3
    ~/Library/Audio/Plug-Ins/Components/CORRUPTR.component
