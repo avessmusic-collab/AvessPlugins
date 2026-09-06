@@ -165,7 +165,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "filterType", 1 },
         "Filter Type",
-        juce::StringArray { "LP", "HP", "BP", "Notch", "Comb", "Resonant LP", "Resonant HP" },
+        juce::StringArray { "LP", "HP", "BP", "Notch", "Comb", "Resonant LP", "Resonant HP", "Formant" }, // v11: +Formant (vowel morph)
         0)); // LP
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -872,6 +872,11 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
         f.reset();
     }
     for (auto& f : svfFilterStage2) // v6: 24 dB/oct cascade stage
+    {
+        f.prepare(monoSpec);
+        f.reset();
+    }
+    for (auto& f : formantBp) // v11: Formant resonators
     {
         f.prepare(monoSpec);
         f.reset();
@@ -1612,6 +1617,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // internal buffers; the Notch state is just four floats).
         for (auto& f : svfFilter) f.reset();
         for (auto& f : svfFilterStage2) f.reset();
+        for (auto& f : formantBp) f.reset();
         notchX1.fill(0.0f); notchX2.fill(0.0f);
         notchY1.fill(0.0f); notchY2.fill(0.0f);
         notch2X1.fill(0.0f); notch2X2.fill(0.0f);
@@ -3420,7 +3426,46 @@ void CORRUPTRAudioProcessor::updateFilterParameters(float cutoffHz, float resona
         case 2: svfType = juce::dsp::StateVariableTPTFilterType::bandpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kStandardResonanceMax); break; // BP
         case 5: svfType = juce::dsp::StateVariableTPTFilterType::lowpass;  svfResonance = juce::jmap(resonanceNorm, 0.5f, kResonantVariantMax); break; // Resonant LP
         case 6: svfType = juce::dsp::StateVariableTPTFilterType::highpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kResonantVariantMax); break; // Resonant HP
-        default: break; // Notch (3) / Comb (4) don't use the SVF path
+        default: break; // Notch (3) / Comb (4) / Formant (7) don't use the plain SVF path
+    }
+
+    // v11 (Formant, filterTypeIndex 7): three parallel bandpass resonators at
+    // vowel formant frequencies. filterCutoff is repurposed as the VOWEL
+    // MORPH control - its perceptual (skewed) position sweeps A-E-I-O-U with
+    // linear interpolation between neighbours; filterResonance sets formant
+    // Q (how "vocal" the peaks are). Same fold/Ring-Mod repurposing precedent.
+    if (filterTypeIndex == 7)
+    {
+        static constexpr float kVowelF[5][3] = {
+            { 800.0f, 1150.0f, 2900.0f },   // A
+            { 400.0f, 1600.0f, 2700.0f },   // E
+            { 350.0f, 1700.0f, 2700.0f },   // I
+            { 450.0f,  800.0f, 2830.0f },   // O
+            { 325.0f,  700.0f, 2700.0f } }; // U
+        static constexpr float kVowelG[5][3] = {
+            { 1.0f, 0.63f, 0.10f },
+            { 1.0f, 0.50f, 0.13f },
+            { 1.0f, 0.32f, 0.16f },
+            { 1.0f, 0.50f, 0.10f },
+            { 1.0f, 0.25f, 0.08f } };
+        const float p = std::pow(juce::jlimit(0.0f, 1.0f, (cutoffHz - 20.0f) / 19980.0f), 0.3f); // cutoff's own skew
+        const float vowelPos = p * 4.0f;
+        const int   vi = juce::jlimit(0, 3, (int) vowelPos);
+        const float vf = juce::jlimit(0.0f, 1.0f, vowelPos - (float) vi);
+        const float q  = juce::jmap(resonanceNorm, 6.0f, 16.0f);
+        for (int f = 0; f < 3; ++f)
+        {
+            const float freq = juce::jlimit(60.0f, 0.45f * (float) sampleRate,
+                                             kVowelF[vi][f] + (kVowelF[vi + 1][f] - kVowelF[vi][f]) * vf);
+            formantGain[(size_t) f] = kVowelG[vi][f] + (kVowelG[vi + 1][f] - kVowelG[vi][f]) * vf;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto& bp = formantBp[(size_t) (ch * 3 + f)];
+                bp.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
+                bp.setCutoffFrequency(freq);
+                bp.setResonance(q);
+            }
+        }
     }
 
     for (auto& f : svfFilter)
@@ -3498,6 +3543,14 @@ float CORRUPTRAudioProcessor::processFilterStage(float xIn, int channel)
             const float y = xIn + combFeedbackGain * delayed;
             delay.pushSample(0, y);
             return y;
+        }
+
+        case 7: // Formant (v11): sum of 3 parallel vowel bandpass resonators
+        {
+            float y = 0.0f;
+            for (int f = 0; f < 3; ++f)
+                y += formantBp[(size_t) (channel * 3 + f)].processSample(0, xIn) * formantGain[(size_t) f];
+            return y * 1.6f; // makeup for parallel-BP level loss
         }
 
         default: // LP(0)/HP(1)/BP(2)/Resonant LP(5)/Resonant HP(6) via StateVariableTPTFilter

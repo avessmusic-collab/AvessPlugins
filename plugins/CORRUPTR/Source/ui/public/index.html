@@ -710,7 +710,7 @@
             <div class="module-body" id="filter_body">
             <div class="mode-tile-wrap">
               <button class="chevron" data-dir="-1" data-for="filter_type">‹</button>
-              <div class="mode-tile" id="filter_type" data-param="filterType" data-choices="LP|HP|BP|Notch|Comb|Resonant LP|Resonant HP" style="width:158px;height:118px;">
+              <div class="mode-tile" id="filter_type" data-param="filterType" data-choices="LP|HP|BP|Notch|Comb|Resonant LP|Resonant HP|Formant" style="width:158px;height:118px;">
                 <div class="tile-glow"></div>
                 <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M4 28 C 14 28, 16 12, 24 12 C 30 12, 32 20, 36 20"/></svg>
                 <div class="tile-label"></div>
@@ -2344,6 +2344,18 @@
         case 2: db = -12 * slopeMul * Math.abs(oct) - 6; break;      // BP
         case 3: db = -22 * Math.exp(-(oct * oct) / 0.06); break;     // Notch — deep dip at cutoff
         case 4: db = 6 * Math.sin(freq / Math.max(50, cutoffHz * 0.15)) - 4; break; // Comb — periodic ripple (decorative)
+        case 7: { // Formant (v11) — three vowel peaks tracking the morph position
+          const VF = [[800,1150,2900],[400,1600,2700],[350,1700,2700],[450,800,2830],[325,700,2700]];
+          const p = Math.pow(clamp01((cutoffHz - 20) / 19980), 0.3);
+          const vp = p * 4, vi = Math.min(3, Math.floor(vp)), vf = vp - vi;
+          db = -16;
+          for (let f = 0; f < 3; f++){
+            const Fi = VF[vi][f] + (VF[vi+1][f] - VF[vi][f]) * vf;
+            const d = Math.log2(Math.max(freq,1) / Fi);
+            db = Math.max(db, -16 + (26 - f*6 + resNorm*6) * Math.exp(-(d*d) / 0.045));
+          }
+          break;
+        }
         case 5: db = -12 * slopeMul * Math.max(0, oct); break;       // Resonant LP
         case 6: db = -12 * slopeMul * Math.max(0, -oct); break;      // Resonant HP
         default: db = -12 * slopeMul * Math.max(0, oct);             // LP
@@ -2456,10 +2468,10 @@
       bias: 'Pre-shaper DC offset — asymmetric, adds even harmonics',
       distortionMix: 'Blend of shaped vs clean signal within the distortion stage',
       graphBypassFilter: 'Filter stage on/off',
-      filterType: 'Filter topology — click to pick (LP, HP, Notch, Comb…)',
+      filterType: 'Filter topology — click to pick (LP, HP, Notch, Comb, Formant…). In Formant, Cutoff morphs the vowel A-E-I-O-U',
       filterCutoff: 'Filter cutoff frequency',
       filterResonance: 'Resonance — emphasis at the cutoff',
-      filterSlope: 'Filter steepness — 12 dB/oct gentle, 24 dB/oct steep (Comb unaffected)',
+      filterSlope: 'Filter steepness — 12 dB/oct gentle, 24 dB/oct steep (Comb/Formant unaffected)',
       feedbackAmount: 'Feedback loop intensity — internally limited, cannot run away',
       feedbackDamping: 'Darkens the feedback tail (higher = duller repeats)',
       microDelayTime: 'Feedback loop delay time — flanger-tight to slapback',

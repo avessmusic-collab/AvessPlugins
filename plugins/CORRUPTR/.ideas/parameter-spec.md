@@ -56,6 +56,13 @@
 > **v10 defaults change (2026-09-06, user-requested):** `sequencerEnabled` and
 > `modMatrixEnabled` now default **false** (both modules off until switched on). Count
 > unchanged (110/110).
+>
+> **v11 addendum (2026-09-06, user-requested):** `filterType` gains an 8th choice —
+> **Formant** (3 parallel vowel bandpass resonators; `filterCutoff` repurposed as the
+> A-E-I-O-U vowel morph on the cutoff's perceptual curve, `filterResonance` sets formant Q;
+> `filterSlope` not applicable, like Comb). NOTE: extending a Choice list shifts the
+> normalized<->index mapping for pre-v11 saved sessions of this parameter (acceptable
+> pre-release). Count unchanged (110/110).
 
 **CRITICAL CONTRACT:** This specification is immutable during implementation. Stage 1 (Foundation/Shell) cannot proceed without this file. All subsequent stages reference these exact parameters, in this exact order.
 
