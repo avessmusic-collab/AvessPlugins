@@ -47,6 +47,23 @@ jobs:
           if ($log -match 'SUCCESS') { Write-Host 'Validation verdict: SUCCESS'; exit 0 }
           Write-Host 'Validation verdict: FAILED'; exit 1
 
+      - name: Ensure WebView2 Runtime present (makes the smoke test representative)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $keys = @(
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+            'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          )
+          $present = $false
+          foreach ($k in $keys) { if (Test-Path $k) { $v=(Get-ItemProperty $k).pv; if ($v) { Write-Host "WebView2 Runtime present: $v"; $present=$true } } }
+          if (-not $present) {
+            Write-Host "WebView2 Runtime NOT found - installing Evergreen bootstrapper..."
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "$env:TEMP\MicrosoftEdgeWebview2Setup.exe"
+            Start-Process -FilePath "$env:TEMP\MicrosoftEdgeWebview2Setup.exe" -ArgumentList "/silent","/install" -Wait
+            Write-Host "Install step done."
+          }
+
       - name: UI smoke test (launch Standalone, screenshot for review)
         shell: pwsh
         continue-on-error: true
