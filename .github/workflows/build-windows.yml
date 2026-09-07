@@ -25,6 +25,22 @@ jobs:
         shell: pwsh
         run: cmake -B build-win -A x64 -DONLY_PLUGIN=CORRUPTR "-DJUCE_WEBVIEW2_PACKAGE_LOCATION=$env:GITHUB_WORKSPACE\webview2"
 
+      - name: Verify WebView2 build config (project files, no rebuild)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $any = $false
+          Get-ChildItem build-win -Recurse -Filter *.vcxproj | ForEach-Object {
+            $c = Get-Content $_.FullName -Raw
+            $hasDef = $c -match 'JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING'
+            $hasLib = $c -match 'WebView2LoaderStatic'
+            if ($hasDef -or $hasLib) {
+              Write-Host "$($_.Name): STATIC_LINKING_DEFINE=$hasDef  STATIC_LIB=$hasLib"
+              $any = $true
+            }
+          }
+          if (-not $any) { Write-Host "!! No vcxproj references the static-linking define OR lib" }
+
       - name: Build VST3 + Standalone (Release)
         run: cmake --build build-win --config Release --target CORRUPTR_VST3 CORRUPTR_Standalone
 
