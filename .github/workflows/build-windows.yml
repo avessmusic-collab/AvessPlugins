@@ -47,6 +47,31 @@ jobs:
           if ($log -match 'SUCCESS') { Write-Host 'Validation verdict: SUCCESS'; exit 0 }
           Write-Host 'Validation verdict: FAILED'; exit 1
 
+      - name: UI smoke test (launch Standalone, screenshot for review)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe = "build-win/plugins/CORRUPTR/CORRUPTR_artefacts/Release/Standalone/CORRUPTR.exe"
+          Write-Host "Launching $exe ..."
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 12
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:GITHUB_WORKSPACE/ui-smoke.png")
+          Write-Host "Screenshot saved. App still running: $(-not $p.HasExited)"
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+
+      - name: Upload UI screenshot
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: CORRUPTR-Windows-UI-Screenshot
+          path: ui-smoke.png
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
 
