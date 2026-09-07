@@ -638,7 +638,14 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     // JUCE editor size). Total scrollable content is 1650px tall and scrolls
     // INTERNALLY within the WebView's .plugin-frame div - do NOT setSize(1200,1650).
     setSize(1200, 800);
-    setResizable(false, false);
+    // Resizable, aspect-ratio-locked to the 1200x800 design (the WebView UI
+    // scales to fit via CSS zoom - see index.html's zoomToFit). 60%..175%.
+    setResizable(true, true);
+    if (auto* c = getConstrainer())
+    {
+        c->setFixedAspectRatio(1200.0 / 800.0);
+        c->setSizeLimits(720, 480, 2100, 1400);
+    }
 
     // Phase 5.6: start the ~30Hz visualization push (meters, sequencer
     // playhead, modulation-range indicators - see this class's header doc

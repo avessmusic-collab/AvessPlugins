@@ -76,7 +76,7 @@
   .plugin-frame::-webkit-scrollbar{ width: 10px; }
   .plugin-frame::-webkit-scrollbar-track{ background: #101012; }
   .plugin-frame::-webkit-scrollbar-thumb{ background: #3a3a40; border-radius: 5px; }
-  .container{ width: 100%; min-height: 100%; }
+  .container{ width: 1200px; min-height: 100%; } /* fixed design width; scaled to the window via zoomToFit */
 
   /* ===== TOP BAR (light monochrome, consistent w/ modules below) ===== */
   .top-bar{
@@ -2858,6 +2858,23 @@
   bindPerfButtons(document);
   bindModeTiles(document);
   bindCombos(document);
+
+  // ===================================================================
+  // Resizable window support (user request): the JUCE editor is aspect-
+  // locked to 1200x800 and resizable; scale the fixed 1200px design to the
+  // current window width via CSS zoom (affects layout, so internal scroll
+  // stays correct; drag math uses rect-relative ratios so it's zoom-safe).
+  // ===================================================================
+  (function(){
+    const container = document.querySelector('.container');
+    function zoomToFit(){
+      if (!container) return;
+      const k = window.innerWidth / 1200;
+      try { container.style.zoom = k; } catch(e){ container.style.transformOrigin = 'top left'; container.style.transform = 'scale(' + k + ')'; }
+    }
+    window.addEventListener('resize', zoomToFit);
+    zoomToFit();
+  })();
 
   console.log('CORRUPTR UI initialized — 69 parameter bindings active.');
 </script>
