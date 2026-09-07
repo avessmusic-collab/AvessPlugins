@@ -691,6 +691,17 @@ std::optional<juce::WebBrowserComponent::Resource> CORRUPTRAudioProcessorEditor:
     // Strip query string (cache-buster) before matching (Pattern #24)
     const juce::String path = url.upToFirstOccurrenceOf("?", false, false);
 
+   #if JUCE_DEBUG || 1
+    // Diagnostic (Windows WebView2 bring-up): a hit here proves the WebView2
+    // backend engaged and is serving via the resource provider (the legacy
+    // IE fallback never calls this). CI cats this file after the smoke test.
+    {
+        auto logFile = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("corruptr-webview.log");
+        logFile.appendText("getResource: " + path + "\n");
+    }
+   #endif
+
     if (path == "/" || path == "/index.html")
     {
         return juce::WebBrowserComponent::Resource {

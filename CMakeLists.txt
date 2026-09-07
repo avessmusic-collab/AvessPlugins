@@ -7,6 +7,15 @@ project(JUCEPlugins VERSION 1.0.0)
 
 # Add JUCE once at root: local install when present (macOS dev machine),
 # otherwise fetch pinned JUCE 8 (CI / other machines).
+# WebView2 module flags set GLOBALLY (before JUCE is added) so juce_gui_extra's
+# OWN translation units see them - a target-scoped define on the plugin does
+# not always reach the module's compilation in the add_subdirectory model,
+# which left WebView2 disabled at runtime (legacy IE fallback on Windows).
+# Windows-only in effect; ignored on macOS.
+add_compile_definitions(
+    JUCE_USE_WIN_WEBVIEW2=1
+    JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
+
 if(EXISTS "/Applications/JUCE/CMakeLists.txt")
     add_subdirectory(/Applications/JUCE JUCE)
 else()

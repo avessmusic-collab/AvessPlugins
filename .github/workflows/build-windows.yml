@@ -81,6 +81,9 @@ jobs:
           $bmp.Save("$env:GITHUB_WORKSPACE/ui-smoke.png")
           Write-Host "Screenshot saved. App still running: $(-not $p.HasExited)"
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          $log = "$env:TEMP\corruptr-webview.log"
+          if (Test-Path $log) { Write-Host "=== resource-provider log (WebView2 engaged) ==="; Get-Content $log }
+          else { Write-Host "=== NO resource-provider log - WebView2 did NOT engage (IE fallback) ===" }
 
       - name: Upload UI screenshot
         uses: actions/upload-artifact@v4
