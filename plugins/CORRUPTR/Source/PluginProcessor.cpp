@@ -2132,17 +2132,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             }
             outputLimiter.setRelease(releaseMs);
         }
-        outputLimiter.process(context);
-        limiterCeilingPostGain.process(context); // see ceiling comment above
-
-        // v9: auto gain balancer - at the TRUE end of the chain so it
-        // cancels every upstream gain (drive, mix overdrive, and the JUCE
-        // Limiter's own hard-coded +1.875dB makeup + first-stage
-        // compressor). ATTENUATE-ONLY (gain capped at unity): it prevents
-        // the processed signal from getting LOUDER than the clean input,
-        // but never fights intentional quiet (Kill/gate ducking) and can
-        // never push the output back above the limiter ceiling. Slow
-        // (~300ms) RMS envelopes; held near-silence; allocation-free.
+        // v9 (REORDERED 2026-09-07 per user request): auto gain balancer
+        // runs BEFORE the limiter so the LIMITER IS THE LAST STAGE - every
+        // page's processing (incl. sequencer & performance modulation, all
+        // upstream) is balanced here, then limited, then exits. Measures
+        // pre-limiter wet vs dry for loudness matching. Attenuate-only
+        // (<= unity); the limiter still catches any residual peaks after.
         {
             auto* autoGainParam = parameters.getRawParameterValue("autoGain");
             const int nCh = juce::jmin(2, buffer.getNumChannels());
@@ -2170,6 +2165,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
                     buffer.getWritePointer(ch)[i] *= g;
             }
         }
+
+        outputLimiter.process(context);
+        limiterCeilingPostGain.process(context); // limiter + ceiling = the final stage everything exits through
+
+
     }
 
     // Stage 3 Phase 5.6: GUI visualization tap — output peak level, read
