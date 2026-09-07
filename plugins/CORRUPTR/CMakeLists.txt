@@ -79,5 +79,11 @@ target_compile_definitions(CORRUPTR
     PUBLIC
         JUCE_WEB_BROWSER=1
         JUCE_USE_WIN_WEBVIEW2=1 # Windows: enables the WebView2 backend (resource provider API); no effect on macOS
+        # NEEDS_WEBVIEW2 links WebView2 STATICALLY (WebView2LoaderStatic.lib),
+        # so there is no WebView2Loader.dll to LoadLibrary at runtime. This
+        # define makes JUCE call the statically-linked entry point directly;
+        # without it JUCE looks for the (absent) DLL, WebView2 fails, and it
+        # falls back to the legacy IE control ("Navigation canceled").
+        JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
         JUCE_USE_CURL=0
 )
