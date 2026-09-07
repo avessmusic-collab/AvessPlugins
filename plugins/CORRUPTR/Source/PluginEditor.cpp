@@ -156,6 +156,15 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     webView = std::make_unique<juce::WebBrowserComponent>(
         juce::WebBrowserComponent::Options{}
             .withNativeIntegrationEnabled()
+           #if JUCE_WINDOWS
+            // THE fix: JUCE only uses WebView2 when the backend is explicitly
+            // webview2 - the default backend routes to the legacy IE control,
+            // which cannot serve the resource provider and instead tries to
+            // reach https://juce.backend over the network ("Navigation to the
+            // webpage was canceled" + white screen). macOS has no webview2
+            // backend, so this is Windows-only.
+            .withBackend(juce::WebBrowserComponent::Options::Backend::webview2)
+           #endif
             .withResourceProvider([this](const auto& url) { return getResource(url); })
             .withKeepPageLoadedWhenBrowserIsHidden()
 
