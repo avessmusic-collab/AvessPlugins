@@ -8,8 +8,8 @@
   :root{
     --page-bg: #d2d2d8; /* light gray (user request) - clearly gray behind the white cards */
 
-    --unit-start: #ffffff;
-    --unit-end: #f2f2f4;
+    --unit-start: #eceef1; /* softened from pure white (user: too saturated) */
+    --unit-end: #e3e5ea;
     --unit-shadow: rgba(20,20,24,0.16);
     --unit-inset: rgba(255,255,255,0.9);
     --unit-border: rgba(0,0,0,0.06);
@@ -201,7 +201,10 @@
   }
   /* Windows/WebView2 fix: value readouts must never wrap (a 2nd line grew the
      control box mid-drag on Chromium); wraps must not grow/shrink on reflow. */
-  .knob-value, .fader-readout, .hslider-readout{ white-space: nowrap; }
+  /* fixed width so the value text changing during a drag can never reflow
+     the control column (Chromium/WebView2 recalcs on every frame; that
+     read as sliders 'getting bigger and smaller' while dragged) */
+  .knob-value, .fader-readout, .hslider-readout{ white-space: nowrap; width: 88px; text-align: center; overflow: hidden; }
   .knob-wrap, .fader-wrap, .hslider-wrap{ flex: 0 0 auto; }
   .fader.vertical, .hslider, .knob{ flex: 0 0 auto; box-sizing: border-box; }
   .fader-label{ margin-top: 8px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }

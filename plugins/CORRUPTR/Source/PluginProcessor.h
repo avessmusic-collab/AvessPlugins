@@ -116,7 +116,7 @@ private:
     //      sits upstream of Master Mix/Output Limiter, so this RMS limiter
     //      is the only safety net protecting the recirculating loop itself.
     //=========================================================================
-    static constexpr float kFeedbackMaxSafeGain = 0.40f;      // user request 2026-09-07: feedback much gentler at 100% (was 0.85). tanh(1)*0.40 ~= 0.30 per-pass loop gain
+    static constexpr float kFeedbackMaxSafeGain = 0.20f;      // user request 2026-09-07: feedback A LOT weaker at 100% (was 0.85->0.40->0.20). tanh(1)*0.20 ~= 0.15 per-pass loop gain
     static constexpr float kFeedbackDampingMinHz = 200.0f;    // feedbackDamping = 100% -> heaviest HF cut
     static constexpr float kFeedbackDampingMaxHz = 18000.0f;  // feedbackDamping = 0%   -> near-transparent
     static constexpr float kFeedbackRmsLimitThreshold = 0.95f;
