@@ -118,11 +118,14 @@
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238e8e93'/></svg>");
     background-repeat: no-repeat; background-position: right 8px center; padding-right: 22px;
   }
-  .meter{ width: 25px; height: 32px; border-radius: 3px; background: #e2e2e5; border: 1px solid var(--divider); position: relative; overflow: hidden; flex: 0 0 auto; }
-  .meter .fill{ position: absolute; left:0; right:0; bottom:0; height: 55%; background: #34c759; opacity: .9; }
-  .meter .fill.clip{ background: #ff3b30; } /* red while clipping (>= 0 dBFS, ~700ms hold) */
-  .tag-dots{ display:flex; gap: 6px; align-items:center; }
-  .tag-dots span{ width:6px; height:6px; border-radius:50%; background: var(--text-tertiary); }
+  /* thin "black water" level columns (user request): dark liquid fill with a
+     surface sheen, non-linear rise, red while clipping. */
+  .meter{ width: 9px; height: 34px; border-radius: 5px; background: #d7d7dc; position: relative; overflow: hidden; flex: 0 0 auto; }
+  .meter .fill{ position: absolute; left:0; right:0; bottom:0; height: 0%; border-radius: 4px;
+                background: linear-gradient(to top, #050506 0%, #2a2a30 100%); }
+  .meter .fill::after{ content:""; position:absolute; left:0; right:0; top:0; height:2px; border-radius:3px;
+                       background: rgba(255,255,255,0.30); } /* water surface highlight */
+  .meter .fill.clip{ background: linear-gradient(to top, #b81d14 0%, #ff5a4f 100%); }
 
   /* ===== RAISED WHITE UNIT (channel-strip hardware container) ===== */
   .strip-wrap{ padding: 30px 15px 0 15px; }
@@ -471,7 +474,6 @@
       </select>
       <div class="meter" id="input_meter_topbar"><div class="fill"></div></div>
       <div class="meter" id="output_meter_topbar"><div class="fill"></div></div>
-      <div class="tag-dots"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
     </header>
 
     <main>
@@ -2222,7 +2224,8 @@
 
     function linearPeakToPct(peak){
       const db = peak > 0.00001 ? 20 * Math.log10(peak) : METER_MIN_DB;
-      return clamp01((db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)) * 100;
+      const norm = clamp01((db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB));
+      return Math.pow(norm, 0.7) * 100; // non-linear (gamma) - watery rise, not a flat linear bar
     }
 
     function animateMeters(){
