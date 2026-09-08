@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CORRUPTR UI Mockup v3</title>
+<style>
+  :root{
+    --top-bg: #17161a;
+    --top-border: #000000;
+    --top-text: #f2f0ec;
+    --top-text-muted: #8a887f;
+    --top-accent: #ff5b3c;
+
+    --body-bg: #eae5db;
+    --divider: #c9c2b2;
+    --divider-strong: #1c1a17;
+
+    --text-label: #9b9587;
+    --text-title: #2b2823;
+    --text-subtitle: #8f8a7c;
+    --text-value: #1c1a17;
+
+    --bezel-outer: #f4f2ec;
+    --bezel-inner: #cfc9ba;
+    --screw: #3a362e;
+    --spindle: #232019;
+    --spindle-ring: #a9a290;
+
+    --d1a:#ffcf9e; --d1b:#ff6a3d; --d1c:#b7311a;
+    --d2a:#c7f0ff; --d2b:#2cc4e8; --d2c:#0b6e8f;
+    --d3a:#ffc2ec; --d3b:#ec4899; --d3c:#9c1568;
+    --d4a:#c9f7d8; --d4b:#22c55e; --d4c:#0f6b3a;
+    --d5a:#ffe4ad; --d5b:#f59e0b; --d5c:#a85706;
+    --d6a:#ecd8ff; --d6b:#a855f7; --d6c:#6420a8;
+    --d7a:#d3dcff; --d7b:#6366f1; --d7c:#33299e;
+    --d8a:#f6f6f2; --d8b:#cbc9c0; --d8c:#8f8c81;
+
+    --knob-track: #d6d0c0;
+    --knob-fill: #2b2823;
+
+    --step-inactive: #dcd6c8;
+    --step-active: #2b2823;
+    --step-playhead: #ff5b3c;
+    --matrix-cell: #d6d0c0;
+    --matrix-cell-active: #2b2823;
+    --perf-bg: #2b2823;
+    --perf-text: #f2f0ec;
+    --perf-kill:#ff5b3c; --perf-glitch:#2cc4e8; --perf-destroy:#f59e0b;
+    --perf-freeze:#6366f1; --perf-reverse:#a855f7; --perf-stutter:#ec4899; --perf-chaos:#22c55e;
+
+    --font-header: Georgia, 'Times New Roman', serif;
+    --font-cond: 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+    --font-body: 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'Courier New', monospace;
+  }
+
+  /* ===== WebView-safe foundation (Rule 1/2) ===== */
+  html, body{ height: 100%; margin: 0; padding: 0; }
+  *, *::before, *::after{ box-sizing: border-box; }
+  body{ background:#000; font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
+
+  /* ===== Native app feel (Rule 3) ===== */
+  body{
+    user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+    -webkit-touch-callout: none; cursor: default; -webkit-tap-highlight-color: transparent;
+  }
+  input[type="text"]{ user-select: text; cursor: text; }
+
+  /* ===== Test-only preview frame (Rule 10) ===== */
+  body{ display:flex; align-items:flex-start; justify-content:center; padding:40px 20px; overflow:auto; }
+  .plugin-frame{
+    width: 1200px;      /* FIXED - from v3-ui.yaml window.width */
+    height: 800px;      /* FIXED - viewport_height from v3-ui.yaml */
+    border: 2px solid #3a3a40;
+    border-radius: 6px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+    background: var(--body-bg);
+  }
+  .plugin-frame::-webkit-scrollbar{ width: 10px; }
+  .plugin-frame::-webkit-scrollbar-track{ background: #101012; }
+  .plugin-frame::-webkit-scrollbar-thumb{ background: #3a3a40; border-radius: 5px; }
+  .frame-caption{ color:#6b6e78; font-family: var(--font-mono); font-size:11px; text-align:center; margin-top:12px; letter-spacing:0.5px; }
+
+  .container{ width:100%; min-height:100%; position:relative; }
+
+  /* Warm grain overlay (subtle noise texture, matches reference's grained body) */
+  .grain{
+    position:absolute; inset:0; pointer-events:none; opacity:0.05; mix-blend-mode:multiply;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ===================================================================
+     TOP BAR - near-black, reference-literal: wordmark, pill preset
+     browser, utility pill/icon buttons, status badge, power button
+     =================================================================== */
+  .top-bar{
+    position:sticky; top:0; z-index:500; height:60px;
+    background: var(--top-bg); border-bottom:1px solid var(--top-border);
+    position:sticky; top:0;
+  }
+  .top-bar-inner{ position:relative; width:100%; height:60px; }
+  .wordmark{
+    position:absolute; left:20px; top:14px; height:32px; display:flex; align-items:center; gap:6px;
+    color: var(--top-text); font-family: var(--font-cond); font-weight:800; font-size:19px; letter-spacing:0.5px;
+  }
+  .wordmark .glyph{ color: var(--top-accent); font-size:15px; }
+
+  .pill-field{
+    position:absolute; background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.10);
+    border-radius:14px; display:flex; align-items:center; gap:8px; padding:0 12px;
+  }
+  .pill-field .chev{ color: var(--top-text-muted); font-size:10px; }
+  .pill-field input{
+    background:transparent; border:none; outline:none; color:var(--top-text); font-family:var(--font-body);
+    font-size:12px; width:100%; height:100%;
+  }
+  .pill-field input::placeholder{ color: var(--top-text-muted); }
+
+  .pill-btn{
+    position:absolute; background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.10);
+    border-radius:14px; color: var(--top-text); font-family: var(--font-body); font-size:11px; font-weight:600;
+    letter-spacing:0.5px; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .pill-btn:hover{ background: rgba(255,255,255,0.11); }
+  .pill-btn:active{ transform: translateY(1px); }
+
+  .pill-toggle{
+    position:absolute; background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.10);
+    border-radius:14px; color: var(--top-text-muted); font-family: var(--font-body); font-size:11px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .pill-toggle.on{ background: var(--top-accent); border-color:var(--top-accent); color:#1c0f0a; }
+
+  .status-badge{
+    position:absolute; background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.10);
+    border-radius:14px; display:flex; align-items:center; gap:8px; padding:0 12px;
+  }
+  .status-badge .dot{ width:7px; height:7px; border-radius:50%; background: var(--top-accent); flex-shrink:0; }
+  .status-badge select{
+    appearance:none; -webkit-appearance:none; background:transparent; border:none; outline:none;
+    color: var(--top-text); font-family: var(--font-body); font-size:11px; font-weight:700; letter-spacing:1px;
+    text-transform:uppercase; width:100%; height:100%; cursor:pointer;
+  }
+  .status-badge select option{ background: var(--top-bg); color: var(--top-text); }
+
+  .power-btn{
+    position:absolute; width:32px; height:32px; border-radius:50%;
+    background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14);
+    display:flex; align-items:center; justify-content:center; color: var(--top-text);
+  }
+  .meter-mini{
+    position:absolute; width:10px; height:32px; border-radius:3px; background: rgba(255,255,255,0.08);
+    overflow:hidden; display:flex; align-items:flex-end;
+  }
+  .meter-mini .fill{ width:100%; background: linear-gradient(180deg, var(--top-accent), #ffb199); height:35%; }
+
+  /* ===================================================================
+     DISTORTION GRAPH STRIP - compact decorative 8-node signal chain
+     =================================================================== */
+  .graph-strip{
+    height:90px; padding:0 30px; display:flex; align-items:center; gap:10px;
+    background: linear-gradient(180deg, #f1ecdf, var(--body-bg));
+    border-bottom:2px solid var(--divider-strong);
+    position:relative;
+  }
+  .graph-node{ display:flex; flex-direction:column; align-items:center; gap:5px; flex:1; min-width:0; }
+  .graph-node .dot{
+    width:26px; height:26px; border-radius:8px; background: linear-gradient(135deg,#fff,var(--bezel-inner));
+    border:1px solid rgba(0,0,0,0.15); box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  }
+  .graph-node.pitch .dot{ opacity:0.35; }
+  .graph-node .lbl{ font-size:8px; letter-spacing:1px; color: var(--text-label); font-weight:700; text-transform:uppercase; white-space:nowrap; }
+  .graph-line{ flex:0 0 18px; height:2px; background: repeating-linear-gradient(90deg, var(--divider) 0 4px, transparent 4px 8px); margin-top:-16px; }
+
+  /* ===================================================================
+     DISC GRID - 4 columns x 285px, thick dividers, absolute-positioned
+     children within each 285x520 module cell (mirrors v3-ui.yaml exactly)
+     =================================================================== */
+  .disc-grid-wrap{ padding:0 30px; }
+  .disc-row{ display:grid; grid-template-columns: repeat(4, 1fr); border-top:2px solid var(--divider-strong); }
+  .disc-row + .disc-row{ border-top:2px solid var(--divider-strong); }
+  .disc-col{ border-right:2px solid var(--divider-strong); }
+  .disc-col:last-child{ border-right:none; }
+
+  .disc-module{ position:relative; height:520px; }
+
+  .disc-meter-track, .disc-meter-deco{
+    position:absolute; left:20px; top:15px; width:245px; height:22px; margin-top:4px;
+    background: var(--bezel-inner); border-radius:11px; overflow:hidden;
+    background-image: repeating-linear-gradient(90deg, rgba(0,0,0,0.12) 0 1px, transparent 1px 13px);
+  }
+  .disc-meter-fill{ height:100%; width:35%; background: linear-gradient(90deg, #fff, #f6f4ee); border-radius:11px; }
+  .disc-meter-track{ cursor: ew-resize; }
+
+  .disc-plate{
+    position:absolute; top:57px; width:170px; height:170px; border-radius:26px;
+    background: linear-gradient(135deg, var(--bezel-outer), var(--bezel-inner));
+    box-shadow: inset 0 2px 3px rgba(255,255,255,0.7), 0 4px 10px rgba(0,0,0,0.18);
+  }
+  .disc-plate .screw{ position:absolute; width:7px; height:7px; border-radius:50%; background:var(--screw); opacity:0.5; }
+  .disc-plate .screw.tl{ top:9px; left:9px; } .disc-plate .screw.tr{ top:9px; right:9px; }
+  .disc-plate .screw.bl{ bottom:9px; left:9px; } .disc-plate .screw.br{ bottom:9px; right:9px; }
+  .disc-platter{
+    position:absolute; inset:16px; border-radius:50%;
+    box-shadow: inset 0 3px 8px rgba(0,0,0,0.25), 0 2px 6px rgba(0,0,0,0.18);
+  }
+  .disc-platter::after{
+    content:''; position:absolute; inset:0; border-radius:50%;
+    background: conic-gradient(from -50deg, rgba(255,255,255,0.4), transparent 55deg 360deg);
+    mix-blend-mode: overlay;
+  }
+  .disc-spindle{
+    position:absolute; top:50%; left:50%; width:30px; height:30px; margin:-15px;
+    border-radius:50%; background: var(--spindle); border:3px solid var(--spindle-ring);
+  }
+
+  .disc-label-row{
+    position:absolute; left:20px; top:237px; width:245px; height:16px; display:flex; justify-content:space-between;
+    font-size:9px; letter-spacing:1.2px; text-transform:uppercase; font-weight:700; color: var(--text-label);
+    border-top:1px solid rgba(0,0,0,0.08); padding-top:4px;
+  }
+  .disc-label-row .tag{ color: var(--text-title); }
+
+  .disc-title-block{ position:absolute; left:20px; top:261px; width:245px; }
+  .disc-title{ font-size:29px; color: var(--text-title); line-height:1.05; margin:0; }
+  .disc-subtitle{ font-size:9px; letter-spacing:2px; text-transform:uppercase; color: var(--text-subtitle); font-weight:600; margin-top:5px; }
+
+  .title-cond{ font-family: var(--font-cond); font-weight:800; letter-spacing:-0.5px; }
+  .title-italic{ font-family: var(--font-header); font-style:italic; font-weight:400; }
+  .title-heavy{ font-family: var(--font-cond); font-weight:900; letter-spacing:2px; text-transform:uppercase; font-size:20px; }
+  .title-serifbold{ font-family: var(--font-header); font-weight:700; }
+  .title-condital{ font-family: var(--font-cond); font-style:italic; font-weight:800; }
+  .title-wideserif{ font-family: var(--font-header); font-weight:400; letter-spacing:3px; font-size:24px; }
+
+  .disc-notch{
+    position:absolute; left:123px; top:321px; width:40px; height:6px; border-radius:3px;
+    background: var(--divider); box-shadow: inset 0 1px 1px rgba(0,0,0,0.15);
+  }
+
+  .disc-combo{
+    position:absolute; top:330px; height:28px; background: #fff; border:1px solid var(--divider);
+    border-radius:14px; display:flex; align-items:center; padding:0 12px; gap:6px;
+  }
+  .disc-combo select{
+    appearance:none; -webkit-appearance:none; background:transparent; border:none; outline:none;
+    font-family: var(--font-body); font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;
+    color: var(--text-value); width:100%; height:100%; cursor:pointer;
+  }
+  .disc-combo .chev{ font-size:8px; color: var(--text-label); flex-shrink:0; }
+
+  .disc-knob-unit{ position:absolute; top:369px; display:flex; flex-direction:column; align-items:center; }
+  .disc-knob-unit .knob-label{
+    margin-top:4px; font-size:9px; letter-spacing:1px; text-transform:uppercase; color: var(--text-subtitle); font-weight:700;
+  }
+
+  .disc-icon-toggle{
+    position:absolute; top:465px; width:28px; height:28px; border-radius:50%;
+    background: #fff; border:1px solid var(--divider); display:flex; align-items:center; justify-content:center;
+    color: var(--text-label); cursor:pointer;
+  }
+  .disc-icon-toggle.on{ background: var(--divider-strong); color:#fff; border-color: var(--divider-strong); }
+
+  /* ===================================================================
+     KNOBS - thin ring track + filled value arc + rotating pointer
+     (Rule 8/9 compliant: .knob-body rotates as a unit; track/arc fixed)
+     =================================================================== */
+  .knob{ position:relative; border-radius:50%; cursor:ns-resize; flex-shrink:0; --knob-accent: var(--knob-fill); }
+  .knob-track{ position:absolute; inset:0; border-radius:50%; border:2.5px solid var(--knob-track); background:#fdfcf8; }
+  .knob-arc{
+    position:absolute; inset:0; border-radius:50%;
+    background: conic-gradient(from -135deg, var(--knob-accent) 0deg, var(--knob-accent) var(--arc-deg,0deg), transparent var(--arc-deg,0deg) 270deg, transparent 270deg 360deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+  }
+  .knob-body{ position:absolute; inset:0; border-radius:50%; transform-origin:center center; transition: transform 40ms linear; }
+  .knob-body::before{
+    content:''; position:absolute; top:50%; left:50%; width:5px; height:5px; margin:-2.5px;
+    border-radius:50%; background: var(--knob-accent); opacity:0.85;
+  }
+  .knob-indicator{ position:absolute; top:10%; left:50%; width:2px; height:30%; background: var(--knob-accent); border-radius:1px; transform:translateX(-50%); }
+
+  /* ===================================================================
+     XY PAD SECTION
+     =================================================================== */
+  .xy-section{ padding: 30px 30px; display:flex; gap:40px; align-items:flex-start; border-top:2px solid var(--divider-strong); }
+  .xy-pad-outer{ flex:0 0 auto; }
+  .xy-pad{
+    position:relative; width:380px; height:260px; border-radius:18px;
+    background: linear-gradient(160deg, #f4f1e6, #ddd6c4);
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.15), inset 0 0 0 1px rgba(0,0,0,0.08);
+    cursor:crosshair; overflow:hidden;
+  }
+  .xy-pad::before{
+    content:''; position:absolute; inset:0;
+    background-image: linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
+    background-size: 38px 26px;
+  }
+  .xy-handle{
+    position:absolute; width:22px; height:22px; border-radius:50%; background: var(--top-accent);
+    box-shadow: 0 0 0 6px rgba(255,91,60,0.18), 0 2px 6px rgba(0,0,0,0.3);
+    margin:-11px; pointer-events:none;
+  }
+  .xy-labels{ flex:1; display:flex; flex-direction:column; justify-content:center; gap:28px; padding-top:10px; }
+  .xy-axis-label{ display:flex; align-items:baseline; gap:14px; }
+  .xy-axis-letter{ font-family: var(--font-header); font-size:52px; color: var(--text-title); line-height:1; }
+  .xy-axis-name{ font-size:12px; letter-spacing:3px; text-transform:uppercase; color: var(--text-subtitle); font-weight:700; }
+
+  /* ===================================================================
+     SEQUENCER
+     =================================================================== */
+  .seq-section{ padding: 20px 30px; border-top:2px solid var(--divider-strong); }
+  .seq-controls{ display:flex; gap:15px; margin-bottom:15px; }
+  .field-combo{
+    height:32px; background:#fff; border:1px solid var(--divider); border-radius:16px;
+    display:flex; align-items:center; padding:0 14px; gap:8px;
+  }
+  .field-combo select{
+    appearance:none; -webkit-appearance:none; background:transparent; border:none; outline:none;
+    font-family: var(--font-body); font-size:11px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase;
+    color: var(--text-value); width:100%; cursor:pointer;
+  }
+  .field-combo .chev{ font-size:8px; color: var(--text-label); }
+
+  .step-grid{ display:flex; gap:6px; height:70px; margin-bottom:15px; }
+  .step{
+    flex:1; border-radius:8px; background: var(--step-inactive); position:relative; cursor:pointer;
+    box-shadow: inset 0 1px 1px rgba(255,255,255,0.6), inset 0 -2px 3px rgba(0,0,0,0.08);
+  }
+  .step.active{ background: var(--step-active); box-shadow: inset 0 1px 1px rgba(255,255,255,0.15); }
+  .step.playhead::after{ content:''; position:absolute; inset:-3px; border-radius:10px; border:2px solid var(--step-playhead); }
+
+  .seq-buttons{ display:flex; gap:12px; }
+  .flat-btn{
+    height:32px; flex:1; background:#fff; border:1px solid var(--divider); border-radius:16px;
+    font-family: var(--font-body); font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase;
+    color: var(--text-value); cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .flat-btn:hover{ background: #f5f2e8; }
+  .flat-btn:active{ transform: translateY(1px); }
+
+  /* ===================================================================
+     MOD MATRIX
+     =================================================================== */
+  .mod-section{ padding: 20px 30px; border-top:2px solid var(--divider-strong); }
+  .lfo-row{ display:flex; gap:20px; margin-bottom:18px; }
+  .lfo-cluster{ width:270px; display:flex; align-items:flex-start; gap:20px; }
+  .lfo-cluster .lfo-controls{ display:flex; flex-direction:column; gap:10px; }
+  .lfo-cluster .field-combo{ width:150px; height:28px; }
+  .lfo-title{ font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color: var(--text-label); font-weight:700; margin-bottom:6px; }
+
+  .matrix-grid{
+    display:grid; grid-template-columns: 90px repeat(12, 1fr); gap:2px; background: var(--divider);
+    border-radius:8px; overflow:hidden; padding:2px;
+  }
+  .matrix-hdr, .matrix-row-label, .matrix-cell{
+    background:#f4f1e6; display:flex; align-items:center; justify-content:center; min-height:16px;
+  }
+  .matrix-hdr{ font-size:7px; font-weight:700; color: var(--text-label); letter-spacing:0.5px; padding:3px 1px; text-align:center; }
+  .matrix-row-label{ font-size:8px; font-weight:700; color: var(--text-subtitle); justify-content:flex-start; padding-left:6px; text-transform:uppercase; letter-spacing:0.5px; }
+  .matrix-cell{ cursor:pointer; }
+  .matrix-cell .dot{ width:6px; height:6px; border-radius:50%; background: var(--matrix-cell); }
+  .matrix-cell.on .dot{ background: var(--matrix-cell-active); }
+
+  /* ===================================================================
+     PERFORMANCE MODE
+     =================================================================== */
+  .perf-section{ padding:15px 30px; border-top:2px solid var(--divider-strong); }
+  .perf-row{ display:flex; gap:15px; }
+  .perf-pad{
+    flex:1; height:100px; border-radius:14px; background: var(--perf-bg); color: var(--perf-text);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; cursor:pointer;
+    position:relative; overflow:hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  }
+  .perf-pad .dot{ width:9px; height:9px; border-radius:50%; }
+  .perf-pad .lbl{ font-size:12px; letter-spacing:1.5px; text-transform:uppercase; font-weight:800; }
+  .perf-pad.on{ box-shadow: 0 0 0 3px var(--pad-accent) inset, 0 4px 14px rgba(0,0,0,0.35); }
+  .perf-pad.on .dot{ box-shadow: 0 0 8px 2px var(--pad-accent); }
+
+  /* ===================================================================
+     BOTTOM BAR
+     =================================================================== */
+  .bottom-bar{
+    height:38px; background: var(--top-bg); display:flex; align-items:center; justify-content:space-between;
+    padding:0 20px; color: var(--top-text-muted); font-family: var(--font-mono); font-size:10px; letter-spacing:1px;
+  }
+  .bottom-bar .brand{ color: var(--top-text); font-weight:700; letter-spacing:3px; font-family: var(--font-body); font-size:10px; }
+
+  /* ===================================================================
+     TOGGLES (A/B, sync)
+     =================================================================== */
+  .toggle{ width:44px; height:24px; border-radius:12px; background: var(--divider); position:relative; cursor:pointer; flex-shrink:0; }
+  .toggle::after{ content:''; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.3); transition: left 100ms; }
+  .toggle.on{ background: var(--text-title); }
+  .toggle.on::after{ left:23px; }
+
+  /* ===== Debug monitor (Rule 11, test HTML only) ===== */
+  .debug-monitor{
+    position:fixed; bottom:10px; right:10px; background: rgba(0,0,0,0.85); color:#0f0;
+    font-family:'Courier New', monospace; font-size:11px; padding:8px 12px; border:1px solid #333;
+    border-radius:4px; min-width:170px; pointer-events:none; z-index:10000;
+  }
+  .debug-label{ color:#666; font-size:9px; margin-bottom:4px; letter-spacing:1px; }
+  .debug-param{ font-weight:bold; color:#0f0; }
+  .debug-value{ color:#fff; margin-top:2px; }
+  .debug-normalized{ color:#888; font-size:10px; }
+</style>
+</head>
+<body>
+
+<div class="plugin-frame" id="pluginFrame">
+  <div class="container">
+    <div class="grain"></div>
+
+    <!-- ===================== TOP BAR ===================== -->
+    <div class="top-bar">
+      <div class="top-bar-inner">
+        <div class="wordmark"><span class="glyph">&#10038;</span>CORRUPTR</div>
+
+        <div class="pill-field" style="left:340px; top:16px; width:260px; height:28px;">
+          <span class="chev">&#9662;</span>
+          <input type="text" id="preset_search" placeholder="Warm Bass" />
+        </div>
+
+        <div class="pill-btn" style="left:630px; top:16px; width:60px; height:28px;" id="undo_button" data-action="undo">&#8249; UNDO</div>
+        <div class="pill-btn" style="left:700px; top:16px; width:60px; height:28px;" id="redo_button" data-action="redo">REDO &#8250;</div>
+        <div class="pill-btn" style="left:790px; top:16px; width:65px; height:28px;" id="save_button" data-action="save_preset">SAVE</div>
+        <div class="pill-btn" style="left:875px; top:16px; width:65px; height:28px;" id="random_button" data-action="randomize_all">DICE</div>
+        <div class="pill-toggle" id="ab_toggle" style="left:950px; top:16px; width:55px; height:28px;" data-param="abCompareState" data-default="false">A / B</div>
+
+        <div class="status-badge" style="left:1020px; top:16px; width:130px; height:28px;">
+          <span class="dot"></span>
+          <select id="quality_mode" data-param="qualityMode">
+            <option>ECO</option><option selected>NORMAL</option><option>HIGH</option><option>EXTREME</option><option>AUTO</option>
+          </select>
+        </div>
+
+        <div class="meter-mini" style="left:1160px; top:14px;"><div class="fill"></div></div>
+        <div class="power-btn" style="left:1160px; top:14px; opacity:0;">
+          <!-- power button rendered decorative-only; overlapping meter avoided by placing off-visible, meter takes the slot -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== DISTORTION GRAPH STRIP (decorative) ===================== -->
+    <div class="graph-strip" id="graphStrip"></div>
+
+    <!-- ===================== DISC MODULE GRID ===================== -->
+    <div class="disc-grid-wrap">
+      <div class="disc-row" id="discRow1"></div>
+      <div class="disc-row" id="discRow2"></div>
+    </div>
+
+    <!-- ===================== XY PAD SECTION ===================== -->
+    <div class="xy-section">
+      <div class="xy-pad-outer">
+        <div class="xy-pad" id="xy_pad">
+          <div class="xy-handle" id="xyHandle" style="left:0%; top:100%;"></div>
+        </div>
+      </div>
+      <div class="xy-labels">
+        <div class="xy-axis-label"><span class="xy-axis-letter">X</span><span class="xy-axis-name">Damage</span></div>
+        <div class="xy-axis-label"><span class="xy-axis-letter">Y</span><span class="xy-axis-name">Glitch</span></div>
+      </div>
+    </div>
+
+    <!-- ===================== SEQUENCER ===================== -->
+    <div class="seq-section">
+      <div class="seq-controls">
+        <div class="field-combo" style="width:150px;">
+          <select id="sequencer_rate" data-param="sequencerRate">
+            <option>1/4</option><option>1/8</option><option selected>1/16</option><option>1/32</option>
+            <option>1/4T</option><option>1/8T</option><option>1/16T</option>
+          </select><span class="chev">&#9662;</span>
+        </div>
+        <div class="field-combo" style="width:100px;">
+          <select id="sequencer_steps" data-param="sequencerSteps">
+            <option selected>16</option><option>32</option>
+          </select><span class="chev">&#9662;</span>
+        </div>
+      </div>
+      <div class="step-grid" id="stepGrid"></div>
+      <div class="seq-buttons" id="seqButtons"></div>
+    </div>
+
+    <!-- ===================== MOD MATRIX ===================== -->
+    <div class="mod-section">
+      <div class="lfo-row" id="lfoRow"></div>
+      <div class="matrix-grid" id="matrixGrid"></div>
+    </div>
+
+    <!-- ===================== PERFORMANCE MODE ===================== -->
+    <div class="perf-section">
+      <div class="perf-row" id="perfRow"></div>
+    </div>
+
+    <!-- ===================== BOTTOM BAR ===================== -->
+    <div class="bottom-bar">
+      <span>v3.0.0</span>
+      <span class="brand">CORRUPTR</span>
+      <span id="statusReadout">CPU 3.2%</span>
+    </div>
+
+  </div>
+</div>
+<div class="frame-caption">CORRUPTR v3 mockup &mdash; 1200&times;800 visible frame, scrolls to 1200&times;2240 total content</div>
+
+<div class="debug-monitor">
+  <div class="debug-label">PARAMETER MONITOR</div>
+  <div class="debug-param" id="debugParam">&mdash;</div>
+  <div class="debug-value" id="debugValue">&mdash;</div>
+  <div class="debug-normalized" id="debugNormalized">&mdash;</div>
+</div>
+
+<script>
+// =====================================================================
+// Mock JUCE backend (browser-only stand-in for window.__JUCE__ bridge)
+// =====================================================================
+const __state = {};
+function stateFor(id){ if(!__state[id]) __state[id] = { norm: 0, listeners: [] }; return __state[id]; }
+window.Juce = {
+  getSliderState(id){
+    const s = stateFor(id);
+    return {
+      getNormalisedValue(){ return s.norm; },
+      setNormalisedValue(v){ s.norm = v; s.listeners.forEach(fn => fn(v)); },
+      valueChangedEvent: { addListener(fn){ s.listeners.push(fn); console.log(`Listener added for slider ${id}`); } }
+    };
+  },
+  getToggleState(id){
+    const s = stateFor(id);
+    return {
+      getValue(){ return !!s.norm; },
+      setValue(v){ s.norm = v ? 1 : 0; s.listeners.forEach(fn => fn(v)); },
+      valueChangedEvent: { addListener(fn){ s.listeners.push(fn); console.log(`Listener added for toggle ${id}`); } }
+    };
+  },
+  getComboBoxState(id){
+    const s = stateFor(id);
+    return {
+      getChoiceIndex(){ return s.norm; },
+      setChoiceIndex(i){ s.norm = i; s.listeners.forEach(fn => fn(i)); },
+      valueChangedEvent: { addListener(fn){ s.listeners.push(fn); console.log(`Listener added for combo ${id}`); } }
+    };
+  }
+};
+
+// ===== Native app feel (Rule 3) =====
+document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+document.addEventListener("dragstart", (e) => { e.preventDefault(); });
+
+// ===== Debug monitor =====
+function updateDebugMonitor(param, value, normalized){
+  document.getElementById('debugParam').textContent = param;
+  document.getElementById('debugValue').textContent = String(value);
+  document.getElementById('debugNormalized').textContent =
+    (typeof normalized === 'number') ? `${(normalized*100).toFixed(1)}%` : String(normalized);
+}
+
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function clamp01(v){ return clamp(v,0,1); }
+function normFromValue(v,min,max){ return (v-min)/(max-min); }
+function valueFromNorm(n,min,max){ return min + n*(max-min); }
+function degFromNorm(n){ return -135 + n*270; }
+
+// =====================================================================
+// Data model - mirrors v3-ui.yaml controls exactly (same 67 ids/params)
+// =====================================================================
+const GRAPH_NODES = ["INPUT","SATURATION","WAVESHAPER","FILTER","BITCRUSH","GLITCH","PITCH","OUTPUT"];
+
+const KNOB_LAYOUT = {
+  1: [ {x:111, w:64} ],
+  2: [ {x:72, w:48}, {x:150, w:64} ],
+  3: [ {x:33, w:48}, {x:111, w:64}, {x:205, w:48} ],
+  4: [ {x:13, w:50}, {x:83, w:50}, {x:153, w:50}, {x:223, w:50} ]
+};
+const COMBO_LAYOUT = {
+  1: [ {x:20, w:245} ],
+  2: [ {x:20, w:117}, {x:148, w:117} ]
+};
+const ICON_LAYOUT = {
+  1: [ {x:129} ],
+  2: [ {x:100}, {x:158} ]
+};
+
+const DISC_MODULES = [
+  { grad:'d1', idx:'DISC 01', tag:'SATURATE', title:'Ignite', titleClass:'title-cond', subtitle:'SATURATION ENGINE',
+    meter: null,
+    combos: [ {id:'node_algorithm_select', param:'distortionAlgorithm', label:'Algorithm',
+      choices:["Saturation","Soft Clip","Hard Clip","Tube","Diode","Fuzz","Digital Distortion","Bitcrusher","Sample Rate Reducer","Wavefolder","Ring-Mod","Foldback"], def:"Saturation"} ],
+    knobs: [
+      {id:'node_fold', param:'fold', min:0, max:100, def:0, dec:0, unit:'%', label:'Fold'},
+      {id:'node_drive', param:'drive', min:0, max:40, def:6, dec:1, unit:'dB', label:'Drive'}
+    ],
+    icons: [ {id:'node_bypass_saturation', param:'graphBypassSaturation'}, {id:'node_bypass_waveshaper', param:'graphBypassWaveshaper'} ]
+  },
+  { grad:'d2', idx:'DISC 02', tag:'DIGITAL', title:'Pixelate', titleClass:'title-italic', subtitle:'BIT REDUCTION',
+    meter: null, combos: [],
+    knobs: [ {id:'node_bit_depth', param:'bitDepth', min:1, max:16, def:16, dec:0, unit:'bit', label:'Bits'} ],
+    icons: [ {id:'node_bypass_bitcrush', param:'graphBypassBitcrush'} ]
+  },
+  { grad:'d3', idx:'DISC 03', tag:'GLITCH', title:'Shatter', titleClass:'title-heavy', subtitle:'BUFFER MANGLER',
+    meter: {id:'node_glitch_probability', param:'glitchProbability', min:0, max:100, def:0, dec:0, unit:'%'},
+    combos: [
+      {id:'glitch_buffer_length', param:'glitchBufferLength', label:'Buffer', choices:["1/64","1/32","1/16","1/8","1/4","1/2","1 bar","2 bars","4 bars"], def:"1/16"},
+      {id:'glitch_mode', param:'glitchMode', label:'Mode', choices:["Off","Stutter","Repeat","Reverse","Buffer Repeat","Freeze","Slice","Random Slice","Micro Loop","Granular Repeat","Tape Stop","Tape Start","Retrigger","Silence","Noise Burst","Bitcrush Burst","Pitch Jump","Random Repeat"], def:"Off"}
+    ],
+    knobs: [ {id:'glitch_probability_detail', param:'glitchProbability', min:0, max:100, def:0, dec:0, unit:'%', label:'Probability'} ],
+    icons: [ {id:'node_bypass_glitch', param:'graphBypassGlitch'} ]
+  },
+  { grad:'d4', idx:'DISC 04', tag:'FILTER', title:'Carve', titleClass:'title-serifbold', subtitle:'SPECTRAL SHAPER',
+    meter: {id:'node_filter_cutoff', param:'filterCutoff', min:20, max:20000, def:20000, dec:0, unit:'Hz'},
+    combos: [ {id:'filter_type', param:'filterType', label:'Type', choices:["LP","HP","BP","Notch","Comb","Resonant LP","Resonant HP"], def:"LP"} ],
+    knobs: [
+      {id:'filter_resonance', param:'filterResonance', min:0, max:100, def:0, dec:0, unit:'%', label:'Resonance'},
+      {id:'filter_cutoff_detail', param:'filterCutoff', min:20, max:20000, def:20000, dec:0, unit:'Hz', label:'Cutoff'}
+    ],
+    icons: [ {id:'node_bypass_filter', param:'graphBypassFilter'} ]
+  },
+  { grad:'d5', idx:'DISC 05', tag:'REGEN', title:'Echo', titleClass:'title-condital', subtitle:'FEEDBACK LOOP',
+    meter: null, combos: [],
+    knobs: [
+      {id:'feedback_damping', param:'feedbackDamping', min:0, max:100, def:50, dec:0, unit:'%', label:'Damping'},
+      {id:'feedback_amount', param:'feedbackAmount', min:0, max:100, def:0, dec:0, unit:'%', label:'Feedback'},
+      {id:'micro_delay_time', param:'microDelayTime', min:0.1, max:50, def:10, dec:1, unit:'ms', label:'Delay'}
+    ],
+    icons: []
+  },
+  { grad:'d6', idx:'DISC 06', tag:'MACRO I', title:'Macro I', titleClass:'title-heavy', subtitle:'PERFORMANCE CONTROL',
+    meter: null, combos: [],
+    knobs: [
+      {id:'macro_damage', param:'macroDamage', min:0, max:100, def:0, dec:0, unit:'%', label:'Damage'},
+      {id:'macro_crush', param:'macroCrush', min:0, max:100, def:0, dec:0, unit:'%', label:'Crush'},
+      {id:'macro_glitch', param:'macroGlitch', min:0, max:100, def:0, dec:0, unit:'%', label:'Glitch'},
+      {id:'macro_chaos', param:'macroChaos', min:0, max:100, def:0, dec:0, unit:'%', label:'Chaos'}
+    ],
+    icons: []
+  },
+  { grad:'d7', idx:'DISC 07', tag:'MACRO II', title:'Macro II', titleClass:'title-heavy', subtitle:'PERFORMANCE CONTROL',
+    meter: null, combos: [],
+    knobs: [
+      {id:'macro_rhythm', param:'macroRhythm', min:0, max:100, def:0, dec:0, unit:'%', label:'Rhythm'},
+      {id:'macro_movement', param:'macroMovement', min:0, max:100, def:0, dec:0, unit:'%', label:'Movement'},
+      {id:'macro_width', param:'macroWidth', min:0, max:100, def:50, dec:0, unit:'%', label:'Width'},
+      {id:'macro_mix', param:'macroMix', min:0, max:200, def:100, dec:0, unit:'%', label:'Mix'}
+    ],
+    icons: []
+  },
+  { grad:'d8', idx:'DISC 08', tag:'OUTPUT', title:'Master', titleClass:'title-wideserif', subtitle:'OUTPUT STAGE',
+    meter: null,
+    combos: [ {id:'output_limiter_style', param:'outputLimiterStyle', label:'Limiter', choices:["Transparent","Colored"], def:"Transparent"} ],
+    knobs: [
+      {id:'input_gain', param:'inputGain', min:-24, max:24, def:0, dec:1, unit:'dB', label:'Input'},
+      {id:'master_mix', param:'mix', min:0, max:200, def:100, dec:0, unit:'%', label:'Mix'},
+      {id:'output_gain', param:'outputGain', min:-24, max:24, def:0, dec:1, unit:'dB', label:'Output'}
+    ],
+    icons: []
+  }
+];
+
+// =====================================================================
+// Render: distortion graph strip (decorative)
+// =====================================================================
+(function(){
+  const strip = document.getElementById('graphStrip');
+  let html = '';
+  GRAPH_NODES.forEach((n, i) => {
+    html += `<div class="graph-node${n==='PITCH'?' pitch':''}"><div class="dot"></div><div class="lbl">${n}</div></div>`;
+    if(i < GRAPH_NODES.length - 1) html += `<div class="graph-line"></div>`;
+  });
+  strip.innerHTML = html;
+})();
+
+// =====================================================================
+// Render: knob HTML fragment
+// =====================================================================
+function knobHTML(k, x, w){
+  const isHero = w >= 60;
+  return `
+    <div class="disc-knob-unit" style="left:${x}px; width:${w}px;">
+      <div class="knob" id="${k.id}" data-param="${k.param}" data-min="${k.min}" data-max="${k.max}"
+           data-default="${k.def}" data-decimals="${k.dec}" data-unit="${k.unit}"
+           style="width:${w}px; height:${w}px;">
+        <div class="knob-track"></div>
+        <div class="knob-arc"></div>
+        <div class="knob-body"><div class="knob-indicator"></div></div>
+      </div>
+      <div class="knob-label">${k.label}</div>
+    </div>`;
+}
+
+function iconHTML(ic, x){
+  return `
+    <div class="disc-icon-toggle" id="${ic.id}" data-param="${ic.param}" data-default="false" style="left:${x}px;">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+        <path d="M12 2v8"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>
+      </svg>
+    </div>`;
+}
+
+// =====================================================================
+// Render: disc module HTML
+// =====================================================================
+function discModuleHTML(m){
+  let html = `<div class="disc-col"><div class="disc-module">`;
+
+  // meter (interactive slider or decorative bar)
+  if(m.meter){
+    html += `
+      <div class="disc-meter-track" id="${m.meter.id}" data-param="${m.meter.param}" data-min="${m.meter.min}"
+           data-max="${m.meter.max}" data-default="${m.meter.def}" data-decimals="${m.meter.dec}" data-unit="${m.meter.unit}">
+        <div class="disc-meter-fill"></div>
+      </div>`;
+  } else {
+    html += `<div class="disc-meter-deco"><div class="disc-meter-fill" style="width:22%;"></div></div>`;
+  }
+
+  // bezel / disc plate
+  html += `
+    <div class="disc-plate" style="left:58px;">
+      <div class="screw tl"></div><div class="screw tr"></div><div class="screw bl"></div><div class="screw br"></div>
+      <div class="disc-platter" style="background: radial-gradient(circle at 35% 30%, var(--${m.grad}a), var(--${m.grad}b) 55%, var(--${m.grad}c) 100%);"></div>
+      <div class="disc-spindle"></div>
+    </div>`;
+
+  // label row
+  html += `<div class="disc-label-row"><span>${m.idx}</span><span class="tag">${m.tag}</span></div>`;
+
+  // title block
+  html += `<div class="disc-title-block"><div class="disc-title ${m.titleClass}">${m.title}</div><div class="disc-subtitle">${m.subtitle}</div></div>`;
+
+  // divider notch
+  html += `<div class="disc-notch"></div>`;
+
+  // mode-select row (combos)
+  if(m.combos.length){
+    const layout = COMBO_LAYOUT[m.combos.length];
+    m.combos.forEach((c, i) => {
+      const pos = layout[i];
+      let opts = c.choices.map(ch => `<option${ch===c.def?' selected':''}>${ch}</option>`).join('');
+      html += `
+        <div class="disc-combo" style="left:${pos.x}px; width:${pos.w}px;">
+          <select id="${c.id}" data-param="${c.param}">${opts}</select>
+          <span class="chev">&#9662;</span>
+        </div>`;
+    });
+  }
+
+  // knob row
+  const klayout = KNOB_LAYOUT[m.knobs.length];
+  m.knobs.forEach((k, i) => {
+    const pos = klayout[i];
+    html += knobHTML(k, pos.x, pos.w);
+  });
+
+  // icon row
+  if(m.icons.length){
+    const ilayout = ICON_LAYOUT[m.icons.length];
+    m.icons.forEach((ic, i) => { html += iconHTML(ic, ilayout[i].x); });
+  }
+
+  html += `</div></div>`;
+  return html;
+}
+
+(function(){
+  const row1 = document.getElementById('discRow1');
+  const row2 = document.getElementById('discRow2');
+  DISC_MODULES.slice(0,4).forEach(m => row1.innerHTML += discModuleHTML(m));
+  DISC_MODULES.slice(4,8).forEach(m => row2.innerHTML += discModuleHTML(m));
+})();
+
+// =====================================================================
+// Render: sequencer pattern buttons + step grid
+// =====================================================================
+(function(){
+  const buttons = [
+    {id:'seq_random', action:'randomize_pattern', label:'Random'},
+    {id:'seq_mutate', action:'mutate_pattern', label:'Mutate'},
+    {id:'seq_reverse', action:'reverse_pattern', label:'Reverse'},
+    {id:'seq_mirror', action:'mirror_pattern', label:'Mirror'},
+    {id:'seq_shift', action:'shift_pattern', label:'Shift'},
+    {id:'seq_clear', action:'clear_pattern', label:'Clear'}
+  ];
+  const wrap = document.getElementById('seqButtons');
+  buttons.forEach(b => {
+    wrap.innerHTML += `<div class="flat-btn action-btn" id="${b.id}" data-action="${b.action}">${b.label}</div>`;
+  });
+
+  const grid = document.getElementById('stepGrid');
+  const activeSteps = [0,3,4,7,8,10,12,15];
+  for(let i=0;i<16;i++){
+    const classes = ['step'];
+    if(activeSteps.includes(i)) classes.push('active');
+    if(i===2) classes.push('playhead');
+    grid.innerHTML += `<div class="${classes.join(' ')}" data-step="${i}"></div>`;
+  }
+  grid.querySelectorAll('.step').forEach(s => {
+    s.addEventListener('click', () => { s.classList.toggle('active'); });
+  });
+})();
+
+// =====================================================================
+// Render: LFO clusters + mod matrix grid
+// =====================================================================
+(function(){
+  const row = document.getElementById('lfoRow');
+  const shapes = ["Sine","Triangle","Saw","Reverse Saw","Square","S&H","Random","Smooth Random","Random Walk"];
+  for(let i=1;i<=4;i++){
+    let opts = shapes.map(s => `<option${s==='Sine'?' selected':''}>${s}</option>`).join('');
+    row.innerHTML += `
+      <div class="lfo-cluster">
+        <div class="knob" id="lfo${i}_rate" data-param="lfo${i}Rate" data-min="0.01" data-max="20" data-default="1" data-decimals="2" data-unit="Hz" style="width:60px; height:60px;">
+          <div class="knob-track"></div><div class="knob-arc"></div><div class="knob-body"><div class="knob-indicator"></div></div>
+        </div>
+        <div class="lfo-controls">
+          <div class="lfo-title">LFO ${i}</div>
+          <div class="field-combo"><select id="lfo${i}_shape" data-param="lfo${i}Shape">${opts}</select><span class="chev">&#9662;</span></div>
+          <div class="toggle" id="lfo${i}_sync" data-param="lfo${i}Sync" data-default="false" style="width:44px;height:24px;"></div>
+        </div>
+      </div>`;
+  }
+
+  const sources = ["LFO1","LFO2","LFO3","LFO4","Envelope","Audio Lvl","Sequencer","Random","MIDI CC","Macros"];
+  const dests = ["Drive","Mix","Filter","Bits","S.Rate","Fold","Feedback","Gl.Prob","Gl.Size","Pitch","Pan","Width"];
+  const grid = document.getElementById('matrixGrid');
+  let html = `<div class="matrix-hdr"></div>`;
+  dests.forEach(d => html += `<div class="matrix-hdr">${d}</div>`);
+  const seeded = new Set(['0-0','2-7','5-1','6-6']);
+  sources.forEach((s, r) => {
+    html += `<div class="matrix-row-label">${s}</div>`;
+    dests.forEach((d, c) => {
+      const on = seeded.has(`${r}-${c}`);
+      html += `<div class="matrix-cell${on?' on':''}" data-r="${r}" data-c="${c}"><div class="dot"></div></div>`;
+    });
+  });
+  grid.innerHTML = html;
+  grid.querySelectorAll('.matrix-cell').forEach(cell => {
+    cell.addEventListener('click', () => cell.classList.toggle('on'));
+  });
+})();
+
+// =====================================================================
+// Render: performance mode pads
+// =====================================================================
+(function(){
+  const pads = [
+    {id:'perf_kill', param:'performanceKill', label:'Kill', color:'var(--perf-kill)'},
+    {id:'perf_glitch', param:'performanceGlitch', label:'Glitch', color:'var(--perf-glitch)'},
+    {id:'perf_destroy', param:'performanceDestroy', label:'Destroy', color:'var(--perf-destroy)'},
+    {id:'perf_freeze', param:'performanceFreeze', label:'Freeze', color:'var(--perf-freeze)'},
+    {id:'perf_reverse', param:'performanceReverse', label:'Reverse', color:'var(--perf-reverse)'},
+    {id:'perf_stutter', param:'performanceStutter', label:'Stutter', color:'var(--perf-stutter)'},
+    {id:'perf_chaos', param:'performanceChaos', label:'Chaos', color:'var(--perf-chaos)'}
+  ];
+  const row = document.getElementById('perfRow');
+  pads.forEach(p => {
+    row.innerHTML += `
+      <div class="perf-pad" id="${p.id}" data-param="${p.param}" data-default="false" style="--pad-accent:${p.color};">
+        <div class="dot" style="background:${p.color};"></div>
+        <div class="lbl">${p.label}</div>
+      </div>`;
+  });
+})();
+
+// =====================================================================
+// Generic KNOB binding (Rule 8/9)
+// =====================================================================
+function bindKnobs(){
+  document.querySelectorAll('.knob[data-param]').forEach(knob => {
+    if(knob.dataset.bound) return;
+    knob.dataset.bound = '1';
+    const param = knob.dataset.param;
+    const min = parseFloat(knob.dataset.min);
+    const max = parseFloat(knob.dataset.max);
+    const decimals = parseInt(knob.dataset.decimals || "1");
+    const unit = knob.dataset.unit || "";
+    let value = parseFloat(knob.dataset.default);
+
+    const body = knob.querySelector('.knob-body');
+    const arc = knob.querySelector('.knob-arc');
+    const state = Juce.getSliderState(param);
+
+    function render(){
+      const n = clamp01(normFromValue(value, min, max));
+      body.style.transform = `rotate(${degFromNorm(n)}deg)`;
+      arc.style.setProperty('--arc-deg', `${n*270}deg`);
+    }
+    render();
+    state.setNormalisedValue(normFromValue(value, min, max));
+
+    let dragging = false, startY = 0, startVal = 0;
+    knob.addEventListener('mousedown', e => {
+      dragging = true; startY = e.clientY; startVal = value;
+      document.body.style.cursor = 'ns-resize'; e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => {
+      if(!dragging) return;
+      const dy = startY - e.clientY;
+      const range = max - min;
+      value = clamp(startVal + dy * (range / 200), min, max);
+      render();
+      const n = normFromValue(value, min, max);
+      state.setNormalisedValue(n);
+      updateDebugMonitor(param, `${value.toFixed(decimals)}${unit}`, n);
+    });
+    window.addEventListener('mouseup', () => { dragging = false; document.body.style.cursor = 'default'; });
+
+    state.valueChangedEvent.addListener(n => { value = valueFromNorm(n, min, max); render(); });
+  });
+}
+
+// =====================================================================
+// Generic segmented-METER-SLIDER binding (node_glitch_probability,
+// node_filter_cutoff - horizontal drag, same parameter as a paired knob)
+// =====================================================================
+function bindMeterSliders(){
+  document.querySelectorAll('.disc-meter-track[data-param]').forEach(track => {
+    if(track.dataset.bound) return;
+    track.dataset.bound = '1';
+    const param = track.dataset.param;
+    const min = parseFloat(track.dataset.min);
+    const max = parseFloat(track.dataset.max);
+    const decimals = parseInt(track.dataset.decimals || "0");
+    const unit = track.dataset.unit || "";
+    let value = parseFloat(track.dataset.default);
+    const fill = track.querySelector('.disc-meter-fill');
+    const state = Juce.getSliderState(param);
+
+    function render(){
+      const n = clamp01(normFromValue(value, min, max));
+      fill.style.width = `${n*100}%`;
+    }
+    render();
+    state.setNormalisedValue(normFromValue(value, min, max));
+
+    function setFromClientX(clientX){
+      const rect = track.getBoundingClientRect();
+      const n = clamp01((clientX - rect.left) / rect.width);
+      value = valueFromNorm(n, min, max);
+      render();
+      state.setNormalisedValue(n);
+      updateDebugMonitor(param, `${value.toFixed(decimals)}${unit}`, n);
+    }
+
+    let dragging = false;
+    track.addEventListener('mousedown', e => { dragging = true; setFromClientX(e.clientX); });
+    window.addEventListener('mousemove', e => { if(dragging) setFromClientX(e.clientX); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+
+    state.valueChangedEvent.addListener(n => { value = valueFromNorm(n, min, max); render(); });
+  });
+}
+
+// =====================================================================
+// Generic TOGGLE binding (pill toggles: A/B, sync; icon toggles: bypass)
+// =====================================================================
+function bindToggles(){
+  document.querySelectorAll('.toggle[data-param], .disc-icon-toggle[data-param], .pill-toggle[data-param]').forEach(t => {
+    if(t.dataset.bound) return;
+    t.dataset.bound = '1';
+    const param = t.dataset.param;
+    let on = t.dataset.default === "true";
+    const state = Juce.getToggleState(param);
+    function render(){ t.classList.toggle('on', on); }
+    render();
+    t.addEventListener('click', () => {
+      on = !on; render(); state.setValue(on);
+      updateDebugMonitor(param, on, on ? 1 : 0);
+    });
+    state.valueChangedEvent.addListener(v => { on = !!v; render(); });
+  });
+}
+
+// =====================================================================
+// Performance pad binding (momentary-styled toggle)
+// =====================================================================
+function bindPerfPads(){
+  document.querySelectorAll('.perf-pad[data-param]').forEach(p => {
+    if(p.dataset.bound) return;
+    p.dataset.bound = '1';
+    const param = p.dataset.param;
+    let on = p.dataset.default === "true";
+    const state = Juce.getToggleState(param);
+    function render(){ p.classList.toggle('on', on); }
+    render();
+    p.addEventListener('mousedown', () => {
+      on = !on; render(); state.setValue(on);
+      updateDebugMonitor(param, on, on ? 1 : 0);
+    });
+  });
+}
+
+// =====================================================================
+// Generic COMBO binding
+// =====================================================================
+function bindCombos(){
+  document.querySelectorAll('select[data-param]').forEach(sel => {
+    if(sel.dataset.bound) return;
+    sel.dataset.bound = '1';
+    const param = sel.dataset.param;
+    const state = Juce.getComboBoxState(param);
+    state.setChoiceIndex(sel.selectedIndex);
+    sel.addEventListener('change', () => {
+      state.setChoiceIndex(sel.selectedIndex);
+      updateDebugMonitor(param, sel.value, sel.selectedIndex / Math.max(1, sel.options.length - 1));
+    });
+  });
+}
+
+// =====================================================================
+// Generic ACTION BUTTON binding
+// =====================================================================
+function bindActionButtons(){
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    if(btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      console.log(`Action triggered: ${btn.dataset.action}`);
+      updateDebugMonitor(btn.dataset.action, 'triggered', '—');
+    });
+  });
+}
+
+document.getElementById('preset_search').addEventListener('input', (e) => {
+  console.log(`Action triggered: search_presets ("${e.target.value}")`);
+  updateDebugMonitor('search_presets', e.target.value || '(empty)', '—');
+});
+
+// =====================================================================
+// XY PAD binding (xyPadX / xyPadY, independent params, glide handled
+// upstream by DSP - this mockup just sets normalized target position)
+// =====================================================================
+(function(){
+  const pad = document.getElementById('xy_pad');
+  const handle = document.getElementById('xyHandle');
+  const xState = Juce.getSliderState('xyPadX');
+  const yState = Juce.getSliderState('xyPadY');
+  let dragging = false;
+
+  function setFromClient(clientX, clientY){
+    const rect = pad.getBoundingClientRect();
+    const nx = clamp01((clientX - rect.left) / rect.width);
+    const ny = clamp01((clientY - rect.top) / rect.height);
+    handle.style.left = `${nx*100}%`;
+    handle.style.top = `${ny*100}%`;
+    xState.setNormalisedValue(nx);
+    yState.setNormalisedValue(1 - ny);
+    updateDebugMonitor('xyPadX / xyPadY', `${(nx*100).toFixed(0)}% / ${((1-ny)*100).toFixed(0)}%`, nx);
+  }
+  pad.addEventListener('mousedown', e => { dragging = true; setFromClient(e.clientX, e.clientY); });
+  window.addEventListener('mousemove', e => { if(dragging) setFromClient(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', () => { dragging = false; });
+})();
+
+// =====================================================================
+// Bind everything (all dynamic content is now in the DOM)
+// =====================================================================
+bindKnobs();
+bindMeterSliders();
+bindToggles();
+bindPerfPads();
+bindCombos();
+bindActionButtons();
+</script>
+</body>
+</html>

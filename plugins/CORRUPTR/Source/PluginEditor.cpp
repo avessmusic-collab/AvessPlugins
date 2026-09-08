@@ -695,7 +695,17 @@ void CORRUPTRAudioProcessorEditor::paint(juce::Graphics& g)
 void CORRUPTRAudioProcessorEditor::resized()
 {
     if (webView)
+    {
         webView->setBounds(getLocalBounds());
+        // Push the fit-to-width zoom from C++: some hosts resize the plugin
+        // window without the WKWebView delivering a `resize` event to the
+        // page, so index.html's window-resize listener alone left the UI
+        // stuck at its load-time scale in the DAW. Safe pre-load: the page
+        // guards on window.__corruptrZoomToFit existing.
+        webView->evaluateJavascript(
+            "window.__corruptrZoomToFit && window.__corruptrZoomToFit("
+            + juce::String(getWidth()) + "," + juce::String(getHeight()) + ");");
+    }
 }
 
 //==============================================================================

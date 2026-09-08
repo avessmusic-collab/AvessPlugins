@@ -1,0 +1,1072 @@
+# v3 UI Design Specification
+# Generated: 2026-09-01
+# Plugin: CORRUPTR
+#
+# STRUCTURE: single continuous scrolling page (no tabs). window.height below
+# represents TOTAL SCROLLABLE CONTENT height, not the visible viewport.
+# The plugin window is fixed at viewport_height (visible area); content
+# scrolls internally beyond that. All layout-validation.md hard rules
+# (bounds containment, no overlap, minimum control sizes, minimum spacing)
+# are enforced against every element in the `controls:` list below.
+# Decorative/visual-only elements live in `special_elements:` and are not
+# subject to those hard checks (consistent with v1/v2 precedent).
+#
+# v3 CHANGE SUMMARY (user feedback: rejected v2's ELYSIUM-inspired light/airy
+# hero-panel + big-graph direction; provided a NEW reference — "FUSION 002"
+# by Prototype Audio, a warm light-gray "turntable disc module" plugin — and
+# asked to match it almost identically while packing the UI densely with
+# "as many knobs as needed" and "not a lot of empty space"):
+#
+#   - COMPLETE visual direction change. Replaced the near-black-topbar +
+#     light-gradient-hero-panel + dark-accent-card ELYSIUM language with a
+#     warm off-white/grain "disc module" language: near-black slim top bar,
+#     warm light-gray grained body, thick hairline column dividers, and 8
+#     repeating "disc modules" (segmented meter -> circular turntable bezel
+#     w/ colored platter gradient -> disc-index/mode label -> large display
+#     title + tracked subtitle -> pill divider notch -> knob row -> optional
+#     icon-button) tiling the page in a dense 4-column x 2-row grid.
+#   - The v2 "Distortion Graph" hero routing visualization is DEMOTED from a
+#     ~380px-tall hero section with interactive per-node knobs to a slim
+#     ~90px decorative signal-chain strip (8 small connected node icons, no
+#     bound controls) sitting directly above the disc-module grid. All 6
+#     interactive controls that lived on graph nodes in v2
+#     (node_algorithm_select, node_drive, node_fold, node_filter_cutoff,
+#     node_bit_depth, node_glitch_probability) and the 5 graph bypass
+#     toggles are RELOCATED (not removed, not re-bound) into their
+#     functionally-matching disc module below - this is the "module
+#     grouping/grid arrangement" change explicitly permitted by the v3
+#     brief, not a functional redesign.
+#   - node_glitch_probability and node_filter_cutoff change `type` from
+#     `knob` to `slider` (STYLING change only, same id/parameter/range/
+#     default preserved exactly) so they can render as the disc module's
+#     horizontal segmented meter/progress bar (matching the reference's
+#     "segmented meter near the top of each disc" element) while their
+#     "detail" duplicate (glitch_probability_detail / filter_cutoff_detail,
+#     already independently bound to the SAME parameter in v2 - a pattern
+#     v2 itself established as valid: "both are valid simultaneous bindings
+#     to one APVTS parameter, a common pattern in professional plugin UIs")
+#     becomes the module's actual rotary knob. This avoids two identical
+#     redundant-looking knobs sitting side by side while preserving both
+#     of v2's original 67 bindings unchanged.
+#   - The v2 XY Pad + 4 hero macro knobs (Damage/Crush/Glitch/Chaos) section
+#     is split: xy_pad keeps its own compact section (now sized to the
+#     dense grid rhythm, not an oversized hero pad); macro_damage/crush/
+#     glitch/chaos move into a dedicated disc module (Disc 06 "MACRO I").
+#     The 4 remaining macros (Rhythm/Movement/Width/Mix) that lived in v2's
+#     Performance section move into Disc 07 "MACRO II" alongside it.
+#   - The v2 dark accent cards (Glitch Engine / Filter & EQ / Feedback +
+#     Delay) become 3 of the 8 disc modules (Disc 03/04/05), keeping every
+#     one of their original controls (same ids/parameters), restyled from
+#     dark dot-header cards into light-material disc modules.
+#   - NEW disc module count = 8 (2 more disc "slots" than the reference's 3
+#     modules, filling out the full 67-control surface as instructed):
+#     Disc 01 DISTORTION, Disc 02 BITCRUSH, Disc 03 GLITCH ENGINE,
+#     Disc 04 FILTER & EQ, Disc 05 FEEDBACK + DELAY, Disc 06 MACRO I,
+#     Disc 07 MACRO II, Disc 08 OUTPUT - tiled 4 columns x 2 rows.
+#   - Rhythmic Sequencer, Modulation Matrix, and Performance Mode keep their
+#     original v1/v2 controls untouched, restyled into the same warm-grain
+#     light material with thick dividers and packed tightly edge-to-edge
+#     (pattern buttons and performance triggers now span the full content
+#     width contiguously instead of floating with large gaps).
+#   - Top bar restyled to the reference's near-black wordmark + pill preset
+#     browser + status-badge language; the extra utility chrome v2 already
+#     required (save/random/undo/redo/A-B/quality) that the reference does
+#     not show is kept in the SAME single top bar as compact dark pill/icon
+#     buttons to the right of the preset browser, rather than inventing a
+#     second strip - keeps the "almost identical" top bar height and feel.
+#   - Net result: v3's total scrollable height (2240px) is close to v2's
+#     (2220px) but density is dramatically higher - v2 spent ~750px of that
+#     height on two sparse hero sections (Distortion Graph + XY/Macros)
+#     containing only 16 controls total; v3 spends the equivalent space on
+#     8 fully-packed disc modules containing 32 controls plus a compact
+#     graph strip and right-sized XY section. No control positions were
+#     invented or removed - all 67 ids/parameters below are identical to
+#     v2-ui.yaml, only position/size/type(2 controls)/grouping changed.
+
+window:
+  width: 1200
+  height: 2240         # total scrollable content height
+  viewport_height: 800 # visible plugin frame height (JUCE setSize)
+  resizable: false
+  scrollable: true      # internal vertical scroll beyond viewport_height
+
+colors:
+  # Top bar (near-black, reference-literal)
+  topBarBackground: "#17161a"
+  topBarBorder: "#000000"
+  topBarText: "#f2f0ec"
+  topBarTextMuted: "#8a887f"
+  topBarAccent: "#ff5b3c"        # wordmark glyph accent
+
+  # Warm off-white grained body (reference-literal - NOT v2's cool blue-white)
+  bodyBackground: "#eae5db"
+  bodyGrainOverlay: "rgba(60, 50, 35, 0.035)"
+  dividerColor: "#c9c2b2"
+  dividerColorStrong: "#1c1a17"
+
+  # 3-tier text hierarchy on the light body
+  textLabel: "#9b9587"      # small tracked-caps labels ("DISC 01", "GAIN")
+  textTitle: "#2b2823"      # large display module titles
+  textSubtitle: "#8f8a7c"   # tracked-caps subtitles
+  textValue: "#1c1a17"      # near-black value readouts
+
+  # Bezel / disc hardware
+  bezelOuter: "#f4f2ec"
+  bezelInner: "#cfc9ba"
+  bezelScrewHole: "#3a362e"
+  spindleColor: "#232019"
+  spindleRing: "#a9a290"
+
+  # Per-module platter gradients (3-stop washes, this is the UI's color pop)
+  disc01DistortionStart: "#ffcf9e"
+  disc01DistortionMid: "#ff6a3d"
+  disc01DistortionEnd: "#b7311a"
+
+  disc02BitcrushStart: "#c7f0ff"
+  disc02BitcrushMid: "#2cc4e8"
+  disc02BitcrushEnd: "#0b6e8f"
+
+  disc03GlitchStart: "#ffc2ec"
+  disc03GlitchMid: "#ec4899"
+  disc03GlitchEnd: "#9c1568"
+
+  disc04FilterStart: "#c9f7d8"
+  disc04FilterMid: "#22c55e"
+  disc04FilterEnd: "#0f6b3a"
+
+  disc05FeedbackStart: "#ffe4ad"
+  disc05FeedbackMid: "#f59e0b"
+  disc05FeedbackEnd: "#a85706"
+
+  disc06MacroIStart: "#ecd8ff"
+  disc06MacroIMid: "#a855f7"
+  disc06MacroIEnd: "#6420a8"
+
+  disc07MacroIIStart: "#d3dcff"
+  disc07MacroIIMid: "#6366f1"
+  disc07MacroIIEnd: "#33299e"
+
+  disc08OutputStart: "#f6f6f2"
+  disc08OutputMid: "#cbc9c0"
+  disc08OutputEnd: "#8f8c81"
+
+  # Knob widget (thin-ring + tick pointer, on light material)
+  knobTrack: "#d6d0c0"
+  knobFill: "#2b2823"
+  knobPointer: "#1c1a17"
+
+  # Sequencer / mod matrix / performance (same warm material, dense)
+  stepInactive: "#dcd6c8"
+  stepActive: "#2b2823"
+  stepPlayhead: "#ff5b3c"
+  matrixCell: "#d6d0c0"
+  matrixCellActive: "#2b2823"
+  perfPadBackground: "#2b2823"
+  perfPadText: "#f2f0ec"
+  perfKill: "#ff5b3c"
+  perfGlitch: "#2cc4e8"
+  perfDestroy: "#f59e0b"
+  perfFreeze: "#6366f1"
+  perfReverse: "#a855f7"
+  perfStutter: "#ec4899"
+  perfChaos: "#22c55e"
+
+typography:
+  header: "Georgia, 'Times New Roman', serif"
+  headerCondensed: "'Arial Narrow', 'Helvetica Neue', Arial, sans-serif"
+  body: "'Helvetica Neue', Arial, sans-serif"
+  mono: "'Courier New', monospace"
+  size:
+    wordmark: "18px"
+    discLabel: "10px"
+    moduleTitle: "30px"
+    moduleSubtitle: "10px"
+    knobLabel: "10px"
+    badge: "10px"
+  notes:
+    - "Per-module title typographic variety (matching reference's differing chrome/street/SURGE treatments), all system-font-only (no external @font-face, WebView offline-safe): Disc01 bold condensed sans; Disc02 italic serif; Disc03 heavy tracked-out caps sans; Disc04 bold serif; Disc05 condensed italic; Disc06/07 bold tracked caps sans (consistent pair, MACRO I / MACRO II); Disc08 wide-tracked light serif."
+    - "Small labels (disc index/mode tag, knob labels, subtitles) are 10px tracked-caps in textLabel/textSubtitle color throughout, matching reference's small-caps technical language."
+
+layout:
+  type: custom
+  scroll_direction: vertical
+  sections:
+    - id: top_bar
+      y: 0
+      height: 60
+      description: "Near-black top bar: wordmark+glyph, pill preset browser (chevron/name), utility pill/icon buttons (save/random/undo/redo/A-B), status badge (quality mode), decorative power button and I/O meters"
+    - id: distortion_graph_strip
+      y: 60
+      height: 90
+      description: "DEMOTED from v2 hero section to a compact decorative 8-node signal-chain strip (INPUT->SATURATION->WAVESHAPER->FILTER->BITCRUSH->GLITCH->PITCH->OUTPUT), no bound controls - all former node controls relocated into the disc grid below"
+    - id: disc_grid_row1
+      y: 153
+      height: 520
+      description: "Disc 01 DISTORTION, Disc 02 BITCRUSH, Disc 03 GLITCH ENGINE, Disc 04 FILTER & EQ - 4 columns x 285px, thick hairline dividers between"
+    - id: disc_grid_row2
+      y: 676
+      height: 520
+      description: "Disc 05 FEEDBACK + DELAY, Disc 06 MACRO I, Disc 07 MACRO II, Disc 08 OUTPUT - same 4-column grid"
+    - id: xy_pad_section
+      y: 1206
+      height: 300
+      description: "Performance XY pad (compact, sized to dense grid rhythm) + decorative large axis-label typographic filler, same warm-grain material"
+    - id: sequencer
+      y: 1516
+      height: 200
+      description: "Rate/steps selectors, 16-step grid, 6 pattern-control buttons spanning full width edge-to-edge"
+    - id: mod_matrix
+      y: 1726
+      height: 310
+      description: "4 LFO clusters (rate knob + shape combo + sync toggle) in a row, compact source x destination matrix grid below, minimal cell padding"
+    - id: performance_mode
+      y: 2046
+      height: 130
+      description: "7 large trigger buttons packed edge-to-edge, full width"
+    - id: bottom_bar
+      y: 2186
+      height: 38
+      description: "Thin dark strip: version bottom-left, brand wordmark centered, status readout bottom-right - all decorative, no bound controls"
+
+# ---------------------------------------------------------------------------
+# CONTROLS (all 67 bindable/interactive elements - parameter-bound or UI
+# action). SAME 67 ids and parameter bindings as v2-ui.yaml. Only position,
+# size, and (for 2 controls, noted inline) `type` changed for this restyle.
+# id = snake_case control identifier (HTML element id / mockup identity)
+# parameter = camelCase APVTS parameter id (matches parameter-spec-draft.md)
+# action = non-parameter UI action (host-side / preset-browser chrome)
+# ---------------------------------------------------------------------------
+controls:
+
+  # ===== TOP BAR (y 0-60) =====
+  - id: preset_search
+    type: combo
+    label: "Search"
+    action: search_presets
+    position: { x: 340, y: 16 }
+    size: { width: 260, height: 28 }
+    note: "Preset browser search/filter field, styled as reference's chevron+name pill; not an APVTS parameter"
+
+  - id: undo_button
+    type: button
+    label: "Undo"
+    action: undo
+    position: { x: 630, y: 16 }
+    size: { width: 60, height: 28 }
+
+  - id: redo_button
+    type: button
+    label: "Redo"
+    action: redo
+    position: { x: 700, y: 16 }
+    size: { width: 60, height: 28 }
+
+  - id: save_button
+    type: button
+    label: "Save"
+    action: save_preset
+    position: { x: 790, y: 16 }
+    size: { width: 65, height: 28 }
+
+  - id: random_button
+    type: button
+    label: "Random"
+    action: randomize_all
+    position: { x: 875, y: 16 }
+    size: { width: 65, height: 28 }
+
+  - id: ab_toggle
+    type: toggle
+    label: "A/B"
+    parameter: abCompareState
+    parameter_type: bool
+    default: false
+    position: { x: 950, y: 16 }
+    size: { width: 55, height: 28 }
+    note: "UI-only A/B compare state, not host-automatable"
+
+  - id: quality_mode
+    type: combo
+    label: "Quality"
+    parameter: qualityMode
+    parameter_type: choice
+    choices: ["ECO", "NORMAL", "HIGH", "EXTREME", "AUTO"]
+    default: "NORMAL"
+    position: { x: 1020, y: 16 }
+    size: { width: 130, height: 28 }
+    note: "Styled as the reference's colored-dot status badge (e.g. dot + 'NORMAL')"
+
+  # ===== DISC 01 - DISTORTION (col1 x30-315, row1 y153-673) =====
+  # RELOCATED from v2 Distortion Graph hero nodes; drive/fold/algorithm are
+  # the distortion stage's own controls per creative-brief.md ("Common
+  # controls: Drive, Tone, Bias, Fold... Mix" for distortion algorithms).
+
+  - id: node_algorithm_select
+    type: combo
+    label: "Algorithm"
+    parameter: distortionAlgorithm
+    parameter_type: choice
+    choices: ["Saturation", "Soft Clip", "Hard Clip", "Tube", "Diode", "Fuzz", "Digital Distortion", "Bitcrusher", "Sample Rate Reducer", "Wavefolder", "Ring-Mod", "Foldback"]
+    default: "Saturation"
+    position: { x: 50, y: 483 }
+    size: { width: 245, height: 28 }
+    note: "Mode-select row of Disc 01, was a compact selector under the SATURATION graph node in v2"
+
+  - id: node_fold
+    type: knob
+    label: "Fold"
+    parameter: fold
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 102, y: 522 }
+    size: { width: 48, height: 48 }
+    note: "Disc 01 flanking knob, was WAVEFOLDER graph node overview knob in v2"
+
+  - id: node_drive
+    type: knob
+    label: "Drive"
+    parameter: drive
+    range: [0.0, 40.0]
+    unit: "dB"
+    default: 6.0
+    decimals: 1
+    position: { x: 180, y: 522 }
+    size: { width: 64, height: 64 }
+    style: hero
+    note: "Disc 01 hero center knob, was SATURATION graph node overview knob in v2"
+
+  - id: node_bypass_saturation
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassSaturation
+    parameter_type: bool
+    default: false
+    position: { x: 130, y: 618 }
+    size: { width: 28, height: 28 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  - id: node_bypass_waveshaper
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassWaveshaper
+    parameter_type: bool
+    default: false
+    position: { x: 188, y: 618 }
+    size: { width: 28, height: 28 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  # ===== DISC 02 - BITCRUSH (col2 x315-600, row1) =====
+
+  - id: node_bit_depth
+    type: knob
+    label: "Bits"
+    parameter: bitDepth
+    range: [1.0, 16.0]
+    unit: "bit"
+    default: 16.0
+    decimals: 0
+    position: { x: 426, y: 522 }
+    size: { width: 64, height: 64 }
+    style: hero
+    note: "Disc 02 sole hero knob, was BITCRUSH graph node overview knob in v2"
+
+  - id: node_bypass_bitcrush
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassBitcrush
+    parameter_type: bool
+    default: false
+    position: { x: 444, y: 618 }
+    size: { width: 28, height: 28 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  # ===== DISC 03 - GLITCH ENGINE (col3 x600-885, row1) =====
+
+  - id: node_glitch_probability
+    type: slider
+    label: "Probability"
+    parameter: glitchProbability
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 620, y: 168 }
+    size: { width: 245, height: 30 }
+    note: "TYPE CHANGED knob->slider (styling only, same parameter/range/default) to render as Disc 03's top segmented meter/progress bar per reference; was GLITCH graph node overview knob in v2"
+
+  - id: glitch_buffer_length
+    type: combo
+    label: "Buffer"
+    parameter: glitchBufferLength
+    parameter_type: choice
+    choices: ["1/64", "1/32", "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"]
+    default: "1/16"
+    position: { x: 620, y: 483 }
+    size: { width: 117, height: 28 }
+
+  - id: glitch_mode
+    type: combo
+    label: "Mode"
+    parameter: glitchMode
+    parameter_type: choice
+    choices: ["Off", "Stutter", "Repeat", "Reverse", "Buffer Repeat", "Freeze", "Slice", "Random Slice", "Micro Loop", "Granular Repeat", "Tape Stop", "Tape Start", "Retrigger", "Silence", "Noise Burst", "Bitcrush Burst", "Pitch Jump", "Random Repeat"]
+    default: "Off"
+    position: { x: 748, y: 483 }
+    size: { width: 117, height: 28 }
+
+  - id: glitch_probability_detail
+    type: knob
+    label: "Probability"
+    parameter: glitchProbability
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 711, y: 522 }
+    size: { width: 64, height: 64 }
+    style: hero
+    note: "Disc 03 hero knob - same parameter as node_glitch_probability's segmented-meter binding above (intentional dual widget, same pattern v2 established)"
+
+  - id: node_bypass_glitch
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassGlitch
+    parameter_type: bool
+    default: false
+    position: { x: 729, y: 618 }
+    size: { width: 28, height: 28 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  # ===== DISC 04 - FILTER & EQ (col4 x885-1170, row1) =====
+
+  - id: node_filter_cutoff
+    type: slider
+    label: "Cutoff"
+    parameter: filterCutoff
+    range: [20.0, 20000.0]
+    unit: "Hz"
+    default: 20000.0
+    decimals: 0
+    skew: 0.3
+    position: { x: 905, y: 168 }
+    size: { width: 245, height: 30 }
+    note: "TYPE CHANGED knob->slider (styling only, same parameter/range/default) to render as Disc 04's top segmented meter/progress bar per reference; was FILTER graph node overview knob in v2"
+
+  - id: filter_type
+    type: combo
+    label: "Type"
+    parameter: filterType
+    parameter_type: choice
+    choices: ["LP", "HP", "BP", "Notch", "Comb", "Resonant LP", "Resonant HP"]
+    default: "LP"
+    position: { x: 905, y: 483 }
+    size: { width: 245, height: 28 }
+
+  - id: filter_resonance
+    type: knob
+    label: "Resonance"
+    parameter: filterResonance
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 957, y: 522 }
+    size: { width: 48, height: 48 }
+
+  - id: filter_cutoff_detail
+    type: knob
+    label: "Cutoff"
+    parameter: filterCutoff
+    range: [20.0, 20000.0]
+    unit: "Hz"
+    default: 20000.0
+    decimals: 0
+    skew: 0.3
+    position: { x: 1035, y: 522 }
+    size: { width: 64, height: 64 }
+    style: hero
+    note: "Disc 04 hero knob - same parameter as node_filter_cutoff's segmented-meter binding above (intentional dual widget, same pattern v2 established)"
+
+  - id: node_bypass_filter
+    type: toggle
+    label: "Bypass"
+    parameter: graphBypassFilter
+    parameter_type: bool
+    default: false
+    position: { x: 1014, y: 618 }
+    size: { width: 28, height: 28 }
+    note: "NEW - module bypass not yet in parameter-spec-draft.md, reconcile in Stage 0/1"
+
+  # ===== DISC 05 - FEEDBACK + DELAY (col1 x30-315, row2 y676-1196) =====
+
+  - id: feedback_damping
+    type: knob
+    label: "Damping"
+    parameter: feedbackDamping
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    position: { x: 63, y: 1045 }
+    size: { width: 48, height: 48 }
+
+  - id: feedback_amount
+    type: knob
+    label: "Feedback"
+    parameter: feedbackAmount
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 141, y: 1045 }
+    size: { width: 64, height: 64 }
+    style: hero
+    note: "Internally soft-clamped - cannot reach true unity/runaway"
+
+  - id: micro_delay_time
+    type: knob
+    label: "Delay"
+    parameter: microDelayTime
+    range: [0.1, 50.0]
+    unit: "ms"
+    default: 10.0
+    decimals: 1
+    position: { x: 235, y: 1045 }
+    size: { width: 48, height: 48 }
+    note: "NEW - not yet in parameter-spec-draft.md (feedback-loop micro delay time), reconcile in Stage 0/1"
+
+  # ===== DISC 06 - MACRO I (col2 x315-600, row2) =====
+  # Damage/Crush/Glitch/Chaos - moved here from v2's XY-pad hero section.
+
+  - id: macro_damage
+    type: knob
+    label: "Damage"
+    parameter: macroDamage
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 328, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  - id: macro_crush
+    type: knob
+    label: "Crush"
+    parameter: macroCrush
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 398, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  - id: macro_glitch
+    type: knob
+    label: "Glitch"
+    parameter: macroGlitch
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 468, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  - id: macro_chaos
+    type: knob
+    label: "Chaos"
+    parameter: macroChaos
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 538, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  # ===== DISC 07 - MACRO II (col3 x600-885, row2) =====
+  # Rhythm/Movement/Width/Mix - moved here from v2's Performance section.
+
+  - id: macro_rhythm
+    type: knob
+    label: "Rhythm"
+    parameter: macroRhythm
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 613, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  - id: macro_movement
+    type: knob
+    label: "Movement"
+    parameter: macroMovement
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 683, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  - id: macro_width
+    type: knob
+    label: "Width"
+    parameter: macroWidth
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    position: { x: 753, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  - id: macro_mix
+    type: knob
+    label: "Mix"
+    parameter: macroMix
+    range: [0.0, 200.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 823, y: 1045 }
+    size: { width: 50, height: 50 }
+
+  # ===== DISC 08 - OUTPUT (col4 x885-1170, row2) =====
+
+  - id: output_limiter_style
+    type: combo
+    label: "Limiter"
+    parameter: outputLimiterStyle
+    parameter_type: choice
+    choices: ["Transparent", "Colored"]
+    default: "Transparent"
+    position: { x: 905, y: 1006 }
+    size: { width: 245, height: 28 }
+
+  - id: input_gain
+    type: knob
+    label: "Input"
+    parameter: inputGain
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    position: { x: 918, y: 1045 }
+    size: { width: 48, height: 48 }
+
+  - id: master_mix
+    type: knob
+    label: "Mix"
+    parameter: mix
+    range: [0.0, 200.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 996, y: 1045 }
+    size: { width: 64, height: 64 }
+    style: hero
+
+  - id: output_gain
+    type: knob
+    label: "Output"
+    parameter: outputGain
+    range: [-24.0, 24.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    position: { x: 1090, y: 1045 }
+    size: { width: 48, height: 48 }
+
+  # ===== XY PAD SECTION (y 1206-1506) =====
+
+  - id: xy_pad
+    type: xy-pad
+    label: "XY Performance Pad"
+    parameter: xyPadX_xyPadY
+    position: { x: 30, y: 1226 }
+    size: { width: 380, height: 260 }
+    note: "Binds xyPadX (horizontal, default macroDamage) and xyPadY (vertical, default macroGlitch). Glide/inertia via xyPadSmoothing (80ms default). Sized to the dense grid rhythm rather than v2's oversized hero pad."
+
+  # ===== RHYTHMIC SEQUENCER (y 1516-1716) =====
+
+  - id: sequencer_rate
+    type: combo
+    label: "Rate"
+    parameter: sequencerRate
+    parameter_type: choice
+    choices: ["1/4", "1/8", "1/16", "1/32", "1/4T", "1/8T", "1/16T"]
+    default: "1/16"
+    position: { x: 30, y: 1536 }
+    size: { width: 150, height: 32 }
+
+  - id: sequencer_steps
+    type: combo
+    label: "Steps"
+    parameter: sequencerSteps
+    parameter_type: choice
+    choices: ["16", "32"]
+    default: "16"
+    position: { x: 200, y: 1536 }
+    size: { width: 100, height: 32 }
+
+  - id: seq_random
+    type: button
+    label: "Random"
+    action: randomize_pattern
+    position: { x: 30, y: 1668 }
+    size: { width: 180, height: 32 }
+
+  - id: seq_mutate
+    type: button
+    label: "Mutate"
+    action: mutate_pattern
+    position: { x: 222, y: 1668 }
+    size: { width: 180, height: 32 }
+
+  - id: seq_reverse
+    type: button
+    label: "Reverse"
+    action: reverse_pattern
+    position: { x: 414, y: 1668 }
+    size: { width: 180, height: 32 }
+
+  - id: seq_mirror
+    type: button
+    label: "Mirror"
+    action: mirror_pattern
+    position: { x: 606, y: 1668 }
+    size: { width: 180, height: 32 }
+
+  - id: seq_shift
+    type: button
+    label: "Shift"
+    action: shift_pattern
+    position: { x: 798, y: 1668 }
+    size: { width: 180, height: 32 }
+
+  - id: seq_clear
+    type: button
+    label: "Clear"
+    action: clear_pattern
+    position: { x: 990, y: 1668 }
+    size: { width: 180, height: 32 }
+
+  # ===== MODULATION MATRIX (y 1726-2036) =====
+
+  - id: lfo1_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo1Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 30, y: 1746 }
+    size: { width: 60, height: 60 }
+  - id: lfo1_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo1Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 110, y: 1746 }
+    size: { width: 150, height: 28 }
+  - id: lfo1_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo1Sync
+    parameter_type: bool
+    default: false
+    position: { x: 110, y: 1786 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo2_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo2Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 320, y: 1746 }
+    size: { width: 60, height: 60 }
+  - id: lfo2_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo2Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 400, y: 1746 }
+    size: { width: 150, height: 28 }
+  - id: lfo2_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo2Sync
+    parameter_type: bool
+    default: false
+    position: { x: 400, y: 1786 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo3_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo3Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 610, y: 1746 }
+    size: { width: 60, height: 60 }
+  - id: lfo3_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo3Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 690, y: 1746 }
+    size: { width: 150, height: 28 }
+  - id: lfo3_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo3Sync
+    parameter_type: bool
+    default: false
+    position: { x: 690, y: 1786 }
+    size: { width: 44, height: 24 }
+
+  - id: lfo4_rate
+    type: knob
+    label: "Rate"
+    parameter: lfo4Rate
+    range: [0.01, 20.0]
+    unit: "Hz"
+    default: 1.0
+    decimals: 2
+    position: { x: 900, y: 1746 }
+    size: { width: 60, height: 60 }
+  - id: lfo4_shape
+    type: combo
+    label: "Shape"
+    parameter: lfo4Shape
+    parameter_type: choice
+    choices: ["Sine", "Triangle", "Saw", "Reverse Saw", "Square", "S&H", "Random", "Smooth Random", "Random Walk"]
+    default: "Sine"
+    position: { x: 980, y: 1746 }
+    size: { width: 150, height: 28 }
+  - id: lfo4_sync
+    type: toggle
+    label: "Sync"
+    parameter: lfo4Sync
+    parameter_type: bool
+    default: false
+    position: { x: 980, y: 1786 }
+    size: { width: 44, height: 24 }
+
+  # ===== PERFORMANCE MODE (y 2046-2176) =====
+
+  - id: perf_kill
+    type: toggle
+    label: "Kill"
+    parameter: performanceKill
+    parameter_type: bool
+    default: false
+    position: { x: 30, y: 2061 }
+    size: { width: 150, height: 100 }
+    style: performance-pad
+
+  - id: perf_glitch
+    type: toggle
+    label: "Glitch"
+    parameter: performanceGlitch
+    parameter_type: bool
+    default: false
+    position: { x: 195, y: 2061 }
+    size: { width: 150, height: 100 }
+    style: performance-pad
+
+  - id: perf_destroy
+    type: toggle
+    label: "Destroy"
+    parameter: performanceDestroy
+    parameter_type: bool
+    default: false
+    position: { x: 360, y: 2061 }
+    size: { width: 150, height: 100 }
+    style: performance-pad
+
+  - id: perf_freeze
+    type: toggle
+    label: "Freeze"
+    parameter: performanceFreeze
+    parameter_type: bool
+    default: false
+    position: { x: 525, y: 2061 }
+    size: { width: 150, height: 100 }
+    style: performance-pad
+
+  - id: perf_reverse
+    type: toggle
+    label: "Reverse"
+    parameter: performanceReverse
+    parameter_type: bool
+    default: false
+    position: { x: 690, y: 2061 }
+    size: { width: 150, height: 100 }
+    style: performance-pad
+
+  - id: perf_stutter
+    type: toggle
+    label: "Stutter"
+    parameter: performanceStutter
+    parameter_type: bool
+    default: false
+    position: { x: 855, y: 2061 }
+    size: { width: 150, height: 100 }
+    style: performance-pad
+
+  - id: perf_chaos
+    type: toggle
+    label: "Chaos"
+    parameter: performanceChaos
+    parameter_type: bool
+    default: false
+    position: { x: 1020, y: 2061 }
+    size: { width: 150, height: 100 }
+    style: performance-pad
+
+special_elements:
+  - id: top_bar_wordmark
+    type: decorative
+    layer: decorative
+    description: "'CORRUPTR' wordmark, bold, with a small inline accent glyph (matching reference's 'FUSION✳002' pattern), top-left"
+    position: { x: 20, y: 14 }
+    size: { width: 200, height: 32 }
+
+  - id: top_bar_status_badge_dot
+    type: decorative
+    layer: decorative
+    description: "Small colored dot inside quality_mode combo, mirrors reference's mode-badge dot (e.g. dot + 'NORMAL')"
+    position: { x: 1030, y: 26 }
+    size: { width: 8, height: 8 }
+
+  - id: top_bar_power_button
+    type: decorative
+    layer: decorative
+    description: "Circular power/bypass button, top-right, decorative (no bound bypass parameter exists among CORRUPTR's 67 controls)"
+    position: { x: 1160, y: 14 }
+    size: { width: 32, height: 32 }
+
+  - id: input_meter_topbar
+    type: level-meter
+    data_source: "input_level"
+    position: { x: 1160, y: 14 }
+    size: { width: 10, height: 32 }
+    range: [-60, 6]
+    orientation: vertical
+
+  - id: distortion_graph_strip
+    type: routing-graph
+    layer: decorative
+    description: "Compact 8-node signal-chain strip (INPUT/SATURATION/WAVESHAPER/FILTER/BITCRUSH/GLITCH/PITCH/OUTPUT), small connected node icons + thin connector line, minimal padding. No bound controls - decorative only, replacing v2's ~380px interactive hero graph."
+    position: { x: 30, y: 70 }
+    size: { width: 1140, height: 70 }
+
+  - id: disc_bezel_pattern
+    type: decorative
+    layer: decorative
+    description: "Repeating pattern applied to all 8 disc modules: outer light-gray bezel ring (170px diameter) with 4 dark screw-hole dots at compass positions, inner colored gradient platter (per-module color, see colors.disc0*), dark center spindle w/ thin metallic ring, subtle rotation highlight arc. Positioned centered in each 285px-wide column, ~57px below the module's meter row."
+    position: { x: 30, y: 210 }
+    size: { width: 1140, height: 940 }
+
+  - id: disc_label_pattern
+    type: decorative
+    layer: decorative
+    description: "Repeating small two-part inset label on each disc's lower bezel edge: left = disc index ('DISC 01'..'DISC 08'), right = mode/category tag ('SATURATE', 'DIGITAL', 'GLITCH', 'FILTER', 'REGEN', 'MACRO I', 'MACRO II', 'OUTPUT')"
+    position: { x: 30, y: 390 }
+    size: { width: 1140, height: 16 }
+
+  - id: disc_title_pattern
+    type: decorative
+    layer: decorative
+    description: "Repeating large display module title + small tracked-caps subtitle beneath each disc, per-module typographic treatment (see typography.notes): IGNITE/SATURATION ENGINE, PIXELATE/BIT REDUCTION, SHATTER/BUFFER MANGLER, CARVE/SPECTRAL SHAPER, ECHO/FEEDBACK LOOP, MACRO I/PERFORMANCE CONTROL, MACRO II/PERFORMANCE CONTROL, MASTER/OUTPUT STAGE"
+    position: { x: 30, y: 414 }
+    size: { width: 1140, height: 56 }
+
+  - id: disc_divider_notch_pattern
+    type: decorative
+    layer: decorative
+    description: "Small pill-shaped divider notch beneath each module's title block, above its mode-select/knob row"
+    position: { x: 30, y: 474 }
+    size: { width: 1140, height: 6 }
+
+  - id: column_dividers
+    type: decorative
+    layer: decorative
+    description: "Thick hairline vertical dividers between all 4 grid columns (x=315, x=600, x=885) and a horizontal divider between row1/row2 (y=676), matching reference's column divider language"
+    position: { x: 0, y: 153 }
+    size: { width: 1200, height: 1043 }
+
+  - id: xy_pad_axis_labels
+    type: decorative
+    layer: decorative
+    description: "Large stylized 'X · DAMAGE' / 'Y · GLITCH' axis typography filling remaining width beside the XY pad, warm-grain material matching disc modules"
+    position: { x: 450, y: 1226 }
+    size: { width: 690, height: 260 }
+
+  - id: step_grid
+    type: step-sequencer-visual
+    layer: decorative
+    description: "16 (or 32) chunky rounded per-step buttons in warm light-gray/grain material, tempo-synced playhead highlight, packed tightly (no large gaps to the rate/steps selectors above or pattern buttons below)"
+    position: { x: 30, y: 1583 }
+    size: { width: 1140, height: 70 }
+    steps: 16
+
+  - id: mod_matrix_grid
+    type: matrix-grid
+    layer: decorative
+    description: "Source rows (LFO1-4, Envelope, Audio Level, Sequencer, Random, MIDI CC, Macros) x destination columns (Drive, Mix, Filter, Bit Depth, Sample Rate, Fold, Feedback, Glitch Probability, Glitch Size, Pitch, Pan, Width) with amount dots at intersections, minimal cell padding"
+    position: { x: 30, y: 1826 }
+    size: { width: 1140, height: 190 }
+
+  - id: output_meters
+    type: level-meter
+    data_source: "input_level,output_level"
+    position: { x: 30, y: 1130 }
+    size: { width: 60, height: 60 }
+    range: [-60, 6]
+    orientation: vertical
+    note: "Compact paired I/O meters tucked into Disc 08 OUTPUT's lower area"
+
+  - id: bottom_bar_version
+    type: decorative
+    layer: decorative
+    description: "Version number, bottom-left ('v3.0.0')"
+    position: { x: 20, y: 2196 }
+    size: { width: 80, height: 18 }
+
+  - id: bottom_bar_brand
+    type: decorative
+    layer: decorative
+    description: "Small centered caps brand wordmark ('CORRUPTR')"
+    position: { x: 560, y: 2196 }
+    size: { width: 120, height: 18 }
+
+  - id: bottom_bar_status
+    type: decorative
+    layer: decorative
+    description: "Value/status readout, bottom-right (e.g. CPU or active-algorithm readout)"
+    position: { x: 1080, y: 2196 }
+    size: { width: 100, height: 18 }
+
+notes:
+  - All positions in pixels from top-left (0,0) of the total scrollable content area (window.height = 2240px), not the visible viewport (viewport_height = 800px).
+  - Parameter IDs (camelCase) match plugins/CORRUPTR/.ideas/parameter-spec-draft.md exactly where a parameter already exists there.
+  - Controls marked "NEW" in their note field are not yet in parameter-spec-draft.md and should be reconciled during Stage 0/1 planning: graphBypassSaturation, graphBypassWaveshaper, graphBypassFilter, graphBypassBitcrush, graphBypassGlitch, microDelayTime. Identical list to v2 - no new "NEW" items introduced in v3.
+  - glitchProbability and filterCutoff are each bound by TWO controls simultaneously (node_glitch_probability as a segmented-meter slider + glitch_probability_detail as a knob; node_filter_cutoff as a segmented-meter slider + filter_cutoff_detail as a knob) - unchanged from v2, just relocated from "graph overview + separate accent card" into "one disc module's meter + knob".
+  - The Distortion Graph's 8-stage node sequence is now purely decorative (special_elements.distortion_graph_strip) - no interactive controls remain on it in v3; all 6 controls that were graph-node overview controls in v2 (node_algorithm_select, node_drive, node_fold, node_bit_depth, node_glitch_probability, node_filter_cutoff) plus its 5 bypass toggles now live inside their respective disc module. This is a module-grouping/grid-arrangement change only, not a functional redesign - see header comment.
+  - Controls automatically generate parameter bindings via WebSliderRelay (knob/slider/xy-pad), WebToggleButtonRelay (toggle), WebComboBoxRelay (combo). Buttons/toggles with an "action" field (not "parameter") are UI-only and communicate via native function calls, not parameter relays.
+  - Special elements (disc bezel/label/title/divider patterns, distortion_graph_strip, step_grid, mod_matrix_grid, meters, column_dividers) are visual/data-driven and may need custom C++/OpenGL or Canvas implementation in Stage 3. They are NOT subject to the controls-list bounds/overlap/min-size validation (consistent with v1/v2 precedent).
+  - "v3 is a complete visual-direction restyle per explicit user feedback rejecting v2's ELYSIUM-inspired light-hero-panel language and providing a new reference ('FUSION 002' by Prototype Audio - warm-gray grained body, near-black top bar, circular turntable disc modules with colored platter gradients, segmented meters, thin-ring knobs) with an explicit instruction to pack the UI densely with minimal empty space. All 67 controls and their parameter bindings are identical to v2 (2 controls changed `type` from knob to slider as a pure styling change, documented above); only position, size, and module grouping changed."

@@ -2725,7 +2725,16 @@ float CORRUPTRAudioProcessor::processDistortionEngine(float xIn, int channel, fl
                 const float carrierFreq = 20.0f * std::pow(250.0f, carrierNorm); // 20Hz .. 5000Hz
                 osc.setFrequency(carrierFreq);
                 const float carrierSample = osc.processSample(0.0f);
-                y = xBiased * carrierSample;
+                // Drive doubles as modulation DEPTH here: unlike the other
+                // algorithms (whose curves are ~identity at 0 dB drive),
+                // x * carrier at full depth is maximally audible with the
+                // fader all the way down. Depth ramps over drive's first
+                // 20 dB (linear gain 1..10, log10 0..1) and saturates at 1,
+                // so the fader sweeps dry -> full ring mod and the upper
+                // half of the range keeps adding plain input gain on top.
+                const float ringDepth = juce::jlimit(0.0f, 1.0f,
+                    std::log10(juce::jmax(1.0f, driveGain)));
+                y = xBiased * (1.0f - ringDepth + ringDepth * carrierSample);
                 break;
             }
 

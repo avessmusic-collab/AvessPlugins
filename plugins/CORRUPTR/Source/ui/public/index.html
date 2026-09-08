@@ -73,10 +73,13 @@
     overflow-y: auto; overflow-x: hidden; position: relative;
     background: var(--page-bg);
   }
-  .plugin-frame::-webkit-scrollbar{ width: 10px; }
-  .plugin-frame::-webkit-scrollbar-track{ background: #101012; }
-  .plugin-frame::-webkit-scrollbar-thumb{ background: #3a3a40; border-radius: 5px; }
-  .container{ width: 1200px; min-height: 100%; } /* fixed design width; scaled to the window via zoomToFit */
+  /* Scrollbar hidden (page-tab layout: each page fits the 800px design
+     height, so a persistent gutter only ate 10px of the 1200px design width
+     — the fit-to-width zoom then pushed the unit cards' right corners
+     underneath it). Wheel/trackpad scrolling still works if a page ever
+     overflows. */
+  .plugin-frame::-webkit-scrollbar{ width: 0; height: 0; }
+  .container{ width: 1200px; min-height: 100%; margin: 0 auto; } /* fixed design width; scaled to the window via zoomToFit (fit-inside: centered when height is the limiting dimension) */
 
   /* ===== TOP BAR (light monochrome, consistent w/ modules below) ===== */
   .top-bar{
@@ -128,7 +131,15 @@
   .meter .fill.clip{ background: linear-gradient(to top, #b81d14 0%, #ff5a4f 100%); }
 
   /* ===== RAISED WHITE UNIT (channel-strip hardware container) ===== */
-  .strip-wrap{ padding: 30px 15px 0 15px; }
+  .strip-wrap{ padding: 16px 15px 0 15px; }
+  /* Height budget (measured, offscreen WKWebView at the 1200x800 design
+     viewport): topbar 64 + tabs 32 + preset strip 27 + wrap pad 16 = 139
+     unit top, + unit 646 = 785, + this 15px = exactly 800 — the Main page
+     fits the viewport with NO scroll, and the unit card's rounded bottom
+     corners get the same 15px dark page-bg margin as the sides. Don't grow
+     any of these paddings without re-measuring: at 801+ the page scrolls
+     and the bottom corners sit clipped at the window edge again. */
+  main{ padding-bottom: 15px; }
   .unit{
     display: flex; align-items: stretch;
     background: linear-gradient(180deg, var(--unit-start), var(--unit-end));
@@ -299,7 +310,7 @@
            pointer-events:none; opacity:0; transition:opacity .12s ease; }
   .ui-tip.show{ opacity:1; }
   /* Page tabs: MAIN / SEQUENCER / MATRIX / PERFORM */
-  .page-tabs{ display:flex; gap:8px; padding:8px 28px 0; }
+  .page-tabs{ display:flex; gap:8px; padding:4px 28px 0; }
   .page-tab{ border:none; border-radius:9px; padding:8px 18px; font-size:10px; font-weight:800;
              letter-spacing:1.4px; text-transform:uppercase; cursor:pointer;
              background:#e2e2e5; color:var(--text-tertiary); }
@@ -787,7 +798,7 @@
               <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
             </div>
 
-            <div style="display:flex; gap:18px; justify-content:center; margin-top:10px;">
+            <div style="display:flex; gap:18px; justify-content:center; margin-top:10px; margin-left:16px;">
               <div class="toggle-row">
                 <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
                 <span class="toggle-label">Auto</span>
@@ -2498,7 +2509,7 @@
       filterResonance: 'Resonance — emphasis at the cutoff',
       filterMorph: 'Morph position (Morph type only): sweeps Lowpass → Bandpass → Highpass → Notch',
       filterDrive: 'Analog-style saturation driven into the filter (adds grit/warmth)',
-      filterSlope: 'Filter steepness — 12 dB/oct gentle, 24 dB/oct steep (Comb/Formant unaffected)',
+      filterSlope: 'Filter steepness — 12 dB/oct gentle, 24 dB/oct steep',
       feedbackAmount: 'Feedback loop intensity — internally limited, cannot run away',
       feedbackDamping: 'Darkens the feedback tail (higher = duller repeats)',
       microDelayTime: 'Feedback loop delay time — flanger-tight to slapback',
@@ -2642,6 +2653,10 @@
       tabs.forEach(t => t.classList.toggle('active', t.dataset.page === String(n)));
       document.body.dataset.page = String(n);
       try { localStorage.setItem('corruptr-page', String(n)); } catch(e){}
+      // Pages differ in height and switching fires no resize event — re-run
+      // the self-correcting fit so no page ever scrolls (guarded: the zoom
+      // IIFE below defines this after the initial showPage call).
+      window.__corruptrZoomRefit && window.__corruptrZoomRefit();
     }
     tabs.forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
     let start = '1';
@@ -2774,7 +2789,7 @@
       // — aggressive —
       { name:'Big Fuzz Wall',  p:{ drive:20, distortionAlgorithm:5, tone:-15, filterCutoff:7500 } },
       { name:'Foldback Snarl', p:{ drive:16, fold:55, distortionAlgorithm:11, mix:90 } },
-      { name:'Ring Modulator', p:{ drive:8, fold:62, distortionAlgorithm:10, mix:75 } },
+      { name:'Ring Modulator', p:{ drive:18, fold:62, distortionAlgorithm:10, mix:75 } },
       { name:'Total Damage',   p:{ macroDamage:30, macroCrush:15, drive:8, distortionAlgorithm:5, tone:-10, mix:85 } },
       // — lo-fi —
       { name:'8-Bit Arcade',   p:{ bitDepth:5, sampleRateReduction:8, bitcrushMode:0, distortionAlgorithm:6, drive:6 } },
@@ -2791,15 +2806,15 @@
       // — feedback —
       { name:'Metal Tank',     p:{ feedbackAmount:48, microDelayTime:2, feedbackDamping:45, drive:8 } },
       { name:'Dying Echo',     p:{ feedbackAmount:55, microDelayTime:38, feedbackDamping:75, mix:85 } },
-      { name:'The Screamer',   p:{ feedbackAmount:20, microDelayTime:1.2, feedbackDamping:28, filterType:5, filterCutoff:2400, filterResonance:45 } },
+      { name:'The Screamer',   p:{ feedbackAmount:20, microDelayTime:1.2, feedbackDamping:28, filterType:0, filterCutoff:2400, filterResonance:45 } },
       // — filter & motion —
-      { name:'Talk Box',       p:{ filterType:7, filterCutoff:900, filterResonance:70, drive:12, distortionAlgorithm:3 } },
-      { name:'Acid Bath',      p:{ filterType:5, filterCutoff:1200, filterResonance:75, filterSlope:1, drive:14, distortionAlgorithm:0 } },
-      { name:'Auto Wah',       p:{ filterType:5, filterResonance:65, modMatrixEnabled:true, modSlot1Source:4, modSlot1Destination:2, modSlot1Amount:70, modSlot1Enable:true } },
+      { name:'Talk Box',       p:{ filterType:2, filterCutoff:900, filterResonance:70, drive:12, distortionAlgorithm:3 } },
+      { name:'Acid Bath',      p:{ filterType:0, filterCutoff:1200, filterResonance:75, filterSlope:1, drive:14, distortionAlgorithm:0 } },
+      { name:'Auto Wah',       p:{ filterType:0, filterResonance:65, modMatrixEnabled:true, modSlot1Source:4, modSlot1Destination:2, modSlot1Amount:70, modSlot1Enable:true } },
       { name:'Wobble Machine', p:{ filterType:0, filterCutoff:2500, filterResonance:55, modMatrixEnabled:true, lfo1Rate:2.2, lfo1Shape:0, modSlot1Source:0, modSlot1Destination:2, modSlot1Amount:80, modSlot1Enable:true } },
-      { name:'Vowel Movement', p:{ filterType:7, filterResonance:80, modMatrixEnabled:true, lfo1Rate:0.4, lfo1Shape:7, modSlot1Source:0, modSlot1Destination:2, modSlot1Amount:90, modSlot1Enable:true, drive:8 } },
+      { name:'Vowel Movement', p:{ filterType:2, filterResonance:80, modMatrixEnabled:true, lfo1Rate:0.4, lfo1Shape:7, modSlot1Source:0, modSlot1Destination:2, modSlot1Amount:90, modSlot1Enable:true, drive:8 } },
       // — rhythmic (write real sequencer patterns via the native bridge) —
-      { name:'Gate Chopper',   p:{ sequencerEnabled:true, sequencerRate:2, sequencerSteps:0, sequencerDepth:100, filterType:5, filterCutoff:4200, filterResonance:30, drive:6, distortionAlgorithm:3 },
+      { name:'Gate Chopper',   p:{ sequencerEnabled:true, sequencerRate:2, sequencerSteps:0, sequencerDepth:100, filterType:0, filterCutoff:4200, filterResonance:30, drive:6, distortionAlgorithm:3 },
         seq:{ 9:[1,0,1,0, 1,0,1,1, 0,1,0,1, 1,1,0,0] } },
       { name:'Pump It',        p:{ sequencerEnabled:true, sequencerRate:2, sequencerSteps:0, sequencerDepth:100, drive:8, distortionAlgorithm:0, mix:100 },
         seq:{ 6:[-1,-0.55,-0.2,0, -1,-0.55,-0.2,0, -1,-0.55,-0.2,0, -1,-0.55,-0.2,0] } },
@@ -2871,14 +2886,51 @@
   // locked to 1200x800 and resizable; scale the fixed 1200px design to the
   // current window width via CSS zoom (affects layout, so internal scroll
   // stays correct; drag math uses rect-relative ratios so it's zoom-safe).
+  //
+  // The zoom is applied to BODY, not .container: the sticky .top-bar lives
+  // inside the zoomed subtree while its scroll container (.plugin-frame)
+  // would sit outside it, and WebKit resolves sticky offsets in the OUTER
+  // coordinate space — at zoom < 1 the bar overlapped and hid the page
+  // tabs + preset strip below it. Zooming body keeps the scroll container
+  // and the sticky element in one coordinate space (window.innerWidth is
+  // reported unzoomed, so the k computation stays stable).
   // ===================================================================
   (function(){
     const container = document.querySelector('.container');
-    function zoomToFit(){
-      if (!container) return;
-      const k = window.innerWidth / 1200;
-      try { container.style.zoom = k; } catch(e){ container.style.transformOrigin = 'top left'; container.style.transform = 'scale(' + k + ')'; }
+    function applyZoom(widthPx, heightPx){
+      // Fit INSIDE the window on both axes (design viewport 1200x800): the
+      // window is aspect-locked 3:2, but any host/runtime chrome that eats
+      // height (the standalone's muted-audio banner, for one) makes the
+      // usable height < width/1.5 — width-only fitting then overflows
+      // vertically and the page scrolls, hiding the bottom of the UI.
+      // min() shrinks the whole page proportionally instead; .container
+      // centers in any horizontal letterbox (page-bg fills it).
+      let k = Math.min(widthPx / 1200, (heightPx > 0 ? heightPx : widthPx / 1.5) / 800);
+      if (!(k > 0)) return;
+      const set = z => { try { document.body.style.zoom = z; }
+        catch(e){ if (container){ container.style.transformOrigin = 'top left'; container.style.transform = 'scale(' + z + ')'; } } };
+      set(k);
+      // Self-correcting pass: the page's true rendered height can exceed the
+      // nominal 800 design px (runtime-only content/metrics — measured 819px
+      // live vs 800 in an offscreen harness), which leaves a scroll that
+      // hides the bottom of the UI. Content height in design px is
+      // zoom-invariant, so one measured shrink makes it fit exactly.
+      const frame = document.querySelector('.plugin-frame');
+      // Iterated: zoomed-px metrics are integers, so one pass can undershoot
+      // by a few px at fractional zooms; converges in 2-3 passes.
+      for (let i = 0; frame && i < 4 && frame.scrollHeight > frame.clientHeight; i++)
+      {
+        k *= frame.clientHeight / frame.scrollHeight;
+        set(k);
+      }
     }
+    function zoomToFit(){ applyZoom(window.innerWidth, window.innerHeight); }
+    // Pushed by PluginEditor::resized() with the editor's actual width —
+    // some hosts resize the plugin window without the WebView ever firing
+    // a `resize` event, so the C++ side drives the zoom authoritatively;
+    // the window listener stays as a fallback (standalone, live-drag).
+    window.__corruptrZoomToFit = applyZoom;
+    window.__corruptrZoomRefit = zoomToFit; // page switches re-fit through this
     window.addEventListener('resize', zoomToFit);
     zoomToFit();
   })();

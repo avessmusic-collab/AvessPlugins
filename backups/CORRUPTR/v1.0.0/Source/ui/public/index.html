@@ -1,0 +1,2889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CORRUPTR</title>
+<style>
+  :root{
+    --page-bg: #d2d2d8; /* light gray (user request) - clearly gray behind the white cards */
+
+    --unit-start: #eceef1; /* softened from pure white (user: too saturated) */
+    --unit-end: #e3e5ea;
+    --unit-shadow: rgba(20,20,24,0.16);
+    --unit-inset: rgba(255,255,255,0.9);
+    --unit-border: rgba(0,0,0,0.06);
+    --divider: rgba(0,0,0,0.08);
+
+    --tile-bg: #151517;
+    --tile-glow: rgba(255,255,255,0.14);
+    --tile-icon: #ffffff;
+    --tile-label: #ffffff;
+    --tile-dot-on: #ffffff;
+    --tile-dot-off: #55555a;
+    --tile-chevron: #8e8e93;
+
+    --text-primary: #1c1c1e;
+    --text-secondary: #8e8e93;
+    --text-tertiary: #c7c7cc;
+    --pill-bg: #ececee;
+    --pill-text: #1c1c1e;
+
+    --knob-track: rgba(0,0,0,0.14);
+    --knob-fill: #1c1c1e;
+    --fader-track: rgba(0,0,0,0.12);
+    --fader-tick: rgba(0,0,0,0.20);
+    --fader-thumb: #1c1c1e;
+    --toggle-off: #d1d1d6;
+    --toggle-on: #1c1c1e;
+    --adv-off: #e2e2e5;
+    --adv-on: #1c1c1e;
+
+    --accent-line: #3a6df0;
+    --graph-bg: #f7f7f8;
+    --graph-grid: rgba(0,0,0,0.08);
+    --graph-axis: #a1a1a6;
+
+    --perf-off: #f2f2f4;
+    --perf-on: #1c1c1e;
+    --perf-text-off: #1c1c1e;
+    --perf-text-on: #ffffff;
+
+    --font-body: 'Inter', -apple-system, 'Segoe UI', BlinkMacSystemFont, sans-serif;
+    --font-mono: 'SF Mono', 'JetBrains Mono', 'Courier New', monospace;
+  }
+
+  /* ===== WebView-safe foundation (Rule 1/2) ===== */
+  html, body{ height: 100%; margin: 0; padding: 0; }
+  *, *::before, *::after{ box-sizing: border-box; }
+  body{ background: #000; font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
+
+  /* ===== Native app feel (Rule 3) ===== */
+  body{
+    user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+    -webkit-touch-callout: none; cursor: default; -webkit-tap-highlight-color: transparent;
+  }
+  input[type="text"]{ user-select: text; cursor: text; }
+
+  /* ===== Plugin frame (production - fills the JUCE WebView editor viewport;
+     window is fixed at 1200x800 via setSize(), content scrolls internally
+     for the full ~1650px of scrollable content, per v5-ui.yaml) ===== */
+  .plugin-frame{
+    width: 100%; height: 100%;
+    overflow-y: auto; overflow-x: hidden; position: relative;
+    background: var(--page-bg);
+  }
+  .plugin-frame::-webkit-scrollbar{ width: 10px; }
+  .plugin-frame::-webkit-scrollbar-track{ background: #101012; }
+  .plugin-frame::-webkit-scrollbar-thumb{ background: #3a3a40; border-radius: 5px; }
+  .container{ width: 1200px; min-height: 100%; } /* fixed design width; scaled to the window via zoomToFit */
+
+  /* ===== TOP BAR (light monochrome, consistent w/ modules below) ===== */
+  .top-bar{
+    position: sticky; top: 0; z-index: 500; height: 64px;
+    background: linear-gradient(180deg, #fbfbfc, #f0f0f2);
+    border-bottom: 1px solid var(--divider);
+    display: flex; align-items: center; padding: 0 20px; gap: 12px;
+  }
+  .wordmark{ font-size: 15px; font-weight: 800; letter-spacing: 3px; color: var(--text-primary); margin: 0 8px; white-space: nowrap; }
+  .search-field{
+    width: 200px; height: 32px; background: #fff; border: 1px solid var(--divider); border-radius: 8px;
+    display: flex; align-items: center; gap: 8px; padding: 0 10px; flex: 0 0 auto;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .search-field svg{ opacity: .45; flex-shrink: 0; }
+  .search-field input{
+    background: transparent; border: none; outline: none; color: var(--text-primary);
+    font-family: var(--font-body); font-size: 11px; letter-spacing: 0.6px; width: 100%;
+  }
+  .search-field input::placeholder{ color: var(--text-tertiary); }
+  .spacer{ flex: 1 1 auto; }
+  .btn{
+    height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--divider);
+    background: linear-gradient(180deg,#ffffff,#f2f2f4); color: var(--text-primary);
+    font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.06); flex: 0 0 auto;
+  }
+  .btn:active{ transform: translateY(1px); box-shadow: none; }
+  .ab-toggle{
+    height: 32px; width: 60px; border-radius: 8px; border: 1px solid var(--divider);
+    background: #fff; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: 1px;
+    cursor: pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .ab-toggle.on{ background: var(--text-primary); color: #fff; }
+  select.combo, select.combo-sm{
+    height: 32px; border-radius: 8px; border: 1px solid var(--divider); background: #fff;
+    color: var(--text-primary); font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+    padding: 0 8px; cursor: pointer; appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%238e8e93'/></svg>");
+    background-repeat: no-repeat; background-position: right 8px center; padding-right: 22px;
+  }
+  /* thin "black water" level columns (user request): dark liquid fill with a
+     surface sheen, non-linear rise, red while clipping. */
+  .meter{ width: 9px; height: 34px; border-radius: 5px; background: #d7d7dc; position: relative; overflow: hidden; flex: 0 0 auto; }
+  .meter .fill{ position: absolute; left:0; right:0; bottom:0; height: 0%; border-radius: 4px;
+                background: linear-gradient(to top, #050506 0%, #2a2a30 100%); }
+  .meter .fill::after{ content:""; position:absolute; left:0; right:0; top:0; height:2px; border-radius:3px;
+                       background: rgba(255,255,255,0.30); } /* water surface highlight */
+  .meter .fill.clip{ background: linear-gradient(to top, #b81d14 0%, #ff5a4f 100%); }
+
+  /* ===== RAISED WHITE UNIT (channel-strip hardware container) ===== */
+  .strip-wrap{ padding: 30px 15px 0 15px; }
+  .unit{
+    display: flex; align-items: stretch;
+    background: linear-gradient(180deg, var(--unit-start), var(--unit-end));
+    border-radius: 22px; border: 1px solid var(--unit-border);
+    box-shadow: 0 24px 50px var(--unit-shadow), inset 0 1px 0 var(--unit-inset);
+    padding: 0 15px;
+  }
+  .module{ display:flex; flex-direction:column; align-items:center; padding: 20px 6px; position: relative; }
+  .module + .module{ border-left: 1px solid var(--divider); }
+
+  /* icon-button row */
+  .icon-row{ display:flex; align-items:center; justify-content:center; gap: 14px; width:100%; height:24px; }
+  .icon-btn{
+    width: 24px; height: 24px; border-radius: 50%; border: none; background: transparent;
+    color: var(--text-secondary); display:flex; align-items:center; justify-content:center; cursor: default; padding:0;
+  }
+  .icon-btn.power-btn{ cursor: pointer; color: var(--text-primary); }
+  .icon-btn.power-btn.on{ color: var(--text-primary); }
+  .icon-btn.power-btn:not(.on){ color: var(--text-tertiary); }
+  /* Power-glyph spans with no bound bypass parameter (Center Master, Feedback,
+     Macros, Performance cards) are hidden: the locked spec defines no bypass
+     for those modules, and a dead-looking power button reads as broken. */
+  .icon-btn.decorative-power{ display:none; }
+  .icon-btn svg{ width: 16px; height: 16px; }
+
+  /* mode tile */
+  .mode-tile-wrap{ display:flex; align-items:center; gap: 2px; margin-top: 14px; width: 100%; justify-content:center; }
+  .chevron{
+    background:none; border:none; color: var(--tile-chevron); font-size: 16px; line-height:1; padding: 0 2px;
+    cursor: pointer; flex: 0 0 auto; user-select:none;
+  }
+  .chevron:hover{ color: var(--text-primary); }
+  .mode-tile{
+    position: relative; border-radius: 14px; background: var(--tile-bg);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden;
+  }
+  .tile-glow{ position:absolute; top: 14px; left:50%; transform:translateX(-50%); width: 60px; height: 60px; border-radius:50%;
+    background: radial-gradient(circle, var(--tile-glow), transparent 70%); }
+  .tile-icon{ width: 30px; height: 30px; margin-top: 12px; z-index:1; opacity:.95; }
+  .tile-label{ z-index:1; margin-top: 8px; font-size: 10px; font-weight: 800; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--tile-label); text-align:center; padding: 0 8px; }
+  .tile-dots{ z-index:1; display:flex; gap: 2px; margin-top: 6px; margin-bottom: 10px; flex-wrap: nowrap; justify-content:center; padding: 0 8px; max-width: 92%; overflow: hidden; }
+  .tile-dots span{ width: 4px; height: 4px; border-radius: 50%; background: var(--tile-dot-off); }
+  .tile-dots span.active{ background: var(--tile-dot-on); }
+  .mode-tile.static .tile-label{ opacity: .9; }
+
+  /* knob (thin-ring, single-dot pointer) */
+  .knob-wrap{ display:flex; flex-direction:column; align-items:center; margin-top: 16px; }
+  .knob{ position:relative; }
+  .knob-track{ position:absolute; inset:0; border-radius:50%; border: 2px solid var(--knob-track); background: #fff; box-shadow: inset 0 1px 2px rgba(0,0,0,0.04); }
+  .knob-body{ position:absolute; inset:0; border-radius:50%; transform-origin:center center; cursor: ns-resize; }
+  .knob-dot{ position:absolute; top: 5px; left:50%; width: 6px; height:6px; margin-left:-3px; border-radius:50%; background: var(--knob-fill); }
+  .knob.hero .knob-track{ box-shadow: 0 10px 22px rgba(0,0,0,0.16), inset 0 1px 2px rgba(0,0,0,0.05); border-width: 2px; }
+  .knob.hero .knob-dot{ width: 9px; height:9px; margin-left:-4.5px; top: 10px; }
+  .knob-value{ margin-top: 6px; font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); }
+  .knob-label{ margin-top: 2px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
+
+  /* fader (dashed-tick) */
+  .fader-wrap{ display:flex; flex-direction:column; align-items:center; margin-top: 16px; }
+  .fader-readout{
+    font-family: var(--font-mono); font-size: 9px; color: var(--pill-text); background: var(--pill-bg);
+    border-radius: 5px; padding: 2px 6px; margin-bottom: 8px; white-space:nowrap;
+  }
+  .fader.vertical{ position: relative; cursor: ns-resize; }
+  .fader.vertical .fader-track{
+    position:absolute; left:50%; top:0; bottom:0; width:2px; margin-left:-1px;
+    background-image: repeating-linear-gradient(to bottom, var(--fader-tick) 0 1.5px, transparent 1.5px 9px);
+  }
+  .fader.vertical .fader-thumb{
+    position:absolute; left:50%; width: 26px; height: 10px; margin-left:-13px; border-radius: 3px;
+    background: var(--fader-thumb); box-shadow: 0 2px 3px rgba(0,0,0,0.3);
+  }
+  /* Windows/WebView2 fix: value readouts must never wrap (a 2nd line grew the
+     control box mid-drag on Chromium); wraps must not grow/shrink on reflow. */
+  /* fixed width so the value text changing during a drag can never reflow
+     the control column (Chromium/WebView2 recalcs on every frame; that
+     read as sliders 'getting bigger and smaller' while dragged) */
+  .knob-value, .fader-readout, .hslider-readout{ white-space: nowrap; width: 50px; text-align: center; overflow: hidden; }
+  .knob-wrap, .fader-wrap, .hslider-wrap{ flex: 0 0 auto; }
+  .fader.vertical, .hslider, .knob{ flex: 0 0 auto; box-sizing: border-box; }
+  .fader-label{ margin-top: 8px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
+
+  /* horizontal dashed slider */
+  .hslider-wrap{ display:flex; flex-direction:column; align-items:center; margin-top: 16px; }
+  .hslider-readout{ font-family: var(--font-mono); font-size: 10px; color: var(--text-primary); margin-bottom: 6px; }
+  .hslider{ position: relative; cursor: ew-resize; }
+  .hslider .hslider-track{
+    position:absolute; top:50%; left:0; right:0; height:2px; margin-top:-1px;
+    background-image: repeating-linear-gradient(to right, var(--fader-tick) 0 1.5px, transparent 1.5px 9px);
+  }
+  .hslider .hslider-thumb{
+    position:absolute; top:50%; width: 10px; height: 22px; margin-top:-11px; border-radius: 3px;
+    background: var(--fader-thumb); box-shadow: 0 2px 3px rgba(0,0,0,0.3);
+  }
+  .hslider-label{ margin-top: 8px; font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
+
+  /* small pill toggle switches */
+  .toggle-row{ display:flex; align-items:center; gap: 8px; margin-top: 16px; }
+  .toggle-sw{ width: 32px; height: 18px; border-radius: 10px; background: var(--toggle-off); position: relative; cursor: pointer; flex: 0 0 auto; transition: background .12s; }
+  .toggle-sw::after{ content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.3); transition: left .12s; }
+  .toggle-sw.on{ background: var(--toggle-on); }
+  .toggle-sw.on::after{ left: 16px; }
+  .toggle-label{ font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-secondary); }
+
+  /* ADV row */
+  .adv-row{ display:none; } /* ADV pills retired - all controls always visible */
+  .adv-label{ font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); }
+  .adv-pill{ width: 30px; height: 16px; border-radius: 9px; background: var(--adv-off); position: relative; cursor: pointer; }
+  .adv-pill::after{ content:""; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.3); transition: left .12s; }
+  .adv-pill.on{ background: var(--adv-on); }
+  .adv-pill.on::after{ left: 14px; }
+  .adv-content{ overflow: visible; opacity: 1; display:flex; flex-direction:column; align-items:center; width:100%; } /* always revealed - ADV pills retired */
+  .adv-content.open{ max-height: 400px; opacity: 1; }
+
+  /* frequency response mini graph (only colored element in the UI) */
+  .graph-card{
+    margin-top: 14px; width: 165px; height: 80px; border-radius: 10px; background: var(--graph-bg);
+    border: 1px solid var(--divider); position: relative; padding: 6px 8px; overflow:hidden;
+  }
+  .graph-card svg{ width:100%; height:100%; display:block; }
+  .graph-axis-y{ position:absolute; left:4px; top:4px; bottom:16px; display:flex; flex-direction:column; justify-content:space-between; }
+  .graph-axis-y span, .graph-axis-x span{ font-family: var(--font-mono); font-size: 6.5px; color: var(--graph-axis); }
+  .graph-axis-x{ position:absolute; left:0; right:0; bottom:2px; }
+  .graph-axis-x span{ position:absolute; transform:translateX(-50%); } /* log-correct positions, 20Hz-20kHz */
+
+  /* buttons row (top bar action + sequencer pattern buttons) */
+  .action-btn{
+    height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--divider);
+    background: linear-gradient(180deg,#ffffff,#f2f2f4); color: var(--text-primary);
+    font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; cursor: pointer;
+  }
+  .action-btn:active{ transform: translateY(1px); }
+
+  /* perf buttons */
+  .perf-grid{ display:flex; flex-wrap: wrap; gap: 10px; justify-content:center; margin-top: 16px; width: 100%; padding: 0 6px; }
+  .perf-btn{
+    width: 90px; height: 44px; border-radius: 10px; border: 1px solid var(--divider);
+    background: var(--perf-off); color: var(--perf-text-off);
+    font-size: 10px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05); touch-action: none; user-select: none;
+  }
+  .perf-btn.on{ background: var(--perf-on); color: var(--perf-text-on); box-shadow: inset 0 2px 4px rgba(0,0,0,.3); }
+
+  /* XY pad */
+  .xy-card{
+    width: 340px; height: 340px; border-radius: 16px; background: #fbfbfc; border: 1px solid var(--divider);
+    position: relative; margin: 20px auto 0; overflow: hidden; cursor: crosshair; touch-action: none;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px),
+      repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px);
+  }
+  .xy-dot{ position:absolute; width: 16px; height: 16px; border-radius:50%; background: var(--text-primary);
+    transform: translate(-50%,50%); }
+  .xy-label{ position:absolute; top:10px; left:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-tertiary); text-transform:uppercase; }
+  /* Cmd+1 latch mode: badge + subtle outline while the pad follows hover */
+  .xy-latch{ position:absolute; top:10px; right:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-primary); text-transform:uppercase; }
+  .xy-card.latched{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
+  /* Latch = full performance mode: the WHOLE window is the XY surface, so
+     the OS cursor is hidden everywhere (the XY dot is the pointer) and all
+     other controls are inert until Cmd+1 unlatches. */
+  body.xy-latch-live, body.xy-latch-live *{ cursor: none !important; }
+  /* Hover tooltips: one shared element, shown after a short delay over any
+     [data-tip] control. Monochrome, matches the tile-menu language. */
+  .ui-tip{ position:fixed; z-index:1200; background:#1c1c1e; color:rgba(255,255,255,0.92);
+           border-radius:8px; padding:7px 12px; font-size:10px; font-weight:600; letter-spacing:.4px;
+           max-width:240px; line-height:1.45; box-shadow:0 6px 18px rgba(0,0,0,0.30);
+           pointer-events:none; opacity:0; transition:opacity .12s ease; }
+  .ui-tip.show{ opacity:1; }
+  /* Page tabs: MAIN / SEQUENCER / MATRIX / PERFORM */
+  .page-tabs{ display:flex; gap:8px; padding:8px 28px 0; }
+  .page-tab{ border:none; border-radius:9px; padding:8px 18px; font-size:10px; font-weight:800;
+             letter-spacing:1.4px; text-transform:uppercase; cursor:pointer;
+             background:#e2e2e5; color:var(--text-tertiary); }
+  .page-tab.active{ background:#1c1c1e; color:#fff; }
+  .preset-strip{ display:flex; justify-content:center; align-items:center; gap:16px; padding:4px 0 0; }
+  .preset-arrow{ border:none; background:#e2e2e5; color:var(--text-primary); width:38px; height:22px;
+                 border-radius:7px; font-size:15px; line-height:1; cursor:pointer; }
+  .preset-arrow:hover{ background:#d6d6da; }
+  .preset-name{ min-width:380px; text-align:center; padding:4px 32px; border-radius:8px; background:#1c1c1e;
+                color:#fff; font-size:12px; font-weight:800; letter-spacing:2px; text-transform:uppercase;
+                cursor:pointer; user-select:none; }
+  .page-hidden{ display:none !important; }
+  /* Collapsible LFO panels: click the label chip to fold */
+  .lfo-panel-label{ cursor:pointer; user-select:none; }
+  .lfo-panel.collapsed .knob-wrap, .lfo-panel.collapsed select, .lfo-panel.collapsed .toggle-row{ display:none; }
+  .lfo-panel.collapsed{ padding:8px 14px; }
+  /* Mod slot management: removable strips + an add button */
+  .mod-slot-row.slot-hidden{ display:none; }
+  .slot-remove{ margin-left:auto; border:none; background:none; color:var(--text-tertiary); font-size:13px;
+                cursor:pointer; padding:2px 8px; border-radius:6px; }
+  .slot-remove:hover{ color:#c33; background:rgba(0,0,0,0.05); }
+  .slot-add{ display:flex; align-items:center; justify-content:center; gap:8px; height:34px; margin-top:8px;
+             border:1px dashed var(--divider); border-radius:10px; cursor:pointer; color:var(--text-tertiary);
+             font-size:11px; font-weight:800; letter-spacing:1.2px; user-select:none; }
+  .slot-add:hover{ color:var(--text-primary); border-color:var(--text-tertiary); }
+  [hidden]{ display:none !important; } /* audit fix: .ab-toggle/input display rules were overriding the hidden attribute */
+
+  /* module titles for macros / performance / xy (below tile) */
+  .module-title{ margin-top: 10px; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
+  .knob-grid{ display:flex; gap: 12px; margin-top: 14px; }
+
+  /* ===== SEQUENCER / MOD MATRIX cards ===== */
+  .card{
+    background: linear-gradient(180deg, var(--unit-start), var(--unit-end));
+    border-radius: 20px; border: 1px solid var(--unit-border);
+    box-shadow: 0 20px 44px var(--unit-shadow), inset 0 1px 0 var(--unit-inset);
+    padding: 20px; display:flex; flex-direction:column; gap: 16px;
+  }
+  /* NEW in v5: minimal icon-button row + power/enable toggle in each card's
+     header, matching the main-unit modules' icon-row chrome exactly. */
+  .card-header-row{ display:flex; align-items:center; gap: 10px; }
+  /* Direct-pick menu for mode tiles: click the tile to choose a type from a
+     list instead of arrow-cycling. Monochrome, matches the tile aesthetic. */
+  .tile-menu{ position:fixed; z-index:1000; background:#1c1c1e; border-radius:10px; padding:6px 0;
+              box-shadow:0 8px 24px rgba(0,0,0,0.35); max-height:320px; overflow-y:auto; min-width:170px; }
+  .tile-menu-item{ padding:7px 16px; font-size:10px; font-weight:800; letter-spacing:1.2px;
+                   text-transform:uppercase; color:rgba(255,255,255,0.72); cursor:pointer; white-space:nowrap; }
+  .tile-menu-item:hover{ background:rgba(255,255,255,0.08); color:#fff; }
+  .tile-menu-item.active{ color:#fff; background:rgba(255,255,255,0.14); }
+  .mode-tile[data-param]{ cursor:pointer; }
+  .card-body{ display:flex; flex-direction:column; gap: 16px; transition: opacity .15s ease; }
+  .card-body.dimmed{ opacity: 0.4; }
+  .card-controls-row{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+
+  /* Phase 5.5: Distortion Graph Visualization. v5 realized the "graph" as
+     the first-unit module chain itself (see PluginEditor.h's Phase 5.5 doc
+     comment) rather than a separate node/link canvas - these two rules are
+     that visualization's entire styling footprint, deliberately reusing the
+     existing .card-body.dimmed opacity idiom (module-body variant, for the
+     4 graphBypass* chain modules which have no separate "body" wrapper
+     until this phase) and the existing dot-based visual language (tile-dots/
+     tag-dots) for the modulation-target indicator, per the task's "subtle,
+     monochrome, no new heavy visuals" constraint - no new color introduced,
+     matching v5's "near-zero color except the filter graph's single accent
+     line" rule. */
+  .module-body{ display:flex; flex-direction:column; align-items:center; width:100%; transition: opacity .15s ease; }
+  .module-body.dimmed{ opacity: 0.4; }
+  .mod-indicator{
+    position: absolute; top: 10px; right: 10px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-primary); opacity: 0;
+    transition: opacity .15s ease; pointer-events: none;
+  }
+  .mod-indicator.active{ opacity: .55; }
+
+  /* Phase 5.6: Meters, Sequencer playhead, and per-knob/fader Modulation-
+     Range indicators. All monochrome (opacity-only), matching the existing
+     .mod-indicator/.tile-dots visual language and v5's "near-zero color"
+     rule - see index.html's own Phase 5.6 doc comment (below, above the new
+     IIFE) for the full design. .step-bar.playhead restores the ORIGINAL
+     v5-ui.html mockup's own playhead rule (present there since v4/v5, byte-
+     for-byte identical outline style) - Phase 5.2's step-grid rewrite
+     removed it from the LIVE index.html (its old always-step-0/fake
+     semantics were actively misleading before real pattern/transport data
+     existed - see that phase's own doc comment above the step-grid IIFE),
+     explicitly deferring REAL playhead wiring to this phase; this is that
+     deferred wiring, reusing the original design's exact visual treatment. */
+  .step-bar.playhead{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
+
+  .mod-range-ring{ position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .15s ease; }
+  .mod-range-ring.active{ opacity:.6; }
+  .mod-range-ring .mrr-dot{ position:absolute; top:1px; left:50%; width:3px; height:3px; margin-left:-1.5px; border-radius:50%; background: var(--text-primary); }
+  .knob.hero .mod-range-ring .mrr-dot{ width:4px; height:4px; margin-left:-2px; top:4px; }
+
+  .mod-range-tick{ position:absolute; left:50%; width:32px; height:2px; margin-left:-16px; border-radius:1px; background: var(--text-primary); opacity:0; transition:opacity .15s ease; pointer-events:none; }
+  .mod-range-tick.active{ opacity:.55; }
+
+  /* Phase 5.2: lane-selector chip row (JS-created, one per RhythmicSequencer
+     lane - see index.html's Sequencer step-grid script section) */
+  .lane-select-row{ display:flex; gap: 6px; flex-wrap: wrap; }
+  .lane-chip{
+    height: 24px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--divider);
+    background: #fff; color: var(--text-secondary);
+    font-size: 9px; font-weight: 800; letter-spacing: 0.8px; text-transform: uppercase;
+    cursor: pointer; flex: 0 0 auto;
+  }
+  .lane-chip.active{ background: var(--text-primary); color: #fff; }
+  .step-grid-readout{
+    font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); height: 14px;
+  }
+
+  .step-grid{ display:flex; gap: 4px; height: 100px; align-items:flex-end; }
+  .step-bar{ flex: 1 1 0; height:100%; background: #ececee; border-radius: 3px; position: relative; overflow:hidden; display:flex; align-items:flex-end; }
+  .step-bar .fill{ width:100%; background: var(--text-primary); opacity: .85; border-radius: 3px 3px 0 0; }
+  .step-bar.beat{ background: #e2e2e5; }
+  /* Phase 5.2: the grid is now a real editable control (was a static
+     decorative visual pre-5.2) - editable cursor + a center guideline for
+     bipolar (-1..+1) lanes so 0 (the "no modulation" default for every lane
+     except Gate) has a visible reference line. The old always-step-0
+     `.playhead` outline (fake, unrelated to real transport position) is
+     REMOVED - see PluginEditor.h's Phase 5.2 doc comment for why (real
+     playhead wiring is plan.md Phase 5.6 scope, not this phase's). */
+  .step-bar.editable{ cursor: ns-resize; }
+  .step-bar .center-line{ position:absolute; left:0; right:0; top:50%; height:1px; background: rgba(0,0,0,0.18); pointer-events:none; }
+
+  .lfo-row{ display:flex; gap: 20px; }
+  .lfo-panel{ flex: 1 1 0; display:flex; align-items:flex-start; gap: 14px; padding: 14px; border-radius: 12px; background: #fafafb; border: 1px solid var(--divider); }
+  .lfo-controls-col{ display:flex; flex-direction:column; gap: 10px; padding-top: 4px; }
+  .lfo-panel-label{ font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
+
+  /* Phase 5.3: Mod Matrix 8-slot editor (JS-created - see index.html's
+     "8-slot Mod Matrix editor" script section). Sits below the pre-existing
+     (formerly below a decorative dot-grid, since removed) as a real per-slot
+     Source/Destination/Amount/Enable row editor, matching this file's
+     established "small light card row" visual language (same background/
+     border treatment as .lfo-panel/.lane-chip above). */
+  .mod-slot-list{ display:flex; flex-direction:column; gap: 6px; }
+  .mod-slot-row{
+    display:flex; align-items:center; gap: 10px; padding: 8px 12px; border-radius: 10px;
+    background: #fafafb; border: 1px solid var(--divider);
+  }
+  .mod-slot-label{
+    width: 16px; flex: 0 0 auto; font-size: 9px; font-weight: 800; color: var(--text-tertiary);
+    text-align:center;
+  }
+  .mod-slot-row .knob-wrap{ margin-top: 0; flex: 0 0 auto; }
+  .mod-slot-row .toggle-row{ margin-top: 0; flex: 0 0 auto; }
+
+
+  .section-label{ font-size: 11px; font-weight: 800; letter-spacing: 2px; color: var(--text-primary); text-transform: uppercase; }
+
+</style>
+</head>
+<body>
+
+<div class="plugin-frame" id="pluginFrame">
+  <div class="container">
+
+    <!-- ============================= TOP BAR ============================= -->
+    <header class="top-bar">
+      <div class="search-field">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1c1c1e" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input hidden type="text" id="preset_search" placeholder="Search presets…" />
+      </div>
+      <div class="wordmark">CORRUPTR</div>
+      <div class="spacer"></div>
+      <button class="btn action-btn" hidden id="save_button" data-action="save_preset">Save</button>
+      <button class="btn action-btn" hidden id="random_button" data-action="randomize_all">Random</button>
+      <div class="ab-toggle" hidden id="ab_toggle" data-param="abCompareState" data-default="false">A/B</div>
+      <select class="combo" id="quality_mode" data-param="qualityMode">
+        <option>ECO</option><option selected>NORMAL</option><option>HIGH</option><option>EXTREME</option><option>AUTO</option>
+      </select>
+      <div class="meter" id="input_meter_topbar"><div class="fill"></div></div>
+      <div class="meter" id="output_meter_topbar"><div class="fill"></div></div>
+    </header>
+
+    <main>
+      <nav class="page-tabs" id="page_tabs">
+        <button class="page-tab active" data-page="1">Main</button>
+        <button class="page-tab" data-page="2">Sequencer</button>
+        <button class="page-tab" data-page="4">Performance</button>
+      </nav>
+      <div class="preset-strip">
+        <button class="preset-arrow" id="preset_prev" title="Previous preset">&#8249;</button>
+        <div class="preset-name" id="preset_name" title="Click to choose a preset">Init &#9662;</div>
+        <button class="preset-arrow" id="preset_next" title="Next preset">&#8250;</button>
+      </div>
+      <!-- ===================== MAIN CHANNEL-STRIP UNIT ===================== -->
+      <section class="strip-wrap">
+        <div class="unit">
+
+          <!-- DISTORTION -->
+          <div class="module" style="width:185px;">
+            <span class="mod-indicator" id="mod_ind_distortion" title="Modulated by an active Mod Matrix slot"></span>
+            <div class="icon-row">
+              <button class="icon-btn power-btn" id="node_bypass_saturation" data-param="graphBypassSaturation" data-default="false" data-invert="true" data-dim-target="distortion_body" title="Bypass distortion stage">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
+              </button>
+              
+              
+            </div>
+
+            <div class="module-body" id="distortion_body">
+            <div class="mode-tile-wrap">
+              <button class="chevron" data-dir="-1" data-for="node_algorithm_select">‹</button>
+              <div class="mode-tile" id="node_algorithm_select" data-param="distortionAlgorithm"
+                   data-choices="Saturation|Soft Clip|Hard Clip|Tube|Diode|Fuzz|Digital Distortion|Bitcrusher|Sample Rate Reducer|Wavefolder|Ring-Mod|Foldback"
+                   data-skip="7|8"
+                   style="width:150px;height:118px;">
+                <div class="tile-glow"></div>
+                <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 24 L10 12 L14 30 L20 8 L24 32 L30 14 L36 24"/></svg>
+                <div class="tile-label"></div>
+                <div class="tile-dots"></div>
+              </div>
+              <button class="chevron" data-dir="1" data-for="node_algorithm_select">›</button>
+            </div>
+
+            <div class="fader-wrap">
+              <div class="fader-readout" id="node_drive_val">+0.0dB</div>
+              <div class="fader vertical" id="node_drive" data-param="drive" data-min="0" data-max="40" data-default="0" data-unit="dB" data-decimals="1" style="width:36px;height:130px;">
+                <div class="fader-track"></div><div class="fader-thumb"></div>
+              </div>
+              <div class="fader-label">Drive</div>
+            </div>
+
+            <div class="knob-wrap">
+              <div class="knob" id="node_fold" data-param="fold" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:66px;height:66px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="fold">0%</div>
+              <div class="knob-label">Fold</div>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:center; margin-top:10px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_tone" data-param="tone" data-min="-100" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:48px;height:48px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="tone">0 %</div>
+                <div class="knob-label">Tone</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_bias" data-param="bias" data-min="-100" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:48px;height:48px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="bias">0 %</div>
+                <div class="knob-label">Bias</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_distortionmix" data-param="distortionMix" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:48px;height:48px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="distortionMix">100 %</div>
+                <div class="knob-label">Dist Mix</div>
+              </div>
+            </div>
+
+            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-distortion"></div></div>
+            <div class="adv-content" id="adv-distortion">
+              <div class="toggle-row">
+                <div class="toggle-sw" id="node_bypass_waveshaper" data-param="graphBypassWaveshaper" data-default="false"></div>
+                <span class="toggle-label">Fold Byp.</span>
+              </div>
+            </div>
+            </div>
+          </div>
+
+          <!-- BITCRUSH -->
+          <div class="module" style="width:115px;">
+            <span class="mod-indicator" id="mod_ind_bitcrush" title="Modulated by an active Mod Matrix slot"></span>
+            <div class="icon-row">
+              <button class="icon-btn power-btn" id="node_bypass_bitcrush" data-param="graphBypassBitcrush" data-default="false" data-invert="true" data-dim-target="bitcrush_body" title="Bypass bitcrush stage">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
+              </button>
+              
+            </div>
+            <div class="module-body" id="bitcrush_body">
+            <div class="mode-tile-wrap">
+              <div class="mode-tile" id="bitcrush_mode" data-param="bitcrushMode"
+                   data-choices="Classic|Dither|Asymmetric|Mid-Rise|Bit Flip|Gate Crush"
+                   style="width:95px;height:118px;">
+                <div class="tile-glow"></div>
+                <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 30h6v-6h6v-6h6v-6h6v-6h6"/></svg>
+                <div class="tile-label"></div>
+                <div class="tile-dots"></div>
+              </div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="node_bit_depth" data-param="bitDepth" data-min="1" data-max="16" data-default="16" data-unit="bit" data-decimals="0" style="width:66px;height:66px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="bitDepth">16 bit</div>
+              <div class="knob-label">Bits</div>
+            </div>
+            <div class="knob-wrap">
+              <div class="knob" id="node_srr_amount" data-param="sampleRateReduction" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:66px;height:66px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="sampleRateReduction">0 %</div>
+              <div class="knob-label">Amount</div>
+            </div>
+            </div>
+          </div>
+
+          <!-- GLITCH -->
+          <div class="module" style="width:185px;">
+            <span class="mod-indicator" id="mod_ind_glitch" title="Modulated by an active Mod Matrix slot"></span>
+            <div class="icon-row">
+              <button class="icon-btn power-btn" id="node_bypass_glitch" data-param="graphBypassGlitch" data-default="false" data-invert="true" data-dim-target="glitch_body" title="Bypass glitch stage">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
+              </button>
+              
+              
+            </div>
+            <div class="module-body" id="glitch_body">
+            <div class="mode-tile-wrap">
+              <button class="chevron" data-dir="-1" data-for="glitch_mode">‹</button>
+              <div class="mode-tile" id="glitch_mode" data-param="glitchMode"
+                   data-choices="Off|Stutter|Repeat|Reverse|Buffer Repeat|Freeze|Slice|Random Slice|Micro Loop|Granular Repeat|Tape Stop|Tape Start|Retrigger|Silence|Noise Burst|Bitcrush Burst|Pitch Jump|Random Repeat"
+                   style="width:150px;height:118px;">
+                <div class="tile-glow"></div>
+                <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M6 14h10M20 14h4M28 14h6M6 20h6M16 20h4M24 20h10M6 26h14M24 26h4M32 26h4"/></svg>
+                <div class="tile-label"></div>
+                <div class="tile-dots"></div>
+              </div>
+              <button class="chevron" data-dir="1" data-for="glitch_mode">›</button>
+            </div>
+
+            <div class="hslider-wrap">
+              <div class="hslider-readout" id="glitch_buffer_length_val">1/16</div>
+              <div class="hslider" id="glitch_buffer_length" data-param="glitchBufferLength"
+                   data-choices="1/64|1/32|1/16|1/8|1/4|1/2|1 bar|2 bars|4 bars" data-default-index="2" style="width:150px;height:22px;">
+                <div class="hslider-track"></div><div class="hslider-thumb"></div>
+              </div>
+              <div class="hslider-label">Buffer</div>
+            </div>
+
+            <div class="knob-wrap">
+              <div class="knob" id="glitch_probability_detail" data-param="glitchProbability" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:66px;height:66px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="glitchProbability">0%</div>
+              <div class="knob-label">Probability</div>
+            </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_chaos" data-param="chaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="chaos">0 %</div>
+                <div class="knob-label">Chaos</div>
+              </div>
+
+            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-glitch"></div></div>
+            </div>
+          </div>
+
+          <!-- FILTER & EQ -->
+          <div class="module" style="width:195px;">
+            <span class="mod-indicator" id="mod_ind_filter" title="Modulated by an active Mod Matrix slot"></span>
+            <div class="icon-row">
+              <button class="icon-btn power-btn" id="node_bypass_filter" data-param="graphBypassFilter" data-default="false" data-invert="true" data-dim-target="filter_body" title="Bypass filter stage">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
+              </button>
+              
+              
+            </div>
+            <div class="module-body" id="filter_body">
+            <div class="mode-tile-wrap">
+              <button class="chevron" data-dir="-1" data-for="filter_type">‹</button>
+              <div class="mode-tile" id="filter_type" data-param="filterType" data-choices="Lowpass|Highpass|Bandpass|Notch|Morph" style="width:158px;height:118px;">
+                <div class="tile-glow"></div>
+                <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M4 28 C 14 28, 16 12, 24 12 C 30 12, 32 20, 36 20"/></svg>
+                <div class="tile-label"></div>
+                <div class="tile-dots"></div>
+              </div>
+              <button class="chevron" data-dir="1" data-for="filter_type">›</button>
+            </div>
+
+            <div class="graph-card">
+              <div class="graph-axis-y"><span>+12</span><span>0</span><span>-12</span></div>
+              <svg viewBox="0 0 165 80" preserveAspectRatio="none">
+                <line x1="20" y1="10" x2="160" y2="10" stroke="var(--graph-grid)" stroke-width="1"/>
+                <line x1="20" y1="40" x2="160" y2="40" stroke="var(--graph-grid)" stroke-width="1"/>
+                <line x1="20" y1="65" x2="160" y2="65" stroke="var(--graph-grid)" stroke-width="1"/>
+                <path id="filter_eq_curve" d="M20 55 C 60 55, 70 20, 100 18 C 125 16, 140 30, 160 34" fill="none" stroke="var(--accent-line)" stroke-width="1.6"/>
+                <line id="filter_cutoff_marker" x1="160" y1="8" x2="160" y2="76" stroke="var(--graph-grid)" stroke-width="1" stroke-dasharray="2 2"/>
+                <text id="filter_cutoff_hz_label" x="158" y="16" text-anchor="end" font-size="7.5" font-weight="700" fill="var(--text-tertiary)">20.0 kHz</text>
+              </svg>
+              <div class="graph-axis-x">
+                <span style="left:31.9%;">100</span>
+                <span style="left:60.2%;">1k</span>
+                <span style="left:88.5%;">10k</span>
+                <span style="left:97%;">20k</span>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:10px; margin-top:14px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="filter_cutoff_detail" data-param="filterCutoff" data-min="20" data-max="20000" data-default="20000" data-unit="Hz" data-decimals="0" style="width:66px;height:66px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="filterCutoff">20000 Hz</div>
+                <div class="knob-label">Cutoff</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="filter_resonance" data-param="filterResonance" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:66px;height:66px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="filterResonance">0%</div>
+                <div class="knob-label">Resonance</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:center; margin-top:10px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_filter_morph" data-param="filterMorph" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:52px;height:52px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="filterMorph">0 %</div>
+                <div class="knob-label">Morph</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_filter_drive" data-param="filterDrive" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:52px;height:52px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="filterDrive">0 %</div>
+                <div class="knob-label">Drive</div>
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:center; align-items:center; gap:10px; margin-top:12px;">
+              <select class="combo-sm" id="filter_slope" data-param="filterSlope" style="width:90px;height:26px;">
+                <option selected>12 dB</option><option>24 dB</option>
+              </select>
+              <span class="knob-label" style="margin:0;">Slope</span>
+            </div>
+
+            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-filter"></div></div>
+            </div>
+          </div>
+
+          <!-- FEEDBACK + DELAY -->
+          <div class="module" style="width:190px;">
+            <span class="mod-indicator" id="mod_ind_feedback" title="Modulated by an active Mod Matrix slot"></span>
+            <div class="icon-row" style="justify-content:center;">
+              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
+              
+              
+            </div>
+            <div class="mode-tile-wrap">
+              <div class="mode-tile static" style="width:170px;height:118px;">
+                <div class="tile-glow"></div>
+                <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12h12a8 8 0 0 1 8 8v2"/><path d="M28 12h4v4"/><path d="M28 28H16a8 8 0 0 1-8-8v-2"/><path d="M12 28H8v-4"/></svg>
+                <div class="tile-label">Feedback</div>
+              </div>
+            </div>
+
+            <div class="fader-wrap">
+              <div class="fader-readout" id="feedback_amount_val">0%</div>
+              <div class="fader vertical" id="feedback_amount" data-param="feedbackAmount" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:36px;height:120px;">
+                <div class="fader-track"></div><div class="fader-thumb"></div>
+              </div>
+              <div class="fader-label">Feedback</div>
+            </div>
+
+            <div class="knob-wrap">
+              <div class="knob" id="feedback_damping" data-param="feedbackDamping" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" style="width:66px;height:66px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="feedbackDamping">50%</div>
+              <div class="knob-label">Damping</div>
+            </div>
+
+            <div class="hslider-wrap">
+              <div class="hslider-readout" id="micro_delay_time_val">10.0ms</div>
+              <div class="hslider" id="micro_delay_time" data-param="microDelayTime" data-min="0.1" data-max="50" data-default="10" data-unit="ms" data-decimals="1" style="width:140px;height:22px;">
+                <div class="hslider-track"></div><div class="hslider-thumb"></div>
+              </div>
+              <div class="hslider-label">Delay</div>
+            </div>
+          </div>
+
+          <!-- CENTER MASTER -->
+          <div class="module" style="width:205px;">
+            <span class="mod-indicator" id="mod_ind_output" title="Modulated by an active Mod Matrix slot"></span>
+            <div class="icon-row" style="justify-content:center;">
+              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
+            </div>
+
+            <div style="display:flex; gap:18px; justify-content:center; margin-top:10px;">
+              <div class="toggle-row">
+                <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
+                <span class="toggle-label">Auto</span>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-sw on" id="auto_gain_toggle" data-param="autoGain" data-default="true"></div>
+                <span class="toggle-label">Balance</span>
+              </div>
+            </div>
+
+            <div class="knob-wrap" style="margin-top:12px;">
+              <div class="knob hero" id="master_mix" data-param="mix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:120px;height:120px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="mix" style="font-size:11px;margin-top:8px;">100%</div>
+              <div class="knob-label">Level</div>
+            </div>
+
+            <select class="combo-sm" id="output_limiter_style" data-param="outputLimiterStyle" style="width:108px;height:26px;margin-top:12px;">
+              <option selected>Transparent</option><option>Colored</option>
+            </select>
+            <div style="display:flex; gap:14px; align-items:flex-start; margin-top:12px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_limiter_ceiling" data-param="limiterCeiling" data-min="-20" data-max="0" data-default="-0.3" data-unit="dB" data-decimals="1" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="limiterCeiling">-0.3 dB</div>
+                <div class="knob-label">Ceiling</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_limiter_release" data-param="limiterRelease" data-min="1" data-max="1000" data-default="300" data-unit="ms" data-decimals="0" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="limiterRelease">300 ms</div>
+                <div class="knob-label">Release</div>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:20px; margin-top:16px;">
+              <div class="fader-wrap" style="margin-top:0;">
+                <div class="fader-readout" id="input_gain_val">0.0dB</div>
+                <div class="fader vertical" id="input_gain" data-param="inputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:36px;height:190px;">
+                  <div class="fader-track"></div><div class="fader-thumb"></div>
+                </div>
+                <div class="fader-label">In</div>
+              </div>
+              <div class="fader-wrap" style="margin-top:0;">
+                <div class="fader-readout" id="output_gain_val">0.0dB</div>
+                <div class="fader vertical" id="output_gain" data-param="outputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:36px;height:190px;">
+                  <div class="fader-track"></div><div class="fader-thumb"></div>
+                </div>
+                <div class="fader-label">Out</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===================== SECOND UNIT: MACROS / PERFORMANCE / XY ===================== -->
+      <section class="strip-wrap">
+        <div class="unit">
+
+          <!-- MACROS -->
+          <div class="module" style="width:300px;">
+            <div class="icon-row">
+              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
+              
+              
+            </div>
+            <div class="mode-tile-wrap">
+              <div class="mode-tile static" style="width:270px;height:100px;">
+                <div class="tile-glow"></div>
+                <svg class="tile-icon" viewBox="0 0 40 40" fill="#fff" style="margin-top:8px;"><path d="M20 4 L23 17 L36 20 L23 23 L20 36 L17 23 L4 20 L17 17 Z"/></svg>
+                <div class="tile-label">Macros</div>
+              </div>
+            </div>
+
+            <div class="knob-grid">
+              <div class="knob-wrap" style="margin-top:14px;">
+                <div class="knob" id="macro_damage" data-param="macroDamage" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="macroDamage">0%</div>
+                <div class="knob-label">Damage</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:14px;">
+                <div class="knob" id="macro_crush" data-param="macroCrush" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="macroCrush">0%</div>
+                <div class="knob-label">Crush</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:14px;">
+                <div class="knob" id="macro_glitch" data-param="macroGlitch" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="macroGlitch">0%</div>
+                <div class="knob-label">Glitch</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:14px;">
+                <div class="knob" id="macro_chaos" data-param="macroChaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="macroChaos">0%</div>
+                <div class="knob-label">Chaos</div>
+              </div>
+            </div>
+
+            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-macros"></div></div>
+            <div class="adv-content" id="adv-macros">
+              <div class="knob-grid">
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="macro_rhythm" data-param="macroRhythm" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroRhythm">0%</div>
+                  <div class="knob-label">Rhythm</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="macro_movement" data-param="macroMovement" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroMovement">0%</div>
+                  <div class="knob-label">Movement</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="macro_width" data-param="macroWidth" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroWidth">50%</div>
+                  <div class="knob-label">Width</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="macro_mix" data-param="macroMix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="macroMix">100%</div>
+                  <div class="knob-label">Mix</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PERFORMANCE -->
+          <div class="module" style="width:430px;">
+            <div class="icon-row">
+              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
+              
+              
+            </div>
+            <div class="mode-tile-wrap">
+              <div class="mode-tile static" style="width:400px;height:100px;">
+                <div class="tile-glow"></div>
+                <svg class="tile-icon" viewBox="0 0 40 40" fill="#fff" style="margin-top:8px;"><path d="M22 4 L10 22 h8 l-2 14 L30 18 h-8 Z"/></svg>
+                <div class="tile-label">Performance</div>
+              </div>
+            </div>
+
+            <div class="perf-grid">
+              <button class="perf-btn" id="perf_kill" data-param="performanceKill" data-default="false">Kill</button>
+              <button class="perf-btn" id="perf_glitch" data-param="performanceGlitch" data-default="false">Glitch</button>
+              <button class="perf-btn" id="perf_destroy" data-param="performanceDestroy" data-default="false">Destroy</button>
+              <button class="perf-btn" id="perf_freeze" data-param="performanceFreeze" data-default="false">Freeze</button>
+              <button class="perf-btn" id="perf_reverse" data-param="performanceReverse" data-default="false">Reverse</button>
+              <button class="perf-btn" id="perf_stutter" data-param="performanceStutter" data-default="false">Stutter</button>
+              <button class="perf-btn" id="perf_chaos" data-param="performanceChaos" data-default="false">Chaos</button>
+            </div>
+
+            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" id="adv_pill_performance" data-target="adv-performance"></div></div>
+            <div class="section-label" style="margin-top:14px; font-size:9px;">Trigger Amount</div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:8px;">
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancekillamount" data-param="performanceKillAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceKillAmount">100 %</div>
+                  <div class="knob-label">Kill</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performanceglitchamount" data-param="performanceGlitchAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceGlitchAmount">100 %</div>
+                  <div class="knob-label">Gltch</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancedestroyamount" data-param="performanceDestroyAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceDestroyAmount">100 %</div>
+                  <div class="knob-label">Dstry</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancefreezeamount" data-param="performanceFreezeAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceFreezeAmount">100 %</div>
+                  <div class="knob-label">Frz</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancereverseamount" data-param="performanceReverseAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceReverseAmount">100 %</div>
+                  <div class="knob-label">Rev</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancestutteramount" data-param="performanceStutterAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceStutterAmount">100 %</div>
+                  <div class="knob-label">Stut</div>
+                </div>
+                <div class="knob-wrap" style="margin-top:0;">
+                  <div class="knob" id="node_performancechaosamount" data-param="performanceChaosAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
+                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                  </div>
+                  <div class="knob-value" data-value-for="performanceChaosAmount">100 %</div>
+                  <div class="knob-label">Chaos</div>
+                </div>
+            </div>
+            <div class="adv-content" id="adv-performance">
+              <div class="knob-wrap">
+                <div class="knob" id="node_xy_glide" data-param="xyPadSmoothing" data-min="0" data-max="500" data-default="80" data-unit="ms" data-decimals="0" style="width:60px;height:60px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="xyPadSmoothing">80 ms</div>
+                <div class="knob-label">XY Glide</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- XY PAD -->
+          <div class="module" style="flex:1 1 auto; min-width:384px;">
+            <div class="xy-card" id="xy_pad">
+              <span class="xy-label">Performance XY</span>
+              <span class="xy-latch" id="xy_latch" hidden>&#8984;L LATCH</span>
+              <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
+            </div>
+            <div class="xy-dest-row" style="display:flex; gap:10px; align-items:center; justify-content:center; margin-top:10px;">
+              <span class="knob-label" style="margin:0;">X &#8594;</span>
+              <select class="combo-sm" id="xy_x_dest" data-param="xyPadXDestination" style="width:130px;height:26px;"><option selected>Damage Macro</option><option>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
+              <span class="knob-label" style="margin:0 0 0 8px;">Y &#8594;</span>
+              <select class="combo-sm" id="xy_y_dest" data-param="xyPadYDestination" style="width:130px;height:26px;"><option>Damage Macro</option><option selected>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===================== SEQUENCER ===================== -->
+      <section class="strip-wrap">
+        <div class="card">
+          <div class="card-header-row">
+            <button class="icon-btn power-btn" id="sequencer_enable" data-param="sequencerEnabled" data-default="false" data-dim-target="sequencer_body" title="Enable/disable sequencer module">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
+            </button>
+            <div class="section-label">Rhythmic Sequencer</div>
+          </div>
+          <div class="card-body" id="sequencer_body">
+            <div class="card-controls-row">
+              <select class="combo-sm" id="sequencer_rate" data-param="sequencerRate" style="width:110px;height:32px;">
+                <option>1/4</option><option>1/8</option><option selected>1/16</option><option>1/32</option><option>1/4T</option><option>1/8T</option><option>1/16T</option>
+              </select>
+              <select class="combo-sm" id="sequencer_steps" data-param="sequencerSteps" style="width:90px;height:32px;">
+                <option selected>16</option><option>32</option>
+              </select>
+              <div class="knob-wrap" style="margin:0 0 0 10px;">
+                <div class="knob" id="node_seq_depth" data-param="sequencerDepth" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="sequencerDepth">100 %</div>
+                <div class="knob-label">Seq Mix</div>
+              </div>
+              <span style="flex:1 1 auto;"></span>
+              <button class="action-btn" id="seq_random" data-action="randomize_pattern">Random</button>
+              <button class="action-btn" id="seq_mutate" data-action="mutate_pattern">Mutate</button>
+              <button class="action-btn" id="seq_reverse" data-action="reverse_pattern">Reverse</button>
+              <button class="action-btn" id="seq_mirror" data-action="mirror_pattern">Mirror</button>
+              <button class="action-btn" id="seq_shift" data-action="shift_pattern">Shift</button>
+              <button class="action-btn" id="seq_clear" data-action="clear_pattern">Clear</button>
+            </div>
+            <div class="lane-select-row" id="lane_select_row"></div>
+            <div class="step-grid-readout" id="step_grid_readout">Drive — click/drag a bar to edit</div>
+            <div class="step-grid" id="step_grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== MOD MATRIX ===================== -->
+      <section class="strip-wrap">
+        <div class="card">
+          <div class="card-header-row">
+            <button class="icon-btn power-btn" id="mod_matrix_enable" data-param="modMatrixEnabled" data-default="false" data-dim-target="mod_matrix_body" title="Enable/disable mod matrix module">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg>
+            </button>
+            <div class="section-label">Modulation Matrix</div>
+          </div>
+          <div class="card-body" id="mod_matrix_body">
+            <div class="lfo-row" id="lfoPanelRow"></div>
+            <div class="mod-slot-list" id="modSlotList"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+</div>
+
+
+<script type="module">
+  // ===================================================================
+  // JUCE FRONTEND LIBRARY IMPORT (ES6 module - required for WebView
+  // parameter binding; see troubleshooting/patterns/juce8-critical-patterns.md
+  // Pattern #21)
+  // ===================================================================
+  import * as Juce from "./js/juce/index.js";
+
+  if (!window.__JUCE__) {
+    console.error("JUCE backend not available");
+    document.body.innerHTML = "<h1>Error: JUCE backend not connected</h1>";
+    throw new Error("JUCE backend not connected");
+  }
+  console.log("JUCE backend connected:", window.__JUCE__.backend);
+
+  window.addEventListener("error", (e) => {
+    console.error("JavaScript error:", e.message, e.filename, e.lineno);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    console.error("Unhandled promise rejection:", e.reason);
+  });
+
+  // ===== Native app feel (Rule 3) =====
+  document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+  document.addEventListener("dragstart", (e) => { e.preventDefault(); });
+
+  // ===== Debug monitor: no-op in production (debug overlay removed from UI) =====
+  function updateDebugMonitor(){ /* intentionally empty - dev-only in v5-ui-test.html */ }
+
+  function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+  function clamp01(v){ return clamp(v,0,1); }
+  // Skew-aware conversions (audit fix 2026-09-05): parameters with a
+  // non-linear NormalisableRange (filterCutoff skew 0.3, limiterRelease
+  // skew 0.4) were displayed AND set with linear math, so mid-range knob
+  // values disagreed with the actual parameter (e.g. Release showed 618ms
+  // for an actual 300ms). Skew arrives via the relay's properties
+  // round-trip; before it lands, skewOf() returns 1 (safe linear).
+  function skewOf(state){ try { return (state && state.properties && state.properties.skew) || 1; } catch(e){ return 1; } }
+  function normFromValue(v,min,max,skew){ const p=(v-min)/(max-min); return (!skew || skew===1) ? p : Math.pow(Math.max(0,p), skew); }
+  function valueFromNorm(n,min,max,skew){ const p=(!skew || skew===1) ? n : Math.pow(Math.max(0,n), 1/skew); return min + p*(max-min); }
+  function degFromNorm(n){ return -135 + n*270; }
+  function fmtValue(v, decimals, unit){
+    const s = v.toFixed(decimals);
+    const withSign = (unit === 'dB' && v > 0) ? `+${s}` : s;
+    return `${withSign}${unit ? (unit === '%' ? unit : ' ' + unit) : ''}`;
+  }
+
+  // ===================================================================
+  // Generic KNOB binding (thin-ring track + rotating single-dot pointer;
+  // Rule 8: rotate .knob-body, dot is a child that inherits rotation)
+  // ===================================================================
+  function bindKnobs(scope){
+    scope.querySelectorAll('.knob[data-param]:not([data-bound])').forEach(knob => {
+      knob.setAttribute('data-bound','1');
+      const param = knob.dataset.param;
+      const min = parseFloat(knob.dataset.min);
+      const max = parseFloat(knob.dataset.max);
+      const decimals = parseInt(knob.dataset.decimals || "1");
+      const unit = knob.dataset.unit || "";
+      let value = parseFloat(knob.dataset.default);
+      const body = knob.querySelector('.knob-body');
+      const wrap = knob.closest('.knob-wrap');
+      const valueEl = wrap ? wrap.querySelector('.knob-value') : null;
+      const state = Juce.getSliderState(param);
+
+      function render(){
+        const n = clamp01(normFromValue(value, min, max, skewOf(state)));
+        body.style.transform = `rotate(${degFromNorm(n)}deg)`;
+        const text = fmtValue(value, decimals, unit);
+        if(valueEl) valueEl.textContent = text;
+        document.querySelectorAll(`[data-value-for="${param}"]`).forEach(el => { el.textContent = text; });
+        // Phase 5.6: stamp the current BASE (unmodulated) native-unit value
+        // onto the element itself - read by the Phase 5.6 modulation-range-
+        // indicator IIFE below (index.html's own doc comment, "Phase 5.6")
+        // so it can compare against the live post-modulation value in the
+        // SAME plain-linear native-unit space this render() uses, without
+        // duplicating this closure's private `value`/`normFromValue` logic.
+        // Pure attribute stamp - does not alter binding behavior.
+        knob.dataset.currentValue = String(value);
+      }
+      // NOTE: do NOT proactively push this local placeholder default into
+      // the backend here - the relay's real properties/value round-trip
+      // (sendInitialUpdate(), fired from the C++ attachment's constructor)
+      // arrives asynchronously via the valueChangedEvent listener below and
+      // is the source of truth. Writing here races that round-trip using
+      // the SliderState's still-default {start:0,end:1,skew:1} properties
+      // and can corrupt the real APVTS value on load (e.g. clamp
+      // skewed/wide-range parameters to their minimum).
+      render();
+
+      let dragging = false, startY = 0, startNorm = 0, fineMode = false;
+      knob.addEventListener('mousedown', e => {
+        dragging = true; startY = e.clientY; fineMode = e.shiftKey;
+        startNorm = clamp01(normFromValue(value, min, max, skewOf(state)));
+        document.body.style.cursor = 'ns-resize'; e.preventDefault();
+        state.sliderDragStarted();
+      });
+      window.addEventListener('mousemove', e => {
+        if(!dragging) return;
+        const sk = skewOf(state);
+        // Shift toggled mid-drag: rebase the anchor at the CURRENT value so
+        // the knob continues smoothly from where it is - never snaps back.
+        if (e.shiftKey !== fineMode){ fineMode = e.shiftKey; startY = e.clientY; startNorm = clamp01(normFromValue(value, min, max, sk)); }
+        const dy = startY - e.clientY;
+        // Drag in the parameter's PERCEPTUAL (skew-aware normalized) space -
+        // every pixel moves an equal musical amount, so log-style knobs
+        // (cutoff, release) sweep smoothly at the low end instead of
+        // jumping whole octaves per pixel (user report: 800 -> 20 Hz).
+        const n = clamp01(startNorm + dy * (1/200) * (fineMode ? 0.08 : 1)); // shift = micro adjustments
+        value = valueFromNorm(n, min, max, sk);
+        render();
+        state.setNormalisedValue(n);
+        updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
+      });
+      // Double-click resets to the parameter's default value.
+      knob.addEventListener('dblclick', e => {
+        e.preventDefault();
+        value = parseFloat(knob.dataset.default);
+        render();
+        const n = normFromValue(value, min, max, skewOf(state));
+        state.sliderDragStarted(); state.setNormalisedValue(n); state.sliderDragEnded();
+        updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
+      });
+      window.addEventListener('mouseup', () => {
+        if(dragging) state.sliderDragEnded();
+        dragging = false; document.body.style.cursor = 'default';
+      });
+      // NOTE: valueChangedEvent fires with NO callback arguments (JUCE 8
+      // pattern #15) - read the current value from `state` itself, not
+      // from a listener argument.
+      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max, skewOf(state)); render(); });
+    });
+  }
+
+  // ===================================================================
+  // Generic VERTICAL FADER binding
+  // ===================================================================
+  function bindFaders(scope){
+    scope.querySelectorAll('.fader.vertical[data-param]:not([data-bound])').forEach(fader => {
+      fader.setAttribute('data-bound','1');
+      const param = fader.dataset.param;
+      const min = parseFloat(fader.dataset.min);
+      const max = parseFloat(fader.dataset.max);
+      const decimals = parseInt(fader.dataset.decimals || "1");
+      const unit = fader.dataset.unit || "";
+      let value = parseFloat(fader.dataset.default);
+      const thumb = fader.querySelector('.fader-thumb');
+      const wrap = fader.closest('.fader-wrap');
+      const readout = wrap ? wrap.querySelector('.fader-readout') : null;
+      const state = Juce.getSliderState(param);
+
+      function render(){
+        const n = clamp01(normFromValue(value, min, max, skewOf(state)));
+        // Size-independent: correct even if the fader was hidden (page
+        // switched away) when this ran - equals (1-n)*(height-10).
+        thumb.style.top = `calc(${((1-n)*100).toFixed(3)}% - ${((1-n)*10).toFixed(2)}px)`;
+        const text = fmtValue(value, decimals, unit);
+        if(readout) readout.textContent = text;
+        // Phase 5.6: see bindKnobs()'s identical comment above - same
+        // current-BASE-value attribute stamp, fader variant.
+        fader.dataset.currentValue = String(value);
+      }
+      // Do NOT proactively push the local placeholder default into the
+      // backend here (see bindKnobs' identical note above) - the real
+      // value arrives asynchronously via the valueChangedEvent listener.
+      render();
+
+      let dragging = false, fStartY = 0, fStartVal = 0, fFine = false;
+      function pushValue(){
+        render();
+        const n = clamp01(normFromValue(value, min, max, skewOf(state)));
+        state.setNormalisedValue(n);
+        updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
+      }
+      function setFromClientY(clientY){
+        const rect = fader.getBoundingClientRect();
+        const usable = rect.height - 10;
+        const n = clamp01(1 - ((clientY - rect.top - 5) / usable));
+        value = valueFromNorm(n, min, max, skewOf(state));
+        pushValue();
+      }
+      fader.addEventListener('mousedown', e => {
+        dragging = true; state.sliderDragStarted();
+        setFromClientY(e.clientY);                       // click-to-position, as before
+        fStartY = e.clientY; fStartVal = value; fFine = e.shiftKey;
+        e.preventDefault();
+      });
+      window.addEventListener('mousemove', e => {
+        if(!dragging) return;
+        // Anchored delta drag: identical feel to absolute tracking at 1x,
+        // but lets Shift scale to micro adjustments with a rebase on toggle
+        // so the fader continues from its current value (no snap-back).
+        if (e.shiftKey !== fFine){ fFine = e.shiftKey; fStartY = e.clientY; fStartVal = value; }
+        const rect = fader.getBoundingClientRect();
+        const usable = Math.max(1, rect.height - 10);
+        const sens = ((max-min)/usable) * (fFine ? 0.08 : 1);
+        value = clamp(fStartVal + (fStartY - e.clientY) * sens, min, max);
+        pushValue();
+      });
+      window.addEventListener('mouseup', () => { if(dragging) state.sliderDragEnded(); dragging = false; });
+      // Double-click resets to the parameter's default value.
+      fader.addEventListener('dblclick', e => {
+        e.preventDefault();
+        value = parseFloat(fader.dataset.default);
+        state.sliderDragStarted(); pushValue(); state.sliderDragEnded();
+      });
+      // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+      // read the current value from `state` itself.
+      state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max, skewOf(state)); render(); });
+    });
+  }
+
+  // ===================================================================
+  // Generic HORIZONTAL SLIDER binding (continuous OR discrete choice-list)
+  // ===================================================================
+  function bindHSliders(scope){
+    scope.querySelectorAll('.hslider[data-param]:not([data-bound])').forEach(hs => {
+      hs.setAttribute('data-bound','1');
+      const param = hs.dataset.param;
+      const thumb = hs.querySelector('.hslider-thumb');
+      const wrap = hs.closest('.hslider-wrap');
+      const readout = wrap ? wrap.querySelector('.hslider-readout') : null;
+      const choices = hs.dataset.choices ? hs.dataset.choices.split('|') : null;
+
+      if(choices){
+        // discrete combo, rendered as a snapping horizontal slider
+        let index = parseInt(hs.dataset.defaultIndex || "0");
+        const state = Juce.getComboBoxState(param);
+        function render(){
+          const n = choices.length > 1 ? index/(choices.length-1) : 0;
+          thumb.style.left = `calc(${(n*100).toFixed(3)}% - ${(n*10).toFixed(2)}px)`; // size-independent
+          if(readout) readout.textContent = choices[index];
+        }
+        // Do NOT proactively push the local placeholder default index into
+        // the backend here (see bindKnobs' identical note above).
+        render();
+        function setFromClientX(clientX){
+          const rect = hs.getBoundingClientRect();
+          const usable = rect.width - 10;
+          const n = clamp01((clientX - rect.left - 5)/usable);
+          index = Math.round(n * (choices.length-1));
+          render();
+          state.setChoiceIndex(index);
+          updateDebugMonitor(param, choices[index], index/(choices.length-1));
+        }
+        let dragging = false;
+        hs.addEventListener('mousedown', e => { dragging = true; setFromClientX(e.clientX); e.preventDefault(); });
+        window.addEventListener('mousemove', e => { if(dragging) setFromClientX(e.clientX); });
+        window.addEventListener('mouseup', () => { dragging = false; });
+        // valueChangedEvent fires with NO callback arguments (Pattern #15).
+        state.valueChangedEvent.addListener(() => { index = state.getChoiceIndex(); render(); });
+      } else {
+        // continuous float slider (e.g. micro delay time)
+        const min = parseFloat(hs.dataset.min);
+        const max = parseFloat(hs.dataset.max);
+        const decimals = parseInt(hs.dataset.decimals || "1");
+        const unit = hs.dataset.unit || "";
+        let value = parseFloat(hs.dataset.default);
+        const state = Juce.getSliderState(param);
+        function render(){
+          const n = clamp01(normFromValue(value, min, max, skewOf(state)));
+          thumb.style.left = `calc(${(n*100).toFixed(3)}% - ${(n*10).toFixed(2)}px)`; // size-independent
+          if(readout) readout.textContent = fmtValue(value, decimals, unit);
+        }
+        // Do NOT proactively push the local placeholder default into the
+        // backend here (see bindKnobs' identical note above).
+        render();
+        function setFromClientX(clientX){
+          const rect = hs.getBoundingClientRect();
+          const usable = rect.width - 10;
+          const n = clamp01((clientX - rect.left - 5)/usable);
+          value = valueFromNorm(n, min, max, skewOf(state));
+          render();
+          state.setNormalisedValue(n);
+          updateDebugMonitor(param, fmtValue(value, decimals, unit), n);
+        }
+        let dragging = false;
+        hs.addEventListener('mousedown', e => { dragging = true; state.sliderDragStarted(); setFromClientX(e.clientX); e.preventDefault(); });
+        window.addEventListener('mousemove', e => { if(dragging) setFromClientX(e.clientX); });
+        window.addEventListener('mouseup', () => { if(dragging) state.sliderDragEnded(); dragging = false; });
+        // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+        // read the current value from `state` itself.
+        state.valueChangedEvent.addListener(() => { value = valueFromNorm(state.getNormalisedValue(), min, max, skewOf(state)); render(); });
+      }
+    });
+  }
+
+  // ===================================================================
+  // Generic TOGGLE (small pill switches: lfo sync, A/B, fold bypass)
+  // ===================================================================
+  function bindToggles(scope){
+    scope.querySelectorAll('.toggle-sw[data-param]:not([data-bound])').forEach(t => {
+      t.setAttribute('data-bound','1');
+      const param = t.dataset.param;
+      let on = t.dataset.default === "true";
+      const state = Juce.getToggleState(param);
+      function render(){ t.classList.toggle('on', on); }
+      render();
+      t.addEventListener('click', () => { on = !on; render(); state.setValue(on); updateDebugMonitor(param, on, on?1:0); });
+      // valueChangedEvent fires with NO callback arguments (Pattern #15).
+      state.valueChangedEvent.addListener(() => { on = !!state.getValue(); render(); });
+    });
+
+    document.getElementById('ab_toggle').addEventListener('click', function(){
+      const state = Juce.getToggleState('abCompareState');
+      const on = !this.classList.contains('on');
+      this.classList.toggle('on', on);
+      state.setValue(on);
+      updateDebugMonitor('abCompareState', on, on?1:0);
+    });
+  }
+
+  // ===================================================================
+  // Power icon buttons (module bypass toggles rendered as icon glyphs)
+  // ===================================================================
+  function bindPowerButtons(scope){
+    scope.querySelectorAll('.power-btn[data-param]:not([data-bound])').forEach(btn => {
+      btn.setAttribute('data-bound','1');
+      const param = btn.dataset.param;
+      // data-invert="true" marks BYPASS-semantic params (graphBypass*): the
+      // parameter is true when the module is OFF, but the power icon must be
+      // LIT when the module is ON — so the lit state renders as !paramValue.
+      // Enable-semantic params (sequencerEnabled/modMatrixEnabled) omit it.
+      const inv = btn.dataset.invert === "true";
+      let paramVal = btn.dataset.default === "true";
+      const state = Juce.getToggleState(param);
+      function render(){ btn.classList.toggle('on', inv ? !paramVal : paramVal); }
+      render();
+      btn.addEventListener('click', () => { paramVal = !paramVal; render(); state.setValue(paramVal); updateDebugMonitor(param, paramVal, paramVal?1:0); });
+      // valueChangedEvent fires with NO callback arguments (Pattern #15).
+      state.valueChangedEvent.addListener(() => { paramVal = !!state.getValue(); render(); });
+    });
+  }
+
+  // ===================================================================
+  // NEW in v5: ENABLE toggles (sequencer_enable, mod_matrix_enable).
+  // Reuses the same power-btn markup/CSS and relies on bindPowerButtons()
+  // (called first, below) for the actual on/off state + parameter message
+  // posting - this function only adds the "dim the rest of the card"
+  // behavior on top, keyed off data-dim-target. true = module ON (lit),
+  // the opposite semantic of the node_bypass_* power buttons.
+  // ===================================================================
+  function bindEnableButtons(scope){
+    scope.querySelectorAll('.power-btn[data-dim-target]:not([data-dim-bound])').forEach(btn => {
+      btn.setAttribute('data-dim-bound','1');
+      const target = document.getElementById(btn.dataset.dimTarget);
+      function applyDim(){
+        if(!target) return;
+        target.classList.toggle('dimmed', !btn.classList.contains('on'));
+      }
+      applyDim();
+      btn.addEventListener('click', applyDim);
+    });
+  }
+
+  // ===================================================================
+  // Perf trigger buttons (Phase 5.4: MOMENTARY press-and-hold, matching the
+  // DSP's momentary accumulator-override design for performanceKill/Glitch/
+  // Destroy/Freeze/Reverse/Stutter/Chaos - true while held, false on
+  // release/cancel. Previously toggled (latched) on mousedown; fixed here.
+  // ===================================================================
+  function bindPerfButtons(scope){
+    scope.querySelectorAll('.perf-btn[data-param]:not([data-bound])').forEach(btn => {
+      btn.setAttribute('data-bound','1');
+      const param = btn.dataset.param;
+      const state = Juce.getToggleState(param);
+      function render(){ btn.classList.toggle('on', !!state.getValue()); }
+      render();
+
+      function press(e){
+        state.setValue(true);
+        render();
+        updateDebugMonitor(param, true, 1);
+        try{ btn.setPointerCapture(e.pointerId); }catch(err){}
+      }
+      function release(e){
+        if(!btn.classList.contains('on')) return; // already released (e.g. pointercancel after pointerup)
+        state.setValue(false);
+        render();
+        updateDebugMonitor(param, false, 0);
+        try{ btn.releasePointerCapture(e.pointerId); }catch(err){}
+      }
+      btn.addEventListener('pointerdown', press);
+      btn.addEventListener('pointerup', release);
+      btn.addEventListener('pointercancel', release);
+
+      // Reflect MIDI-triggered (notes 36-42) or host-automated changes into
+      // the button's visual state even when no pointer touched it.
+      // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+      // read the current value from `state` itself.
+      state.valueChangedEvent.addListener(render);
+    });
+  }
+
+  // ===================================================================
+  // Mode tiles (icon-tile + chevron-cycle combo, e.g. distortionAlgorithm)
+  // ===================================================================
+  // ===================================================================
+  // Direct-pick tile menu: shared popup for all choice-bearing mode tiles.
+  // Skipped choice indices (data-skip) are omitted from the list.
+  // ===================================================================
+  let tileMenuEl = null, tileMenuFor = null, tileMenuSuppress = null;
+  function closeTileMenu(){ if(tileMenuEl){ tileMenuEl.remove(); tileMenuEl = null; tileMenuFor = null; } }
+  document.addEventListener('pointerdown', e => {
+    if (tileMenuEl && !tileMenuEl.contains(e.target)){
+      tileMenuSuppress = (tileMenuFor && tileMenuFor.contains(e.target)) ? tileMenuFor : null;
+      closeTileMenu();
+    }
+  }, true);
+  function openTileMenu(tile, choices, skip, getIndex, choose){
+    closeTileMenu();
+    const menu = document.createElement('div');
+    menu.className = 'tile-menu';
+    choices.forEach((c, i) => {
+      if (skip.includes(i)) return;
+      const it = document.createElement('div');
+      it.className = 'tile-menu-item' + (i === getIndex() ? ' active' : '');
+      it.textContent = c;
+      it.addEventListener('click', ev => { ev.stopPropagation(); choose(i); closeTileMenu(); });
+      menu.appendChild(it);
+    });
+    const r = tile.getBoundingClientRect();
+    menu.style.left = r.left + 'px';
+    menu.style.top = (r.bottom + 6) + 'px';
+    document.body.appendChild(menu);
+    const mr = menu.getBoundingClientRect();
+    if (mr.bottom > window.innerHeight - 8) menu.style.top = Math.max(8, r.top - mr.height - 6) + 'px';
+    if (mr.right > window.innerWidth - 8) menu.style.left = Math.max(8, window.innerWidth - 8 - mr.width) + 'px';
+    tileMenuEl = menu; tileMenuFor = tile;
+  }
+
+  function bindModeTiles(scope){
+    scope.querySelectorAll('.mode-tile[data-param]:not([data-bound])').forEach(tile => {
+      tile.setAttribute('data-bound','1');
+      const id = tile.id;
+      const param = tile.dataset.param;
+      const choices = tile.dataset.choices.split('|');
+      // data-skip: choice indices hidden from UI cycling (e.g. the Distortion
+      // menu's Bitcrusher/Sample Rate Reducer passthrough entries, which defer
+      // to the dedicated Bitcrush module). The APVTS choice list is unchanged
+      // (locked spec) - host automation can still select them and the tile
+      // renders them honestly; the chevrons just skip past.
+      const skip = (tile.dataset.skip || '').split('|').filter(s => s !== '').map(Number);
+      let index = 0;
+      const defaultChoice = tile.dataset.defaultChoice;
+      if(defaultChoice){ const di = choices.indexOf(defaultChoice); if(di >= 0) index = di; }
+      const state = Juce.getComboBoxState(param);
+      const labelEl = tile.querySelector('.tile-label');
+      const dotsEl = tile.querySelector('.tile-dots');
+      const innerWidth = (tile.offsetWidth || 150) - 24;
+      const gap = 2;
+      let dotSize = Math.floor((innerWidth - (choices.length-1)*gap) / choices.length);
+      dotSize = Math.max(2, Math.min(5, dotSize));
+
+      dotsEl.innerHTML = '';
+      dotsEl.style.gap = gap + 'px';
+      choices.forEach((c,i) => {
+        const d = document.createElement('span');
+        d.style.width = dotSize+'px'; d.style.height = dotSize+'px'; d.style.flex = '0 0 auto';
+        if (skip.includes(i)) d.style.display = 'none';
+        dotsEl.appendChild(d);
+      });
+
+      function render(){
+        labelEl.textContent = choices[index];
+        Array.from(dotsEl.children).forEach((d,i) => d.classList.toggle('active', i === index));
+      }
+      // Do NOT proactively push the local placeholder default index into
+      // the backend here (see bindKnobs' identical note above).
+      render();
+
+      document.querySelectorAll(`.chevron[data-for="${id}"]`).forEach(chev => {
+        chev.addEventListener('click', () => {
+          const dir = parseInt(chev.dataset.dir);
+          index = (index + dir + choices.length) % choices.length;
+          for (let g = 0; skip.includes(index) && g < choices.length; ++g)
+            index = (index + dir + choices.length) % choices.length;
+          render();
+          state.setChoiceIndex(index);
+          updateDebugMonitor(param, choices[index], index/(choices.length-1));
+        });
+      });
+
+      // Reflect host automation / preset recall back into the tile
+      // (valueChangedEvent fires with NO callback arguments - Pattern #15).
+      state.valueChangedEvent.addListener(() => { index = state.getChoiceIndex(); render(); });
+
+      // Direct-pick menu: click the tile itself to choose from a list.
+      tile.addEventListener('click', () => {
+        if (tileMenuSuppress === tile){ tileMenuSuppress = null; return; } // toggle-close
+        openTileMenu(tile, choices, skip, () => index, (i) => {
+          index = i; render(); state.setChoiceIndex(i);
+          updateDebugMonitor(param, choices[i], i / (choices.length - 1));
+        });
+      });
+    });
+  }
+
+  // ===================================================================
+  // ADV pill toggles (decorative UI chrome - not parameter-bound)
+  // ===================================================================
+  document.querySelectorAll('.adv-pill[data-target]').forEach(pill => {
+    pill.addEventListener('click', () => {
+      const target = document.getElementById(pill.dataset.target);
+      const open = !pill.classList.contains('on');
+      pill.classList.toggle('on', open);
+      if(target) target.classList.toggle('open', open);
+    });
+  });
+
+  // ===================================================================
+  // Combo (native <select>) binding
+  // ===================================================================
+  function bindCombos(scope){
+    scope.querySelectorAll('select[data-param]:not([data-bound])').forEach(sel => {
+      sel.setAttribute('data-bound','1');
+      const param = sel.dataset.param;
+      const state = Juce.getComboBoxState(param);
+      // Do NOT proactively push the HTML's static default selectedIndex
+      // into the backend here (see bindKnobs' identical note above) - the
+      // real value arrives asynchronously via the valueChangedEvent
+      // listener below.
+      sel.addEventListener('change', () => {
+        state.setChoiceIndex(sel.selectedIndex);
+        updateDebugMonitor(param, sel.value, sel.selectedIndex/Math.max(1, sel.options.length-1));
+      });
+      // Reflect host automation / preset recall back into the <select>
+      // (valueChangedEvent fires with NO callback arguments - Pattern #15).
+      state.valueChangedEvent.addListener(() => { sel.selectedIndex = state.getChoiceIndex(); });
+    });
+  }
+
+  // ===================================================================
+  // Action buttons + preset search
+  // ===================================================================
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      console.log(`Action triggered: ${btn.dataset.action}`);
+      updateDebugMonitor(btn.dataset.action, 'triggered', '—');
+    });
+  });
+  document.getElementById('preset_search').addEventListener('input', (e) => {
+    console.log(`Action triggered: search_presets ("${e.target.value}")`);
+    updateDebugMonitor('search_presets', e.target.value || '(empty)', '—');
+  });
+
+  // ===================================================================
+  // XY PAD (Phase 5.4: continuous streaming during drag, hard requirement
+  // per plan.md - xyPadX/xyPadY must update on every pointermove, not just
+  // on release. Switched from mousedown/mousemove/mouseup to pointer events
+  // with setPointerCapture (so drag tracking survives the pointer leaving
+  // the pad's bounds mid-drag - clamp01 below still bounds the resulting
+  // normalised value to the pad's edges), and gesture-bracketed with
+  // sliderDragStarted()/sliderDragEnded() (Pattern from
+  // juce8-critical-patterns.md #"WebView Slider Gesture Bracketing" - so
+  // hosts' touch/latch automation-record modes and undo grouping work
+  // correctly, matching every other slider/knob/fader binding in this file).
+  // Deliberately does NOT add any UI-side smoothing of its own - the glide
+  // feel (matching xyPadSmoothing) is entirely DSP-side (SmoothedValue
+  // chasing this raw streamed position); the dot tracks the pointer exactly.
+  // ===================================================================
+  (function(){
+    const pad = document.getElementById('xy_pad');
+    const dot = document.getElementById('xy_dot');
+    const xState = Juce.getSliderState('xyPadX');
+    const yState = Juce.getSliderState('xyPadY');
+    let dragging = false;
+    let activePointerId = null;
+
+    // ---- Cmd+1 latch = full performance mode (user request 2026-09-05):
+    // while latched, the ENTIRE window maps to the pad's range - every
+    // pointer movement anywhere drives xyPadX/Y (full trackpad travel =
+    // full XY travel), the OS cursor is hidden, and every other control is
+    // click-proofed (capture-phase blockers) so live play can't misfire a
+    // knob or button. ONLY Cmd+1 unlatches. The automation gesture stays
+    // open for the whole latch so hosts record the full performance.
+    // Session-local, never persisted.
+    let latched = false;
+    const latchBadge = document.getElementById('xy_latch');
+    function setLatch(on){
+      if (latched === on) return;
+      latched = on;
+      pad.classList.toggle('latched', on);
+      document.body.classList.toggle('xy-latch-live', on);
+      if (latchBadge) latchBadge.hidden = !on;
+      if (on){ xState.sliderDragStarted(); yState.sliderDragStarted(); }
+      else if (!dragging){ xState.sliderDragEnded(); yState.sliderDragEnded(); }
+    }
+    document.addEventListener('keydown', e => {
+      // Cmd+L toggles latch (user-chosen final binding; Ctrl+L kept as a
+      // fallback for hosts that swallow Cmd chords).
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')){
+        e.preventDefault();
+        setLatch(!latched);
+      }
+      // Esc is an unlatch-only panic exit - it never latches.
+      if (e.key === 'Escape' && latched){
+        e.preventDefault();
+        setLatch(false);
+      }
+    });
+    // Whole-window -> pad mapping while latched.
+    function setFromViewport(clientX, clientY){
+      const xN = clamp01(clientX / window.innerWidth);
+      const yN = clamp01(1 - clientY / window.innerHeight);
+      renderDot(xN, yN);
+      xState.setNormalisedValue(xN); yState.setNormalisedValue(yN);
+      updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
+    }
+    document.addEventListener('pointermove', e => {
+      if (latched) setFromViewport(e.clientX, e.clientY);
+    });
+    // While latched, swallow every click-like event before it reaches any
+    // control - the only exit is Cmd+1.
+    for (const type of ['pointerdown','pointerup','click','dblclick','contextmenu'])
+      document.addEventListener(type, e => {
+        if (latched){ e.preventDefault(); e.stopPropagation(); }
+      }, true);
+
+    function renderDot(xN, yN){
+      dot.style.left = (xN*100)+'%'; dot.style.bottom = (yN*100)+'%';
+    }
+
+    function setFromClient(clientX, clientY){
+      const rect = pad.getBoundingClientRect();
+      const xN = clamp01((clientX - rect.left)/rect.width);
+      const yN = clamp01(1 - (clientY - rect.top)/rect.height);
+      renderDot(xN, yN);
+      xState.setNormalisedValue(xN); yState.setNormalisedValue(yN);
+      updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
+    }
+
+    pad.addEventListener('pointerdown', e => {
+      dragging = true;
+      activePointerId = e.pointerId;
+      try{ pad.setPointerCapture(e.pointerId); }catch(err){}
+      if (!latched){ xState.sliderDragStarted(); yState.sliderDragStarted(); } // latch already holds the gesture open
+      setFromClient(e.clientX, e.clientY);
+      e.preventDefault();
+    });
+    pad.addEventListener('pointermove', e => {
+      if (latched) return; // whole-window document listener drives while latched
+      if(!dragging || e.pointerId !== activePointerId) return;
+      setFromClient(e.clientX, e.clientY);
+    });
+    function endDrag(e){
+      if(!dragging) return;
+      if(e && e.pointerId !== activePointerId) return;
+      dragging = false;
+      if (!latched){ xState.sliderDragEnded(); yState.sliderDragEnded(); } // latch keeps the gesture open
+      try{ pad.releasePointerCapture(activePointerId); }catch(err){}
+      activePointerId = null;
+    }
+    pad.addEventListener('pointerup', endDrag);
+    pad.addEventListener('pointercancel', endDrag);
+
+    // Reflect host automation / preset recall / DSP-side changes (e.g. a
+    // Performance Mode trigger or Mod Matrix slot driving xyPadX/Y) back
+    // into the dot's position when NOT actively being dragged by the user.
+    // valueChangedEvent fires with NO callback arguments (Pattern #15) -
+    // read the current values from the states themselves.
+    function reflectFromState(){
+      if(dragging) return;
+      renderDot(xState.getNormalisedValue(), yState.getNormalisedValue());
+    }
+    xState.valueChangedEvent.addListener(reflectFromState);
+    yState.valueChangedEvent.addListener(reflectFromState);
+  })();
+
+  // ===================================================================
+  // Phase 5.2: RHYTHMIC SEQUENCER — real editable step grid.
+  //
+  // Pattern data (10 lanes x up to 32 steps) is RhythmicSequencer's custom,
+  // non-APVTS state - it cannot use Juce.getSliderState()/etc like every
+  // other control in this file. This block instead uses the native-
+  // function/event bridge PluginEditor.h/.cpp registers (see that header's
+  // "PHASE 5.2 ADDITIONS" doc comment for the full C++-side design):
+  //   - Juce.getNativeFunction('sequencerRequestPattern'/'sequencerSetStep'/
+  //     'sequencerPatternOp') for JS -> C++ commands.
+  //   - window.__JUCE__.backend.addEventListener('sequencerPatternChanged', ...)
+  //     for the C++ -> JS pattern-refresh push (initial load + after any
+  //     pattern operation).
+  //
+  // LANE-SELECTOR INTERPRETATION (flagged, per the task's own pre-approved
+  // "acceptable interpretation" for this ambiguity): v5-ui.html's step-grid
+  // is a single row of bars with no room in the card for 10 simultaneous
+  // lane rows without redesigning the card - rather than alter that layout,
+  // this shows ONE lane at a time (default: Drive) via a JS-created
+  // lane-selector chip row above the grid, reusing the grid's existing
+  // single-row visual language unchanged.
+  // ===================================================================
+  (function(){
+    // Order/semantics MUST match dsp/RhythmicSequencer.h's Lane enum and
+    // laneMinValue()/laneMaxValue() exactly.
+    const LANE_NAMES = ['Drive','Mix','Filter Cutoff','Bit Depth','Sample Rate','Glitch Probability','Volume','Pan','Pitch','Gate'];
+    const LANE_CHIPS = ['DRIVE','MIX','CUTOFF','BITS','S.RATE','GL.PROB','VOLUME','PAN','PITCH','GATE'];
+    const LANE_MIN   = [-1,-1,-1,-1,-1,-1,-1,-1,-1, 0]; // every lane bipolar -1..+1 EXCEPT Gate (index 9), unipolar 0..1
+    const LANE_MAX   = [ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+    const NUM_LANES = 10;
+    const MAX_STEPS = 32; // dsp/RhythmicSequencer.h kMaxSteps
+
+    const grid = document.getElementById('step_grid');
+    const laneRow = document.getElementById('lane_select_row');
+    const readout = document.getElementById('step_grid_readout');
+    const stepsState = Juce.getComboBoxState('sequencerSteps'); // choices "16"/"32", index 0/1
+
+    const seqRequestPattern = Juce.getNativeFunction('sequencerRequestPattern');
+    const seqSetStep = Juce.getNativeFunction('sequencerSetStep');
+    const seqPatternOp = Juce.getNativeFunction('sequencerPatternOp');
+
+    let currentLane = 0;
+    // Local mirror of the C++ pattern, [lane][step] - seeded with each
+    // lane's RhythmicSequencer::laneDefaultValue() (0, or 1.0 for Gate)
+    // until the initial "sequencerPatternChanged" event arrives below.
+    const pattern = [];
+    for (let l = 0; l < NUM_LANES; l++)
+      pattern.push(new Array(MAX_STEPS).fill(l === 9 ? 1 : 0));
+
+    function currentNumSteps(){ return stepsState.getChoiceIndex() === 1 ? 32 : 16; }
+    function heightPct(lane, value){
+      const lo = LANE_MIN[lane], hi = LANE_MAX[lane];
+      return clamp01((value - lo) / (hi - lo)) * 100;
+    }
+
+    function buildLaneChips(){
+      laneRow.innerHTML = '';
+      LANE_CHIPS.forEach((label, i) => {
+        const chip = document.createElement('div');
+        chip.className = 'lane-chip' + (i === currentLane ? ' active' : '');
+        chip.textContent = label;
+        chip.addEventListener('click', () => { currentLane = i; buildLaneChips(); renderGrid(); });
+        laneRow.appendChild(chip);
+      });
+    }
+
+    function renderGrid(){
+      const n = currentNumSteps();
+      const lo = LANE_MIN[currentLane];
+      grid.innerHTML = '';
+      for (let i = 0; i < n; i++){
+        const bar = document.createElement('div');
+        bar.className = 'step-bar editable' + (i % 4 === 0 ? ' beat' : '');
+        if (lo < 0){
+          const center = document.createElement('div');
+          center.className = 'center-line';
+          bar.appendChild(center);
+        }
+        const fill = document.createElement('div');
+        fill.className = 'fill';
+        fill.style.height = heightPct(currentLane, pattern[currentLane][i]) + '%';
+        bar.appendChild(fill);
+        grid.appendChild(bar);
+      }
+      readout.textContent = `${LANE_NAMES[currentLane]} — click/drag a bar to edit`;
+    }
+
+    // Locates the step index under a client-X coordinate by directly
+    // querying each rendered bar's own bounding rect (correctly accounts
+    // for the grid's CSS `gap`, unlike a proportional width/n calculation).
+    function stepIndexFromClientX(clientX){
+      const bars = grid.children;
+      if (bars.length === 0) return 0;
+      for (let i = 0; i < bars.length; i++){
+        const r = bars[i].getBoundingClientRect();
+        if (clientX >= r.left && clientX < r.right) return i;
+      }
+      const firstRect = bars[0].getBoundingClientRect();
+      return clientX < firstRect.left ? 0 : bars.length - 1;
+    }
+
+    function valueFromClientY(clientY){
+      const rect = grid.getBoundingClientRect();
+      const n = clamp01(1 - (clientY - rect.top) / rect.height);
+      const lo = LANE_MIN[currentLane], hi = LANE_MAX[currentLane];
+      return lo + n * (hi - lo);
+    }
+
+    function applyEditAt(clientX, clientY){
+      const step = stepIndexFromClientX(clientX);
+      const value = valueFromClientY(clientY);
+      pattern[currentLane][step] = value;
+      // Local render first (same "render locally, then push to backend"
+      // convention every other bindXxx() helper in this file follows).
+      const bar = grid.children[step];
+      if (bar) {
+        const fill = bar.querySelector('.fill');
+        if (fill) fill.style.height = heightPct(currentLane, value) + '%';
+      }
+      readout.textContent = `${LANE_NAMES[currentLane]} — step ${step + 1}: ${value.toFixed(2)}`;
+      seqSetStep(currentLane, step, value);
+    }
+
+    let dragging = false;
+    grid.addEventListener('mousedown', e => { dragging = true; applyEditAt(e.clientX, e.clientY); e.preventDefault(); });
+    window.addEventListener('mousemove', e => { if (dragging) applyEditAt(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+
+    // sequencerSteps changing (host automation, preset recall, or the
+    // sequencer_steps <select> itself) only changes how many bars render -
+    // the underlying values are untouched.
+    stepsState.valueChangedEvent.addListener(() => renderGrid());
+
+    // C++ -> JS pattern refresh (initial load + after any pattern
+    // operation) - see PluginEditor.h's "PHASE 5.2 ADDITIONS" doc comment.
+    window.__JUCE__.backend.addEventListener('sequencerPatternChanged', (payload) => {
+      if (payload && Array.isArray(payload.lanes)) {
+        for (let l = 0; l < NUM_LANES && l < payload.lanes.length; l++)
+          pattern[l] = payload.lanes[l];
+      }
+      renderGrid();
+    });
+
+    // Pattern-operation buttons (index.html's Sequencer card ships 6 of
+    // RhythmicSequencer's 10 opXxx() operations - see PluginEditor.cpp's
+    // "sequencerPatternOp" native function for why all 10 op names are
+    // handled there regardless).
+    const opButtons = { seq_random:'random', seq_mutate:'mutate', seq_reverse:'reverse', seq_mirror:'mirror', seq_shift:'shift', seq_clear:'clear' };
+    Object.keys(opButtons).forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener('click', () => seqPatternOp(opButtons[id]));
+    });
+
+    buildLaneChips();
+    renderGrid();
+    // Request the REAL pattern from C++ (local lane defaults above render
+    // immediately so the grid is never blank; this call's reply replaces
+    // them, arriving well before a user could plausibly interact).
+    seqRequestPattern();
+  })();
+
+  // ===================================================================
+  // 4 LFO mini-panels
+  // ===================================================================
+  (function(){
+    const row = document.getElementById('lfoPanelRow');
+    for(let i=1;i<=4;i++){
+      const panel = document.createElement('div');
+      panel.className = 'lfo-panel';
+      panel.innerHTML = `
+        <div class="knob-wrap" style="margin-top:0;">
+          <div class="knob" id="lfo${i}_rate" data-param="lfo${i}Rate" data-min="0.01" data-max="20" data-default="1" data-unit="Hz" data-decimals="2" style="width:60px;height:60px;">
+            <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+          </div>
+          <div class="knob-value" data-value-for="lfo${i}Rate">1.00 Hz</div>
+          <div class="knob-label">Rate</div>
+        </div>
+        <div class="lfo-controls-col">
+          <div class="lfo-panel-label">LFO ${i}</div>
+          <select class="combo-sm" id="lfo${i}_shape" data-param="lfo${i}Shape" style="width:118px;height:26px;">
+            <option selected>Sine</option><option>Triangle</option><option>Saw</option><option>Reverse Saw</option>
+            <option>Square</option><option>S&amp;H</option><option>Random</option><option>Smooth Random</option><option>Random Walk</option>
+          </select>
+          <div class="toggle-row" style="margin-top:0;">
+            <div class="toggle-sw" id="lfo${i}_sync" data-param="lfo${i}Sync" data-default="false"></div>
+            <span class="toggle-label">Sync</span>
+          </div>
+        </div>`;
+      // Collapsible (user request 2026-09-06): clicking the "LFO n" label
+      // folds the panel to a slim chip; state remembered per-browser.
+      panel.querySelector('.lfo-panel-label').addEventListener('click', () => {
+        const collapsed = panel.classList.toggle('collapsed');
+        try { localStorage.setItem('lfo-collapsed-' + i, collapsed ? '1' : '0'); } catch(e){}
+      });
+      try { if (localStorage.getItem('lfo-collapsed-' + i) === '1') panel.classList.add('collapsed'); } catch(e){}
+      row.appendChild(panel);
+    }
+    bindKnobs(row); bindToggles(row); bindCombos(row);
+  })();
+
+  // ===================================================================
+  // Phase 5.3: 8-slot Mod Matrix editor (real Source/Destination/Amount/
+  // Enable controls - the block above this one is the pre-existing v5-ui.html
+  // decorative dot-grid, left in place unchanged). FLAGGED LAYOUT
+  // INTERPRETATION: v5-ui.html shipped no per-slot editor markup at all (the
+  // 32 modSlotN* params were all "Not yet bound to a mockup control" per
+  // parameter-spec.md) - this generator adds 8 real slot rows below the
+  // decorative grid, one per architecture.md/parameter-spec.md Mod Matrix
+  // slot, each with a Source combo, a Destination combo, a compact bipolar
+  // Amount knob, and an Enable toggle. Reuses bindCombos/bindKnobs/
+  // bindToggles verbatim (same fixed generic helpers every other phase's
+  // controls use), matching this file's established "JS-created controls
+  // call the same shared bind functions as static markup" convention (see
+  // the LFO mini-panel and Sequencer lane-chip generators above/nearby).
+  //
+  // CHOICE-LIST ORDER (CRITICAL - a mismatch here silently routes the wrong
+  // source/destination, no compiler error possible): both lists below are
+  // copied character-for-character from parameter-spec.md's modSlot1Source/
+  // modSlot1Destination Choices fields, and were cross-checked against
+  // dsp/ModMatrix.h's Source/Destination enums (sourceLfo1=0..sourceMacro=9,
+  // destDrive=0..destWidth=11) - both enums' own doc comments state they
+  // match parameter-spec.md's order exactly.
+  // ===================================================================
+  (function(){
+    const modSlotSources = ['LFO 1','LFO 2','LFO 3','LFO 4','Envelope','Audio Level','Sequencer','Random','MIDI CC','Macro'];
+    const modSlotDestinations = ['Drive','Mix','Filter Cutoff','Bit Depth','Sample Rate','Fold','Feedback','Glitch Probability','Glitch Size','Pitch','Pan','Width'];
+    const list = document.getElementById('modSlotList');
+
+    for (let i = 1; i <= 8; i++) {
+      const row = document.createElement('div');
+      row.className = 'mod-slot-row';
+      row.innerHTML = `
+        <span class="mod-slot-label">${i}</span>
+        <select class="combo-sm" id="mod_slot${i}_source" data-param="modSlot${i}Source" style="width:100px;height:26px;">
+          ${modSlotSources.map(s => `<option${s === 'LFO 1' ? ' selected' : ''}>${s}</option>`).join('')}
+        </select>
+        <select class="combo-sm" id="mod_slot${i}_destination" data-param="modSlot${i}Destination" style="width:130px;height:26px;">
+          ${modSlotDestinations.map(d => `<option${d === 'Drive' ? ' selected' : ''}>${d}</option>`).join('')}
+        </select>
+        <div class="knob-wrap">
+          <div class="knob" id="mod_slot${i}_amount" data-param="modSlot${i}Amount" data-min="-100" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:36px;height:36px;">
+            <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+          </div>
+          <div class="knob-value" data-value-for="modSlot${i}Amount">0%</div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-sw" id="mod_slot${i}_enable" data-param="modSlot${i}Enable" data-default="false"></div>
+          <span class="toggle-label">On</span>
+        </div>`;
+      list.appendChild(row);
+    }
+
+    bindCombos(list);
+    bindKnobs(list);
+    bindToggles(list);
+
+    // Slot management (user request 2026-09-06): 4 strips shown by default;
+    // the x on a strip hides it AND disables its slot (no invisible
+    // modulation); + reveals the next strip (up to the engine's 8). A slot
+    // that loads enabled from saved state is always shown. Visibility
+    // remembered per-browser.
+    const rows = Array.from(list.children);
+    const addBtn = document.createElement('div');
+    addBtn.className = 'slot-add';
+    addBtn.textContent = '+ Add Slot';
+    list.after(addBtn);
+    function visibleCount(){ return rows.filter(r => !r.classList.contains('slot-hidden')).length; }
+    function saveVis(){ try { localStorage.setItem('mod-slots-visible', rows.map(r => r.classList.contains('slot-hidden') ? '0' : '1').join('')); } catch(e){} }
+    function refreshAdd(){ addBtn.style.display = rows.every(r => !r.classList.contains('slot-hidden')) ? 'none' : 'flex'; }
+    rows.forEach((rowEl, idx) => {
+      const btn = document.createElement('button');
+      btn.className = 'slot-remove';
+      btn.textContent = '\u00d7';
+      btn.title = 'Remove this slot (disables it)';
+      btn.addEventListener('click', () => {
+        rowEl.classList.add('slot-hidden');
+        Juce.getToggleState('modSlot' + (idx + 1) + 'Enable').setValue(false);
+        saveVis(); refreshAdd();
+      });
+      rowEl.appendChild(btn);
+    });
+    addBtn.addEventListener('click', () => {
+      const next = rows.find(r => r.classList.contains('slot-hidden'));
+      if (next){ next.classList.remove('slot-hidden'); saveVis(); refreshAdd(); }
+    });
+    let vis = null;
+    try { vis = localStorage.getItem('mod-slots-visible'); } catch(e){}
+    rows.forEach((rowEl, idx) => {
+      const remembered = vis && vis.length === 8 ? vis[idx] === '1' : idx < 4; // default: first 4
+      if (!remembered) rowEl.classList.add('slot-hidden');
+    });
+    // A slot enabled in restored plugin state must never be invisibly active.
+    rows.forEach((rowEl, idx) => {
+      const st = Juce.getToggleState('modSlot' + (idx + 1) + 'Enable');
+      st.valueChangedEvent.addListener(() => {
+        if (st.getValue()) { rowEl.classList.remove('slot-hidden'); refreshAdd(); }
+      });
+    });
+    refreshAdd();
+  })();
+
+  // ===================================================================
+  // PHASE 5.5: Distortion Graph Visualization.
+  //
+  // SCOPE (flagged, per plan.md's own simplification clause and the
+  // reconciliation note already recorded in v5-ui.yaml: "The original
+  // brief's standalone 'Distortion Graph' routing-visualization concept was
+  // not carried into the finalized design — the module-map channel-strip
+  // layout... is what shipped instead"). v5 realizes the "Distortion Graph"
+  // AS the 6-module first-unit channel strip itself (Distortion, Bitcrush,
+  // Glitch, Center Master, Filter & EQ, Feedback+Delay), not as a separate
+  // node/link canvas. This phase's entire deliverable is therefore:
+  //   (1) chain-state — bypassed modules visually dim. Achieved with ZERO
+  //       new JS: the 4 graphBypass* power buttons above now carry a
+  //       data-dim-target attribute (new markup, this phase) pointing at
+  //       each module's new .module-body wrapper, which Phase 5.1's
+  //       existing bindEnableButtons() (unchanged, already generic over any
+  //       `.power-btn[data-dim-target]`) picks up in the "Initial bind
+  //       pass" below exactly like it already did for
+  //       sequencer_enable/mod_matrix_enable.
+  //   (2) modulation-target indication (this IIFE) — a small monochrome dot
+  //       (.mod-indicator, new CSS) lights up on a module's card when ANY
+  //       enabled Mod Matrix slot currently targets one of that module's
+  //       live-DSP-wired parameters.
+  // Free-form draggable link creation between nodes (the brief's original,
+  // most speculative vision) is explicitly NOT implemented, per plan.md's
+  // own "could be simplified to a static (non-interactive) routing diagram"
+  // allowance — the module cards ARE the nodes; this is that simplification.
+  //
+  // DESTINATION -> MODULE MAPPING (flagged resolution): of ModMatrix.h's 12
+  // Destination enum values (destDrive..destWidth), only 8 are wired to
+  // real, live DSP — PluginProcessor.cpp's own
+  // resolveModMatrixAndMacroContributions() comments the other 4 explicitly
+  // ("Destinations with no live DSP yet (Glitch Size / Pitch / Pan /
+  // Width)" — computed + clamped into an observation atomic for
+  // diagnostics/future use, per RhythmicSequencer's own Pan/Pitch
+  // precedent, but not consumed by any processing stage). Those 4 also have
+  // no single owning module card in this mockup (no Pitch/Pan/Width control
+  // exists anywhere; Glitch Size's closest thematic fit, the Glitch
+  // module's Buffer control, is not actually the DSP consumer of this
+  // destination) — indicating modulation on a card that produces no
+  // audible effect would be actively misleading, so all 4 are deliberately
+  // EXCLUDED from the map below. The remaining 8 live destinations map onto
+  // all 6 first-unit module cards with zero ambiguity: Drive+Fold ->
+  // Distortion, Bit Depth+Sample Rate -> Bitcrush, Glitch Probability ->
+  // Glitch, Filter Cutoff -> Filter & EQ, Feedback -> Feedback+Delay, Mix ->
+  // Center Master (Output).
+  //
+  // PERFORMANCE (test criterion 3): no timers/rAF/polling of any kind — the
+  // 8 slots' Destination + Enable states (16 Juce state objects; re-fetched
+  // fresh here via Juce.getComboBoxState()/getToggleState(), the same
+  // already-safe multi-subscription pattern this file already relies on
+  // elsewhere, e.g. glitchProbability being bound to two separate on-screen
+  // controls) each carry a valueChangedEvent listener (Pattern #15: fires
+  // with NO callback arguments, current value read fresh from `state`
+  // inside the listener) that recomputes one shared active-module Set and
+  // applies it via classList.toggle. All work is O(8) per event and only
+  // runs on an actual slot Destination/Enable change — never per-frame,
+  // never on a timer.
+  // ===================================================================
+  (function(){
+    const DEST_TO_MODULE_ID = {
+      0: 'mod_ind_distortion',  // Drive
+      5: 'mod_ind_distortion',  // Fold
+      3: 'mod_ind_bitcrush',    // Bit Depth
+      4: 'mod_ind_bitcrush',    // Sample Rate
+      7: 'mod_ind_glitch',      // Glitch Probability
+      2: 'mod_ind_filter',      // Filter Cutoff
+      6: 'mod_ind_feedback',    // Feedback
+      1: 'mod_ind_output',      // Mix
+      // 8 (Glitch Size), 9 (Pitch), 10 (Pan), 11 (Width): diagnostic-only,
+      // no live DSP consumer, no single owning card — deliberately
+      // unmapped, see doc comment above.
+    };
+    const allIndicatorIds = Array.from(new Set(Object.values(DEST_TO_MODULE_ID)));
+
+    const slots = [];
+    for (let i = 1; i <= 8; i++) {
+      slots.push({
+        destState: Juce.getComboBoxState('modSlot' + i + 'Destination'),
+        enableState: Juce.getToggleState('modSlot' + i + 'Enable'),
+      });
+    }
+
+    function recompute(){
+      const active = new Set();
+      slots.forEach(s => {
+        if (!!s.enableState.getValue()) {
+          const moduleId = DEST_TO_MODULE_ID[s.destState.getChoiceIndex()];
+          if (moduleId) active.add(moduleId);
+        }
+      });
+      allIndicatorIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', active.has(id));
+      });
+    }
+
+    slots.forEach(s => {
+      s.destState.valueChangedEvent.addListener(recompute);
+      s.enableState.valueChangedEvent.addListener(recompute);
+    });
+
+    // Initial pass — will show nothing lit until the relays' async
+    // sendInitialUpdate() values land and fire the listeners above (same
+    // documented cosmetic-flash precedent as every other control in this
+    // file; no proactive push here either, for the same corruption-avoidance
+    // reason Phase 5.1's fix documented for bindKnobs/bindCombos/etc).
+    recompute();
+  })();
+
+  // ===================================================================
+  // PHASE 5.6: Meters, Sequencer Playhead, Modulation-Range Indicators,
+  // and a live Filter & EQ frequency-response curve — FINAL GUI PHASE.
+  //
+  // C++ SIDE: PluginEditor.cpp owns a ~30Hz juce::Timer that reads a small
+  // set of new read-only visualization atomics from CORRUPTRAudioProcessor
+  // (see PluginProcessor.h's "Phase 5.6: GUI Visualization Taps" doc
+  // comment) and pushes ONE compact JSON payload per tick via
+  // `window.__JUCE__.backend.addEventListener('visUpdate', ...)` below —
+  // one event stream, not many, per the task brief's architecture.
+  //
+  // SCOPE (flagged, same category of gap as Phase 5.5's "Distortion Graph"
+  // resolution above): plan.md's Phase 5.6 goal names "waveform/spectrum"
+  // as a surface, but v5-ui.yaml (the finalized, locked design) ships NO
+  // waveform/spectrum canvas anywhere in its `special_elements`/`controls`
+  // lists — only `input_meter_topbar`/`output_meter_topbar` (level bar
+  // meters) and `filter_eq_mini_graph` (the frequency-response mini-graph,
+  // v5's ONLY color accent). Per this task's explicit instruction ("don't
+  // invent new surfaces the design doesn't have"), no waveform/spectrum
+  // canvas is added here. The meters are wired live below; the filter
+  // mini-graph — previously a static decorative `#filter_eq_curve` path —
+  // is made genuinely live instead, redrawing from the real current
+  // filterType/filterCutoff/filterResonance values (a small per-topology
+  // magnitude-shape approximation, decorative precision rather than a
+  // bit-exact plot of the SVF/biquad transfer function, but a REAL
+  // real-time visualization of live parameter state, satisfying the spirit
+  // of test criterion 2 via the one shipped surface closest to it). The
+  // sequencer step-grid's real playhead — explicitly deferred here since
+  // Phase 5.2 (see that section's own doc comment above) — is wired from
+  // the same Timer payload's `seqStep`/`seqNumSteps` fields.
+  //
+  // METERS use Pattern #20 (ballistic motion: separate current/target +
+  // requestAnimationFrame interpolation, fast attack / slow decay) exactly
+  // as documented in troubleshooting/patterns/juce8-critical-patterns.md.
+  // MODULATION-RANGE INDICATORS compare each of the 7 live-DSP destinations'
+  // (drive, fold, bitDepth, filterCutoff x2, mix, feedbackAmount,
+  // glitchProbability x2) current post-modulation value against that same
+  // control's own current BASE value — read from the `data-current-value`
+  // attribute bindKnobs()/bindFaders() now stamp on every render() (a
+  // one-line addition to each of those two pre-existing generic helpers,
+  // added this phase; does not change their binding behavior for any
+  // control) — in the SAME plain-linear native-unit space those helpers
+  // already render in (deliberately NOT `state.getNormalisedValue()`,
+  // which for filterCutoff specifically lives in a differently-skewed 0-1
+  // space than the knob's own rotation angle uses, per this file's own
+  // `degFromNorm`/`normFromValue` — comparing in different spaces would
+  // visually mismatch the indicator against the knob it decorates).
+  // ===================================================================
+  (function(){
+    // ---- Meters: ballistic motion (Pattern #20) ----
+    const METER_MIN_DB = -60, METER_MAX_DB = 6; // v5-ui.yaml's declared input/output_meter_topbar range
+    const METER_ATTACK = 0.4, METER_DECAY = 0.15; // Pattern #20 tuning guide: responsive attack, readable decay
+    const inputFill = document.querySelector('#input_meter_topbar .fill');
+    const outputFill = document.querySelector('#output_meter_topbar .fill');
+    let targetInPct = 0, targetOutPct = 0;
+    let currentInPct = 0, currentOutPct = 0;
+    let inClipUntil = 0, outClipUntil = 0; // clip-hold timestamps (ms)
+
+    function linearPeakToPct(peak){
+      const db = peak > 0.00001 ? 20 * Math.log10(peak) : METER_MIN_DB;
+      const norm = clamp01((db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB));
+      return Math.pow(norm, 0.7) * 100; // non-linear (gamma) - watery rise, not a flat linear bar
+    }
+
+    function animateMeters(){
+      const inSpeed = currentInPct < targetInPct ? METER_ATTACK : METER_DECAY;
+      currentInPct += (targetInPct - currentInPct) * inSpeed;
+      const outSpeed = currentOutPct < targetOutPct ? METER_ATTACK : METER_DECAY;
+      currentOutPct += (targetOutPct - currentOutPct) * outSpeed;
+      if (inputFill) inputFill.style.height = currentInPct.toFixed(2) + '%';
+      if (outputFill) outputFill.style.height = currentOutPct.toFixed(2) + '%';
+      const now = performance.now();
+      if (inputFill) inputFill.classList.toggle('clip', now < inClipUntil);
+      if (outputFill) outputFill.classList.toggle('clip', now < outClipUntil);
+      requestAnimationFrame(animateMeters);
+    }
+    animateMeters();
+
+    // ---- Sequencer playhead ----
+    // Reuses Phase 5.2's `#step_grid` (see that section's own IIFE above) —
+    // `.step-bar` children are positional/index-based (renderGrid() rebuilds
+    // them on every sequencerSteps/pattern change), so indexing
+    // `grid.children[step]` directly stays correct on the very next tick
+    // after any rebuild without needing to hook into renderGrid() itself.
+    let lastPlayheadStep = -1;
+    function updatePlayhead(step){
+      const grid = document.getElementById('step_grid');
+      if (!grid) return;
+      if (lastPlayheadStep >= 0 && grid.children[lastPlayheadStep])
+        grid.children[lastPlayheadStep].classList.remove('playhead');
+      if (step >= 0 && step < grid.children.length)
+        grid.children[step].classList.add('playhead');
+      lastPlayheadStep = step;
+    }
+
+    // ---- Modulation-range indicators ----
+    // { DOM id, visUpdate payload key, control kind }. Covers both
+    // dual-bound instances of filterCutoff/glitchProbability (base knob +
+    // ADV-revealed fine mirror), matching this file's established
+    // dual-binding precedent (both instances share one underlying relay).
+    const MOD_TARGETS = [
+      { id: 'node_drive', key: 'modDrive', kind: 'fader' },
+      { id: 'node_fold', key: 'modFold', kind: 'knob' },
+      { id: 'node_bit_depth', key: 'modBitDepth', kind: 'knob' },
+      { id: 'filter_cutoff_detail', key: 'modFilterCutoff', kind: 'knob' },
+      { id: 'node_filter_cutoff', key: 'modFilterCutoff', kind: 'knob' },
+      { id: 'master_mix', key: 'modMix', kind: 'knob' },
+      { id: 'feedback_amount', key: 'modFeedbackAmount', kind: 'fader' },
+      { id: 'glitch_probability_detail', key: 'modGlitchProbability', kind: 'knob' },
+      { id: 'node_glitch_probability', key: 'modGlitchProbability', kind: 'knob' },
+    ];
+
+    // Indicator DOM is JS-created (one small child element per target,
+    // appended once at init) — no hand-edited markup added to the 9 target
+    // controls, same "generator builds it, markup stays untouched"
+    // convention as every prior phase's JS-generated content.
+    const modIndicators = MOD_TARGETS.map(t => {
+      const el = document.getElementById(t.id);
+      if (!el) return null;
+      const indicatorEl = document.createElement('div');
+      if (t.kind === 'knob') {
+        indicatorEl.className = 'mod-range-ring';
+        const dot = document.createElement('span');
+        dot.className = 'mrr-dot';
+        indicatorEl.appendChild(dot);
+      } else {
+        indicatorEl.className = 'mod-range-tick';
+      }
+      el.appendChild(indicatorEl);
+      return { el, indicatorEl, kind: t.kind, key: t.key, param: el.dataset.param,
+               min: parseFloat(el.dataset.min), max: parseFloat(el.dataset.max) };
+    }).filter(Boolean);
+
+    const MOD_EPSILON = 0.004; // normalised-fraction threshold before showing — avoids at-rest flicker from float rounding
+
+    function updateModIndicators(payload){
+      modIndicators.forEach(m => {
+        const liveVal = payload[m.key];
+        if (typeof liveVal !== 'number' || !isFinite(liveVal)) return;
+        const baseValRaw = m.el.dataset.currentValue;
+        const baseVal = baseValRaw !== undefined ? parseFloat(baseValRaw) : liveVal;
+        // Skew-aware (audit fix): markers must use the SAME normalization the
+        // knob's own render uses, or skewed params (cutoff) draw the marker
+        // at the wrong angle relative to the pointer.
+        const sk = skewOf(Juce.getSliderState(m.param));
+        const liveNorm = clamp01(normFromValue(liveVal, m.min, m.max, sk));
+        const baseNorm = clamp01(normFromValue(baseVal, m.min, m.max, sk));
+        const isActive = Math.abs(liveNorm - baseNorm) > MOD_EPSILON;
+        m.indicatorEl.classList.toggle('active', isActive);
+        if (!isActive) return;
+        if (m.kind === 'knob') {
+          m.indicatorEl.style.transform = `rotate(${degFromNorm(liveNorm)}deg)`;
+        } else {
+          const usable = m.el.offsetHeight - 2; // tick is 2px tall, keep it fully inside the track like the thumb does
+          m.indicatorEl.style.top = `${(1 - liveNorm) * usable}px`;
+        }
+      });
+    }
+
+    // ---- Single "visUpdate" listener drives meters + playhead + mod indicators ----
+    window.__JUCE__.backend.addEventListener('visUpdate', (payload) => {
+      if (!payload) return;
+      targetInPct = linearPeakToPct(payload.inputPeak || 0);
+      targetOutPct = linearPeakToPct(payload.outputPeak || 0);
+      // Clip detection: linear peak at/above 0 dBFS turns the meter red,
+      // held ~700ms so brief overs stay visible.
+      const nowMs = performance.now();
+      if ((payload.inputPeak || 0) >= 1.0)  inClipUntil = nowMs + 700;
+      if ((payload.outputPeak || 0) >= 1.0) outClipUntil = nowMs + 700;
+      updatePlayhead(typeof payload.seqStep === 'number' ? payload.seqStep : -1);
+      updateModIndicators(payload);
+    });
+
+    // ---- Filter & EQ mini-graph: live frequency-response curve ----
+    // Event-driven only (Pattern #15/Phase 5.5 precedent) — NOT tied to the
+    // 30Hz visUpdate tick, since filterType/filterCutoff/filterResonance
+    // are already ordinary WebComboBoxRelay/WebSliderRelay-bound (Phase
+    // 5.1), so redrawing from their own valueChangedEvent listeners is
+    // zero-poll and only runs on an actual change.
+    const curvePath = document.getElementById('filter_eq_curve');
+    const filterTypeState = Juce.getComboBoxState('filterType');
+
+    // X axis: log-frequency across the graph's plotted region (20..160 in
+    // the `viewBox="0 0 165 80"` SVG, matching the "100Hz/1kHz/10kHz" axis
+    // labels below it). Y axis: dB, reusing the SAME two calibration points
+    // the existing grid lines already draw (y=10 -> +12dB, y=40 -> 0dB).
+    const GX0 = 20, GX1 = 160;
+    const FREQ_MIN = 20, FREQ_MAX = 20000;
+    function xToFreq(x){ const t = (x - GX0) / (GX1 - GX0); return FREQ_MIN * Math.pow(FREQ_MAX / FREQ_MIN, t); }
+    function dbToY(db){ return 40 - db * 2.5; } // slope calibrated from (0dB,y40)/(12dB,y10)
+
+    const filterSlopeState = Juce.getComboBoxState('filterSlope');
+    const morphState = Juce.getSliderState('filterMorph');
+    function magnitudeDb(typeIndex, freq, cutoffHz, resonancePct){
+      const slopeMul = filterSlopeState.getChoiceIndex() === 1 ? 2 : 1; // 12 vs 24 dB/oct
+      const oct = Math.log2(Math.max(freq,1) / Math.max(1,cutoffHz));
+      const resNorm = clamp01(resonancePct / 100);
+      function shape(t){ // t: 0 LP,1 HP,2 BP,3 Notch
+        let db;
+        if (t === 0) db = -12*slopeMul*Math.max(0, oct);          // LP
+        else if (t === 1) db = -12*slopeMul*Math.max(0, -oct);    // HP
+        else if (t === 2) db = -12*slopeMul*Math.abs(oct) - 6;    // BP
+        else db = -22*Math.exp(-(oct*oct)/0.06);                  // Notch
+        if (t !== 3) db += resNorm * 16 * Math.exp(-(oct*oct)/(2*Math.pow(1.4-resNorm*1.1,2)));
+        return db;
+      }
+      if (typeIndex < 4) return shape(typeIndex);
+      // Morph: blend LP->BP->HP->Notch across filterMorph
+      const mp = clamp01((typeof morphState!=='undefined' && morphState) ? morphState.getScaledValue()/100 : 0) * 3;
+      const seq = [0,2,1,3]; // LP,BP,HP,Notch
+      const i = Math.min(2, Math.floor(mp)); const f = mp - i;
+      return shape(seq[i]) + (shape(seq[i+1]) - shape(seq[i])) * f;
+    }
+
+    // Smoothly animated: the DISPLAYED cutoff/resonance ease toward their
+    // targets each frame (cutoff in log-frequency space so sweeps look
+    // even across the log X axis), so opening/closing the filter draws a
+    // glide instead of stepping. rAF runs only while values are moving.
+    const cutoffMarker = document.getElementById('filter_cutoff_marker');
+    const cutoffHzLabel = document.getElementById('filter_cutoff_hz_label');
+    function freqToX(f){ return GX0 + (GX1 - GX0) * (Math.log(f / FREQ_MIN) / Math.log(FREQ_MAX / FREQ_MIN)); }
+    function fmtHz(f){ return f >= 1000 ? (f/1000).toFixed(f >= 10000 ? 1 : 2) + ' kHz' : Math.round(f) + ' Hz'; }
+
+    function targets(){
+      const cutoffEl = document.getElementById('filter_cutoff_detail');
+      const resonanceEl = document.getElementById('filter_resonance');
+      return {
+        cutoffHz: cutoffEl ? parseFloat(cutoffEl.dataset.currentValue ?? cutoffEl.dataset.default) : 20000,
+        resonancePct: resonanceEl ? parseFloat(resonanceEl.dataset.currentValue ?? resonanceEl.dataset.default) : 0
+      };
+    }
+    let disp = targets();          // displayed (eased) values
+    let animating = false;
+
+    function drawCurve(){
+      if (!curvePath) return;
+      const typeIndex = filterTypeState.getChoiceIndex();
+      const N = 24;
+      let d = '';
+      for (let i = 0; i <= N; i++){
+        const x = GX0 + (GX1 - GX0) * (i / N);
+        const freq = xToFreq(x);
+        const db = clamp(magnitudeDb(typeIndex, freq, disp.cutoffHz, disp.resonancePct), -12, 14);
+        const y = clamp(dbToY(db), 4, 76);
+        d += (i === 0 ? `M${x.toFixed(1)} ${y.toFixed(1)}` : ` L${x.toFixed(1)} ${y.toFixed(1)}`);
+      }
+      curvePath.setAttribute('d', d);
+      // Cutoff marker + live Hz readout track the DISPLAYED (eased) cutoff.
+      if (cutoffMarker){
+        const cx = clamp(freqToX(Math.max(FREQ_MIN, disp.cutoffHz)), GX0, GX1);
+        cutoffMarker.setAttribute('x1', cx.toFixed(1));
+        cutoffMarker.setAttribute('x2', cx.toFixed(1));
+      }
+      if (cutoffHzLabel) cutoffHzLabel.textContent = fmtHz(disp.cutoffHz);
+    }
+
+    function animate(){
+      const t = targets();
+      // Ease cutoff in log space, resonance linearly (~120ms feel at 60fps).
+      const logDisp = Math.log(Math.max(FREQ_MIN, disp.cutoffHz));
+      const logTgt  = Math.log(Math.max(FREQ_MIN, t.cutoffHz));
+      const newLog  = logDisp + (logTgt - logDisp) * 0.22;
+      disp.cutoffHz = Math.exp(newLog);
+      disp.resonancePct += (t.resonancePct - disp.resonancePct) * 0.22;
+      drawCurve();
+      const done = Math.abs(newLog - logTgt) < 0.002 && Math.abs(t.resonancePct - disp.resonancePct) < 0.1;
+      if (done){ disp = t; drawCurve(); animating = false; return; }
+      requestAnimationFrame(animate);
+    }
+    function kick(){ if (!animating){ animating = true; requestAnimationFrame(animate); } }
+
+    filterTypeState.valueChangedEvent.addListener(() => drawCurve()); // type changes snap (discrete)
+    filterSlopeState.valueChangedEvent.addListener(() => drawCurve()); // slope changes snap too
+    morphState.valueChangedEvent.addListener(() => drawCurve()); // morph reshapes the curve
+    Juce.getSliderState('filterCutoff').valueChangedEvent.addListener(kick);
+    Juce.getSliderState('filterResonance').valueChangedEvent.addListener(kick);
+    drawCurve(); // initial paint from data-default values, before any relay round-trip lands
+  })();
+
+  // ===================================================================
+  // Hover tooltips: descriptions keyed by data-param / data-action / id,
+  // applied as data-tip attributes, rendered by one shared .ui-tip element
+  // (450ms hover delay, follows in near the cursor, viewport-clamped).
+  // ===================================================================
+  (function(){
+    const PARAM_TIPS = {
+      qualityMode: 'Oversampling quality — ECO to EXTREME; AUTO adapts to drive intensity',
+      inputGain: 'Input trim (−24 to +24 dB) into the chain',
+      outputGain: 'Output trim after the limiter',
+      mix: 'Master dry/wet — above 100% overdrives the wet signal (up to +6 dB)',
+      outputLimiterStyle: 'Output limiter: Transparent catches peaks; Colored adds saturation first',
+      limiterCeiling: 'Limiter ceiling — output never exceeds this level',
+      limiterRelease: 'Limiter recovery speed (ignored while Auto is on)',
+      limiterAutoRelease: 'Auto release — fast on transients, slow on dense material',
+      autoGain: 'Loudness balancer — output matches input level, so drive adds character not volume',
+      graphBypassSaturation: 'Distortion stage on/off',
+      distortionAlgorithm: 'Distortion type — click to pick from the list, arrows to step',
+      drive: 'Distortion input gain (0–40 dB) — pushes harder into the curve',
+      fold: 'Fold amount (Wavefolder/Foldback) — sets carrier frequency for Ring-Mod',
+      graphBypassWaveshaper: 'Bypass only the shaping curve; drive/tone stay active',
+      graphBypassBitcrush: 'Bitcrush stage on/off',
+      bitcrushMode: 'Crush character — click to pick (Classic, Dither, Bit Flip…)',
+      bitDepth: 'Bit depth (1–16) — lower = coarser, harsher steps',
+      sampleRateReduction: 'Sample-rate crush amount — 0% clean, 100% = 48× hold',
+      graphBypassGlitch: 'Glitch engine on/off',
+      glitchMode: 'Glitch mode (17 types) — click to pick',
+      glitchBufferLength: 'Glitch cycle length, synced to host tempo',
+      glitchProbability: 'Chance a glitch event fires each cycle',
+      chaos: 'Randomizes glitch timing and length per cycle',
+      tone: 'Post-distortion tilt — dark to bright around 1 kHz',
+      bias: 'Pre-shaper DC offset — asymmetric, adds even harmonics',
+      distortionMix: 'Blend of shaped vs clean signal within the distortion stage',
+      graphBypassFilter: 'Filter stage on/off',
+      filterType: 'Filter type — Lowpass, Highpass, Bandpass, Notch, or Morph (Ableton Auto Filter style)',
+      filterCutoff: 'Filter cutoff frequency',
+      filterResonance: 'Resonance — emphasis at the cutoff',
+      filterMorph: 'Morph position (Morph type only): sweeps Lowpass → Bandpass → Highpass → Notch',
+      filterDrive: 'Analog-style saturation driven into the filter (adds grit/warmth)',
+      filterSlope: 'Filter steepness — 12 dB/oct gentle, 24 dB/oct steep (Comb/Formant unaffected)',
+      feedbackAmount: 'Feedback loop intensity — internally limited, cannot run away',
+      feedbackDamping: 'Darkens the feedback tail (higher = duller repeats)',
+      microDelayTime: 'Feedback loop delay time — flanger-tight to slapback',
+      sequencerEnabled: 'Rhythmic sequencer on/off',
+      sequencerRate: 'Step rate, host-synced (incl. triplets)',
+      sequencerSteps: 'Pattern length (16 or 32 steps)',
+      sequencerDepth: 'Sequencer mix — how strongly all lanes modulate the sound (0% = off)',
+      modMatrixEnabled: 'Modulation matrix + LFOs on/off',
+      macroDamage: 'Macro: cranks drive + crush together for instant destruction',
+      macroGlitch: 'Macro: raises glitch probability and intensity',
+      macroCrush: 'Macro: deepens bit/sample-rate crushing',
+      macroChaos: 'Macro: adds randomness across the engine',
+      macroMovement: 'Macro: increases modulation depth and motion',
+      macroRhythm: 'Macro: intensifies sequencer-driven rhythm',
+      macroWidth: 'Macro: stereo width treatment',
+      macroMix: 'Macro: overall wet balance',
+      performanceKill: 'Hold to hard-mute the output (key 1 on Perform page, MIDI note 36)',
+      performanceGlitch: 'Hold to force glitching (key 2, MIDI note 37)',
+      performanceDestroy: 'Hold to slam drive to maximum (key 3, MIDI note 38)',
+      performanceFreeze: 'Hold to freeze the audio buffer (key 4, MIDI note 39)',
+      performanceReverse: 'Hold for reverse playback (key 5, MIDI note 40)',
+      performanceStutter: 'Hold for stutter repeats (key 6, MIDI note 41)',
+      performanceChaos: 'Hold to spike randomness (key 7, MIDI note 42)',
+      performanceKillAmount: 'Kill depth — 100% full mute, lower = partial duck',
+      performanceGlitchAmount: 'Glitch trigger intensity (forced probability level)',
+      performanceDestroyAmount: 'Destroy intensity — how far drive/crush/feedback slam toward max',
+      performanceFreezeAmount: 'Freeze trigger intensity (forced probability level)',
+      performanceReverseAmount: 'Reverse trigger intensity (forced probability level)',
+      performanceStutterAmount: 'Stutter trigger intensity (forced probability level)',
+      performanceChaosAmount: 'Chaos trigger intensity (chaos level while held)',
+      xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)',
+      xyPadXDestination: 'What the X axis (left-right) controls',
+      xyPadYDestination: 'What the Y axis (up-down) controls' 
+    };
+    const ACTION_TIPS = {
+      randomize_pattern: 'Randomize every step of the current lane’s pattern',
+      mutate_pattern: 'Nudge the pattern — small random variations',
+      reverse_pattern: 'Reverse the step order',
+      mirror_pattern: 'Mirror the first half onto the second',
+      shift_pattern: 'Rotate the pattern one step',
+      clear_pattern: 'Reset the current lane to defaults'
+    };
+    const ID_TIPS = {
+      xy_pad: 'Drag to morph Damage (X) + Glitch (Y). Cmd+L latches: the whole window becomes the pad, no click needed. Cmd+L or Esc unlatches.',
+      input_meter_topbar: 'Input level — red = clipping at the input',
+      output_meter_topbar: 'Output level — red = clipping (limiter beaten)',
+      step_grid: 'Click/drag bars to edit the selected lane’s steps',
+      lane_select_row: 'Pick which modulation lane the grid edits',
+      modSlotList: 'Route a source to a destination; Amount sets bipolar depth',
+      filter_eq_mini_graph: 'Live filter response for the current settings'
+    };
+    for (const [p, tip] of Object.entries(PARAM_TIPS))
+      document.querySelectorAll(`[data-param="${p}"]`).forEach(el => el.setAttribute('data-tip', tip));
+    for (const [a, tip] of Object.entries(ACTION_TIPS))
+      document.querySelectorAll(`[data-action="${a}"]`).forEach(el => el.setAttribute('data-tip', tip));
+    for (const [id, tip] of Object.entries(ID_TIPS))
+      { const el = document.getElementById(id); if (el) el.setAttribute('data-tip', tip); }
+    // LFO panels + mod slots are JS-generated: pattern-match their params.
+    document.querySelectorAll('[data-param]').forEach(el => {
+      const p = el.dataset.param;
+      if (el.hasAttribute('data-tip')) return;
+      let m;
+      if ((m = p.match(/^lfo(\d)Rate$/)))  el.setAttribute('data-tip', `LFO ${m[1]} speed (free Hz or synced)`);
+      else if ((m = p.match(/^lfo(\d)Shape$/))) el.setAttribute('data-tip', `LFO ${m[1]} waveform (9 shapes)`);
+      else if ((m = p.match(/^lfo(\d)Sync$/)))  el.setAttribute('data-tip', `Sync LFO ${m[1]} to host tempo`);
+      else if ((m = p.match(/^modSlot(\d)Source$/)))      el.setAttribute('data-tip', `Slot ${m[1]}: modulation source`);
+      else if ((m = p.match(/^modSlot(\d)Destination$/))) el.setAttribute('data-tip', `Slot ${m[1]}: parameter to modulate`);
+      else if ((m = p.match(/^modSlot(\d)Amount$/)))      el.setAttribute('data-tip', `Slot ${m[1]}: depth (−100% to +100%)`);
+      else if ((m = p.match(/^modSlot(\d)Enable$/)))      el.setAttribute('data-tip', `Slot ${m[1]}: on/off`);
+    });
+
+    // Native title attributes would render a second (OS) tooltip on top of
+    // ours - strip them wherever a data-tip now exists.
+    document.querySelectorAll('[data-tip][title]').forEach(el => el.removeAttribute('title'));
+
+    // Shared tooltip element + delegated hover handling
+    const tip = document.createElement('div');
+    tip.className = 'ui-tip';
+    document.body.appendChild(tip);
+    let tipTimer = null, tipTarget = null;
+    function hideTip(){ clearTimeout(tipTimer); tipTimer = null; tipTarget = null; tip.classList.remove('show'); }
+    document.addEventListener('pointerover', e => {
+      const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+      if (!t || t === tipTarget) return;
+      // No tooltips at all in latch performance mode (cursor is hidden).
+      if (document.body.classList.contains('xy-latch-live')) { hideTip(); return; }
+      hideTip();
+      tipTarget = t;
+      tipTimer = setTimeout(() => {
+        tip.textContent = t.dataset.tip;
+        const r = t.getBoundingClientRect();
+        tip.style.left = '0px'; tip.style.top = '0px';
+        tip.classList.add('show');
+        const mr = tip.getBoundingClientRect();
+        let x = Math.min(Math.max(8, r.left + r.width/2 - mr.width/2), window.innerWidth - mr.width - 8);
+        let y = r.bottom + 8;
+        if (y + mr.height > window.innerHeight - 8) y = r.top - mr.height - 8;
+        tip.style.left = x + 'px'; tip.style.top = Math.max(8, y) + 'px';
+      }, 450);
+    });
+    document.addEventListener('pointerout', e => {
+      if (tipTarget && (!e.relatedTarget || !tipTarget.contains(e.relatedTarget))) hideTip();
+    });
+    document.addEventListener('pointerdown', hideTip, true);
+  })();
+
+  // ===================================================================
+  // 4-page layout (user request 2026-09-05): 1 Main (chain + macros),
+  // 2 Rhythmic Sequencer, 3 Modulation Matrix, 4 Live Performance
+  // (performance triggers + XY pad, moved out of the second unit at load -
+  // listeners travel with the DOM nodes). Last page remembered per-browser.
+  // ===================================================================
+  (function(){
+    const unit1Section  = document.getElementById('node_algorithm_select').closest('section');
+    const unit2Section  = document.getElementById('xy_pad').closest('section');
+    const seqSection    = document.getElementById('sequencer_body').closest('section');
+    const matrixSection = document.getElementById('mod_matrix_body').closest('section');
+    const perfModule    = document.getElementById('perf_kill').closest('.module');
+    const xyModule      = document.getElementById('xy_pad').closest('.module');
+
+    // Build the Live Performance page as a clone of the unit-strip structure
+    const perfSection = document.createElement('section');
+    perfSection.className = 'strip-wrap';
+    const perfUnit = document.createElement('div');
+    perfUnit.className = 'unit';
+    perfSection.appendChild(perfUnit);
+    const macrosModule = document.querySelector('[data-param="macroDamage"]').closest('.module');
+    perfUnit.appendChild(macrosModule);
+    perfUnit.appendChild(perfModule);
+    perfUnit.appendChild(xyModule);
+    matrixSection.after(perfSection);
+    unit2Section.remove(); // all three of its modules now live on the Performance page
+
+    // Modulation lives WITH the sequencer (user request 2026-09-06): the
+    // LFO row + compact 8-slot editor share page 2 as one "motion" page.
+    const PAGES = { 1: [unit1Section], 2: [seqSection, matrixSection], 4: [perfSection] };
+    const tabs = document.querySelectorAll('#page_tabs .page-tab');
+    function showPage(n){
+      for (const k of Object.keys(PAGES))
+        PAGES[k].forEach(sec => sec.classList.toggle('page-hidden', k !== String(n)));
+      tabs.forEach(t => t.classList.toggle('active', t.dataset.page === String(n)));
+      document.body.dataset.page = String(n);
+      try { localStorage.setItem('corruptr-page', String(n)); } catch(e){}
+    }
+    tabs.forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
+    let start = '1';
+    try { start = localStorage.getItem('corruptr-page') || '1'; } catch(e){}
+    if (!(start in PAGES)) start = '1'; // e.g. a remembered, since-removed page
+    showPage(start);
+  })();
+
+  // ===================================================================
+  // Live-performance number keys (user request 2026-09-05): while the
+  // Perform page is active, digits 1-7 hold their performance trigger for
+  // as long as the key is held (auto-repeat ignored; release always
+  // clears, even if the page changed mid-hold). Modifier chords are left
+  // alone so Cmd+Z latch etc. still work.
+  // ===================================================================
+  (function(){
+    // Keyed by e.code (PHYSICAL key, modifier-independent) - e.key changes
+    // to '!' etc. if Shift is touched mid-hold, which made keyup miss the
+    // lookup and left the trigger stuck on (user-reported bug, 2026-09-05).
+    const CODE_TO_PARAM = {
+      Digit1: 'performanceKill',   Digit2: 'performanceGlitch',  Digit3: 'performanceDestroy',
+      Digit4: 'performanceFreeze', Digit5: 'performanceReverse', Digit6: 'performanceStutter',
+      Digit7: 'performanceChaos',
+      Numpad1: 'performanceKill',   Numpad2: 'performanceGlitch',  Numpad3: 'performanceDestroy',
+      Numpad4: 'performanceFreeze', Numpad5: 'performanceReverse', Numpad6: 'performanceStutter',
+      Numpad7: 'performanceChaos'
+    };
+    const states = {};
+    for (const c of Object.keys(CODE_TO_PARAM))
+      states[c] = Juce.getToggleState(CODE_TO_PARAM[c]);
+    function clearAll(){ for (const c of Object.keys(states)) states[c].setValue(false); }
+    // Held-key ledger + auto-repeat heartbeat watchdog (fix for
+    // occasionally-lost keyup events leaving a trigger stuck on): while a
+    // key is physically held, macOS delivers repeated keydowns - each one
+    // re-asserts the trigger AND stamps a heartbeat. If a key that HAS
+    // been heartbeating goes silent for >1.2s without a keyup, the keyup
+    // was lost - force-release it. Keys that never repeat (key-repeat
+    // disabled in System Settings) are exempt from the watchdog.
+    const held = new Map(); // code -> { sawRepeat, last }
+    let watchdog = null;
+    function stopWatchdogIfIdle(){ if (held.size === 0 && watchdog){ clearInterval(watchdog); watchdog = null; } }
+    function releaseCode(code){
+      const st = states[code];
+      if (st) st.setValue(false);
+      held.delete(code);
+      stopWatchdogIfIdle();
+    }
+    document.addEventListener('keydown', e => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const st = states[e.code];
+      if (!st) return;
+      if (e.repeat){
+        const rec = held.get(e.code);
+        if (rec){ rec.sawRepeat = true; rec.last = performance.now(); }
+        st.setValue(true); // self-healing re-assert while held
+        e.preventDefault();
+        return;
+      }
+      if (document.body.dataset.page !== '4') return;
+      e.preventDefault();
+      held.set(e.code, { sawRepeat: false, last: performance.now() });
+      st.setValue(true);
+      if (!watchdog)
+        watchdog = setInterval(() => {
+          const now = performance.now();
+          for (const [code, rec] of held)
+            if (rec.sawRepeat && now - rec.last > 1200) releaseCode(code); // lost keyup
+        }, 300);
+    });
+    window.addEventListener('keyup', e => {
+      if (states[e.code]) releaseCode(e.code); // capture phase: nothing can swallow it
+    }, true);
+    // Esc = performance panic: clears every trigger (and the XY latch handler
+    // already unlatches on Esc independently).
+    document.addEventListener('keydown', e => { if (e.key === 'Escape'){ clearAll(); held.clear(); stopWatchdogIfIdle(); } });
+    // Focus lost mid-hold (window switch, latch toggle, host stealing keys):
+    // keyup may never arrive - clear every trigger rather than leave one stuck.
+    window.addEventListener('blur', () => { clearAll(); held.clear(); stopWatchdogIfIdle(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden){ clearAll(); held.clear(); stopWatchdogIfIdle(); } });
+  })();
+
+  // ===================================================================
+  // PRESET SYSTEM v1 (user request 2026-09-06): factory presets applied
+  // entirely through the existing parameter states (no native bridge).
+  // Strip: prev/next arrows + click-the-name dropdown (tile-menu styling).
+  // A preset = defaults + overrides; unspecified params return to default.
+  // Sequencer PATTERNS are not part of presets (custom state, by design).
+  // ===================================================================
+  (function(){
+    // ---- typed registry + canonical defaults (natural units) ----
+    const SLIDERS = {
+      inputGain:0, drive:0, tone:0, bias:0, fold:0, distortionMix:100,
+      bitDepth:16, sampleRateReduction:1, glitchProbability:0, chaos:0,
+      filterCutoff:20000, filterResonance:0, feedbackAmount:0, feedbackDamping:50,
+      microDelayTime:10, mix:100, outputGain:0, limiterCeiling:-0.3, limiterRelease:300,
+      sequencerDepth:100, xyPadX:0, xyPadY:0, xyPadSmoothing:80,
+      macroDamage:0, macroCrush:0, macroGlitch:0, macroChaos:0,
+      macroRhythm:0, macroMovement:0, macroWidth:50, macroMix:100,
+      performanceKillAmount:100, performanceGlitchAmount:100, performanceDestroyAmount:100,
+      performanceFreezeAmount:100, performanceReverseAmount:100, performanceStutterAmount:100,
+      performanceChaosAmount:100
+    };
+    for (let i=1;i<=4;i++) SLIDERS['lfo'+i+'Rate'] = 1;
+    for (let i=1;i<=8;i++) SLIDERS['modSlot'+i+'Amount'] = 0;
+    const COMBOS = {
+      qualityMode:1, distortionAlgorithm:0, bitcrushMode:0, glitchMode:0, glitchBufferLength:4,
+      filterType:0, filterSlope:0, outputLimiterStyle:0, sequencerRate:2, sequencerSteps:0,
+      xyPadXDestination:0, xyPadYDestination:1
+    };
+    for (let i=1;i<=4;i++) COMBOS['lfo'+i+'Shape'] = 0;
+    for (let i=1;i<=8;i++){ COMBOS['modSlot'+i+'Source'] = 0; COMBOS['modSlot'+i+'Destination'] = 0; }
+    const TOGGLES = {
+      graphBypassSaturation:false, graphBypassWaveshaper:false, graphBypassBitcrush:false,
+      graphBypassGlitch:false, graphBypassFilter:false, sequencerEnabled:false, modMatrixEnabled:false,
+      limiterAutoRelease:true, autoGain:true,
+      performanceKill:false, performanceGlitch:false, performanceDestroy:false, performanceFreeze:false,
+      performanceReverse:false, performanceStutter:false, performanceChaos:false
+    };
+    for (let i=1;i<=4;i++) TOGGLES['lfo'+i+'Sync'] = false;
+    for (let i=1;i<=8;i++) TOGGLES['modSlot'+i+'Enable'] = false;
+
+    // ---- factory bank ----
+    const PRESETS = [
+      { name:'Init', p:{} },
+      // — saturation & warmth —
+      { name:'Warm Tape',      p:{ drive:8, tone:-25, distortionAlgorithm:0, mix:85 } },
+      { name:'Tube Glow',      p:{ drive:10, bias:35, distortionAlgorithm:3, tone:-10 } },
+      { name:'Console Crunch', p:{ drive:6, distortionAlgorithm:1, distortionMix:70, macroWidth:65 } },
+      { name:'Diode Grit',     p:{ drive:14, distortionAlgorithm:4, tone:15, filterType:0, filterCutoff:9000 } },
+      // — aggressive —
+      { name:'Big Fuzz Wall',  p:{ drive:20, distortionAlgorithm:5, tone:-15, filterCutoff:7500 } },
+      { name:'Foldback Snarl', p:{ drive:16, fold:55, distortionAlgorithm:11, mix:90 } },
+      { name:'Ring Modulator', p:{ drive:8, fold:62, distortionAlgorithm:10, mix:75 } },
+      { name:'Total Damage',   p:{ macroDamage:30, macroCrush:15, drive:8, distortionAlgorithm:5, tone:-10, mix:85 } },
+      // — lo-fi —
+      { name:'8-Bit Arcade',   p:{ bitDepth:5, sampleRateReduction:8, bitcrushMode:0, distortionAlgorithm:6, drive:6 } },
+      { name:'VHS Memories',   p:{ bitDepth:10, sampleRateReduction:4, bitcrushMode:1, tone:-35, filterCutoff:8000, macroWidth:60 } },
+      { name:'Telephone Call', p:{ filterType:2, filterCutoff:1800, filterResonance:35, bitDepth:8, drive:9 } },
+      { name:'Broken Speaker', p:{ bitcrushMode:5, bitDepth:6, drive:12, distortionAlgorithm:2, filterCutoff:5000 } },
+      { name:'Bit Mangler',    p:{ bitcrushMode:4, bitDepth:7, sampleRateReduction:6, drive:8 } },
+      // — glitch —
+      { name:'Stutter Step',   p:{ glitchMode:1, glitchProbability:65, glitchBufferLength:3 } },
+      { name:'Buffer Overflow',p:{ glitchMode:17, glitchProbability:80, chaos:45, glitchBufferLength:2 } },
+      { name:'Tape Eater',     p:{ glitchMode:10, glitchProbability:45, glitchBufferLength:5, tone:-20 } },
+      { name:'Granular Cloud', p:{ glitchMode:9, glitchProbability:75, glitchBufferLength:4, mix:80, macroWidth:70 } },
+      { name:'Pitch Gremlin',  p:{ glitchMode:16, glitchProbability:55, glitchBufferLength:3, chaos:30 } },
+      // — feedback —
+      { name:'Metal Tank',     p:{ feedbackAmount:48, microDelayTime:2, feedbackDamping:45, drive:8 } },
+      { name:'Dying Echo',     p:{ feedbackAmount:55, microDelayTime:38, feedbackDamping:75, mix:85 } },
+      { name:'The Screamer',   p:{ feedbackAmount:20, microDelayTime:1.2, feedbackDamping:28, filterType:5, filterCutoff:2400, filterResonance:45 } },
+      // — filter & motion —
+      { name:'Talk Box',       p:{ filterType:7, filterCutoff:900, filterResonance:70, drive:12, distortionAlgorithm:3 } },
+      { name:'Acid Bath',      p:{ filterType:5, filterCutoff:1200, filterResonance:75, filterSlope:1, drive:14, distortionAlgorithm:0 } },
+      { name:'Auto Wah',       p:{ filterType:5, filterResonance:65, modMatrixEnabled:true, modSlot1Source:4, modSlot1Destination:2, modSlot1Amount:70, modSlot1Enable:true } },
+      { name:'Wobble Machine', p:{ filterType:0, filterCutoff:2500, filterResonance:55, modMatrixEnabled:true, lfo1Rate:2.2, lfo1Shape:0, modSlot1Source:0, modSlot1Destination:2, modSlot1Amount:80, modSlot1Enable:true } },
+      { name:'Vowel Movement', p:{ filterType:7, filterResonance:80, modMatrixEnabled:true, lfo1Rate:0.4, lfo1Shape:7, modSlot1Source:0, modSlot1Destination:2, modSlot1Amount:90, modSlot1Enable:true, drive:8 } },
+      // — rhythmic (write real sequencer patterns via the native bridge) —
+      { name:'Gate Chopper',   p:{ sequencerEnabled:true, sequencerRate:2, sequencerSteps:0, sequencerDepth:100, filterType:5, filterCutoff:4200, filterResonance:30, drive:6, distortionAlgorithm:3 },
+        seq:{ 9:[1,0,1,0, 1,0,1,1, 0,1,0,1, 1,1,0,0] } },
+      { name:'Pump It',        p:{ sequencerEnabled:true, sequencerRate:2, sequencerSteps:0, sequencerDepth:100, drive:8, distortionAlgorithm:0, mix:100 },
+        seq:{ 6:[-1,-0.55,-0.2,0, -1,-0.55,-0.2,0, -1,-0.55,-0.2,0, -1,-0.55,-0.2,0] } },
+      { name:'Glitch March',   p:{ sequencerEnabled:true, sequencerRate:2, sequencerSteps:0, sequencerDepth:100, glitchMode:17, glitchBufferLength:3, chaos:25, drive:6 },
+        seq:{ 5:[0,0,0,0, 0,0,0,0, 0,0,0,0, 1,1,0.8,1] } }
+    ];
+
+    // ---- apply machinery ----
+    function setSlider(id, v){
+      const st = Juce.getSliderState(id);
+      const pr = st.properties || {};
+      const start = (typeof pr.start === 'number') ? pr.start : 0;
+      const end   = (typeof pr.end   === 'number' && pr.end !== start) ? pr.end : 1;
+      const sk    = pr.skew || 1;
+      const n = clamp01(Math.pow(Math.max(0, (v - start) / (end - start)), sk));
+      st.setNormalisedValue(n);
+    }
+    const presetSetStep = Juce.getNativeFunction('sequencerSetStep');
+    const presetPatternOp = Juce.getNativeFunction('sequencerPatternOp');
+    function applyPreset(idx){
+      current = ((idx % PRESETS.length) + PRESETS.length) % PRESETS.length;
+      const o = PRESETS[current].p;
+      for (const id of Object.keys(SLIDERS)) setSlider(id, (id in o) ? o[id] : SLIDERS[id]);
+      for (const id of Object.keys(COMBOS))  Juce.getComboBoxState(id).setChoiceIndex((id in o) ? o[id] : COMBOS[id]);
+      for (const id of Object.keys(TOGGLES)) Juce.getToggleState(id).setValue((id in o) ? !!o[id] : TOGGLES[id]);
+      // Rhythmic presets carry a real pattern: clear, then write each lane's
+      // steps through the native bridge (calls process in order on the
+      // message thread; the C++ side pushes a refresh so the grid follows).
+      // Presets WITHOUT a seq field leave the user's pattern untouched.
+      const seq = PRESETS[current].seq;
+      if (seq){
+        presetPatternOp('clear');
+        for (const lane of Object.keys(seq))
+          seq[lane].forEach((v, step) => presetSetStep(parseInt(lane), step, v));
+      }
+      nameEl.innerHTML = PRESETS[current].name.toUpperCase() + ' ▾';
+      try { localStorage.setItem('corruptr-preset', String(current)); } catch(e){}
+    }
+
+    // ---- strip wiring ----
+    const nameEl = document.getElementById('preset_name');
+    let current = 0;
+    document.getElementById('preset_prev').addEventListener('click', () => applyPreset(current - 1));
+    document.getElementById('preset_next').addEventListener('click', () => applyPreset(current + 1));
+    nameEl.addEventListener('click', () => {
+      openTileMenu(nameEl, PRESETS.map(pr => pr.name), [], () => current, (i) => applyPreset(i));
+    });
+    // Restore the strip LABEL only - never auto-apply on load (the host's
+    // saved plugin state is the source of truth for parameter values).
+    try {
+      const saved = parseInt(localStorage.getItem('corruptr-preset'));
+      if (!isNaN(saved) && PRESETS[saved]) { current = saved; nameEl.innerHTML = PRESETS[saved].name.toUpperCase() + ' ▾'; }
+    } catch(e){}
+  })();
+
+  // ===== Initial bind pass over statically-authored markup =====
+  bindKnobs(document);
+  bindFaders(document);
+  bindHSliders(document);
+  bindToggles(document);
+  bindPowerButtons(document);
+  bindEnableButtons(document);
+  bindPerfButtons(document);
+  bindModeTiles(document);
+  bindCombos(document);
+
+  // ===================================================================
+  // Resizable window support (user request): the JUCE editor is aspect-
+  // locked to 1200x800 and resizable; scale the fixed 1200px design to the
+  // current window width via CSS zoom (affects layout, so internal scroll
+  // stays correct; drag math uses rect-relative ratios so it's zoom-safe).
+  // ===================================================================
+  (function(){
+    const container = document.querySelector('.container');
+    function zoomToFit(){
+      if (!container) return;
+      const k = window.innerWidth / 1200;
+      try { container.style.zoom = k; } catch(e){ container.style.transformOrigin = 'top left'; container.style.transform = 'scale(' + k + ')'; }
+    }
+    window.addEventListener('resize', zoomToFit);
+    zoomToFit();
+  })();
+
+  console.log('CORRUPTR UI initialized — 69 parameter bindings active.');
+</script>
+</body>
+</html>
