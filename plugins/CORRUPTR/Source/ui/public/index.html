@@ -653,70 +653,6 @@
             </div>
           </div>
 
-          <!-- CENTER MASTER -->
-          <div class="module" style="width:205px;">
-            <span class="mod-indicator" id="mod_ind_output" title="Modulated by an active Mod Matrix slot"></span>
-            <div class="icon-row" style="justify-content:center;">
-              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
-            </div>
-
-            <div style="display:flex; gap:18px; justify-content:center; margin-top:10px;">
-              <div class="toggle-row">
-                <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
-                <span class="toggle-label">Auto</span>
-              </div>
-              <div class="toggle-row">
-                <div class="toggle-sw on" id="auto_gain_toggle" data-param="autoGain" data-default="true"></div>
-                <span class="toggle-label">Balance</span>
-              </div>
-            </div>
-
-            <div class="knob-wrap" style="margin-top:12px;">
-              <div class="knob hero" id="master_mix" data-param="mix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:120px;height:120px;">
-                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-              </div>
-              <div class="knob-value" data-value-for="mix" style="font-size:11px;margin-top:8px;">100%</div>
-              <div class="knob-label">Level</div>
-            </div>
-
-            <select class="combo-sm" id="output_limiter_style" data-param="outputLimiterStyle" style="width:108px;height:26px;margin-top:12px;">
-              <option selected>Transparent</option><option>Colored</option>
-            </select>
-            <div style="display:flex; gap:14px; align-items:flex-start; margin-top:12px;">
-              <div class="knob-wrap" style="margin-top:0;">
-                <div class="knob" id="node_limiter_ceiling" data-param="limiterCeiling" data-min="-20" data-max="0" data-default="-0.3" data-unit="dB" data-decimals="1" style="width:44px;height:44px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="limiterCeiling">-0.3 dB</div>
-                <div class="knob-label">Ceiling</div>
-              </div>
-              <div class="knob-wrap" style="margin-top:0;">
-                <div class="knob" id="node_limiter_release" data-param="limiterRelease" data-min="1" data-max="1000" data-default="300" data-unit="ms" data-decimals="0" style="width:44px;height:44px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="limiterRelease">300 ms</div>
-                <div class="knob-label">Release</div>
-              </div>
-            </div>
-
-            <div style="display:flex; gap:20px; margin-top:16px;">
-              <div class="fader-wrap" style="margin-top:0;">
-                <div class="fader-readout" id="input_gain_val">0.0dB</div>
-                <div class="fader vertical" id="input_gain" data-param="inputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:36px;height:190px;">
-                  <div class="fader-track"></div><div class="fader-thumb"></div>
-                </div>
-                <div class="fader-label">In</div>
-              </div>
-              <div class="fader-wrap" style="margin-top:0;">
-                <div class="fader-readout" id="output_gain_val">0.0dB</div>
-                <div class="fader vertical" id="output_gain" data-param="outputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:36px;height:190px;">
-                  <div class="fader-track"></div><div class="fader-thumb"></div>
-                </div>
-                <div class="fader-label">Out</div>
-              </div>
-            </div>
-          </div>
-
           <!-- FILTER & EQ -->
           <div class="module" style="width:195px;">
             <span class="mod-indicator" id="mod_ind_filter" title="Modulated by an active Mod Matrix slot"></span>
@@ -823,6 +759,70 @@
                 <div class="hslider-track"></div><div class="hslider-thumb"></div>
               </div>
               <div class="hslider-label">Delay</div>
+            </div>
+          </div>
+
+          <!-- CENTER MASTER -->
+          <div class="module" style="width:205px;">
+            <span class="mod-indicator" id="mod_ind_output" title="Modulated by an active Mod Matrix slot"></span>
+            <div class="icon-row" style="justify-content:center;">
+              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
+            </div>
+
+            <div style="display:flex; gap:18px; justify-content:center; margin-top:10px;">
+              <div class="toggle-row">
+                <div class="toggle-sw on" id="limiter_auto_release" data-param="limiterAutoRelease" data-default="true"></div>
+                <span class="toggle-label">Auto</span>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-sw on" id="auto_gain_toggle" data-param="autoGain" data-default="true"></div>
+                <span class="toggle-label">Balance</span>
+              </div>
+            </div>
+
+            <div class="knob-wrap" style="margin-top:12px;">
+              <div class="knob hero" id="master_mix" data-param="mix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:120px;height:120px;">
+                <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+              </div>
+              <div class="knob-value" data-value-for="mix" style="font-size:11px;margin-top:8px;">100%</div>
+              <div class="knob-label">Level</div>
+            </div>
+
+            <select class="combo-sm" id="output_limiter_style" data-param="outputLimiterStyle" style="width:108px;height:26px;margin-top:12px;">
+              <option selected>Transparent</option><option>Colored</option>
+            </select>
+            <div style="display:flex; gap:14px; align-items:flex-start; margin-top:12px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_limiter_ceiling" data-param="limiterCeiling" data-min="-20" data-max="0" data-default="-0.3" data-unit="dB" data-decimals="1" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="limiterCeiling">-0.3 dB</div>
+                <div class="knob-label">Ceiling</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_limiter_release" data-param="limiterRelease" data-min="1" data-max="1000" data-default="300" data-unit="ms" data-decimals="0" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="limiterRelease">300 ms</div>
+                <div class="knob-label">Release</div>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:20px; margin-top:16px;">
+              <div class="fader-wrap" style="margin-top:0;">
+                <div class="fader-readout" id="input_gain_val">0.0dB</div>
+                <div class="fader vertical" id="input_gain" data-param="inputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:36px;height:190px;">
+                  <div class="fader-track"></div><div class="fader-thumb"></div>
+                </div>
+                <div class="fader-label">In</div>
+              </div>
+              <div class="fader-wrap" style="margin-top:0;">
+                <div class="fader-readout" id="output_gain_val">0.0dB</div>
+                <div class="fader vertical" id="output_gain" data-param="outputGain" data-min="-24" data-max="24" data-default="0" data-unit="dB" data-decimals="1" style="width:36px;height:190px;">
+                  <div class="fader-track"></div><div class="fader-thumb"></div>
+                </div>
+                <div class="fader-label">Out</div>
+              </div>
             </div>
           </div>
 
