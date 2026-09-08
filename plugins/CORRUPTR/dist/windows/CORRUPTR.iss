@@ -49,3 +49,13 @@ Name: "{autoprograms}\CORRUPTR"; Filename: "{autopf}\Avess\CORRUPTR\CORRUPTR.exe
 
 [Run]
 ; WebView2 runtime is preinstalled on Win 11 / current Win 10; nothing to do.
+
+[UninstallDelete]
+; Force-remove the whole plugin bundle folders on uninstall. Without this,
+; Inno removes the individually-tracked files but can leave the .vst3 /
+; .component folder shells behind on disk.
+Type: filesandordirs; Name: "{app}\CORRUPTR.vst3"
+Type: filesandordirs; Name: "{autopf}\Avess\CORRUPTR"
+Type: dirifempty; Name: "{autopf}\Avess"
+; WebView2 per-user data folder created at runtime (see PluginEditor.cpp)
+Type: filesandordirs; Name: "{localappdata}\Temp\CORRUPTR-WebView2"
