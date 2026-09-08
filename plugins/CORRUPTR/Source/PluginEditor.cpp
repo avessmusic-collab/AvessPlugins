@@ -30,6 +30,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     xyPadYDestinationRelay = std::make_unique<juce::WebComboBoxRelay>("xyPadYDestination");
     filterSlopeRelay = std::make_unique<juce::WebComboBoxRelay>("filterSlope");
     filterCutoffRelay = std::make_unique<juce::WebSliderRelay>("filterCutoff");
+    filterMorphRelay = std::make_unique<juce::WebSliderRelay>("filterMorph");
+    filterDriveRelay = std::make_unique<juce::WebSliderRelay>("filterDrive");
     filterResonanceRelay = std::make_unique<juce::WebSliderRelay>("filterResonance");
 
     // --- Center Master (Output/Global) ---
@@ -192,6 +194,8 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*xyPadYDestinationRelay)
             .withOptionsFrom(*filterSlopeRelay)
             .withOptionsFrom(*filterCutoffRelay)
+            .withOptionsFrom(*filterMorphRelay)
+            .withOptionsFrom(*filterDriveRelay)
             .withOptionsFrom(*filterResonanceRelay)
             .withOptionsFrom(*mixRelay)
             .withOptionsFrom(*outputLimiterStyleRelay)
@@ -402,6 +406,10 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("filterSlope"), *filterSlopeRelay, nullptr);
     filterCutoffAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("filterCutoff"), *filterCutoffRelay, nullptr);
+    filterMorphAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("filterMorph"), *filterMorphRelay, nullptr);
+    filterDriveAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.getAPVTS().getParameter("filterDrive"), *filterDriveRelay, nullptr);
     filterResonanceAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("filterResonance"), *filterResonanceRelay, nullptr);
 

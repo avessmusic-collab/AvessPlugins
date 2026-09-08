@@ -1175,3 +1175,5 @@ Established pattern (carried from v2 onward, see `v5-ui.yaml` header notes): a b
 - See "Reconciliation Notes" above for the full accounting of every draft parameter and every mockup-flagged-NEW parameter.
 - **v2 addition:** the 38 parameters marked `(v2: architecture-required...)` throughout this document (6 draft-only + 32 Mod Matrix slot parameters) have no bound UI control in the v5 mockup - their `UI Control` field states this explicitly. Stage 1 still implements their APVTS parameters per this locked spec; Stage 3 (GUI) has no mockup-driven binding to wire for them until a future mockup iteration adds one. This is a pure addition to the v1 locked spec - none of the original 56 parameter entries were modified, renumbered, or reordered.
 
+
+> v12: Auto Filter (LP/HP/BP/Notch/Morph + filterMorph + filterDrive); count 112.

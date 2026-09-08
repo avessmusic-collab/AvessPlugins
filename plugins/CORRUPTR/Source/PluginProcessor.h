@@ -1506,29 +1506,69 @@ private:
     void advanceGlitchGranularVoicesForThisSample();    // called once per sample from processBlock(), Granular Repeat only
     void advanceGlitchTier2SharedState();               // called once per sample from processBlock(), Slice/Random Slice/Random Repeat only
 
-    // --- Component #6: Filter Stage (7 topologies) ---
-    std::array<juce::dsp::StateVariableTPTFilter<float>, 2> svfFilter; // LP/HP/BP/Resonant LP/Resonant HP
-    // v6 (filterSlope): second identical stage, engaged in series at 24 dB.
-    std::array<juce::dsp::StateVariableTPTFilter<float>, 2> svfFilterStage2;
-    std::array<float, 2> notch2X1 { 0.0f, 0.0f }, notch2X2 { 0.0f, 0.0f };
-    std::array<float, 2> notch2Y1 { 0.0f, 0.0f }, notch2Y2 { 0.0f, 0.0f };
-    // v11 (Formant): 3 parallel BP resonators per channel (ch*3+f) + gains
-    std::array<juce::dsp::StateVariableTPTFilter<float>, 6> formantBp;
-    std::array<float, 3> formantGain { 1.0f, 0.5f, 0.1f };
-    int filterSlopeIndex = 0;
-    int lastFilterSlopeIndex = -1;
-    std::array<float, 2> notchX1 { 0.0f, 0.0f }, notchX2 { 0.0f, 0.0f };
-    std::array<float, 2> notchY1 { 0.0f, 0.0f }, notchY2 { 0.0f, 0.0f };
-    float notchB0 = 1.0f, notchB1 = 0.0f, notchB2 = 0.0f, notchA1 = 0.0f, notchA2 = 0.0f; // manual biquad coeffs (see rationale above)
-    std::array<juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear>, 2> combDelay;
-    int combMaxDelaySamples = 0;
-    float combFeedbackGain = 0.0f;
-    int lastFilterTypeIndex = -1; // triggers a one-time state reset when filterType changes (architecture.md: "must reset state on filterType change")
-    bool filterBypassed = false;
-    int filterTypeIndex = 0;
+    // --- Component #6: Filter Stage — Ableton Auto Filter style (v12) ---
+    // Hand-rolled Cytomic/Zavalishin TPT state-variable filter: one process
+    // step yields LP, BP, HP (and Notch = LP+HP) simultaneously, which is
+    // what continuous Morph (LP->BP->HP->Notch) needs. Two stages in series
+    // give the 24 dB/oct slope. Drive adds analog-style tanh saturation into
+    // the filter input (Auto Filter's circuit character, approximated).
+    // Types: 0 Lowpass, 1 Highpass, 2 Bandpass, 3 Notch, 4 Morph.
+    struct TptSvf
+    {
+        float ic1eq = 0.0f, ic2eq = 0.0f;
+        float g = 0.0f, k = 2.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
+        void setCoeffs (float cutoffHz, double sr, float kIn) noexcept
+        {
+            g  = std::tan (juce::MathConstants<float>::pi * cutoffHz / (float) sr);
+            k  = kIn; // 1/Q
+            a1 = 1.0f / (1.0f + g * (g + k));
+            a2 = g * a1;
+            a3 = g * a2;
+        }
+        void reset() noexcept { ic1eq = ic2eq = 0.0f; }
+        // Returns lp/bp/hp by reference; caller derives notch = lp + hp.
+        inline void process (float v0, float& lp, float& bp, float& hp) noexcept
+        {
+            const float v3 = v0 - ic2eq;
+            const float v1 = a1 * ic1eq + a2 * v3;
+            const float v2 = ic2eq + a2 * ic1eq + a3 * v3;
+            ic1eq = 2.0f * v1 - ic1eq;
+            ic2eq = 2.0f * v2 - ic2eq;
+            lp = v2; bp = v1; hp = v0 - k * v1 - v2;
+        }
+    };
+    std::array<TptSvf, 2> filterStage1; // per channel (12 dB)
+    std::array<TptSvf, 2> filterStage2; // per channel, series at 24 dB
+
+    int   filterTypeIndex  = 0;   // 0 LP, 1 HP, 2 BP, 3 Notch, 4 Morph
+    int   filterSlopeIndex = 0;   // 0 = 12 dB, 1 = 24 dB
+    float filterMorphNorm  = 0.0f; // 0..1 Morph position (LP->BP->HP->Notch)
+    float filterDriveGain   = 1.0f; // linear pre-filter drive
+    float filterDriveComp    = 1.0f; // makeup so drive doesn't just raise level
+    int   lastFilterTypeIndex  = -1;
+    int   lastFilterSlopeIndex = -1;
+    bool  filterBypassed = false;
 
     void updateFilterParameters(float cutoffHz, float resonancePct, double sampleRate);
     float processFilterStage(float xIn, int channel);
+    static inline float filterPickOutput (int type, float morphN, float lp, float bp, float hp) noexcept
+    {
+        switch (type)
+        {
+            case 0: return lp;
+            case 1: return hp;
+            case 2: return bp;
+            case 3: return lp + hp;                 // notch
+            default:                                 // 4 = Morph: LP->BP->HP->Notch
+            {
+                const float notch = lp + hp;
+                const float p = juce::jlimit (0.0f, 1.0f, morphN) * 3.0f; // 0..3
+                if (p < 1.0f) return lp  + (bp    - lp) * p;
+                if (p < 2.0f) return bp  + (hp    - bp) * (p - 1.0f);
+                return                hp  + (notch - hp) * (p - 2.0f);
+            }
+        }
+    }
 
     // --- Component #14: Master Mix ---
     juce::AudioBuffer<float> dryBuffer; // captured at the very start of processBlock(), before Input Gain

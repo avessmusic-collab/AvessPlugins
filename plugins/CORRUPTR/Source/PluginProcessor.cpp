@@ -165,8 +165,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "filterType", 1 },
         "Filter Type",
-        juce::StringArray { "LP", "HP", "BP", "Notch", "Comb", "Resonant LP", "Resonant HP", "Formant" }, // v11: +Formant (vowel morph)
-        0)); // LP
+        juce::StringArray { "Lowpass", "Highpass", "Bandpass", "Notch", "Morph" }, // v12: Ableton Auto Filter style
+        0)); // Lowpass
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "filterCutoff", 1 },
@@ -517,6 +517,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         juce::ParameterID { "filterSlope", 1 }, "Filter Slope",
         juce::StringArray { "12 dB", "24 dB" }, 0));
 
+    // v12 (Auto Filter): Morph position (LP->BP->HP->Notch) + Drive.
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "filterMorph", 1 }, "Filter Morph",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 0.0f, "%"));
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "filterDrive", 1 }, "Filter Drive",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 0.0f, "%"));
+
     // v7 spec addition (user request 2026-09-05): Ableton-style output
     // limiter controls for the existing unconditional end-of-chain limiter.
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -866,24 +874,8 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     glitchGrainNextVoiceSlot = 0;
     glitchGrainSpawnCountdown = 0;
 
-    for (auto& f : svfFilter)
-    {
-        f.prepare(monoSpec);
-        f.reset();
-    }
-    for (auto& f : svfFilterStage2) // v6: 24 dB/oct cascade stage
-    {
-        f.prepare(monoSpec);
-        f.reset();
-    }
-    for (auto& f : formantBp) // v11: Formant resonators
-    {
-        f.prepare(monoSpec);
-        f.reset();
-    }
-    notchX1.fill(0.0f); notchX2.fill(0.0f);
-    notchY1.fill(0.0f); notchY2.fill(0.0f);
-    notch2X1.fill(0.0f); notch2X2.fill(0.0f);
+    for (auto& f : filterStage1) f.reset(); // v12: hand-rolled TPT SVF
+    for (auto& f : filterStage2) f.reset();
     autoGainDryEnv = 0.0f; autoGainWetEnv = 0.0f;
     autoGainSmoothed.reset(sampleRate, 0.05);
     autoGainSmoothed.setCurrentAndTargetValue(1.0f);
@@ -892,15 +884,7 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     bitcrushLevelsSmoothed.reset(sampleRate, 0.015);
     bitcrushLevelsSmoothed.setCurrentAndTargetValue(65535.0f);
     bitcrushLevelsCurrent = 65535.0f;
-    notch2Y1.fill(0.0f); notch2Y2.fill(0.0f);
 
-    combMaxDelaySamples = static_cast<int>(std::ceil(0.025 * sampleRate)) + 4; // 25ms headroom for the ~1-20ms comb spacing range
-    for (auto& d : combDelay)
-    {
-        d.setMaximumDelayInSamples(combMaxDelaySamples);
-        d.prepare(monoSpec);
-        d.reset();
-    }
     lastFilterTypeIndex = -1; // force a state reset + coefficient recompute on the first processBlock() call
 
     dryBuffer.setSize(numChannels, samplesPerBlock, false, true, true);
@@ -1604,6 +1588,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // filterTypeIndex above.
         auto* filterSlopeParam = parameters.getRawParameterValue("filterSlope");
         filterSlopeIndex = juce::jlimit(0, 1, (int) filterSlopeParam->load());
+        // v12 (Auto Filter): Morph position + Drive (with makeup compensation)
+        filterMorphNorm = juce::jlimit(0.0f, 1.0f, parameters.getRawParameterValue("filterMorph")->load() / 100.0f);
+        const float drN = juce::jlimit(0.0f, 1.0f, parameters.getRawParameterValue("filterDrive")->load() / 100.0f);
+        filterDriveGain = 1.0f + drN * 11.0f;                 // up to ~+21 dB into the tanh
+        filterDriveComp = 1.0f / std::tanh(filterDriveGain);  // unity at input=1.0 -> colours, not boosts
     }
 
     if (filterTypeIndex != lastFilterTypeIndex || filterSlopeIndex != lastFilterSlopeIndex)
@@ -1615,14 +1604,8 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // are bounded/allocation-free (DelayLine::reset() and
         // StateVariableTPTFilter::reset() clear their already-allocated
         // internal buffers; the Notch state is just four floats).
-        for (auto& f : svfFilter) f.reset();
-        for (auto& f : svfFilterStage2) f.reset();
-        for (auto& f : formantBp) f.reset();
-        notchX1.fill(0.0f); notchX2.fill(0.0f);
-        notchY1.fill(0.0f); notchY2.fill(0.0f);
-        notch2X1.fill(0.0f); notch2X2.fill(0.0f);
-        notch2Y1.fill(0.0f); notch2Y2.fill(0.0f);
-        for (auto& d : combDelay) d.reset();
+        for (auto& f : filterStage1) f.reset();
+        for (auto& f : filterStage2) f.reset();
         lastFilterTypeIndex = filterTypeIndex;
         lastFilterSlopeIndex = filterSlopeIndex;
     }
@@ -3407,105 +3390,19 @@ void CORRUPTRAudioProcessor::advanceGlitchTier2SharedState()
 
 void CORRUPTRAudioProcessor::updateFilterParameters(float cutoffHz, float resonancePct, double sampleRate)
 {
+    // Auto Filter style (v12). Resonance -> k = 1/Q; higher resonance = lower
+    // k = sharper peak, clamped above self-oscillation. 24 dB uses two stages
+    // in series, each with slightly lower individual resonance so the summed
+    // response peak stays controlled.
     const float resonanceNorm = juce::jlimit(0.0f, 1.0f, resonancePct / 100.0f);
-
-    // StateVariableTPTFilter-backed topologies (LP/HP/BP/Resonant LP/Resonant HP).
-    // architecture.md: "clamped to prevent self-oscillation blowup" —
-    // regular LP/HP/BP get a conservative resonance ceiling; the two
-    // "Resonant" variants get a higher ceiling (closer to, but still
-    // safely below, self-oscillation) since that's their entire purpose.
-    constexpr float kStandardResonanceMax = 8.0f;
-    constexpr float kResonantVariantMax = 18.0f;
-    auto svfType = juce::dsp::StateVariableTPTFilterType::lowpass;
-    float svfResonance = 0.7071f; // default Butterworth Q
-
-    switch (filterTypeIndex)
-    {
-        case 0: svfType = juce::dsp::StateVariableTPTFilterType::lowpass;  svfResonance = juce::jmap(resonanceNorm, 0.5f, kStandardResonanceMax); break; // LP
-        case 1: svfType = juce::dsp::StateVariableTPTFilterType::highpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kStandardResonanceMax); break; // HP
-        case 2: svfType = juce::dsp::StateVariableTPTFilterType::bandpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kStandardResonanceMax); break; // BP
-        case 5: svfType = juce::dsp::StateVariableTPTFilterType::lowpass;  svfResonance = juce::jmap(resonanceNorm, 0.5f, kResonantVariantMax); break; // Resonant LP
-        case 6: svfType = juce::dsp::StateVariableTPTFilterType::highpass; svfResonance = juce::jmap(resonanceNorm, 0.5f, kResonantVariantMax); break; // Resonant HP
-        default: break; // Notch (3) / Comb (4) / Formant (7) don't use the plain SVF path
-    }
-
-    // v11 (Formant, filterTypeIndex 7): three parallel bandpass resonators at
-    // vowel formant frequencies. filterCutoff is repurposed as the VOWEL
-    // MORPH control - its perceptual (skewed) position sweeps A-E-I-O-U with
-    // linear interpolation between neighbours; filterResonance sets formant
-    // Q (how "vocal" the peaks are). Same fold/Ring-Mod repurposing precedent.
-    if (filterTypeIndex == 7)
-    {
-        static constexpr float kVowelF[5][3] = {
-            { 800.0f, 1150.0f, 2900.0f },   // A
-            { 400.0f, 1600.0f, 2700.0f },   // E
-            { 350.0f, 1700.0f, 2700.0f },   // I
-            { 450.0f,  800.0f, 2830.0f },   // O
-            { 325.0f,  700.0f, 2700.0f } }; // U
-        static constexpr float kVowelG[5][3] = {
-            { 1.0f, 0.63f, 0.10f },
-            { 1.0f, 0.50f, 0.13f },
-            { 1.0f, 0.32f, 0.16f },
-            { 1.0f, 0.50f, 0.10f },
-            { 1.0f, 0.25f, 0.08f } };
-        const float p = std::pow(juce::jlimit(0.0f, 1.0f, (cutoffHz - 20.0f) / 19980.0f), 0.3f); // cutoff's own skew
-        const float vowelPos = p * 4.0f;
-        const int   vi = juce::jlimit(0, 3, (int) vowelPos);
-        const float vf = juce::jlimit(0.0f, 1.0f, vowelPos - (float) vi);
-        const float q  = juce::jmap(resonanceNorm, 6.0f, 16.0f);
-        for (int f = 0; f < 3; ++f)
-        {
-            const float freq = juce::jlimit(60.0f, 0.45f * (float) sampleRate,
-                                             kVowelF[vi][f] + (kVowelF[vi + 1][f] - kVowelF[vi][f]) * vf);
-            formantGain[(size_t) f] = kVowelG[vi][f] + (kVowelG[vi + 1][f] - kVowelG[vi][f]) * vf;
-            for (int ch = 0; ch < 2; ++ch)
-            {
-                auto& bp = formantBp[(size_t) (ch * 3 + f)];
-                bp.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
-                bp.setCutoffFrequency(freq);
-                bp.setResonance(q);
-            }
-        }
-    }
-
-    for (auto& f : svfFilter)
-    {
-        f.setType(svfType);
-        f.setCutoffFrequency(cutoffHz);
-        f.setResonance(svfResonance);
-    }
-    for (auto& f : svfFilterStage2) // v6: identical settings; engaged only at 24 dB
-    {
-        f.setType(svfType);
-        f.setCutoffFrequency(cutoffHz);
-        f.setResonance(svfResonance);
-    }
-
-    // Notch (custom biquad, manual RBJ formula — see PluginProcessor.h for
-    // why this avoids juce::dsp::IIR::Filter::makeNotch()'s heap allocation).
-    {
-        const float q = juce::jmap(resonanceNorm, 0.7071f, 12.0f);
-        const float w0 = juce::MathConstants<float>::twoPi * cutoffHz / static_cast<float>(sampleRate);
-        const float alpha = std::sin(w0) / (2.0f * q);
-        const float cosw0 = std::cos(w0);
-        const float a0 = 1.0f + alpha;
-        notchB0 = 1.0f / a0;
-        notchB1 = (-2.0f * cosw0) / a0;
-        notchB2 = 1.0f / a0;
-        notchA1 = (-2.0f * cosw0) / a0;
-        notchA2 = (1.0f - alpha) / a0;
-    }
-
-    // Comb (custom, via DelayLine + feedback gain). architecture.md:
-    // "~1-20ms, tunable via filterCutoff reinterpreted as comb spacing".
-    {
-        const float delayMs = juce::jlimit(0.5f, 20.0f, 1000.0f / juce::jmax(50.0f, cutoffHz));
-        const float delaySamples = juce::jlimit(1.0f, static_cast<float>(combMaxDelaySamples - 1),
-                                                 static_cast<float>(delayMs / 1000.0 * sampleRate));
-        for (auto& d : combDelay)
-            d.setDelay(delaySamples);
-        combFeedbackGain = juce::jlimit(0.0f, 0.92f, resonanceNorm * 0.92f); // clamped well below 1.0 to prevent self-oscillation blowup
-    }
+    const float safeCutoff    = juce::jlimit(20.0f, 0.45f * (float) sampleRate, cutoffHz);
+    const bool  twoStage      = (filterSlopeIndex == 1);
+    // Q from ~0.6 (gentle) to ~9 (resonant); split across stages at 24 dB.
+    const float qMax   = twoStage ? 5.5f : 9.0f;
+    const float q      = juce::jmap(resonanceNorm, 0.60f, qMax);
+    const float k      = juce::jlimit(0.10f, 2.0f, 1.0f / q);
+    for (auto& f : filterStage1) f.setCoeffs(safeCutoff, sampleRate, k);
+    for (auto& f : filterStage2) f.setCoeffs(safeCutoff, sampleRate, k);
 }
 
 float CORRUPTRAudioProcessor::processFilterStage(float xIn, int channel)
@@ -3513,54 +3410,22 @@ float CORRUPTRAudioProcessor::processFilterStage(float xIn, int channel)
     if (filterBypassed)
         return xIn;
 
-    switch (filterTypeIndex)
+    // Drive: analog-style tanh saturation into the filter input (Auto Filter
+    // circuit character), with makeup so it colours rather than just boosts.
+    float x = xIn;
+    if (filterDriveGain > 1.0001f)
+        x = std::tanh(x * filterDriveGain) * filterDriveComp;
+
+    float lp, bp, hp;
+    filterStage1[(size_t) channel].process(x, lp, bp, hp);
+    float y = filterPickOutput(filterTypeIndex, filterMorphNorm, lp, bp, hp);
+
+    if (filterSlopeIndex == 1) // 24 dB: second identical stage in series
     {
-        case 3: // Notch (custom biquad)
-        {
-            auto& x1 = notchX1[(size_t) channel];
-            auto& x2 = notchX2[(size_t) channel];
-            auto& y1 = notchY1[(size_t) channel];
-            auto& y2 = notchY2[(size_t) channel];
-            const float y = notchB0 * xIn + notchB1 * x1 + notchB2 * x2 - notchA1 * y1 - notchA2 * y2;
-            x2 = x1; x1 = xIn;
-            y2 = y1; y1 = y;
-            if (filterSlopeIndex == 1) // v6: 24 dB — second identical notch biquad in series
-            {
-                auto& u1 = notch2X1[(size_t) channel]; auto& u2 = notch2X2[(size_t) channel];
-                auto& v1 = notch2Y1[(size_t) channel]; auto& v2 = notch2Y2[(size_t) channel];
-                const float y2nd = notchB0 * y + notchB1 * u1 + notchB2 * u2 - notchA1 * v1 - notchA2 * v2;
-                u2 = u1; u1 = y;
-                v2 = v1; v1 = y2nd;
-                return y2nd;
-            }
-            return y;
-        }
-
-        case 4: // Comb (custom DelayLine + feedback)
-        {
-            auto& delay = combDelay[(size_t) channel];
-            const float delayed = delay.popSample(0);
-            const float y = xIn + combFeedbackGain * delayed;
-            delay.pushSample(0, y);
-            return y;
-        }
-
-        case 7: // Formant (v11): sum of 3 parallel vowel bandpass resonators
-        {
-            float y = 0.0f;
-            for (int f = 0; f < 3; ++f)
-                y += formantBp[(size_t) (channel * 3 + f)].processSample(0, xIn) * formantGain[(size_t) f];
-            return y * 1.6f; // makeup for parallel-BP level loss
-        }
-
-        default: // LP(0)/HP(1)/BP(2)/Resonant LP(5)/Resonant HP(6) via StateVariableTPTFilter
-        {
-            const float y = svfFilter[(size_t) channel].processSample(0, xIn);
-            if (filterSlopeIndex == 1) // v6: 24 dB — second identical SVF in series
-                return svfFilterStage2[(size_t) channel].processSample(0, y);
-            return y;
-        }
+        filterStage2[(size_t) channel].process(y, lp, bp, hp);
+        y = filterPickOutput(filterTypeIndex, filterMorphNorm, lp, bp, hp);
     }
+    return y;
 }
 
 //==============================================================================

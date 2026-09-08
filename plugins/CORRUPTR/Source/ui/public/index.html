@@ -668,7 +668,7 @@
             <div class="module-body" id="filter_body">
             <div class="mode-tile-wrap">
               <button class="chevron" data-dir="-1" data-for="filter_type">‹</button>
-              <div class="mode-tile" id="filter_type" data-param="filterType" data-choices="LP|HP|BP|Notch|Comb|Resonant LP|Resonant HP|Formant" style="width:158px;height:118px;">
+              <div class="mode-tile" id="filter_type" data-param="filterType" data-choices="Lowpass|Highpass|Bandpass|Notch|Morph" style="width:158px;height:118px;">
                 <div class="tile-glow"></div>
                 <svg class="tile-icon" viewBox="0 0 40 40" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M4 28 C 14 28, 16 12, 24 12 C 30 12, 32 20, 36 20"/></svg>
                 <div class="tile-label"></div>
@@ -709,6 +709,22 @@
                 </div>
                 <div class="knob-value" data-value-for="filterResonance">0%</div>
                 <div class="knob-label">Resonance</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:center; margin-top:10px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_filter_morph" data-param="filterMorph" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:52px;height:52px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="filterMorph">0 %</div>
+                <div class="knob-label">Morph</div>
+              </div>
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_filter_drive" data-param="filterDrive" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:52px;height:52px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="filterDrive">0 %</div>
+                <div class="knob-label">Drive</div>
               </div>
             </div>
 
@@ -2356,41 +2372,26 @@
     function dbToY(db){ return 40 - db * 2.5; } // slope calibrated from (0dB,y40)/(12dB,y10)
 
     const filterSlopeState = Juce.getComboBoxState('filterSlope');
+    const morphState = Juce.getSliderState('filterMorph');
     function magnitudeDb(typeIndex, freq, cutoffHz, resonancePct){
       const slopeMul = filterSlopeState.getChoiceIndex() === 1 ? 2 : 1; // 12 vs 24 dB/oct
-      const ratio = freq / Math.max(1, cutoffHz);
-      const oct = Math.log2(Math.max(ratio, 1e-6));
+      const oct = Math.log2(Math.max(freq,1) / Math.max(1,cutoffHz));
       const resNorm = clamp01(resonancePct / 100);
-      let db;
-      switch (typeIndex){
-        case 1: db = -12 * slopeMul * Math.max(0, -oct); break;      // HP
-        case 2: db = -12 * slopeMul * Math.abs(oct) - 6; break;      // BP
-        case 3: db = -22 * Math.exp(-(oct * oct) / 0.06); break;     // Notch — deep dip at cutoff
-        case 4: db = 6 * Math.sin(freq / Math.max(50, cutoffHz * 0.15)) - 4; break; // Comb — periodic ripple (decorative)
-        case 7: { // Formant (v11) — three vowel peaks tracking the morph position
-          const VF = [[800,1150,2900],[400,1600,2700],[350,1700,2700],[450,800,2830],[325,700,2700]];
-          const p = Math.pow(clamp01((cutoffHz - 20) / 19980), 0.3);
-          const vp = p * 4, vi = Math.min(3, Math.floor(vp)), vf = vp - vi;
-          db = -16;
-          for (let f = 0; f < 3; f++){
-            const Fi = VF[vi][f] + (VF[vi+1][f] - VF[vi][f]) * vf;
-            const d = Math.log2(Math.max(freq,1) / Fi);
-            db = Math.max(db, -16 + (26 - f*6 + resNorm*6) * Math.exp(-(d*d) / 0.045));
-          }
-          break;
-        }
-        case 5: db = -12 * slopeMul * Math.max(0, oct); break;       // Resonant LP
-        case 6: db = -12 * slopeMul * Math.max(0, -oct); break;      // Resonant HP
-        default: db = -12 * slopeMul * Math.max(0, oct);             // LP
+      function shape(t){ // t: 0 LP,1 HP,2 BP,3 Notch
+        let db;
+        if (t === 0) db = -12*slopeMul*Math.max(0, oct);          // LP
+        else if (t === 1) db = -12*slopeMul*Math.max(0, -oct);    // HP
+        else if (t === 2) db = -12*slopeMul*Math.abs(oct) - 6;    // BP
+        else db = -22*Math.exp(-(oct*oct)/0.06);                  // Notch
+        if (t !== 3) db += resNorm * 16 * Math.exp(-(oct*oct)/(2*Math.pow(1.4-resNorm*1.1,2)));
+        return db;
       }
-      // Resonance peak bump centered at the cutoff — narrower + taller at
-      // higher resonance. Skipped for Notch/Comb, which already have their
-      // own cutoff-centered shape.
-      if (typeIndex !== 3 && typeIndex !== 4) {
-        const sigma = 1.4 - resNorm * 1.1;
-        db += resNorm * 18 * Math.exp(-(oct * oct) / (2 * sigma * sigma));
-      }
-      return db;
+      if (typeIndex < 4) return shape(typeIndex);
+      // Morph: blend LP->BP->HP->Notch across filterMorph
+      const mp = clamp01((typeof morphState!=='undefined' && morphState) ? morphState.getScaledValue()/100 : 0) * 3;
+      const seq = [0,2,1,3]; // LP,BP,HP,Notch
+      const i = Math.min(2, Math.floor(mp)); const f = mp - i;
+      return shape(seq[i]) + (shape(seq[i+1]) - shape(seq[i])) * f;
     }
 
     // Smoothly animated: the DISPLAYED cutoff/resonance ease toward their
@@ -2452,6 +2453,7 @@
 
     filterTypeState.valueChangedEvent.addListener(() => drawCurve()); // type changes snap (discrete)
     filterSlopeState.valueChangedEvent.addListener(() => drawCurve()); // slope changes snap too
+    morphState.valueChangedEvent.addListener(() => drawCurve()); // morph reshapes the curve
     Juce.getSliderState('filterCutoff').valueChangedEvent.addListener(kick);
     Juce.getSliderState('filterResonance').valueChangedEvent.addListener(kick);
     drawCurve(); // initial paint from data-default values, before any relay round-trip lands
@@ -2491,9 +2493,11 @@
       bias: 'Pre-shaper DC offset — asymmetric, adds even harmonics',
       distortionMix: 'Blend of shaped vs clean signal within the distortion stage',
       graphBypassFilter: 'Filter stage on/off',
-      filterType: 'Filter topology — click to pick (LP, HP, Notch, Comb, Formant…). In Formant, Cutoff morphs the vowel A-E-I-O-U',
+      filterType: 'Filter type — Lowpass, Highpass, Bandpass, Notch, or Morph (Ableton Auto Filter style)',
       filterCutoff: 'Filter cutoff frequency',
       filterResonance: 'Resonance — emphasis at the cutoff',
+      filterMorph: 'Morph position (Morph type only): sweeps Lowpass → Bandpass → Highpass → Notch',
+      filterDrive: 'Analog-style saturation driven into the filter (adds grit/warmth)',
       filterSlope: 'Filter steepness — 12 dB/oct gentle, 24 dB/oct steep (Comb/Formant unaffected)',
       feedbackAmount: 'Feedback loop intensity — internally limited, cannot run away',
       feedbackDamping: 'Darkens the feedback tail (higher = duller repeats)',

@@ -451,6 +451,8 @@ private:
     std::unique_ptr<juce::WebComboBoxRelay> xyPadYDestinationRelay; // v5 addition
     std::unique_ptr<juce::WebComboBoxRelay> filterSlopeRelay; // v6 addition
     std::unique_ptr<juce::WebSliderRelay> filterCutoffRelay;
+    std::unique_ptr<juce::WebSliderRelay> filterMorphRelay;
+    std::unique_ptr<juce::WebSliderRelay> filterDriveRelay;
     std::unique_ptr<juce::WebSliderRelay> filterResonanceRelay;
 
     // --- Center Master (Output/Global) ---
@@ -594,6 +596,8 @@ private:
     std::unique_ptr<juce::WebComboBoxParameterAttachment> xyPadYDestinationAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> filterSlopeAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> filterCutoffAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> filterMorphAttachment;
+    std::unique_ptr<juce::WebSliderParameterAttachment> filterDriveAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> filterResonanceAttachment;
 
     // --- Center Master (Output/Global) ---
