@@ -43,9 +43,16 @@
  * bridged via two native functions instead ("setTriggerMode" JS->C++,
  * "getInitialUIState" JS->C++ one-shot read at load) - see v10-ui.html's
  * own top-of-script doc comment for the JS side. The MIDI-trigger-note
- * picker (also non-parameter state per architecture.md) has NO UI element
- * in the finalized v10 mockup at all - flagged in
- * v10-integration-checklist.md Section 5, not addressed in this phase.
+ * picker (also non-parameter state per architecture.md) had NO UI element
+ * in the finalized v10 mockup - flagged as a gap in
+ * v10-integration-checklist.md Section 5 - RESOLVED in Stage 3 GUI Phase
+ * 4.2 via a small design-consistent "MIDI NOTE" mini-screen chip
+ * (#midiNoteChip, matching the Tension/Chaos readout family) on the
+ * Advanced page, bridged via two more native functions
+ * ("setMidiTriggerNote" JS->C++, folded into the existing
+ * "getInitialUIState" one-shot read) rather than a WebSliderRelay - same
+ * non-parameter-state treatment as triggerMode. Documented as a
+ * post-finalization amendment in v10-ui.yaml.
  *
  * VISUALIZATION (Phase 4.3 scope; wired minimally here per Phase 4.1's own
  * instructions so the file compiles and the member/order contract is

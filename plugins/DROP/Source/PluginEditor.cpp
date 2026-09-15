@@ -80,11 +80,23 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
                         setTriggerModeIndex(static_cast<int>(args[0]));
                     completion(true);
                 })
+            // --- Non-APVTS "MIDI trigger note" bridge (Stage 3 GUI Phase
+            // 4.2 gap resolution - v10-integration-checklist.md Section 5;
+            // same non-parameter-state category/reasoning as triggerMode
+            // above, see index.html's #midiNoteChip markup comment) ---
+            .withNativeFunction("setMidiTriggerNote",
+                [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+                {
+                    if (args.size() >= 1)
+                        processorRef.setMidiTriggerNote(juce::jlimit(0, 127, static_cast<int>(args[0])));
+                    completion(true);
+                })
             .withNativeFunction("getInitialUIState",
                 [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
                 {
                     auto* obj = new juce::DynamicObject();
                     obj->setProperty("triggerMode", getTriggerModeIndex());
+                    obj->setProperty("midiTriggerNote", processorRef.getMidiTriggerNote());
                     completion(juce::var(obj));
                 })
     );

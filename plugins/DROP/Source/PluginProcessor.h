@@ -104,7 +104,8 @@
  * drain via a juce::Timer - see VisualizationFrame's doc comment for the
  * PINNED activeModuleWeights[10] index order.
  */
-class DROPAudioProcessor : public juce::AudioProcessor
+class DROPAudioProcessor : public juce::AudioProcessor,
+                            private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     DROPAudioProcessor();
@@ -232,6 +233,29 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+    // ------------------------------------------------------------------
+    // Stage 3 GUI Phase 4.2 fix: juce::AudioProcessorValueTreeState::Listener
+    // override, registered on the "trigger" parameter only
+    // (parameters.addParameterListener("trigger", this) in the constructor).
+    // Replaces the Phase 3.1-era block-granular `triggerParam->load() > 0.5f`
+    // polling edge-detector (see processBlock()'s trigger-event-detection
+    // comment for why): that approach snapshots the parameter's value only
+    // ONCE per processBlock() call, so at LARGE block sizes (e.g. an
+    // 8192-sample block at 44.1kHz is called only every ~186ms) the DROP
+    // button's short (~30ms) true->false click pulse (v10-ui.html) could in
+    // principle fall entirely BETWEEN two consecutive processBlock() calls
+    // and never be observed as `true` by either one - a genuine, block-size-
+    // dependent race, not merely a theoretical concern. parameterChanged()
+    // instead fires SYNCHRONOUSLY at the exact moment the parameter's value
+    // changes (from setValueNotifyingHost()/host automation, on whichever
+    // thread performed the write - JUCE's own documented behavior for this
+    // listener type), so it can never miss an edge regardless of block size
+    // or pulse duration. The callback itself only performs a single atomic
+    // store (triggerEventPendingFlag below) - real-time-safe on every
+    // thread.
+    // ------------------------------------------------------------------
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
+
     // Sample-accurate trigger/state-machine segmentation helpers
     // (architecture.md "Sample-Accurate Events / Block Segmentation").
     // Fires Idle->Arming (re-trigger safety enforced by DropStateMachine
@@ -353,10 +377,34 @@ private:
     drop::IntensityBudget::Weights lastComputedWeights {};
     float lastComputedProgress = 0.0f;
 
-    // Edge-detection state for the `trigger` APVTS parameter (see
-    // processBlock()'s trigger-event-detection comment for why this is
-    // block-granular rather than true sub-sample-accurate).
-    bool previousTriggerParamValue = false;
+    // Stage 3 GUI Phase 4.2 DOCUMENTED SUPERSESSION: the Phase 3.1-era
+    // `bool previousTriggerParamValue` block-granular POLLING flag is
+    // replaced by the pair below, both now driven from parameterChanged()
+    // (see its doc comment above) instead of processBlock() sampling
+    // triggerParam->load() once per call:
+    //   - triggerEventEdgeSeenHigh: the "previous value" half of the rising-
+    //     edge test, but evaluated per ACTUAL parameter-change EVENT rather
+    //     than per audio block - preserves the exact original low->high-only
+    //     semantics (a host re-sending the SAME already-high value, which
+    //     some DAWs' automation engines do during static/held automation,
+    //     must NOT be treated as a fresh edge; whether or not JUCE's own
+    //     AudioProcessorParameter::setValue() internally dedupes
+    //     unchanged-value writes before invoking listeners is not something
+    //     this code relies on either way - this flag makes the guarantee
+    //     explicit and independent of that internal JUCE detail).
+    //   - triggerEventPendingFlag: set true only on a genuine low->high
+    //     transition; consumed (test-and-clear) once per processBlock() call.
+    // Together these reproduce the OLD polling logic's exact rising-edge
+    // semantics, but event-driven - the edge itself can no longer be missed
+    // regardless of block size or pulse duration (unlike the old approach,
+    // which snapshotted the parameter's value only once per processBlock()
+    // call and could miss a short UI pulse entirely at large block sizes -
+    // see parameterChanged()'s doc comment for the full race analysis). The
+    // resulting DropStateMachine transition is still applied at this block's
+    // sample offset 0 either way (APVTS exposes no sub-block automation
+    // resolution for this parameter).
+    std::atomic<bool> triggerEventEdgeSeenHigh { false };
+    std::atomic<bool> triggerEventPendingFlag { false };
 
     // Stage 3 DSP Phase 3.5 DOCUMENTED SUPERSESSION: the Phase 3.4-era fixed
     // `kVacuumMinFloorSeconds`/`kImpactWindowSeconds` constants (25ms Vacuum
@@ -391,6 +439,10 @@ private:
     // comparisons; the returned std::atomic<float>* itself is what's
     // actually safe/cheap to read every block).
     // ------------------------------------------------------------------
+    // Stage 3 GUI Phase 4.2: no longer read for edge-detection (superseded
+    // by the parameterChanged()/triggerEventPendingFlag latch above) - kept
+    // cached for consistency with "all 19 parameters cached once" and in
+    // case any future debug/UI readout wants the raw current value.
     std::atomic<float>* triggerParam = nullptr;
     std::atomic<float>* buildLengthParam = nullptr;
     std::atomic<float>* styleParam = nullptr;

@@ -145,6 +145,16 @@
   .mchev.up { border-left: 0.22rem solid transparent; border-right: 0.22rem solid transparent; border-bottom: 0.28rem solid var(--accent); }
   .mchev.down { border-left: 0.22rem solid transparent; border-right: 0.22rem solid transparent; border-top: 0.28rem solid var(--accent); }
 
+  /* ---------- MIDI trigger note chip (Stage 3 GUI Phase 4.2 addition,
+     post-finalization amendment - see v10-ui.yaml's midi_trigger_note_chip
+     note and v10-integration-checklist.md Section 5). Reuses the
+     .mini-screen family verbatim (same dark inset LCD treatment as
+     Tension/Chaos) - only an added `.disabled` state, shown while
+     triggerMode != MIDI (non-APVTS native-function-bridged state, same
+     category as the trigger-mode pill itself, so it has no drag-to-adjust,
+     chevron-step only). ---------- */
+  .mini-screen.disabled { opacity: 0.4; pointer-events: none; transition: opacity 220ms ease; }
+
   /* ---------- Phase chip + progress track - light neumorphic recessed wells,
      driven by the live "dropVisUpdate" feed (see script below), dark text
      normally, orange accents while a drop is in progress ---------- */
@@ -343,6 +353,19 @@
            data-param="chaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1">
         <div class="mini-screen-label">CHAOS</div>
         <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">0</span><span style="font-size:0.6rem;">%</span></div>
+        <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
+      </div>
+
+      <!-- MIDI trigger note - NON-APVTS state (architecture.md), bridged via
+           "setMidiTriggerNote"/"getInitialUIState" native functions (see
+           PluginEditor.cpp) - NOT a WebSliderRelay, matching triggerMode's
+           own non-parameter treatment. Stage 3 GUI Phase 4.2 addition
+           resolving the gap flagged in v10-integration-checklist.md Section
+           5; dimmed/inert (see .mini-screen.disabled) except while
+           triggerMode == MIDI. -->
+      <div class="mini-screen disabled" id="midiNoteChip" style="left:17.25rem; top:9.375rem; width:6.75rem; height:3.5rem;">
+        <div class="mini-screen-label">MIDI NOTE</div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span id="midiNoteName">C3</span></div>
         <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
       </div>
 
@@ -577,9 +600,43 @@
   const modeIndicator = document.getElementById('modeIndicator');
   const modeButtons = Array.from(modePill.querySelectorAll('button'));
   const MODE_VALUES = ['manual', 'midi', 'auto'];
+
+  /* MIDI trigger note chip - NON-APVTS state, bridged via native functions
+     (Stage 3 GUI Phase 4.2 gap resolution - see this file's own markup
+     comment above #midiNoteChip and v10-integration-checklist.md Section
+     5). Chevron-step only (no drag), matching a discrete note picker rather
+     than a continuous parameter; enabled/dimmed by triggerMode below. */
+  const midiNoteChip = document.getElementById('midiNoteChip');
+  const midiNoteNameEl = document.getElementById('midiNoteName');
+  const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  let midiTriggerNote = 60; // matches PluginProcessor.h's kDefaultMidiTriggerNote (C3, see noteNumberToName below)
+  function noteNumberToName(n) {
+    const name = NOTE_NAMES[((n % 12) + 12) % 12];
+    const octave = Math.floor(n / 12) - 2; // note 60 -> "C3" (internal convention, self-consistent between JS and PluginEditor.cpp - not tied to any specific DAW's octave numbering)
+    return name + octave;
+  }
+  function renderMidiNote() { midiNoteNameEl.textContent = noteNumberToName(midiTriggerNote); }
+  renderMidiNote();
+  function setMidiNoteChipEnabled(enabled) { midiNoteChip.classList.toggle('disabled', !enabled); }
+  let cachedSetMidiTriggerNoteFn = null;
+  function callSetMidiTriggerNote(n) {
+    if (!backendAvailable) return;
+    if (!cachedSetMidiTriggerNoteFn) cachedSetMidiTriggerNoteFn = Juce.getNativeFunction('setMidiTriggerNote');
+    cachedSetMidiTriggerNoteFn(n);
+  }
+  midiNoteChip.querySelectorAll('.mchev').forEach((chev) => {
+    chev.addEventListener('click', () => {
+      const dir = parseFloat(chev.dataset.dir);
+      midiTriggerNote = Math.min(127, Math.max(0, midiTriggerNote + dir));
+      renderMidiNote();
+      callSetMidiTriggerNote(midiTriggerNote);
+    });
+  });
+
   function setTriggerModeUI(index) {
     modeButtons.forEach((b, i) => b.classList.toggle('active', i === index));
     modeIndicator.style.transform = `translateX(${index * 100}%)`;
+    setMidiNoteChipEnabled(index === 1); // 1 = midi
   }
   let cachedSetTriggerModeFn = null;
   function callSetTriggerMode(index) {
@@ -595,14 +652,15 @@
       callSetTriggerMode(i);
     });
   });
-  // Fetch the persisted trigger mode once at load (non-parameter state does
-  // not round-trip through a relay's own sendInitialUpdate() the way APVTS
-  // parameters do) - see v10-PluginEditor.cpp's "getInitialUIState" native
-  // function.
+  // Fetch the persisted trigger mode + MIDI trigger note once at load
+  // (non-parameter state does not round-trip through a relay's own
+  // sendInitialUpdate() the way APVTS parameters do) - see
+  // v10-PluginEditor.cpp's "getInitialUIState" native function.
   if (backendAvailable) {
     const getInitialUIState = Juce.getNativeFunction('getInitialUIState');
     getInitialUIState().then((state) => {
       if (state && typeof state.triggerMode === 'number') setTriggerModeUI(state.triggerMode);
+      if (state && typeof state.midiTriggerNote === 'number') { midiTriggerNote = state.midiTriggerNote; renderMidiNote(); }
     }).catch((e) => console.warn('[DROP] getInitialUIState failed:', e));
   }
 

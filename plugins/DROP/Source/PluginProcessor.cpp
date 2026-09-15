@@ -206,10 +206,40 @@ DROPAudioProcessor::DROPAudioProcessor()
     noiseParam = parameters.getRawParameterValue("noise");
     dryWetParam = parameters.getRawParameterValue("dryWet");
     outputParam = parameters.getRawParameterValue("output");
+
+    // Stage 3 GUI Phase 4.2: event-latched trigger edge-detection (see
+    // PluginProcessor.h's parameterChanged()/triggerEventPendingFlag doc
+    // comments) - registered on "trigger" only, not all 19 parameters.
+    parameters.addParameterListener("trigger", this);
 }
 
 DROPAudioProcessor::~DROPAudioProcessor()
 {
+    parameters.removeParameterListener("trigger", this);
+}
+
+void DROPAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    // Real-time-safety: this callback can be invoked from ANY thread
+    // depending on who changed the parameter - the message thread for a UI
+    // click (WebToggleButtonParameterAttachment -> setValueNotifyingHost()),
+    // or potentially the audio thread for host automation (VST3/AU wrappers
+    // typically apply automation immediately before calling processBlock()).
+    // Only atomic exchange/store operations are performed here, safe on
+    // every thread (see this method's declaration-site doc comment in
+    // PluginProcessor.h for the full rationale).
+    //
+    // RISING-EDGE test performed HERE (per actual value-change event), not
+    // in processBlock() - see triggerEventEdgeSeenHigh's doc comment in
+    // PluginProcessor.h for why a host re-sending an already-high value must
+    // NOT be treated as a fresh edge.
+    if (parameterID != "trigger")
+        return;
+
+    const bool high = (newValue > 0.5f);
+    const bool wasHigh = triggerEventEdgeSeenHigh.exchange(high, std::memory_order_acq_rel);
+    if (high && !wasHigh)
+        triggerEventPendingFlag.store(true, std::memory_order_release);
 }
 
 bool DROPAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -233,7 +263,14 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // starts from Idle, regardless of what setStateInformation() may have
     // run before or after this call.
     dropStateMachine.reset();
-    previousTriggerParamValue = false;
+    // Clear any stale unconsumed rising-edge latch/state (Stage 3 GUI Phase
+    // 4.2 - see PluginProcessor.h's triggerEventEdgeSeenHigh/
+    // triggerEventPendingFlag doc comments) so a (re)prepare never auto-
+    // fires a trigger the user didn't just press, and so the "previous
+    // value" half of the edge test starts fresh (matches the old polling
+    // code's own `previousTriggerParamValue = false;` reset here).
+    triggerEventEdgeSeenHigh.store(false, std::memory_order_relaxed);
+    triggerEventPendingFlag.store(false, std::memory_order_relaxed);
 
     // Stage 3 DSP Phase 3.2: prepare the six always-process DSP modules.
     // numChannels/maximumBlockSize drive every module's preallocated
@@ -457,10 +494,18 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // ------------------------------------------------------------------
     int triggerEventOffset = -1; // -1 == no trigger event this block
 
-    const bool triggerParamNow = (triggerParam->load() > 0.5f);
-    if (triggerParamNow && !previousTriggerParamValue)
+    // Stage 3 GUI Phase 4.2 fix: consume the event-latched flag set by
+    // parameterChanged() (see PluginProcessor.h's doc comments on both that
+    // override and triggerEventPendingFlag) rather than polling
+    // `triggerParam->load()` once per call - the old polling approach could
+    // miss a short UI pulse entirely at large block sizes since it only ever
+    // sampled the parameter's value once per processBlock() call. The
+    // resulting event is still applied at this block's sample offset 0 (the
+    // finest granularity APVTS exposes for this parameter either way) -
+    // exchange() atomically consumes the flag so it can only fire once per
+    // rising edge, matching the old polling logic's semantics exactly.
+    if (triggerEventPendingFlag.exchange(false, std::memory_order_acq_rel))
         triggerEventOffset = 0;
-    previousTriggerParamValue = triggerParamNow;
 
     if (getTriggerMode() == TriggerMode::Midi)
     {
