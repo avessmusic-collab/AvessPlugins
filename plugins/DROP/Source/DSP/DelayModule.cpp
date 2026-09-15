@@ -66,10 +66,11 @@ void DelayModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
     for (int ch = 0; ch < numChannels; ++ch)
         dryBuffer.copyFrom(ch, 0, block.getChannelPointer((size_t) ch), numSamples);
 
-    // Fixed 1/8-note division (Phase 3.2 placeholder - Style-driven division
-    // choice + Chaos jitter land in Phase 3.5). Stereo offset per
-    // architecture.md's "dotted-offset trick".
-    const double baseDelaySamples = clock.divisionToSamples(MusicalDivision::Eighth, false);
+    // Stage 3 DSP Phase 3.5: base division is Chaos-drawn at Arming (see
+    // setChaosDivision()), defaulting to the prior fixed Eighth-note
+    // placeholder until set. Stereo offset per architecture.md's
+    // "dotted-offset trick".
+    const double baseDelaySamples = clock.divisionToSamples(chaosDivision, false);
     const double leftDelaySamples = juce::jlimit(1.0, maxDelaySamples, baseDelaySamples);
     const double rightDelaySamples = juce::jlimit(1.0, maxDelaySamples, baseDelaySamples * kStereoOffsetRatio);
 

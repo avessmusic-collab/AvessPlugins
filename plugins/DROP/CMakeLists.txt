@@ -46,6 +46,10 @@ set(DROP_CORE_SOURCES
     Source/Core/DropRandomizer.cpp
     # DSP - Stage 3 DSP Phase 3.4 (ImpactEngine)
     Source/DSP/ImpactEngine.cpp
+    # DSP - Stage 3 DSP Phase 3.5 (IntensityBudget/DropStyle/AudioAnalyzer/Presets - FINAL DSP phase)
+    Source/DSP/AudioAnalyzer.cpp
+    Source/Core/DropStyle.cpp
+    Source/Core/DropPreset.cpp
 )
 
 target_sources(DROP PRIVATE ${DROP_CORE_SOURCES})

@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_dsp/juce_dsp.h>
+#include "MusicalClock.h" // MusicalDivision (Stage 3 DSP Phase 3.5: setChaosDivision() needs the full enum, not just a forward-declared class)
 
 /**
  * DelayModule - tempo-synced stereo delay with a feedback-safe path.
@@ -35,6 +36,16 @@ public:
 
     void process(juce::dsp::AudioBlock<float> block, float weight, float progress, const MusicalClock& clock) noexcept;
 
+    /**
+     * Stage 3 DSP Phase 3.5: the base (left-channel) delay division is
+     * quantized toward this Chaos-drawn division instead of the fixed
+     * Eighth-note placeholder (architecture.md Integration Points:
+     * "DropRandomizer (Chaos) -> ... DelayModule division" - latched once
+     * per Arming via DropRandomizer::getDelayDivisionChoice()). Defaults to
+     * Eighth (identical to the pre-3.5 fixed behavior) until called.
+     */
+    void setChaosDivision(MusicalDivision division) noexcept { chaosDivision = division; }
+
 private:
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine;
     juce::dsp::IIR::Filter<float> feedbackHpf[2], feedbackLpf[2];
@@ -43,6 +54,7 @@ private:
 
     double sampleRate = 44100.0;
     double maxDelaySamples = 0.0;
+    MusicalDivision chaosDivision = MusicalDivision::Eighth;
 
     // architecture.md: "Feedback clamped hard to <=0.92 and additionally
     // soft-saturated before being written back into the delay line."

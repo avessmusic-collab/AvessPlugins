@@ -19,12 +19,17 @@ void GateModule::reset()
 
 double GateModule::computeStepLengthSamples(float progress, const MusicalClock& clock) const noexcept
 {
-    static constexpr MusicalDivision kCandidates[] = {
-        MusicalDivision::Quarter, MusicalDivision::Eighth, MusicalDivision::Sixteenth, MusicalDivision::ThirtySecond
+    // Stage 3 DSP Phase 3.5: the fastest candidate division (both the
+    // interpolation target's end-anchor AND the quantization candidate set)
+    // is now `chaosDivision` (Chaos-drawn at Arming, see setChaosDivision())
+    // instead of a fixed ThirtySecond - defaults to ThirtySecond, so
+    // pre-3.5 behavior is reproduced exactly until a caller opts in.
+    const MusicalDivision kCandidates[] = {
+        MusicalDivision::Quarter, MusicalDivision::Eighth, MusicalDivision::Sixteenth, chaosDivision
     };
 
     const double startPeriod = clock.divisionToSamples(MusicalDivision::Quarter, false);
-    const double endPeriod = clock.divisionToSamples(MusicalDivision::ThirtySecond, false);
+    const double endPeriod = clock.divisionToSamples(chaosDivision, false);
     const double logStart = std::log(juce::jmax(1.0, startPeriod));
     const double logEnd = std::log(juce::jmax(1.0, endPeriod));
     const double targetPeriod = std::exp(logStart + (logEnd - logStart) * (double) juce::jlimit(0.0f, 1.0f, progress));

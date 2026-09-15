@@ -281,6 +281,12 @@ void DROPAudioProcessor::releaseResources()
 
 drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuild()
 {
+    // Stage 3 DSP Phase 3.5: Vacuum/Impact/Recovery timing now comes from
+    // the ACTIVE (already-latched-this-call by fireTriggerIfIdle()) Style
+    // instead of fixed constants (architecture.md: "Vacuum duration/floor,
+    // Impact tail length, Recovery length are all Style-configurable").
+    const auto& style = drop::getStyle(activeStyleIndexForBuild);
+
     drop::DropStateMachine::Durations d;
 
     // Arming: quantize the build's start to the next bar boundary
@@ -303,25 +309,23 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     const int bars = kBuildLengthBars[(size_t) juce::jlimit(0, 4, buildLengthChoiceIndex)];
     d.buildingSamples = (int64_t) std::llround(musicalClock.barsToSamples(bars));
 
-    // Stage 3 DSP Phase 3.4: Peak's ENTIRE duration IS the Vacuum window
+    // Stage 3 DSP Phase 3.4/3.5: Peak's ENTIRE duration IS the Vacuum window
     // (architecture.md VacuumModule: "1/64-1/16 note... e.g. 1/32 note at
     // current tempo"; see processSegment()'s ImpactEngine doc comment for
-    // this phase's Peak/Impact handoff design). Clamped to a fixed
+    // this phase's Peak/Impact handoff design). Clamped to a Style-authored
     // millisecond floor so extreme tempos never produce a too-short-to-be-
-    // click-free window (see kVacuumMinFloorSeconds's doc comment).
-    const double vacuumWindowSamples = musicalClock.divisionToSamples(drop::MusicalDivision::ThirtySecond, false);
-    const double vacuumFloorSamples = currentSampleRate * kVacuumMinFloorSeconds;
+    // click-free window.
+    const double vacuumWindowSamples = musicalClock.divisionToSamples(style.vacuumDivision, false);
+    const double vacuumFloorSamples = currentSampleRate * style.vacuumFloorSeconds;
     d.peakSamples = (int64_t) std::llround(juce::jmax(vacuumWindowSamples, vacuumFloorSamples));
 
-    // Impact: ImpactEngine's own burst/sub/tail window (see
-    // kImpactWindowSeconds's doc comment) - DropStyle-authored per-Style
-    // values land in Phase 3.5.
-    d.impactSamples = (int64_t) std::llround(currentSampleRate * kImpactWindowSeconds);
+    // Impact: ImpactEngine's own burst/sub/tail window, Style-authored
+    // (architecture.md: "typically 50-300ms").
+    d.impactSamples = (int64_t) std::llround(currentSampleRate * style.impactWindowSeconds);
 
-    // Recovery: half a bar (architecture.md: "Style-configurable, e.g.
-    // 1/8-1 bar") - a musically-derived settle window that scales with
-    // tempo, replacing the Phase 3.1-era fixed-seconds placeholder.
-    d.recoverySamples = (int64_t) std::llround(musicalClock.divisionToSamples(drop::MusicalDivision::Half, false));
+    // Recovery: Style-authored musical division (architecture.md:
+    // "Style-configurable, e.g. 1/8-1 bar").
+    d.recoverySamples = (int64_t) std::llround(musicalClock.divisionToSamples(style.recoveryDivision, false));
 
     return d;
 }
@@ -335,6 +339,15 @@ void DROPAudioProcessor::fireTriggerIfIdle()
     if (dropStateMachine.getState() != drop::DropState::Idle)
         return;
 
+    // Stage 3 DSP Phase 3.5: the `style` APVTS parameter is latched for the
+    // ENTIRE upcoming build right here (architecture.md DropStyle:
+    // "Switching style while a build is in-flight... is deferred until the
+    // state machine returns to Idle" - reading it only at Arming, and
+    // reusing this value for the whole build via activeStyleIndexForBuild,
+    // implements that deferral naturally).
+    activeStyleIndexForBuild = juce::jlimit(0, drop::kNumStyles - 1, (int) styleParam->load());
+    const auto& style = drop::getStyle(activeStyleIndexForBuild);
+
     // Stage 3 DSP Phase 3.3: Chaos RNG draws happen ONLY here, at Arming
     // (architecture.md DropRandomizer: "RNG draws happen only at
     // well-defined points: once at Arming... latching this build's jitter
@@ -345,16 +358,32 @@ void DROPAudioProcessor::fireTriggerIfIdle()
     dropRandomizer.drawForNewBuild();
 
     pitchModule.setSemitoneTarget(dropRandomizer.getPitchSemitoneChoice());
+    pitchModule.setMode(style.pitchMode);
     stutterModule.setMode(static_cast<drop::StutterMode>(dropRandomizer.getStutterModeChoice()));
     noiseModule.setSeed(dropRandomizer.getSeed());
+    noiseModule.setColor(style.noiseColor);
     impactEngine.setSeed(dropRandomizer.getSeed()); // deterministic burst noise (a "seeded equivalent" of NoiseModule's generator, internally XORed - see ImpactEngine::kSeedXorConstant)
-    // GateModule/DelayModule division-choice jitter consumption and the
-    // per-module IntensityBudget intensity jitter (dropRandomizer.
-    // getIntensityJitter()) are deferred to Phase 3.5's real
-    // Style-driven IntensityBudget (architecture.md: jitter is applied
-    // INSIDE IntensityBudget's weight computation, which is still a fixed
-    // Phase 3.2 placeholder until then) - drawn deterministically above
-    // regardless, so the values are already latched and ready to consume.
+
+    // Stage 3 DSP Phase 3.5: Style-driven mode/curve-type selection (data-
+    // driven, per architecture.md DROPSTYLE: "Do not hard-code large switch
+    // statements throughout DSP" - the switch/table lives in DropStyle.cpp's
+    // data authoring, not here or in any DSP module).
+    filterModule.setMode(style.filterMode);
+    saturationModule.setMode(style.saturationMode);
+    transitionEngine.setCurveType(style.transitionCurveType);
+
+    // Stage 3 DSP Phase 3.5: the previously-deferred Gate/Delay division
+    // Chaos-jitter consumers (architecture.md Integration Points:
+    // "DropRandomizer (Chaos) -> ... GateModule pattern/rate, DelayModule
+    // division") are wired here - musically-constrained choices drawn above
+    // by dropRandomizer.drawForNewBuild(), latched for this build's duration.
+    gateModule.setChaosDivision(dropRandomizer.getGateDivisionChoice());
+    delayModule.setChaosDivision(dropRandomizer.getDelayDivisionChoice());
+    // The remaining deferred consumer - per-module IntensityBudget intensity
+    // jitter (dropRandomizer.getIntensityJitter()) - is consumed every
+    // segment inside processSegment() via IntensityBudget::computeWeights()'s
+    // `chaosJitter01` argument, not here (it is read repeatedly for the
+    // duration of the build, not a one-shot "apply at Arming" setter).
 
     dropStateMachine.requestTrigger(computeDurationsForNewBuild());
 }
@@ -381,6 +410,13 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // final Dry/Wet Mixer stage at the very end of this function.
     for (int channel = 0; channel < totalNumOutputChannels; ++channel)
         dryCaptureBuffer.copyFrom(channel, 0, buffer, channel, 0, numSamples);
+
+    // Stage 3 DSP Phase 3.5: AudioAnalyzer tap (architecture.md Processing
+    // Order step 2: "runs in parallel off the same pre-chain signal... order
+    // relative to [the dry capture] doesn't matter"). READ-ONLY - never
+    // modifies dryCaptureBuffer. Its SourceProfile + metrics feed
+    // IntensityBudget::computeWeights() below (via processSegment()).
+    audioAnalyzer.analyze(dryCaptureBuffer, numSamples);
 
     // MusicalClock: refresh bpm/time-signature/bar-position once per host
     // block (architecture.md: "recomputes samplesPerBeat once per block...
@@ -482,6 +518,24 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // the state observed at the start of the NEXT block is already correct.
     while (dropStateMachine.tick()) {}
 
+    // Stage 3 DSP Phase 3.5: push one visualization frame per processBlock()
+    // call (architecture.md Thread Boundaries: "pushed once per processed
+    // block (or once per sub-block segment)" - block granularity chosen
+    // here, simplest option explicitly allowed by that sentence). Uses the
+    // LAST segment's computed weights/progress within this block (cached by
+    // processSegment()) - a per-block snapshot is sufficient for a
+    // ~30-60Hz GUI drain rate (Stage 3 GUI Phase 4.3, not wired yet).
+    {
+        VisualizationFrame frame;
+        frame.progress = lastComputedProgress;
+        frame.tensionLevel = tensionParam->load() / 100.0f;
+        frame.currentState = (int) dropStateMachine.getState();
+        frame.inputRMS = audioAnalyzer.getMetrics().rms;
+        for (int i = 0; i < 10; ++i)
+            frame.activeModuleWeights[i] = lastComputedWeights.value[(size_t) i];
+        pushVisualizationFrame(frame);
+    }
+
     // ------------------------------------------------------------------
     // Final Dry/Wet Mixer + Output Gain (architecture.md Processing Order
     // steps 9-10, always last) - smoothed to avoid zipper per
@@ -535,7 +589,27 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     macroPercent[(size_t) drop::BudgetModule::Noise] = noiseParam->load() / 100.0f;
 
     const float intensity01 = intensityParam->load() / 100.0f;
-    const auto weights = intensityBudget.compute(macroPercent, progress, intensity01);
+    const float tension01 = tensionParam->load() / 100.0f;
+    const float chaos01 = chaosParam->load() / 100.0f;
+
+    // Stage 3 DSP Phase 3.5: the deferred per-module IntensityBudget
+    // intensity-jitter consumer (architecture.md Integration Points:
+    // "DropRandomizer (Chaos) -> IntensityBudget weight jitter") - read
+    // every segment (pure getters, no new RNG draws; the underlying values
+    // were latched once at Arming by dropRandomizer.drawForNewBuild()).
+    std::array<float, (size_t) drop::BudgetModule::Count> chaosJitter {};
+    for (size_t i = 0; i < (size_t) drop::BudgetModule::Count; ++i)
+        chaosJitter[i] = dropRandomizer.getIntensityJitter((int) i);
+
+    const auto& style = drop::getStyle(activeStyleIndexForBuild);
+    const auto weights = drop::IntensityBudget::computeWeights(style, progress, macroPercent, intensity01,
+                                                                 tension01, chaos01, audioAnalyzer.getSourceProfile(),
+                                                                 chaosJitter);
+
+    // Cached for the visualization-frame push at the end of processBlock()
+    // (see that call site's doc comment).
+    lastComputedWeights = weights;
+    lastComputedProgress = progress;
 
     const float impactAmount01 = juce::jlimit(0.0f, 1.0f, impactParam->load() / 100.0f);
 
@@ -583,7 +657,7 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     saturationModule.process(segmentBlock, saturationWeight, progress);
 
     digitalModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Digital], progress,
-                           tensionParam->load() / 100.0f, chaosParam->load() / 100.0f);
+                           tension01, chaos01);
     noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f);
     reverbModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Reverb], progress);
 
@@ -652,9 +726,10 @@ float DROPAudioProcessor::computeIntensityProgress() noexcept
             // source"): the 10 shared-budget modules snap to 0 starting at
             // PEAK ENTRY (not Impact entry) - each module's OWN internal
             // weightSmoothed ramp (~20ms) needs real elapsed time to settle
-            // fully to 0, and Peak's ENTIRE latched duration (>= 25ms even
-            // at the floor-clamped extreme-tempo edge case - see
-            // kVacuumMinFloorSeconds) comfortably provides that, so by the
+            // fully to 0, and Peak's ENTIRE latched duration (>= the active
+            // Style's vacuumFloorSeconds even at the floor-clamped
+            // extreme-tempo edge case - see computeDurationsForNewBuild())
+            // comfortably provides that, so by the
             // time Impact's first sample arrives the shared chain is
             // GENUINELY transparent (weight exactly 0, smoothers settled),
             // not merely "targeting 0." Ducking during Peak is also
@@ -682,6 +757,82 @@ float DROPAudioProcessor::computeIntensityProgress() noexcept
         }
     }
     return 0.0f;
+}
+
+void DROPAudioProcessor::setCurrentProgram(int index)
+{
+    // Message-thread-only (standard JUCE AudioProcessor::setCurrentProgram()
+    // contract - hosts call this off the audio thread; the actual parameter
+    // writes below go through the normal APVTS setValueNotifyingHost() path,
+    // identical to any other host-driven parameter change).
+    index = juce::jlimit(0, drop::kNumPresets - 1, index);
+    currentProgramIndex = index;
+    const auto& preset = drop::getPreset(index);
+
+    auto setParam = [this](const char* id, float rawValue)
+    {
+        if (auto* p = parameters.getParameter(id))
+            p->setValueNotifyingHost(p->convertTo0to1(rawValue));
+    };
+
+    setParam("style", (float) preset.styleIndex);
+    setParam("buildLength", (float) preset.buildLengthChoiceIndex);
+    setParam("intensity", preset.intensity);
+    setParam("tension", preset.tension);
+    setParam("chaos", preset.chaos);
+    setParam("impact", preset.impact);
+    setParam("dryWet", preset.dryWet);
+    setParam("output", preset.outputDb);
+
+    // architecture.md "Resolved Open Questions" #2: the 10 module macros
+    // default to 100% (unipolar direct multiplier, "module behaves exactly
+    // as the selected DropStyle authored it") - a loaded preset is not a
+    // separate data structure from its Style (architecture.md Presets: "the
+    // 16 presets ARE the 16 DropStyles at their recommended macro
+    // defaults"), so resetting all 10 macros to 100% here guarantees the
+    // Style is heard exactly as authored, not pre-attenuated.
+    static constexpr const char* kMacroIds[10] = {
+        "filter", "width", "pitch", "gate", "stutter", "delay", "reverb", "distortion", "digital", "noise"
+    };
+    for (auto* id : kMacroIds)
+        setParam(id, 100.0f);
+}
+
+void DROPAudioProcessor::pushVisualizationFrame(const VisualizationFrame& frame) noexcept
+{
+    // Audio-thread-only (see architecture.md Thread Boundaries). Lock-free:
+    // juce::AbstractFifo's write-side is safe for exactly one writer
+    // concurrent with exactly one reader (popVisualizationFrame(), message
+    // thread) - matches this class's usage exactly.
+    int start1, size1, start2, size2;
+    visualizationFifo.prepareToWrite(1, start1, size1, start2, size2);
+    if (size1 > 0)
+        visualizationBuffer[(size_t) start1] = frame;
+    else if (size2 > 0)
+        visualizationBuffer[(size_t) start2] = frame;
+    visualizationFifo.finishedWrite(size1 + size2);
+    // size1+size2 == 0 (FIFO full - GUI not draining fast enough, or not yet
+    // attached) is a silent, harmless drop of this one frame: the next
+    // processBlock() call will simply try again. No allocation, no lock,
+    // never blocks the audio thread.
+}
+
+bool DROPAudioProcessor::popVisualizationFrame(VisualizationFrame& outFrame) noexcept
+{
+    // Message-thread-only (see VisualizationFrame's public doc comment).
+    int start1, size1, start2, size2;
+    visualizationFifo.prepareToRead(1, start1, size1, start2, size2);
+    if (size1 > 0)
+        outFrame = visualizationBuffer[(size_t) start1];
+    else if (size2 > 0)
+        outFrame = visualizationBuffer[(size_t) start2];
+    else
+    {
+        visualizationFifo.finishedRead(0);
+        return false;
+    }
+    visualizationFifo.finishedRead(size1 + size2);
+    return true;
 }
 
 juce::AudioProcessorEditor* DROPAudioProcessor::createEditor()

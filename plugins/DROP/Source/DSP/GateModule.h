@@ -34,12 +34,24 @@ public:
     /** `clock` supplies the current tempo for musical-division rate quantization. */
     void process(juce::dsp::AudioBlock<float> block, float weight, float progress, const MusicalClock& clock) noexcept;
 
+    /**
+     * Stage 3 DSP Phase 3.5: the fastest (progress==1) end of the rate
+     * sweep is quantized toward this Chaos-drawn division instead of the
+     * fixed ThirtySecond placeholder (architecture.md Integration Points:
+     * "DropRandomizer (Chaos) -> ... GateModule pattern/rate" - latched once
+     * per Arming via DropRandomizer::getGateDivisionChoice(), a
+     * musically-constrained choice, never an arbitrary value). Defaults to
+     * ThirtySecond (identical to the pre-3.5 fixed behavior) until called.
+     */
+    void setChaosDivision(MusicalDivision division) noexcept { chaosDivision = division; }
+
 private:
     double computeStepLengthSamples(float progress, const MusicalClock& clock) const noexcept;
 
     double sampleRate = 44100.0;
     double phaseSamples = 0.0; // running position within the current gate step, persists across segments/blocks
     juce::SmoothedValue<float> edgeRamp; // anti-click envelope (linear ramp approximation of architecture.md's raised-cosine)
+    MusicalDivision chaosDivision = MusicalDivision::ThirtySecond;
 
     static constexpr float kAntiClickSeconds = 0.002f; // 2ms, within architecture.md's 1-3ms target
     static constexpr float kDutyCycle = 0.5f;

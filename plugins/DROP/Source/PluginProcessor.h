@@ -17,7 +17,10 @@
 #include "DSP/VacuumModule.h"
 #include "DSP/NoiseModule.h"
 #include "DSP/ImpactEngine.h"
+#include "DSP/AudioAnalyzer.h"
 #include "Core/DropRandomizer.h"
+#include "Core/DropStyle.h"
+#include "Core/DropPreset.h"
 #include <array>
 #include <atomic>
 #include <vector>
@@ -77,6 +80,29 @@
  * PRESERVATION: "duck the effect chain, not the source") so the (near-)dry
  * source transient survives the drop. Recovery's musically-derived duration
  * (half a bar) also replaces its Phase 3.1-era fixed-seconds placeholder.
+ *
+ * Stage 3 DSP Phase 3.5 ("IntensityBudget, DropStyle, AudioAnalyzer, Preset
+ * Wiring") scope - this is the FINAL DSP phase: the Phase 3.2-3.4 placeholder
+ * IntensityBudget (fixed/static weight curves) is replaced by the real,
+ * DropStyle-authored, source-aware, Chaos-jittered
+ * drop::IntensityBudget::computeWeights(); the `style` APVTS parameter now
+ * selects one of 16 factory drop::DropStyleData entries (Source/Core/
+ * DropStyle.*), latched at Arming into activeStyleIndexForBuild (mirroring
+ * every other per-build-latched setting) - the Style also now drives
+ * FilterModule/SaturationModule/NoiseModule/PitchModule's mode selection and
+ * TransitionEngine's curve type, plus the Vacuum/Impact/Recovery timing
+ * previously hard-coded in computeDurationsForNewBuild(). A new
+ * drop::AudioAnalyzer (Source/DSP/AudioAnalyzer.*) taps the pre-chain dry
+ * signal every block (RT-safe, read-only) and feeds its SourceProfile
+ * classification into computeWeights() for source-aware weight
+ * redistribution. Source/Core/DropPreset.* exposes the 16 presets (= the 16
+ * Styles at recommended macro defaults) via the standard
+ * getNumPrograms()/setCurrentProgram() JUCE program API. A lock-free
+ * single-producer/single-consumer visualization ring buffer
+ * (VisualizationFrame, popVisualizationFrame()) is now populated once per
+ * processBlock() call, ready for the Stage 3 GUI Phase 4.3 DropGraph to
+ * drain via a juce::Timer - see VisualizationFrame's doc comment for the
+ * PINNED activeModuleWeights[10] index order.
  */
 class DROPAudioProcessor : public juce::AudioProcessor
 {
@@ -101,11 +127,16 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return {}; }
-    void changeProgramName(int, const juce::String&) override {}
+    // Stage 3 DSP Phase 3.5: the 16 factory presets (Source/Core/
+    // DropPreset.*) = the 16 DropStyles at recommended macro defaults
+    // (architecture.md Data-Driven Style System > Presets). Message-thread
+    // API per JUCE convention (setCurrentProgram() writes APVTS parameters
+    // via setValueNotifyingHost(), same as any host-driven parameter change).
+    int getNumPrograms() override { return drop::kNumPresets; }
+    int getCurrentProgram() override { return currentProgramIndex; }
+    void setCurrentProgram(int index) override;
+    const juce::String getProgramName(int index) override { return drop::getPreset(index).name; }
+    void changeProgramName(int, const juce::String&) override {} // factory presets are read-only, matches this repo's convention for fixed preset lists
 
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
@@ -168,6 +199,36 @@ public:
     // ------------------------------------------------------------------
     drop::DropState getCurrentDropState() const noexcept { return dropStateMachine.getState(); }
 
+    // ------------------------------------------------------------------
+    // Stage 3 DSP Phase 3.5 - visualization ring buffer (architecture.md
+    // Thread Boundaries: "Audio thread -> UI (visualization): a small
+    // lock-free single-producer/single-consumer ring buffer... pushed once
+    // per processed block... drained by a juce::Timer (~30-60Hz) on the
+    // message thread"). Pushed once per processBlock() call by the audio
+    // thread (pushVisualizationFrame(), private); drained here by the
+    // message thread (Stage 3 GUI Phase 4.3's DropGraph will call this from
+    // a juce::Timer - not yet wired to any GUI code this phase).
+    // ------------------------------------------------------------------
+    struct VisualizationFrame
+    {
+        float progress = 0.0f;
+        float tensionLevel = 0.0f;
+        int currentState = 0; // drop::DropState, stored as int for POD-simplicity across the FIFO
+        float inputRMS = 0.0f;
+
+        // PINNED ORDER (do not reorder without updating every GUI JS/native
+        // consumer that indexes into this array): Filter, Width, Pitch,
+        // Gate, Stutter, Delay, Reverb, Distortion, Digital, Noise - matches
+        // drop::BudgetModule's enum declaration order exactly (see
+        // IntensityBudget.h). Flagged as previously-unpinned in
+        // v10-integration-checklist.md #5's "Open items" note - now fixed
+        // here as the single source of truth.
+        float activeModuleWeights[10] = {};
+    };
+
+    /** Message-thread-only. Returns false when the FIFO is empty. */
+    bool popVisualizationFrame(VisualizationFrame& outFrame) noexcept;
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -183,10 +244,15 @@ private:
     // fixed series DSP chain (Filter -> Width -> Gate -> Delay -> Saturation
     // -> Reverb), using the CURRENT (pre-advance) DropStateMachine state/
     // progress for this segment. Called from processBlock()'s segmentation
-    // loop, once per segment.
+    // loop, once per segment. Stage 3 DSP Phase 3.5: weights now come from
+    // drop::IntensityBudget::computeWeights() (Style-driven, source-aware,
+    // Chaos-jittered) instead of the Phase 3.2-3.4 fixed placeholder (the
+    // active Style's filterMode/saturationMode/noiseColor/pitchMode/
+    // transitionCurveType are applied once at Arming, in fireTriggerIfIdle() -
+    // not re-applied per segment, since they only ever change per-build).
     void processSegment(juce::AudioBuffer<float>& buffer, int startSample, int numSamplesInSegment) noexcept;
 
-    // Derives the 0-1 "budget progress" input fed to IntensityBudget::compute()
+    // Derives the 0-1 "budget progress" input fed to IntensityBudget::computeWeights()
     // from the DropStateMachine's CURRENT state - 0 during Idle/Arming,
     // TransitionEngine::evaluate(t) during Building (t = elapsed/total
     // within Building), 0.0 across BOTH Peak and Impact (Stage 3 DSP Phase
@@ -212,7 +278,9 @@ private:
     drop::DelayModule delayModule;
     drop::SaturationModule saturationModule;
     drop::ReverbModule reverbModule;
-    drop::IntensityBudget intensityBudget;
+    // Stage 3 DSP Phase 3.5: IntensityBudget::computeWeights() is now a pure
+    // `static` function (no instance state) - see IntensityBudget.h. No
+    // member instance needed any more.
 
     // Stage 3 DSP Phase 3.3 components (Creative DSP Modules). Wired into
     // processSegment() in the architecture.md-mandated fixed series order:
@@ -236,6 +304,13 @@ private:
     // handoff design.
     drop::ImpactEngine impactEngine;
 
+    // Stage 3 DSP Phase 3.5 component: parallel, read-only tap of the
+    // pre-chain dry signal (architecture.md Processing Order step 2), fed
+    // once per processBlock() (see processBlock()'s doc comment at the
+    // analyze() call site). Its SourceProfile + metrics feed
+    // IntensityBudget::computeWeights() via processSegment().
+    drop::AudioAnalyzer audioAnalyzer;
+
     // Pre-chain dry capture (architecture.md Processing Order step 1) +
     // final global Dry/Wet mix / Output gain smoothing (steps 9-10) -
     // preallocated in prepareToPlay(), RT-safe.
@@ -245,39 +320,56 @@ private:
 
     double currentSampleRate = 44100.0;
 
+    // Stage 3 DSP Phase 3.5: the `style` APVTS parameter's value, LATCHED at
+    // Arming (mirroring buildLength/tempo's own latching - architecture.md
+    // DropStyle: "Switching style while a build is in-flight... is deferred
+    // until the state machine returns to Idle"). Read fresh from
+    // styleParam->load() inside fireTriggerIfIdle() every time a trigger is
+    // actually accepted; used by processSegment()/computeDurationsForNewBuild()
+    // for the ENTIRE resulting build (including while Idle, so a live style
+    // change is reflected immediately for a not-yet-triggered preview -
+    // harmless since Idle's weights are always 0 regardless of Style).
+    // Audio-thread-owned, no atomic needed.
+    int activeStyleIndexForBuild = 0;
+
+    // Stage 3 DSP Phase 3.5: JUCE program-management state (see
+    // setCurrentProgram()/getCurrentProgram()). Message-thread-only.
+    int currentProgramIndex = 0;
+
+    // Stage 3 DSP Phase 3.5: visualization ring buffer (see
+    // VisualizationFrame's public doc comment). juce::AbstractFifo is
+    // lock-free for exactly one writer (audio thread, pushVisualizationFrame())
+    // and one reader (message thread, popVisualizationFrame()) - matches
+    // this class's single-writer/single-reader usage exactly.
+    void pushVisualizationFrame(const VisualizationFrame& frame) noexcept;
+    static constexpr int kVisualizationFifoSize = 256; // generous headroom against a ~30-60Hz GUI drain vs. a per-block (up to several kHz at tiny block sizes) audio-thread push rate
+    juce::AbstractFifo visualizationFifo { kVisualizationFifoSize };
+    std::array<VisualizationFrame, (size_t) kVisualizationFifoSize> visualizationBuffer {};
+
+    // Stage 3 DSP Phase 3.5: the most recently computed IntensityBudget
+    // weights + progress (cached by processSegment(), consumed once per
+    // processBlock() by the visualization-frame push at the end of the
+    // segmentation loop - see processBlock()'s doc comment there).
+    drop::IntensityBudget::Weights lastComputedWeights {};
+    float lastComputedProgress = 0.0f;
+
     // Edge-detection state for the `trigger` APVTS parameter (see
     // processBlock()'s trigger-event-detection comment for why this is
     // block-granular rather than true sub-sample-accurate).
     bool previousTriggerParamValue = false;
 
-    // Stage 3 DSP Phase 3.4: musically-derived Peak(Vacuum)/Impact/Recovery
-    // window lengths, replacing the Phase 3.1-era fixed-seconds placeholders.
-    // DropStyle-authored per-Style values (architecture.md: Vacuum
-    // duration/floor, Impact tail length, Recovery length are all
-    // Style-configurable) land in Phase 3.5 - these are deterministic,
-    // documented architecture defaults, not yet Style-driven.
-    //
-    // kVacuumMinFloorSeconds: architecture.md Implementation Risks >
-    // VacuumModule Click-Free Collapse fallback: "clamp the minimum Vacuum
-    // duration to a fixed millisecond floor (e.g. 8-10ms)... a
-    // barely-longer Vacuum is a smaller compromise than an audible click."
-    // Stage 3 DSP Phase 3.4 bugfix: raised from the originally-documented
-    // 8ms to 25ms - this floor now does DOUBLE duty. Since
-    // computeIntensityProgress() ducks the 10 shared-budget modules to 0
-    // starting at PEAK entry (not Impact entry - see that method's doc
-    // comment), Peak's ACTUAL duration must exceed each module's internal
-    // weightSmoothed ramp time (~20ms, see e.g. WidthModule.cpp's
-    // kWeightSmoothingSeconds) with margin, so the duck has GENUINELY
-    // settled (not merely started ramping) by the time Impact's first
-    // sample arrives, at every tempo (jmax() below guarantees Peak's
-    // duration is never shorter than this floor, regardless of how short a
-    // literal 1/32 note becomes at extreme tempos).
-    // kImpactWindowSeconds: architecture.md ImpactEngine config: "typically
-    // 50-300ms" - a fixed, non-tempo-synced duration (unlike Peak/Vacuum,
-    // this window is characterized by the sub-hit's own AR-envelope timing,
-    // not a musical division).
-    static constexpr double kVacuumMinFloorSeconds = 0.025;
-    static constexpr double kImpactWindowSeconds = 0.22;
+    // Stage 3 DSP Phase 3.5 DOCUMENTED SUPERSESSION: the Phase 3.4-era fixed
+    // `kVacuumMinFloorSeconds`/`kImpactWindowSeconds` constants (25ms Vacuum
+    // floor, 220ms Impact window) are REMOVED - computeDurationsForNewBuild()
+    // now reads drop::getStyle(activeStyleIndexForBuild)'s vacuumDivision/
+    // vacuumFloorSeconds/impactWindowSeconds/recoveryDivision fields instead
+    // (architecture.md: "Vacuum duration/floor, Impact tail length, Recovery
+    // length are all Style-configurable"). The DEFAULT style (index 0,
+    // "Clean EDM") deliberately reproduces the exact prior values (0.025s
+    // floor / 0.22s window / ThirtySecond / Half) so the pre-existing Phase
+    // 3.4 transient-preservation unit test's precomputed sample offsets
+    // (block 760, local offset 184) remain correct unmodified - see
+    // Source/Core/DropStyle.cpp style index 0's doc comment.
 
     // Default seed is a fixed constant so a freshly-loaded plugin is still
     // deterministic (architecture.md "State Persistence" restore behavior).

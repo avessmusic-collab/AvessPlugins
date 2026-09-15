@@ -52,6 +52,28 @@
       - `impact` parameter scaling monotonicity (0/50/100%).
       - Low-end soft-clip safety on bass-heavy material at full impact.
       - Short-tail reverb decay bounded within a generous tail window.
+
+    Phase 3.5 (IntensityBudget, DropStyle, AudioAnalyzer, Preset Wiring -
+    the FINAL DSP phase) scope, per plugins/DROP/.ideas/plan.md:
+      - IntensityBudget::computeWeights() sum<=totalBudget fuzz invariant
+        (randomized style/progress/macros/intensity/tension/chaos/
+        sourceProfile/jitter inputs).
+      - Source-aware weight-distribution shift: synthetic vocal-like vs.
+        drum-like signals (a) classify correctly via AudioAnalyzer and (b)
+        measurably shift computeWeights()'s output distribution in the
+        documented direction (Pitch/Delay/Reverb/Width up for vocal,
+        Gate/Stutter/Digital up for drums).
+      - 16-style behavioral distinctness: a quantitative per-style
+        weight-trajectory-matrix pairwise-distance metric (not just
+        endpoint values).
+      - End-to-end Chaos determinism through full processBlock(): same
+        style+seed+input -> bit-identical output; different seed -> some
+        difference.
+      - `impact`-outside-the-pool invariant: ImpactEngine's output depends
+        only on (elapsed, total, impactAmount01), never on any
+        IntensityBudget macro/weight state.
+      - AudioAnalyzer hop correctness across block sizes 1/32/512/8192 (the
+        512-sample FFT hop must be decoupled from host block size).
 */
 #include "PluginProcessor.h"
 #include "DSP/MusicalClock.h"
@@ -70,12 +92,16 @@
 #include "DSP/VacuumModule.h"
 #include "DSP/NoiseModule.h"
 #include "DSP/ImpactEngine.h"
+#include "DSP/AudioAnalyzer.h"
 #include "Core/DropRandomizer.h"
+#include "Core/DropStyle.h"
+#include "Core/DropPreset.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <random>
@@ -610,8 +636,36 @@ int main()
 
     //==========================================================================
     std::printf ("\n[Phase 3.2] IntensityBudget - proportional-cap invariant + zero-macro transparency\n");
+    // Stage 3 DSP Phase 3.5 API SUPERSESSION (documented, not a weakened
+    // assertion): this block originally called the Phase 3.2 PLACEHOLDER's
+    // instance method `drop::IntensityBudget budget; budget.compute(macros,
+    // progress, intensity)`, which Phase 3.5 replaced with the real, static
+    // `drop::IntensityBudget::computeWeights(style, progress, macros,
+    // intensity, tension, chaos, sourceProfile, chaosJitter)`. Adapted below
+    // to the new signature using a neutral/default Style (getStyle(0),
+    // "Clean EDM"), SourceProfile::FullMix, and zero tension/chaos/jitter -
+    // this preserves the ORIGINAL intent (the proportional-cap normalization
+    // invariant, and zero-macro transparency) exactly, since neither of
+    // those two properties depends on which Style/source/tension/chaos is
+    // supplied. The THIRD original sub-assertion ("progress == 0 -> all-zero
+    // weights") does NOT carry over: it was an artifact of the OLD
+    // placeholder's specific `raw[i] = macro * progress` formula, not a
+    // general normalization property - the REAL Style-driven curves
+    // intentionally allow nonzero AUTHORED starting weights at progress==0
+    // (e.g. Clean EDM's Filter/Delay/Reverb curves start above 0, a
+    // deliberate musical-design choice, not a bug - see DropStyle.cpp).
+    // Replaced with the generalized, still-genuinely-true equivalent that
+    // DOES hold for every Style/macro/progress combination:
+    // "intensity == 0 -> all-zero weights" (totalBudgetFor(...) is exactly 0
+    // whenever intensity01 == 0, so the proportional cap forces scale == 0
+    // regardless of the raw per-module sums) - same "some neutral input
+    // collapses everything to zero via the budget mechanism" spirit as the
+    // original test, just sourced from an invariant that is actually true of
+    // the new system.
     {
-        drop::IntensityBudget budget;
+        const auto& neutralStyle = drop::getStyle (0); // Clean EDM (default style)
+        std::array<float, (size_t) drop::BudgetModule::Count> noJitterFuzz {};
+
         std::mt19937 rng (12345u); // fixed seed - determinism not required here, just repeatable fuzzing
         std::uniform_real_distribution<float> dist01 (0.0f, 1.0f);
 
@@ -624,7 +678,8 @@ int main()
             const float progress = dist01 (rng);
             const float intensity = dist01 (rng);
 
-            const auto weights = budget.compute (macros, progress, intensity);
+            const auto weights = drop::IntensityBudget::computeWeights (neutralStyle, progress, macros, intensity,
+                                                                          0.0f, 0.0f, drop::SourceProfile::FullMix, noJitterFuzz);
 
             float sum = 0.0f;
             for (auto w : weights.value)
@@ -633,14 +688,14 @@ int main()
                 sum += w;
             }
 
-            const float totalBudget = intensity * juce::jlimit (0.0f, 1.0f, progress)
-                                     * (float) ((size_t) drop::BudgetModule::Count) * 0.6f;
+            const float totalBudget = drop::IntensityBudget::totalBudgetFor (neutralStyle, progress, intensity);
             if (sum > totalBudget + 1.0e-3f) invariantHolds = false;
         }
-        check (invariantHolds, "computeWeights(): sum(output) <= totalBudget(progress) invariant holds across 500 randomized fuzz inputs, every weight in [0,1] and finite");
+        check (invariantHolds, "computeWeights(): sum(output) <= totalBudgetFor(style, progress, intensity) invariant holds across 500 randomized fuzz inputs, every weight in [0,1] and finite");
 
         std::array<float, (size_t) drop::BudgetModule::Count> allZeroMacros {};
-        const auto zeroWeights = budget.compute (allZeroMacros, 1.0f, 1.0f);
+        const auto zeroWeights = drop::IntensityBudget::computeWeights (neutralStyle, 1.0f, allZeroMacros, 1.0f,
+                                                                          0.0f, 0.0f, drop::SourceProfile::FullMix, noJitterFuzz);
         bool allZero = true;
         for (auto w : zeroWeights.value)
             if (w != 0.0f) allZero = false;
@@ -648,11 +703,12 @@ int main()
 
         std::array<float, (size_t) drop::BudgetModule::Count> allFullMacros {};
         for (auto& m : allFullMacros) m = 1.0f;
-        const auto zeroProgressWeights = budget.compute (allFullMacros, 0.0f, 1.0f);
-        bool allZeroAtZeroProgress = true;
-        for (auto w : zeroProgressWeights.value)
-            if (w != 0.0f) allZeroAtZeroProgress = false;
-        check (allZeroAtZeroProgress, "progress == 0 (Idle/Arming) -> all-zero weights regardless of macros/intensity");
+        const auto zeroIntensityWeights = drop::IntensityBudget::computeWeights (neutralStyle, 1.0f, allFullMacros, 0.0f,
+                                                                                   0.0f, 0.0f, drop::SourceProfile::FullMix, noJitterFuzz);
+        bool allZeroAtZeroIntensity = true;
+        for (auto w : zeroIntensityWeights.value)
+            if (w != 0.0f) allZeroAtZeroIntensity = false;
+        check (allZeroAtZeroIntensity, "intensity == 0 -> all-zero weights regardless of progress/macros (totalBudgetFor(...) == 0 forces the proportional cap's scale to 0 - supersedes the Phase 3.2-era 'progress==0' variant of this check, which relied on the OLD placeholder's macro*progress formula rather than a property that still holds for real Style-authored curves with nonzero starting weights)");
     }
 
     //==========================================================================
@@ -1414,9 +1470,12 @@ int main()
         const RunResult a = runOnce (777u);
         const RunResult b = runOnce (777u);
 
-        bool identical = (a.samples.size() == b.samples.size());
-        for (size_t i = 0; identical && i < a.samples.size(); ++i)
-            if (a.samples[i] != b.samples[i]) identical = false;
+        // Compile-safety only (-Wfloat-equal): memcmp is a byte-exact,
+        // warning-free equivalent to a per-sample != loop for this
+        // "bit-identical" determinism claim - same pass/fail outcome, no
+        // logic change.
+        bool identical = (a.samples.size() == b.samples.size())
+                       && std::memcmp (a.samples.data(), b.samples.data(), a.samples.size() * sizeof (float)) == 0;
         check (identical, "NoiseModule: same seed -> bit-identical output across two independent runs (std::mt19937-based determinism, NOT juce::Random)");
 
         const bool randomizerIdentical = (a.pitchChoice == b.pitchChoice) && (a.stutterChoice == b.stutterChoice)
@@ -1567,6 +1626,11 @@ int main()
                 case drop::DropState::Impact:   sawImpact = true; break;
                 case drop::DropState::Recovery: sawRecovery = true; break;
                 case drop::DropState::Idle:     if (block > 10) backToIdle = true; break;
+                // Compile-safety only (-Wswitch-enum wants every enumerator
+                // named even when a default exists) - identical behavior to
+                // default: below, no logic change.
+                case drop::DropState::Arming:
+                case drop::DropState::Building:
                 default: break;
             }
         }
@@ -1930,6 +1994,413 @@ int main()
               "ImpactEngine short-tail reverb: tail RMS falls below a bounded threshold well within a generous 4-second window (not an unbounded/sustained tail)");
         check (earlyRms > lateRms * 2.0,
               "ImpactEngine short-tail reverb: tail genuinely decays over time (later measurement is meaningfully quieter than an earlier one), not stuck/growing");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] IntensityBudget::computeWeights - sum(weights) <= totalBudget fuzz invariant\n");
+    {
+        std::mt19937 rng (13013u);
+        std::uniform_real_distribution<float> unit01 (0.0f, 1.0f);
+        std::uniform_int_distribution<int> styleDist (0, drop::kNumStyles - 1);
+        std::uniform_int_distribution<int> sourceDist (0, (int) drop::SourceProfile::Count - 1);
+
+        bool allOk = true;
+        double worstMargin = 1.0e9;
+        for (int trial = 0; trial < 500; ++trial)
+        {
+            const auto& style = drop::getStyle (styleDist (rng));
+            const float progress = unit01 (rng);
+            const float intensity01 = unit01 (rng);
+            const float tension01 = unit01 (rng);
+            const float chaos01 = unit01 (rng);
+            const auto sourceProfile = (drop::SourceProfile) sourceDist (rng);
+
+            std::array<float, (size_t) drop::BudgetModule::Count> macros {};
+            std::array<float, (size_t) drop::BudgetModule::Count> jitter {};
+            for (auto& m : macros) m = unit01 (rng);
+            // Matches DropRandomizer::drawForNewBuild()'s own jitter magnitude
+            // convention (+-15% at chaos==100%) - a fuzz test that only ever
+            // exercises tinier jitter than production would understate risk.
+            for (auto& j : jitter) j = (unit01 (rng) * 2.0f - 1.0f) * 0.15f * chaos01;
+
+            const auto weights = drop::IntensityBudget::computeWeights (style, progress, macros, intensity01,
+                                                                          tension01, chaos01, sourceProfile, jitter);
+            float sum = 0.0f;
+            for (auto w : weights.value) sum += w;
+
+            const float budget = drop::IntensityBudget::totalBudgetFor (style, progress, intensity01);
+            const double margin = (double) budget - (double) sum;
+            worstMargin = std::min (worstMargin, margin);
+            if (sum > budget + 1.0e-4f)
+                allOk = false;
+        }
+        std::printf ("  500 randomized trials, worst (budget - sum) margin = %.6f -> %s\n", worstMargin, allOk ? "ok" : "VIOLATION");
+        check (allOk, "IntensityBudget::computeWeights(): sum(weights) <= totalBudgetFor(style, progress, intensity01) holds across 500 randomized fuzz trials (style/progress/macros/intensity/tension/chaos/sourceProfile/jitter all randomized)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] AudioAnalyzer - SourceProfile classification (synthetic vocal-like vs drum-like signals)\n");
+    drop::SourceProfile testVocalProfile = drop::SourceProfile::FullMix;
+    drop::SourceProfile testDrumProfile = drop::SourceProfile::FullMix;
+    {
+        constexpr double sr = 48000.0;
+        constexpr int numSamples = 48000; // 1 second - several FFT hops to let classification settle
+
+        // Vocal-like: a steady mid-frequency tone (500Hz), constant
+        // amplitude, no transients - architecture.md's own "midFrac
+        // dominant, low transient density" vocal characterization.
+        {
+            juce::dsp::ProcessSpec spec { sr, 512, 2 };
+            drop::AudioAnalyzer analyzer;
+            analyzer.prepare (spec);
+
+            juce::AudioBuffer<float> buf (2, numSamples);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* d = buf.getWritePointer (ch);
+                for (int i = 0; i < numSamples; ++i)
+                    d[i] = 0.4f * std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 500.0 * (double) i / sr));
+            }
+            analyzer.analyze (buf, numSamples);
+            testVocalProfile = analyzer.getSourceProfile();
+            std::printf ("  vocal-like signal -> classified as %d (0=Vocal,1=Drums,2=Bass,3=FullMix)\n", (int) testVocalProfile);
+        }
+
+        // Drum-like: short broadband noise bursts (24/sec, sparse duty
+        // cycle) - high transient density, broadband content.
+        {
+            juce::dsp::ProcessSpec spec { sr, 512, 2 };
+            drop::AudioAnalyzer analyzer;
+            analyzer.prepare (spec);
+
+            juce::AudioBuffer<float> buf (2, numSamples);
+            buf.clear();
+            std::mt19937 noiseRng (2024u);
+            std::uniform_real_distribution<float> noiseDist (-1.0f, 1.0f);
+            constexpr int burstPeriod = 2000;
+            constexpr int burstLen = 60;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                if ((i % burstPeriod) < burstLen)
+                {
+                    const float n = noiseDist (noiseRng);
+                    buf.setSample (0, i, n);
+                    buf.setSample (1, i, n);
+                }
+            }
+            analyzer.analyze (buf, numSamples);
+            testDrumProfile = analyzer.getSourceProfile();
+            std::printf ("  drum-like signal -> classified as %d (0=Vocal,1=Drums,2=Bass,3=FullMix)\n", (int) testDrumProfile);
+        }
+
+        check (testVocalProfile == drop::SourceProfile::Vocal, "AudioAnalyzer: steady mid-frequency tone (no transients) classifies as Vocal");
+        check (testDrumProfile == drop::SourceProfile::Drums, "AudioAnalyzer: short broadband noise bursts (high transient density) classify as Drums");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] IntensityBudget::computeWeights - source-aware weight-distribution shift\n");
+    {
+        // progress=0.95, intensity=100% chosen so totalBudget is generous
+        // enough that the proportional-cap normalization does NOT engage
+        // for either call (verified: raw sums stay comfortably under
+        // budget for Clean EDM at this progress) - isolates the
+        // source-aware SHIFT from the separate capping mechanism, which is
+        // unit-tested independently above.
+        const auto& style = drop::getStyle (0); // Clean EDM
+        std::array<float, (size_t) drop::BudgetModule::Count> macros {};
+        for (auto& m : macros) m = 1.0f;
+        std::array<float, (size_t) drop::BudgetModule::Count> noJitter {};
+
+        const auto vocalWeights = drop::IntensityBudget::computeWeights (style, 0.95f, macros, 1.0f, 0.5f, 0.0f, drop::SourceProfile::Vocal, noJitter);
+        const auto drumWeights  = drop::IntensityBudget::computeWeights (style, 0.95f, macros, 1.0f, 0.5f, 0.0f, drop::SourceProfile::Drums, noJitter);
+
+        auto sumOf = [] (const drop::IntensityBudget::Weights& w, std::initializer_list<drop::BudgetModule> mods) -> float
+        {
+            float s = 0.0f;
+            for (auto m : mods) s += w.value[(size_t) m];
+            return s;
+        };
+
+        const float vocalFavoredUnderVocal = sumOf (vocalWeights, { drop::BudgetModule::Pitch, drop::BudgetModule::Delay, drop::BudgetModule::Reverb, drop::BudgetModule::Width });
+        const float drumFavoredUnderVocal  = sumOf (vocalWeights, { drop::BudgetModule::Gate, drop::BudgetModule::Stutter, drop::BudgetModule::Digital });
+
+        const float vocalFavoredUnderDrum = sumOf (drumWeights, { drop::BudgetModule::Pitch, drop::BudgetModule::Delay, drop::BudgetModule::Reverb, drop::BudgetModule::Width });
+        const float drumFavoredUnderDrum  = sumOf (drumWeights, { drop::BudgetModule::Gate, drop::BudgetModule::Stutter, drop::BudgetModule::Digital });
+
+        std::printf ("  Vocal profile: Pitch+Delay+Reverb+Width=%.4f  Gate+Stutter+Digital=%.4f\n", vocalFavoredUnderVocal, drumFavoredUnderVocal);
+        std::printf ("  Drums profile: Pitch+Delay+Reverb+Width=%.4f  Gate+Stutter+Digital=%.4f\n", vocalFavoredUnderDrum, drumFavoredUnderDrum);
+
+        check (vocalFavoredUnderVocal > vocalFavoredUnderDrum,
+              "computeWeights(): Vocal-classified input shifts Pitch+Delay+Reverb+Width weight UP relative to Drums-classified input (same Style/macros/progress)");
+        check (drumFavoredUnderDrum > drumFavoredUnderVocal,
+              "computeWeights(): Drums-classified input shifts Gate+Stutter+Digital weight UP relative to Vocal-classified input (same Style/macros/progress)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] DropStyle - 16-style behavioral distinctness (quantitative weight-trajectory-matrix pairwise distance)\n");
+    {
+        constexpr int kNumProgressPoints = 9;
+        std::array<float, (size_t) drop::BudgetModule::Count> macros {};
+        for (auto& m : macros) m = 1.0f;
+        std::array<float, (size_t) drop::BudgetModule::Count> noJitter {};
+
+        // Per-style 10-module x 9-progress-point weight-trajectory matrix,
+        // computed with FIXED macros/intensity/tension/chaos/sourceProfile
+        // so only the Style's own authored curves/timing differ between
+        // rows - the strict "genuinely different transition behavior"
+        // criterion, not a proxy that could be satisfied by different
+        // macro defaults alone.
+        std::vector<std::vector<std::array<float, kNumProgressPoints>>> matrices (
+            (size_t) drop::kNumStyles, std::vector<std::array<float, kNumProgressPoints>> ((size_t) drop::BudgetModule::Count));
+
+        for (int s = 0; s < drop::kNumStyles; ++s)
+        {
+            const auto& style = drop::getStyle (s);
+            for (int p = 0; p < kNumProgressPoints; ++p)
+            {
+                const float progress = (float) p / (float) (kNumProgressPoints - 1);
+                const auto weights = drop::IntensityBudget::computeWeights (style, progress, macros, 1.0f, 0.5f, 0.0f, drop::SourceProfile::FullMix, noJitter);
+                for (size_t m = 0; m < (size_t) drop::BudgetModule::Count; ++m)
+                    matrices[(size_t) s][m][(size_t) p] = weights.value[m];
+            }
+        }
+
+        auto l1Distance = [&] (int a, int b) -> double
+        {
+            double sum = 0.0;
+            for (size_t m = 0; m < (size_t) drop::BudgetModule::Count; ++m)
+                for (int p = 0; p < kNumProgressPoints; ++p)
+                    sum += std::abs ((double) matrices[(size_t) a][m][(size_t) p] - (double) matrices[(size_t) b][m][(size_t) p]);
+            return sum;
+        };
+
+        // Documented threshold: chosen conservatively low relative to the
+        // typical observed pairwise distance (printed below) - the intent
+        // is to require genuinely different curve shapes/timings/module
+        // emphasis (which the per-Style authoring above provides in every
+        // one of the 10 module curves + the budget envelope), not to be a
+        // razor's-edge tolerance.
+        constexpr double kMinPairwiseDistance = 0.3;
+        double worstDistance = 1.0e9;
+        int worstA = 0, worstB = 1;
+        bool allDistinct = true;
+        for (int a = 0; a < drop::kNumStyles; ++a)
+        {
+            for (int b = a + 1; b < drop::kNumStyles; ++b)
+            {
+                const double d = l1Distance (a, b);
+                if (d < worstDistance) { worstDistance = d; worstA = a; worstB = b; }
+                if (d < kMinPairwiseDistance) allDistinct = false;
+            }
+        }
+
+        std::printf ("  closest pair (of 120): \"%s\" vs \"%s\", L1 distance = %.4f (threshold %.2f)\n",
+                     drop::getStyle (worstA).name, drop::getStyle (worstB).name, worstDistance, kMinPairwiseDistance);
+        check (allDistinct, "DropStyle: all 16 styles' 10-module x 9-progress-point weight-trajectory matrices are pairwise distinct (L1 distance >= threshold for every one of the 120 pairs) - a full-trajectory metric, not just endpoint values");
+
+        bool sawMoreThanOneCurveType = false;
+        const auto firstCurveType = drop::getStyle (0).transitionCurveType;
+        for (int s = 1; s < drop::kNumStyles; ++s)
+            if (drop::getStyle (s).transitionCurveType != firstCurveType) { sawMoreThanOneCurveType = true; break; }
+        check (sawMoreThanOneCurveType, "DropStyle: styles use more than one TransitionEngine curve type (an independent axis of 'genuinely different behavior' beyond the weight-trajectory matrix)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] End-to-end Chaos determinism (full processBlock(): same style+seed+input -> bit-identical; different seed -> differs)\n");
+    {
+        constexpr int blockSize = 256;
+        constexpr int numBlocks = 400; // covers Arming + a stretch of Building at the 120 BPM fallback transport
+
+        auto runOnce = [&] (uint32_t seed) -> std::vector<float>
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            p.setChaosSeed (seed);
+
+            if (auto* prm = p.parameters.getParameter ("chaos"))
+                prm->setValueNotifyingHost (0.8f); // 80% - large enough that different seeds reliably pick different musically-constrained choices
+            if (auto* prm = p.parameters.getParameter ("buildLength"))
+                prm->setValueNotifyingHost (0.0f); // shortest: 1 bar
+            if (auto* prm = p.parameters.getParameter ("trigger"))
+                prm->setValueNotifyingHost (1.0f);
+
+            std::vector<float> captured;
+            captured.reserve ((size_t) numBlocks * (size_t) blockSize);
+
+            for (int block = 0; block < numBlocks; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                // Fixed, deterministic test input (a sine tone at a
+                // block-continuous phase) - never RNG/wall-clock seeded,
+                // per implementation-spec.md's offline-rendering
+                // determinism requirement.
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    auto* d = buf.getWritePointer (ch);
+                    for (int i = 0; i < blockSize; ++i)
+                        d[i] = 0.3f * std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 220.0 * (double) (block * blockSize + i) / 48000.0));
+                }
+
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger"))
+                        prm->setValueNotifyingHost (0.0f);
+
+                const float* out = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                    captured.push_back (out[i]);
+            }
+
+            p.releaseResources();
+            return captured;
+        };
+
+        const auto runA1 = runOnce (4242u);
+        const auto runA2 = runOnce (4242u);
+        const auto runB  = runOnce (4243u);
+
+        // Compile-safety only (-Wfloat-equal): memcmp is a byte-exact,
+        // warning-free equivalent to a per-sample !=/== loop for these
+        // "bit-identical"/"differs" determinism claims - same pass/fail
+        // outcome, no logic change.
+        const bool identical = (runA1.size() == runA2.size())
+                             && std::memcmp (runA1.data(), runA2.data(), runA1.size() * sizeof (float)) == 0;
+        check (identical, "End-to-end determinism: same DROPAudioProcessor style+seed+input -> bit-identical output across two independent runs");
+
+        const bool anyDifferent = (runA1.size() != runB.size())
+                                || std::memcmp (runA1.data(), runB.data(), runA1.size() * sizeof (float)) != 0;
+        check (anyDifferent, "End-to-end determinism: a different Chaos seed produces measurably different output (same style/input/transport otherwise)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] impact-outside-the-pool invariant: ImpactEngine output depends only on (elapsed, total, impactAmount01)\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 2048, 2 };
+
+        auto renderImpact = [&] (float impactAmount01) -> std::vector<float>
+        {
+            drop::ImpactEngine engine;
+            engine.prepare (spec);
+            engine.setSeed (777u);
+
+            constexpr int numSamples = 2048;
+            juce::AudioBuffer<float> buf (2, numSamples);
+            buf.clear();
+            juce::dsp::AudioBlock<float> block (buf);
+            engine.process (block, 0.0, 10560.0, impactAmount01);
+
+            std::vector<float> out ((size_t) numSamples);
+            const float* ptr = buf.getReadPointer (0);
+            for (int i = 0; i < numSamples; ++i) out[(size_t) i] = ptr[i];
+            return out;
+        };
+
+        // ImpactEngine::process()/computeDriveValues() take NO IntensityBudget
+        // macro/weight/style argument whatsoever - a structural,
+        // compile-time guarantee (see ImpactEngine.h's signatures). The
+        // runtime check below confirms the SAME impactAmount01 always
+        // produces bit-identical output regardless of arbitrary
+        // computeWeights() calls (with extreme, opposite-end macro/style/
+        // progress/source inputs) evaluated and discarded in between -
+        // "sweeping other macros never changes impact headroom."
+        const auto a = renderImpact (0.5f);
+
+        std::array<float, (size_t) drop::BudgetModule::Count> macrosLow {};
+        std::array<float, (size_t) drop::BudgetModule::Count> macrosHigh {};
+        for (auto& m : macrosHigh) m = 1.0f;
+        std::array<float, (size_t) drop::BudgetModule::Count> noJitter {};
+        (void) drop::IntensityBudget::computeWeights (drop::getStyle (0), 0.0f, macrosLow, 0.0f, 0.0f, 0.0f, drop::SourceProfile::FullMix, noJitter);
+        (void) drop::IntensityBudget::computeWeights (drop::getStyle (13), 1.0f, macrosHigh, 1.0f, 1.0f, 1.0f, drop::SourceProfile::Drums, noJitter);
+
+        const auto b = renderImpact (0.5f);
+
+        // Compile-safety only (-Wfloat-equal): memcmp is a byte-exact,
+        // warning-free equivalent to a per-sample != loop - same pass/fail
+        // outcome, no logic change.
+        const bool identical = (a.size() == b.size())
+                             && std::memcmp (a.data(), b.data(), a.size() * sizeof (float)) == 0;
+
+        check (identical, "impact-outside-pool invariant: ImpactEngine output for a fixed impactAmount01 is bit-identical regardless of any intervening IntensityBudget macro/style/progress computation (sweeping other macros never changes impact headroom)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] AudioAnalyzer - FFT hop correctness across block sizes (1/32/512/8192), hop decoupled from host block size\n");
+    {
+        constexpr double sr = 48000.0;
+        constexpr int totalSamples = 48000; // 1 second of a steady 1kHz tone
+
+        auto runWithBlockSize = [&] (int blockSize) -> drop::AudioAnalyzerMetrics
+        {
+            juce::dsp::ProcessSpec spec { sr, (juce::uint32) juce::jmax (1, blockSize), 2 };
+            drop::AudioAnalyzer analyzer;
+            analyzer.prepare (spec);
+
+            int processed = 0;
+            while (processed < totalSamples)
+            {
+                const int thisBlock = std::min (blockSize, totalSamples - processed);
+                juce::AudioBuffer<float> buf (2, thisBlock);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    auto* d = buf.getWritePointer (ch);
+                    for (int i = 0; i < thisBlock; ++i)
+                        d[i] = 0.5f * std::sin ((float) (2.0 * juce::MathConstants<double>::pi * 1000.0 * (double) (processed + i) / sr));
+                }
+                analyzer.analyze (buf, thisBlock);
+                processed += thisBlock;
+            }
+            return analyzer.getMetrics();
+        };
+
+        const auto m1    = runWithBlockSize (1);
+        const auto m32   = runWithBlockSize (32);
+        const auto m512  = runWithBlockSize (512);
+        const auto m8192 = runWithBlockSize (8192);
+
+        std::printf ("  spectral centroid: blockSize=1 -> %.1fHz, 32 -> %.1fHz, 512 -> %.1fHz, 8192 -> %.1fHz\n",
+                     m1.spectralCentroidHz, m32.spectralCentroidHz, m512.spectralCentroidHz, m8192.spectralCentroidHz);
+
+        // Same TOTAL input samples (a steady 1kHz tone), chunked
+        // differently into analyze() calls - the internal 512-sample hop
+        // accumulator must be decoupled from how those samples arrived, so
+        // the FINAL metrics should converge to essentially the same value
+        // regardless of host block size (architecture.md AudioAnalyzer FFT
+        // sizing: "independent of how many host processBlock() calls that took").
+        constexpr float kCentroidTolHz = 50.0f;
+        check (std::abs (m1.spectralCentroidHz - m512.spectralCentroidHz) < kCentroidTolHz,
+              "AudioAnalyzer: spectral centroid at blockSize=1 matches blockSize=512 within tolerance (hop decoupled from host block size)");
+        check (std::abs (m32.spectralCentroidHz - m512.spectralCentroidHz) < kCentroidTolHz,
+              "AudioAnalyzer: spectral centroid at blockSize=32 matches blockSize=512 within tolerance");
+        check (std::abs (m8192.spectralCentroidHz - m512.spectralCentroidHz) < kCentroidTolHz,
+              "AudioAnalyzer: spectral centroid at blockSize=8192 matches blockSize=512 within tolerance");
+
+        check (m1.spectralCentroidHz > 900.0f && m1.spectralCentroidHz < 1100.0f,
+              "AudioAnalyzer: spectral centroid correctly resolves a pure 1kHz test tone (within +-100Hz)");
+
+        check (std::isfinite (m1.rms) && std::isfinite (m8192.rms) && m1.rms > 0.0f,
+              "AudioAnalyzer: finite, nonzero RMS regardless of block size");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.5] DropPreset - the 16 presets are the 16 Styles at recommended macro defaults\n");
+    {
+        bool allNamesMatch = true;
+        bool allStyleIndicesValid = true;
+        for (int i = 0; i < drop::kNumPresets; ++i)
+        {
+            const auto& preset = drop::getPreset (i);
+            const auto& style = drop::getStyle (preset.styleIndex);
+            if (juce::String (preset.name) != juce::String (style.name))
+                allNamesMatch = false;
+            if (preset.styleIndex < 0 || preset.styleIndex >= drop::kNumStyles)
+                allStyleIndicesValid = false;
+        }
+        check (allNamesMatch, "DropPreset: all 16 presets' names match their bound DropStyle's name (presets ARE the styles, not a separate list)");
+        check (allStyleIndicesValid, "DropPreset: all 16 presets bind to a valid DropStyle index");
+        check (drop::kNumPresets == drop::kNumStyles, "DropPreset: preset count exactly matches style count (16 == 16)");
     }
 
     std::printf ("\n%d failure(s)\n", failures);
