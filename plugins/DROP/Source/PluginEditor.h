@@ -54,16 +54,25 @@
  * non-parameter-state treatment as triggerMode. Documented as a
  * post-finalization amendment in v10-ui.yaml.
  *
- * VISUALIZATION (Phase 4.3 scope; wired minimally here per Phase 4.1's own
- * instructions so the file compiles and the member/order contract is
- * final): a private juce::Timer (30Hz) drains
- * DROPAudioProcessor::popVisualizationFrame() (the real ring-buffer
- * accessor - NOT the template's assumed getLatestVisualizationSnapshot())
- * and pushes one compact "dropVisUpdate" JSON payload via
- * webView->emitEventIfBrowserIsVisible(), matching this repo's established
- * pattern (see CORRUPTR's PluginEditor.h "PHASE 5.6 ADDITIONS" doc comment
- * for the precedent this follows). Full drain-correctness verification is
- * Phase 4.3's job.
+ * VISUALIZATION (Stage 3 GUI Phase 4.3, COMPLETE): a private juce::Timer
+ * (30Hz) drains DROPAudioProcessor::popVisualizationFrame() (the real
+ * ring-buffer accessor - NOT the v10 template's assumed
+ * getLatestVisualizationSnapshot()) every tick, keeping only the most
+ * recently pushed frame and emitting exactly ONE "dropVisUpdate" JSON
+ * payload per tick via webView->emitEventIfBrowserIsVisible() - matching
+ * this repo's established pattern (see CORRUPTR's PluginEditor.h "PHASE 5.6
+ * ADDITIONS" doc comment for the precedent this follows). The processor
+ * side (pushVisualizationFrame()) silently, harmlessly drops a frame if the
+ * bounded 256-entry FIFO is ever full (GUI not draining fast enough, or not
+ * yet attached) - never blocks the audio thread.
+ *
+ * Editor-reopen correctness (plan.md criterion: reopening the editor
+ * mid-transition must show the CURRENT state immediately, not wait for the
+ * first ~33ms Timer tick / show stale Idle): the SAME drain-all-keep-latest
+ * logic (buildDropVisUpdateVar()) is also invoked once, synchronously, from
+ * the "getInitialUIState" native function's one-shot load-time response
+ * (nested under a "visualization" key) - see PluginEditor.cpp's doc comment
+ * at that call site.
  */
 
 class DROPAudioProcessorEditor : public juce::AudioProcessorEditor,

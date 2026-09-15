@@ -585,12 +585,14 @@
       if (typeof payload.tensionLevel === 'number') dropVis.tensionLevel = payload.tensionLevel;
       if (typeof payload.inputRMS === 'number') dropVis.inputRMS = payload.inputRMS;
       if (Array.isArray(payload.activeModuleWeights)) dropVis.activeModuleWeights = payload.activeModuleWeights;
-      // activeModuleWeights[10] is received and stored but NOT currently
-      // consumed by any visual element (its original planned consumer, the
-      // bubble's per-region agitation modulation, was removed along with the
-      // bubble - see v10-ui.yaml's bubble_removal note). Left in the payload
-      // shape since it is part of the DSP ring buffer's documented contract
-      // (architecture.md) and may feed a future visualization.
+      // activeModuleWeights[10]'s original planned consumer (the bubble's
+      // per-region agitation modulation) was removed along with the bubble
+      // (see v10-ui.yaml's bubble_removal note). Stage 3 GUI Phase 4.3 gave
+      // it a design-consistent replacement consumer instead (plan.md:
+      // "active-effects indication reflects actual IntensityBudget
+      // weights") - see MODULE_MACRO_ORDER / the per-knob setWeightGlow()
+      // calls in frame_() below, and v10-ui.yaml's
+      // `module_weight_arc_glow` amendment note.
     });
   }
 
@@ -661,6 +663,22 @@
     getInitialUIState().then((state) => {
       if (state && typeof state.triggerMode === 'number') setTriggerModeUI(state.triggerMode);
       if (state && typeof state.midiTriggerNote === 'number') { midiTriggerNote = state.midiTriggerNote; renderMidiNote(); }
+      // Phase 4.3 (plan.md criterion): seed the live-visualization state
+      // immediately from this one-shot load-time fetch, using the EXACT
+      // SAME field parsing as the "dropVisUpdate" event listener above, so
+      // an editor reopened mid-transition reflects the CURRENT DSP state on
+      // its very first rendered frame instead of waiting up to ~33ms for
+      // the first Timer-driven "dropVisUpdate" event (during which it would
+      // otherwise show stale/idle - see v10-PluginEditor.cpp's
+      // "getInitialUIState" native function doc comment).
+      if (state && state.visualization) {
+        const v = state.visualization;
+        if (typeof v.currentState === 'string') dropVis.currentState = v.currentState;
+        if (typeof v.progress === 'number') dropVis.progress = v.progress;
+        if (typeof v.tensionLevel === 'number') dropVis.tensionLevel = v.tensionLevel;
+        if (typeof v.inputRMS === 'number') dropVis.inputRMS = v.inputRMS;
+        if (Array.isArray(v.activeModuleWeights)) dropVis.activeModuleWeights = v.activeModuleWeights;
+      }
     }).catch((e) => console.warn('[DROP] getInitialUIState failed:', e));
   }
 
@@ -804,7 +822,26 @@
     });
     state.valueChangedEvent.addListener(() => { normalized = state.getNormalisedValue(); render(normalized); });
 
-    return { get: () => normalized };
+    // Stage 3 GUI Phase 4.3 (plan.md: "active-effects indication reflects
+    // actual IntensityBudget weights, not static UI state") - REUSES the
+    // existing arc-glow treatment (the same drop-shadow-blur-radius
+    // technique the progress strip's STRIP GLOW already established, and
+    // the same base 2px glow `.arc-fill` already has via CSS) rather than
+    // adding any new visual element. Only called for the 10 module-macro
+    // knobs, from frame_()'s single rAF loop below (see MODULE_MACRO_ORDER)
+    // - harmless no-op capability on every other knob (hero macros, Impact)
+    // that simply never gets called for them. `w` is an already-smoothed
+    // 0..1 value (ballistic interpolation lives in frame_(), not here -
+    // juce8-critical-patterns.md #20) - an idle w<=0.02 reverts to the CSS
+    // default glow exactly (empty inline style), so "idle = no glow change"
+    // holds by construction.
+    function setWeightGlow(w) {
+      arc.fill.style.filter = w > 0.02
+        ? `drop-shadow(0 0 ${(2 + w * 6).toFixed(1)}px var(--accent-glow))`
+        : '';
+    }
+
+    return { get: () => normalized, setWeightGlow };
   }
 
   const knobRefs = {};
@@ -975,6 +1012,19 @@
   const stripGlowSpring = new Spring(90, 14, 0.0);
   let stripGlowLevel = 0;
 
+  /* Stage 3 GUI Phase 4.3 - module-macro knob arc-glow, driven by the live
+     activeModuleWeights[10] feed (see setWeightGlow() in initKnob() above
+     and v10-ui.yaml's `module_weight_arc_glow` amendment note). PINNED
+     index order matches PluginProcessor.h's VisualizationFrame doc comment
+     / drop::BudgetModule's enum declaration order exactly - identical to
+     the "10 module macros" data-param order already authored in this
+     file's markup (Filter/Width/Pitch/Gate/Stutter/Delay/Reverb/
+     Distortion/Digital/Noise), so no separate index-mapping table is
+     needed beyond this array. */
+  const MODULE_MACRO_ORDER = ['filter', 'width', 'pitch', 'gate', 'stutter', 'delay', 'reverb', 'distortion', 'digital', 'noise'];
+  const moduleGlowCurrent = new Array(MODULE_MACRO_ORDER.length).fill(0);
+  const MODULE_GLOW_LERP = 0.18; // smoothing speed (juce8-critical-patterns.md #20) - subtle, not peak-responsive like a VU meter
+
   let lastFrameTime = null;
   function frame_(now) {
     if (lastFrameTime === null) lastFrameTime = now;
@@ -997,6 +1047,20 @@
     stripGlowSpring.target = glowTarget;
     stripGlowSpring.update(dt);
     stripGlowLevel = Math.max(0, Math.min(1, stripGlowSpring.value));
+
+    // MODULE MACRO ARC GLOW - same isDropActive gate as the strip glow
+    // above ("idle = no glow change"); each knob's own smoothed
+    // current-value (moduleGlowCurrent[i]) chases its live weight target
+    // via simple exponential lerp, batched here in the SAME single rAF loop
+    // as everything else (no extra timers/loops - CPU-negligible, filter-
+    // only paint updates, no layout thrash).
+    for (let i = 0; i < MODULE_MACRO_ORDER.length; i++) {
+      const ref = knobRefs[MODULE_MACRO_ORDER[i]];
+      if (!ref || !ref.setWeightGlow) continue;
+      const target = isDropActive ? Math.max(0, Math.min(1, dropVis.activeModuleWeights[i] || 0)) : 0;
+      moduleGlowCurrent[i] += (target - moduleGlowCurrent[i]) * MODULE_GLOW_LERP;
+      ref.setWeightGlow(moduleGlowCurrent[i]);
+    }
 
     redrawCurve(); updatePhaseChip(); updateProgressStrip();
     requestAnimationFrame(frame_);

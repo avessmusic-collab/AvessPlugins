@@ -97,6 +97,25 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
                     auto* obj = new juce::DynamicObject();
                     obj->setProperty("triggerMode", getTriggerModeIndex());
                     obj->setProperty("midiTriggerNote", processorRef.getMidiTriggerNote());
+                    // Stage 3 GUI Phase 4.3 (plan.md criterion: "closing and
+                    // reopening the editor mid-transition shows correct
+                    // current state, not reset state"): seed the WebView's
+                    // live-visualization state HERE, synchronously with this
+                    // one-shot load-time fetch, rather than making the UI
+                    // wait up to ~33ms for the first 30Hz Timer tick /
+                    // "dropVisUpdate" event (during which it would otherwise
+                    // show stale/idle). Reuses buildDropVisUpdateVar()
+                    // verbatim (same drain-all-keep-latest FIFO read the
+                    // Timer itself performs - confirmed message-thread-safe
+                    // to call here too, since JUCE guarantees NativeFunction
+                    // callbacks "are always called on the message thread",
+                    // matching popVisualizationFrame()'s single-reader
+                    // contract) so the JS side can apply this nested
+                    // "visualization" object via the EXACT SAME
+                    // currentState/progress/tensionLevel/inputRMS/
+                    // activeModuleWeights field parsing it already has for
+                    // "dropVisUpdate" - no duplicated shape/logic.
+                    obj->setProperty("visualization", buildDropVisUpdateVar());
                     completion(juce::var(obj));
                 })
     );
@@ -335,8 +354,10 @@ juce::var DROPAudioProcessorEditor::buildDropVisUpdateVar()
     // frame we already have cached (so closing/reopening the editor
     // mid-transition - or a UI tick landing between audio-thread pushes -
     // still reflects the current state rather than snapping back to
-    // Idle/zero). Full drain-correctness verification is Phase 4.3's job;
-    // this phase only needs a real, non-placeholder accessor call.
+    // Idle/zero). Called both from timerCallback() (every 30Hz tick) and
+    // once synchronously from the "getInitialUIState" native function
+    // (Stage 3 GUI Phase 4.3 - see that call site's doc comment) so a
+    // reopened editor's very first rendered frame is already correct.
     DROPAudioProcessor::VisualizationFrame frame;
     bool gotFrame = false;
     DROPAudioProcessor::VisualizationFrame latest;

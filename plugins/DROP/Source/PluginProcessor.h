@@ -99,10 +99,13 @@
  * Styles at recommended macro defaults) via the standard
  * getNumPrograms()/setCurrentProgram() JUCE program API. A lock-free
  * single-producer/single-consumer visualization ring buffer
- * (VisualizationFrame, popVisualizationFrame()) is now populated once per
- * processBlock() call, ready for the Stage 3 GUI Phase 4.3 DropGraph to
- * drain via a juce::Timer - see VisualizationFrame's doc comment for the
- * PINNED activeModuleWeights[10] index order.
+ * (VisualizationFrame, popVisualizationFrame()) is populated once per
+ * processBlock() call and drained by PluginEditor's 30Hz juce::Timer (Stage
+ * 3 GUI Phase 4.3, complete - the finalized v10 design's progress-strip/
+ * phase-chip/module-macro-arc-glow treatment consumes this feed in place of
+ * the original spec's separate DropGraph/MeterDisplay components) - see
+ * VisualizationFrame's doc comment for the PINNED activeModuleWeights[10]
+ * index order.
  */
 class DROPAudioProcessor : public juce::AudioProcessor,
                             private juce::AudioProcessorValueTreeState::Listener
@@ -206,9 +209,11 @@ public:
     // lock-free single-producer/single-consumer ring buffer... pushed once
     // per processed block... drained by a juce::Timer (~30-60Hz) on the
     // message thread"). Pushed once per processBlock() call by the audio
-    // thread (pushVisualizationFrame(), private); drained here by the
-    // message thread (Stage 3 GUI Phase 4.3's DropGraph will call this from
-    // a juce::Timer - not yet wired to any GUI code this phase).
+    // thread (pushVisualizationFrame(), private); drained by
+    // PluginEditor's 30Hz juce::Timer (Stage 3 GUI Phase 4.3, complete) and
+    // also once synchronously from the "getInitialUIState" native function
+    // at editor load so a reopened editor immediately reflects the current
+    // state instead of waiting for the first Timer tick.
     // ------------------------------------------------------------------
     struct VisualizationFrame
     {
