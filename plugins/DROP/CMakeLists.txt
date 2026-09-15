@@ -93,38 +93,46 @@ target_compile_definitions(DROP
 )
 
 # ----------------------------------------------------------------------------
-# WebView UI Resources - Stage 3 GUI Phase 4.1 wires this up for real, from
+# WebView UI Resources - Stage 3 GUI Phase 4.1: real WebView UI wired from
 # the finalized mockup v10 ("Light Neumorphic / White Marble", see
 # plugins/DROP/.ideas/mockups/v10-CMakeLists.txt and
-# v10-integration-checklist.md). Left commented out here: Stage 1 Foundation's
-# editor is a placeholder (Source/ui/public/* does not exist yet), and the
-# full WebView wiring is explicitly out of scope for this stage.
+# v10-integration-checklist.md). Mirrors plugins/Transitionist/CMakeLists.txt's
+# convention exactly (juce::juce_gui_extra already linked above).
 # ----------------------------------------------------------------------------
-# juce_add_binary_data(DROP_UIResources
-#     SOURCES
-#         Source/ui/public/index.html
-#         Source/ui/public/js/juce/index.js
-#         Source/ui/public/js/juce/check_native_interop.js
-#         Source/ui/public/v10-marble2-texture-hd.jpg
-# )
-#
-# target_link_libraries(DROP
-#     PRIVATE
-#         DROP_UIResources
-# )
-#
-# target_compile_definitions(DROP
-#     PUBLIC
-#         JUCE_WEB_BROWSER=1
-#         JUCE_USE_CURL=0
-# )
+juce_add_binary_data(DROP_UIResources
+    SOURCES
+        Source/ui/public/index.html
+        Source/ui/public/js/juce/index.js
+        Source/ui/public/js/juce/check_native_interop.js
+        Source/ui/public/v10-marble2-texture-hd.jpg
+)
+
+target_link_libraries(DROP
+    PRIVATE
+        DROP_UIResources
+)
+
+target_compile_definitions(DROP
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_CURL=0
+)
 
 # ---------------------------------------------------------------------------
 # Console test runner - Stage 3 DSP unit-test checkpoints, one block of
 # checks per DSP phase (not part of the default build; run:
 #   cmake --build build --target DROP_Tests
 #   ./build/plugins/DROP/DROP_Tests
-# Mirrors plugins/KICKR/CMakeLists.txt's KICKR_Tests convention exactly.
+# Mirrors plugins/KICKR/CMakeLists.txt's KICKR_Tests convention, with one
+# DROP-specific addition (Stage 3 GUI Phase 4.1): ${DROP_CORE_SOURCES}
+# includes Source/PluginEditor.cpp, and PluginProcessor.cpp's createEditor()
+# references the DROPAudioProcessorEditor constructor directly, so this
+# target must link everything PluginEditor.cpp itself needs (juce_gui_extra,
+# BinaryData from DROP_UIResources, JUCE_WEB_BROWSER=1) even though the test
+# runner never actually opens an editor - otherwise the link step fails on
+# an undefined WebBrowserComponent/BinaryData symbol. RunTests.cpp itself
+# only includes PluginProcessor.h (see its #include block), never
+# PluginEditor.h, so no GUI code ever executes in the test binary.
 # ---------------------------------------------------------------------------
 add_executable(DROP_Tests EXCLUDE_FROM_ALL
     Source/Tests/RunTests.cpp
@@ -143,13 +151,15 @@ target_link_libraries(DROP_Tests
         juce::juce_events
         juce::juce_graphics
         juce::juce_gui_basics
+        juce::juce_gui_extra
+        DROP_UIResources
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
 target_compile_definitions(DROP_Tests
     PUBLIC
-        JUCE_WEB_BROWSER=0
+        JUCE_WEB_BROWSER=1
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
 )
