@@ -1,0 +1,489 @@
+# v2 UI Design Specification
+# Plugin: DROP
+# Generated: 2026-09-13
+# Aesthetic base: swiss-minimal-001, adapted (white/gray ground, single red accent)
+#
+# v2 = v1 PLUS a premium rendering pass. Layout, pages, all 19 parameter
+# bindings, window sizing/resize behavior, and the white/gray Swiss palette
+# are UNCHANGED from v1 (same validated control positions/sizes — see
+# v1-ui.yaml for the full layout-validation record). This revision adds
+# only rendering-quality depth: layered shadows, inset highlights, subtle
+# gradients, a quiet grain texture, decorative value-arcs/ticks on the
+# primary controls, and a genuinely sophisticated metaball-style liquid
+# bubble with spring-damped (never linear) motion. Zero new controls.
+
+window:
+  width: 700
+  height: 500
+  resizable: true
+  min_width: 560
+  min_height: 400
+  max_width: 1200
+  max_height: 900
+  scaling_model: "root-em-resize-observer"
+  base_root_font_size_px: 16
+
+colors:
+  background: "#F4F2EE"
+  surface: "#FBFAF8"
+  structure_line: "#D8D4CC"
+  border_strong: "#1B1A17"
+  text_primary: "#1B1A17"
+  text_secondary: "#7A766D"
+  text_tertiary: "#A6A296"
+  accent: "#B7311F"
+  accent_deep: "#8F2618"
+  accent_soft: "#E7C9C2"
+  knob_fill: "#FBFAF8"
+  knob_indicator: "#1B1A17"
+
+typography:
+  header: "'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+  body: "'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+  mono: "'IBM Plex Mono', 'SF Mono', 'Courier New', monospace"
+  size:
+    wordmark: "1.1rem"
+    section_label: "0.68rem"
+    control_label: "0.62rem"
+    value_readout: "0.62rem"
+    tab: "0.68rem"
+  weight:
+    wordmark: 700
+    section_label: 600
+    control_label: 500
+  letter_spacing:
+    wordmark: "0.14em"
+    section_label: "0.12em"
+    control_label: "0.06em"
+  text_transform:
+    wordmark: uppercase
+    section_label: uppercase
+    control_label: uppercase
+  micro_typography:
+    numerals: "font-variant-numeric: tabular-nums (+ font-feature-settings 'tnum' 1 fallback) on every value readout and debug-monitor number, so digits don't jitter width during automation/drag"
+    tracking: "all uppercase labels keep letter-spacing per typography.letter_spacing above; nothing uppercase ships without tracking"
+
+# ---------------------------------------------------------------------------
+# MATERIAL SYSTEM (new in v2) — depth through restraint, not decoration.
+# Every rule below is deliberately subtle: this is still a flat, 2px-border
+# Swiss interface at a glance; the material pass reads as "quality of light"
+# rather than skeuomorphism.
+# ---------------------------------------------------------------------------
+material:
+  philosophy: >
+    Swiss geometric precision stays the structural language (2px borders,
+    sharp corners, hairline rules, flat large surfaces). Depth is added only
+    at the control level (knobs, buttons, chips) via layered shadow +
+    1px inner highlight + a barely-there radial/linear gradient — the same
+    vocabulary Arturia/FabFilter use to make a flat digital control read as
+    a real, touchable object, kept restrained enough to stay "Swiss".
+  elevation:
+    knob_shadow: "0 1px 1px rgba(27,26,23,0.10), 0 5px 12px rgba(27,26,23,0.09), 0 0.5px 0 rgba(27,26,23,0.04)"
+    button_shadow: "0 1px 2px rgba(27,26,23,0.14), 0 8px 18px rgba(27,26,23,0.16)"
+    chip_shadow: "0 1px 2px rgba(27,26,23,0.06)"
+    inset_highlight: "inset 0 1px 0 rgba(255,255,255,0.75)"     # 1px top highlight, all raised controls
+    inset_shadow: "inset 0 -1px 1px rgba(27,26,23,0.06)"        # 1px bottom shade, knobs only
+    panel_shadow: none   # large flat surfaces stay shadow-free (Swiss discipline preserved)
+  gradients:
+    panel_background: "linear-gradient(180deg, #F6F4F0 0%, #F0EEE8 100%)"   # ~3% luminance shift, barely visible
+    knob_face: "radial-gradient(circle at 34% 28%, #FFFFFF 0%, #FBFAF8 42%, #EEECE5 100%)"
+    trigger_idle: "linear-gradient(180deg, #26231D 0%, #1B1A17 100%)"
+    trigger_armed: "linear-gradient(180deg, #C64432 0%, #B7311F 100%)"
+    chip_face: "linear-gradient(180deg, #FCFBF9 0%, #F3F1EC 100%)"          # segmented buttons, style dropdown
+  texture:
+    grain:
+      technique: "SVG feTurbulence (fractalNoise, baseFrequency 0.88, numOctaves 2) -> feColorMatrix, tiled as a background-image data URI"
+      opacity: 0.045
+      blend_mode: multiply
+      placement: "full-bleed overlay behind all content, pointer-events:none, purely decorative — kept extremely quiet ('if it stays quiet')"
+  hairlines:
+    style: "each 1-2px structure_line rule is paired with a 1px rgba(255,255,255,0.6) highlight directly beneath it (box-shadow), producing a barely-there engraved bevel instead of a flat gray line"
+  value_arcs:
+    applies_to: [intensity, dryWet, tension, chaos, impact, output]
+    style: >
+      Thin (proportionally ~1.5-2px at rendered size) 270-degree arc track +
+      filled value arc using the same -135..+135deg convention as the knob's
+      own rotation, plus 3 tick marks (min/center/max). Rendered as an SVG
+      overlay absolutely positioned INSIDE the knob element via percentage
+      inset (-16%), which scales automatically with rem-based knob sizing
+      and — critically — does NOT alter the control's already-validated
+      bounding box, hit-target, or the v1 layout-validation results (it is
+      a decorative child of the knob, not a layout participant).
+    macros_note: >
+      The 10 module macro knobs (filter, width, pitch, gate, stutter, delay,
+      reverb, distortion, digital, noise) intentionally omit the arc/tick
+      ring to avoid visual noise at that density — they still receive the
+      full knob_face gradient + shadow + inset-highlight material treatment,
+      just without the extra ring. This is a deliberate hierarchy decision,
+      not an oversight: primary/expressive controls get the richest
+      affordance, secondary macros stay calm. No new controls were added
+      anywhere in v2 — only rendering quality changed.
+  decorative_overlay_rule: >
+    General rule for this material pass: shadows, arcs, the grain texture,
+    and the bubble's blur/glow are all allowed to render a few px beyond a
+    control's nominal box (exactly like a real drop-shadow or glow in any
+    professional plugin UI). None of them change a control's declared
+    position/size in this YAML, and none of them affect the v1
+    layout-validation result (zero bounds violations, zero overlaps,
+    >=15px edge padding, >=10px control spacing) — that geometry is
+    unchanged in v2.
+
+# ---------------------------------------------------------------------------
+# MOTION SYSTEM (new in v2) — nothing linear.
+# ---------------------------------------------------------------------------
+motion:
+  philosophy: >
+    Every state change is damped and physical, never a linear tween. Two
+    complementary techniques are used depending on whether the animated
+    property is continuous (bubble) or discrete (UI chrome):
+  continuous_properties:
+    technique: "critically-damped mass-spring-damper, integrated per animation frame (semi-implicit Euler: force = (target-value)*stiffness - velocity*damping; velocity += force*dt; value += velocity*dt)"
+    driven_properties: [bubble.radiusMul, bubble.agitation, bubble.colorMix, bubble.impactGlow]
+    tuning: >
+      Radius/agitation springs are looser (lower damping, stiffness ~95-150)
+      so Impact genuinely overshoots past its resting size before settling —
+      the "physical liquid" read. The color-mix spring is tighter
+      (damping ~24, stiffness ~170) so rising tension is still legible
+      promptly, without lagging the ear-visible build.
+  discrete_ui_feedback:
+    technique: "CSS transitions on a spring-overshoot cubic-bezier, cubic-bezier(0.34, 1.56, 0.64, 1), rather than ease/linear"
+    applied_to:
+      - "Page-nav active-tab sliding indicator (translateX transform)"
+      - "Page crossfade on Main <-> Advanced switch (opacity ease-out + translateY spring-overshoot)"
+      - "DROP trigger button press/release (scale 0.94 -> 1, spring bounce-back)"
+      - "Knob value-arc fill update on click/automation (stroke-dasharray, softer ease-out, not overshooting — a value snapping in shouldn't wobble)"
+
+# ---------------------------------------------------------------------------
+# Shared header, rendered identically on both pages (not an APVTS parameter;
+# page_nav is UI view-state only, per architecture.md "Non-parameter state").
+# Geometry unchanged from v1.
+# ---------------------------------------------------------------------------
+shared_elements:
+  - id: wordmark
+    type: label
+    text: "DROP"
+    position: { x: 24, y: 16 }
+    size: { width: 120, height: 24 }
+
+  - id: page_nav
+    type: segmented-toggle
+    label: null
+    parameter: null   # view-state only, not bound to APVTS
+    choices: ["MAIN", "ADVANCED"]
+    default: "MAIN"
+    position: { x: 560, y: 16 }
+    size: { width: 120, height: 28 }
+    v2_addition: "sliding .nav-indicator element with spring-overshoot transition (see motion.discrete_ui_feedback), replacing v1's instant per-button background swap"
+
+  - id: header_rule
+    type: divider
+    position: { x: 0, y: 50 }
+    size: { width: 700, height: 2 }
+
+# ---------------------------------------------------------------------------
+# PAGE 1 — MAIN (minimal: 2 knobs + trigger + centerpiece visualization)
+# Control positions/sizes identical to v1 (already layout-validated).
+# ---------------------------------------------------------------------------
+pages:
+  - id: main
+    layout: custom
+    controls:
+      - id: intensity
+        type: rotary-knob
+        label: "Intensity"
+        parameter: "intensity"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 50.0
+        decimals: 0
+        position: { x: 150, y: 372 }
+        size: { width: 80, height: 100 }
+        v2_material: "knob_face gradient + shadow-knob + inset highlight/shadow; value-arc + 3 ticks (data-arc)"
+
+      - id: dryWet
+        type: rotary-knob
+        label: "Dry / Wet"
+        parameter: "dryWet"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 470, y: 372 }
+        size: { width: 80, height: 100 }
+        v2_material: "knob_face gradient + shadow-knob + inset highlight/shadow; value-arc + 3 ticks (data-arc)"
+
+      - id: trigger
+        type: button
+        label: "DROP"
+        parameter: "trigger"
+        parameter_type: bool
+        momentary: true
+        default: false
+        position: { x: 275, y: 380 }
+        size: { width: 150, height: 60 }
+        v2_material: "trigger_idle/trigger_armed gradients + button_shadow + inset highlight; spring-overshoot press/release scale (0.94 -> 1)"
+
+    special_elements:
+      - id: liquid_bubble
+        type: audio-reactive-blob
+        description: >
+          v2 upgrades this from a single wobbling polygon (v1) to a layered
+          metaball-style rendering (see bubble_rendering below). Still doubles
+          as the tension display (progress, tensionLevel, currentState,
+          inputRMS all representable per architecture.md).
+        data_source: "fake_input_level, fake_transition_progress, fake_state"
+        position: { x: 230, y: 70 }
+        size: { width: 240, height: 240 }
+        states:
+          idle: { agitation: low, color_mix: 0.0, note: "gentle multi-harmonic breathing; satellites huddle close (near-merged); cool white/gray gradient; soft specular sheen upper-left" }
+          building: { agitation: rising, color_mix: "progress * tension", note: "satellites orbit further out and grow as agitation rises; gradient warms toward pale red at the edge" }
+          peak: { agitation: max, color_mix: 0.88, note: "brief held-breath instant before collapse" }
+          vacuum: { agitation: near-zero, color_mix: "0.88 -> 0.15", note: "smooth Catmull-Rom collapse to a thin flattened ellipse, not an instant cut" }
+          impact: { agitation: burst-then-decay, color_mix: "0.9 -> 0", note: "radius spring overshoots (~1.5x) before settling; radial accent-red glow ring flashes and fades; springs (not linear tweens) drive the whole burst" }
+          recovery: { agitation: decaying, color_mix: "fade -> 0", note: "spring settle back to idle, gentle overshoot-then-rest" }
+
+      - id: progress_strip
+        type: phase-progress-strip
+        description: "Unchanged geometry/behavior from v1; drop-marker now carries a subtle drop-shadow (filter: drop-shadow) for a touch of depth."
+        position: { x: 110, y: 326 }
+        size: { width: 480, height: 16 }
+
+      - id: bar_length_readout
+        type: readout
+        bound_to_parameter: "buildLength"
+        position: { x: 310, y: 448 }
+        size: { width: 80, height: 18 }
+
+  # -------------------------------------------------------------------------
+  # PAGE 2 — ADVANCED (all remaining controls, Swiss-grid discipline)
+  # Control positions/sizes identical to v1 (already layout-validated).
+  # -------------------------------------------------------------------------
+  - id: advanced
+    layout: grid
+    sections:
+      - id: transition_setup
+        label: "Transition"
+        rule_above: { position: { x: 0, y: 50 }, height: 2 }
+      - id: shape
+        label: "Shape"
+        rule_above: { position: { x: 0, y: 126 }, height: 2 }
+      - id: modules
+        label: "Modules"
+        rule_above: { position: { x: 0, y: 226 }, height: 2 }
+      - id: output_section
+        label: "Output"
+    controls:
+      - id: buildLength
+        type: combo-box
+        display_variant: segmented-buttons
+        label: "Build Length"
+        parameter: "buildLength"
+        parameter_type: choice
+        choices: ["1", "2", "4", "8", "16"]
+        choice_suffix: "BAR"
+        default: "4"
+        position: { x: 24, y: 62 }
+        size: { width: 376, height: 56 }
+        v2_material: "chip_face gradient + inset highlight on each segment; active segment uses trigger_idle-style dark gradient + inset shadow"
+
+      - id: style
+        type: combo-box
+        display_variant: dropdown
+        label: "Style"
+        parameter: "style"
+        parameter_type: choice
+        choices:
+          - "Clean EDM"
+          - "Big Room"
+          - "Techno Pressure"
+          - "Dark Techno"
+          - "Trap Pull"
+          - "DnB Rush"
+          - "Hyper"
+          - "Cinematic"
+          - "Minimal"
+          - "Vocal Build"
+          - "Drum Build"
+          - "Synth Build"
+          - "Full Mix"
+          - "Destroy"
+          - "Vacuum"
+          - "Reverse Energy"
+        default: "Clean EDM"
+        position: { x: 420, y: 62 }
+        size: { width: 256, height: 56 }
+        v2_material: "chip_face gradient + inset highlight; custom SVG chevron (replaces native browser arrow) for cross-browser Swiss-consistent styling"
+
+      - id: tension
+        type: rotary-knob
+        label: "Tension"
+        parameter: "tension"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 50.0
+        decimals: 0
+        position: { x: 103, y: 138 }
+        size: { width: 60, height: 80 }
+        v2_material: "knob_face gradient + shadow-knob; value-arc + 3 ticks (data-arc)"
+
+      - id: chaos
+        type: rotary-knob
+        label: "Chaos"
+        parameter: "chaos"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 0.0
+        decimals: 0
+        position: { x: 320, y: 138 }
+        size: { width: 60, height: 80 }
+        v2_material: "knob_face gradient + shadow-knob; value-arc + 3 ticks (data-arc)"
+
+      - id: impact
+        type: rotary-knob
+        label: "Impact"
+        parameter: "impact"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 50.0
+        decimals: 0
+        position: { x: 537, y: 138 }
+        size: { width: 60, height: 80 }
+        v2_material: "knob_face gradient + shadow-knob; value-arc + 3 ticks (data-arc)"
+
+      - id: filter
+        type: rotary-knob
+        label: "Filter"
+        parameter: "filter"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 65, y: 234 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring — see value_arcs.macros_note)"
+
+      - id: width
+        type: rotary-knob
+        label: "Width"
+        parameter: "width"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 195, y: 234 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: pitch
+        type: rotary-knob
+        label: "Pitch"
+        parameter: "pitch"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 325, y: 234 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: gate
+        type: rotary-knob
+        label: "Gate"
+        parameter: "gate"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 455, y: 234 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: stutter
+        type: rotary-knob
+        label: "Stutter"
+        parameter: "stutter"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 585, y: 234 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: delay
+        type: rotary-knob
+        label: "Delay"
+        parameter: "delay"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 65, y: 314 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: reverb
+        type: rotary-knob
+        label: "Reverb"
+        parameter: "reverb"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 195, y: 314 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: distortion
+        type: rotary-knob
+        label: "Distortion"
+        parameter: "distortion"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 325, y: 314 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: digital
+        type: rotary-knob
+        label: "Digital"
+        parameter: "digital"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 455, y: 314 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: noise
+        type: rotary-knob
+        label: "Noise"
+        parameter: "noise"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 585, y: 314 }
+        size: { width: 48, height: 66 }
+        v2_material: "knob_face gradient + shadow-knob (no arc ring)"
+
+      - id: output
+        type: rotary-knob
+        label: "Output"
+        parameter: "output"
+        range: [-60.0, 12.0]
+        unit: "dB"
+        default: 0.0
+        decimals: 1
+        position: { x: 315, y: 398 }
+        size: { width: 70, height: 84 }
+        v2_material: "knob_face gradient + shadow-knob; value-arc + 3 ticks (data-arc) — prominent per Swiss peripheral-emphasis guideline"
+
+notes:
+  - "v2 changes rendering quality only. Layout geometry, page structure, all 19 APVTS parameter bindings, window resize behavior, and the white/gray Swiss palette are byte-for-byte identical to v1's validated spec — see v1-ui.yaml notes for the full layout-validation record (zero bounds violations, zero overlaps, >=15px edge padding except one intentionally-grouped 8px pair, >=10px control spacing)."
+  - "Total: 19 APVTS parameters unchanged — trigger, buildLength, style, intensity, tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, dryWet, output."
+  - "Decorative overlays introduced in v2 (value-arcs, ticks, grain texture, knob/button shadows, bubble blur/glow/satellites) render slightly beyond a control's nominal box in places, by design (see material.decorative_overlay_rule) — this does not change any control's declared position/size or affect the v1 layout validation."
+  - "No controls were added, removed, or resized in v2. Complexity was deliberately kept entirely in rendering (material + motion), not in the control count or layout, per explicit direction."
