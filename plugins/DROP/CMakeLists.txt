@@ -29,6 +29,14 @@ set(DROP_CORE_SOURCES
     Source/DSP/MusicalClock.cpp
     Source/DSP/TransitionEngine.cpp
     Source/DSP/DropStateMachine.cpp
+    # DSP - Stage 3 DSP Phase 3.2 (Core DSP Modules)
+    Source/DSP/FilterModule.cpp
+    Source/DSP/WidthModule.cpp
+    Source/DSP/GateModule.cpp
+    Source/DSP/DelayModule.cpp
+    Source/DSP/SaturationModule.cpp
+    Source/DSP/ReverbModule.cpp
+    Source/DSP/IntensityBudget.cpp
 )
 
 target_sources(DROP PRIVATE ${DROP_CORE_SOURCES})

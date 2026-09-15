@@ -4,6 +4,14 @@
 #include "DSP/MusicalClock.h"
 #include "DSP/TransitionEngine.h"
 #include "DSP/DropStateMachine.h"
+#include "DSP/FilterModule.h"
+#include "DSP/WidthModule.h"
+#include "DSP/GateModule.h"
+#include "DSP/DelayModule.h"
+#include "DSP/SaturationModule.h"
+#include "DSP/ReverbModule.h"
+#include "DSP/IntensityBudget.h"
+#include <array>
 #include <atomic>
 #include <vector>
 
@@ -25,6 +33,16 @@
  * in processBlock(), wired to the `trigger` parameter and the configurable
  * MIDI trigger note. Audio remains a real-time-safe PASS-THROUGH - no
  * audible DSP modules exist yet (those arrive in Stage 3 DSP Phases 3.2-3.5).
+ *
+ * Stage 3 DSP Phase 3.2 ("Core DSP Modules") scope: FilterModule,
+ * WidthModule, GateModule, DelayModule, SaturationModule, ReverbModule, and
+ * a placeholder IntensityBudget wired into the segmentation loop in the
+ * fixed series order Filter -> Width -> Gate -> Delay -> Saturation ->
+ * Reverb (Pitch/Stutter series slot deferred to Phase 3.3), followed by the
+ * global Dry/Wet mix + Output gain stage (architecture.md Processing Order
+ * steps 9-10). Every module always processes (architecture.md
+ * "Always-Process, Weight-Mix Architecture") - IntensityBudget-computed
+ * weights (0-1) blend each module's contribution, never bypass it.
  */
 class DROPAudioProcessor : public juce::AudioProcessor
 {
@@ -126,11 +144,46 @@ private:
     void fireTriggerIfIdle();
     drop::DropStateMachine::Durations computeDurationsForNewBuild();
 
+    // Stage 3 DSP Phase 3.2: processes one sample-accurate segment
+    // [startSample, startSample+numSamplesInSegment) of `buffer` through the
+    // fixed series DSP chain (Filter -> Width -> Gate -> Delay -> Saturation
+    // -> Reverb), using the CURRENT (pre-advance) DropStateMachine state/
+    // progress for this segment. Called from processBlock()'s segmentation
+    // loop, once per segment.
+    void processSegment(juce::AudioBuffer<float>& buffer, int startSample, int numSamplesInSegment) noexcept;
+
+    // Stage 3 DSP Phase 3.2: derives the 0-1 "budget progress" input fed to
+    // IntensityBudget::compute() from the DropStateMachine's CURRENT state -
+    // 0 during Idle/Arming, TransitionEngine::evaluate(t) during Building
+    // (t = elapsed/total within Building), 1.0 during Peak/Impact (Phase
+    // 3.2 placeholder - VacuumModule/ImpactEngine in Phase 3.3/3.4 will
+    // gate/override the bus during these states), ramping 1.0->0.0 across
+    // Recovery (architecture.md: "all module weights ramp back to 0" during
+    // Recovery).
+    float computeIntensityProgress() noexcept;
+
     // Stage 3 DSP Phase 3.1 components (declared before non-DSP private
     // state below, matching this repo's DSP-members-first convention).
     drop::MusicalClock musicalClock;
     drop::TransitionEngine transitionEngine;
     drop::DropStateMachine dropStateMachine;
+
+    // Stage 3 DSP Phase 3.2 components (see class-level doc comment for the
+    // fixed series processing order).
+    drop::FilterModule filterModule;
+    drop::WidthModule widthModule;
+    drop::GateModule gateModule;
+    drop::DelayModule delayModule;
+    drop::SaturationModule saturationModule;
+    drop::ReverbModule reverbModule;
+    drop::IntensityBudget intensityBudget;
+
+    // Pre-chain dry capture (architecture.md Processing Order step 1) +
+    // final global Dry/Wet mix / Output gain smoothing (steps 9-10) -
+    // preallocated in prepareToPlay(), RT-safe.
+    juce::AudioBuffer<float> dryCaptureBuffer;
+    juce::SmoothedValue<float> dryWetSmoothed;
+    juce::SmoothedValue<float> outputGainSmoothed;
 
     double currentSampleRate = 44100.0;
 
@@ -157,6 +210,35 @@ private:
     std::atomic<uint32_t> chaosSeed { kDefaultChaosSeed };
     std::atomic<bool> uiAdvancedRowExpanded { false };
     std::vector<CurvePoint> tensionCurvePoints; // empty = Linear/no custom points
+
+    // ------------------------------------------------------------------
+    // Cached raw parameter pointers (Stage 3 DSP Phase 3.2 validation
+    // carry-over from Phase 3.1): all 19 APVTS parameters looked up ONCE in
+    // the constructor via parameters.getRawParameterValue(), replacing
+    // every per-block string-keyed lookup (real-time-safety/performance -
+    // getRawParameterValue(String) does a linear search + String
+    // comparisons; the returned std::atomic<float>* itself is what's
+    // actually safe/cheap to read every block).
+    // ------------------------------------------------------------------
+    std::atomic<float>* triggerParam = nullptr;
+    std::atomic<float>* buildLengthParam = nullptr;
+    std::atomic<float>* styleParam = nullptr;
+    std::atomic<float>* intensityParam = nullptr;
+    std::atomic<float>* tensionParam = nullptr;
+    std::atomic<float>* chaosParam = nullptr;
+    std::atomic<float>* impactParam = nullptr;
+    std::atomic<float>* filterParam = nullptr;
+    std::atomic<float>* widthParam = nullptr;
+    std::atomic<float>* pitchParam = nullptr;
+    std::atomic<float>* gateParam = nullptr;
+    std::atomic<float>* stutterParam = nullptr;
+    std::atomic<float>* delayParam = nullptr;
+    std::atomic<float>* reverbParam = nullptr;
+    std::atomic<float>* distortionParam = nullptr;
+    std::atomic<float>* digitalParam = nullptr;
+    std::atomic<float>* noiseParam = nullptr;
+    std::atomic<float>* dryWetParam = nullptr;
+    std::atomic<float>* outputParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DROPAudioProcessor)
 };

@@ -21,11 +21,21 @@
 #include "DSP/MusicalClock.h"
 #include "DSP/TransitionEngine.h"
 #include "DSP/DropStateMachine.h"
+#include "DSP/FilterModule.h"
+#include "DSP/WidthModule.h"
+#include "DSP/GateModule.h"
+#include "DSP/DelayModule.h"
+#include "DSP/SaturationModule.h"
+#include "DSP/ReverbModule.h"
+#include "DSP/IntensityBudget.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <limits>
+#include <random>
 #include <vector>
 
 namespace
@@ -501,8 +511,17 @@ int main()
     }
 
     //==========================================================================
-    std::printf ("\n[Phase 3.1] PluginProcessor - audio pass-through + finite output across an active build\n");
+    std::printf ("\n[Phase 3.1->3.2] PluginProcessor - finite, bounded output across an active build\n");
     {
+        // NOTE: this check's ORIGINAL Phase 3.1 assertion was bit-identical
+        // pass-through, valid only because no audible DSP existed yet.
+        // Stage 3 DSP Phase 3.2 adds six always-process DSP modules whose
+        // weight rises above 0 during Building by design (IntensityBudget's
+        // progress-driven budget) - bit-identical pass-through through
+        // Building is therefore no longer the correct expectation and this
+        // check is updated accordingly. Finite/bounded output remains a
+        // hard requirement (updated further to explicit NaN/Inf/denormal
+        // sweeps below, per plan.md Phase 3.2 test criteria).
         DROPAudioProcessor p;
         p.setRateAndBufferSizeDetails (48000.0, 256);
         p.prepareToPlay (48000.0, 256);
@@ -511,7 +530,7 @@ int main()
             prm->setValueNotifyingHost (1.0f);
 
         bool allFinite = true;
-        bool bitIdentical = true;
+        bool allBounded = true;
 
         for (int block = 0; block < 50; ++block)
         {
@@ -523,9 +542,6 @@ int main()
                     data[i] = std::sin ((float) (block * 256 + i) * 0.01f) * 0.5f;
             }
 
-            juce::AudioBuffer<float> reference;
-            reference.makeCopyOf (buf);
-
             juce::MidiBuffer midi;
             p.processBlock (buf, midi);
 
@@ -536,18 +552,504 @@ int main()
             for (int ch = 0; ch < 2; ++ch)
             {
                 const float* out = buf.getReadPointer (ch);
-                const float* ref = reference.getReadPointer (ch);
                 for (int i = 0; i < 256; ++i)
                 {
                     if (! std::isfinite (out[i])) allFinite = false;
-                    if (std::abs (out[i] - ref[i]) > 1.0e-7f) bitIdentical = false;
+                    if (std::abs (out[i]) > 4.0f) allBounded = false;
                 }
             }
         }
 
         check (allFinite, "output stays finite (no NaN/Inf) across an active Idle->Arming->Building sequence");
-        check (bitIdentical, "audio remains an EXACT pass-through through Idle/Arming/Building (no audible DSP yet - Phase 3.1 scope)");
+        check (allBounded, "output stays bounded (no blow-up) across an active Idle->Arming->Building sequence with all six Phase 3.2 DSP modules engaged");
         p.releaseResources();
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] IntensityBudget - proportional-cap invariant + zero-macro transparency\n");
+    {
+        drop::IntensityBudget budget;
+        std::mt19937 rng (12345u); // fixed seed - determinism not required here, just repeatable fuzzing
+        std::uniform_real_distribution<float> dist01 (0.0f, 1.0f);
+
+        bool invariantHolds = true;
+        for (int trial = 0; trial < 500; ++trial)
+        {
+            std::array<float, (size_t) drop::BudgetModule::Count> macros {};
+            for (auto& m : macros)
+                m = dist01 (rng);
+            const float progress = dist01 (rng);
+            const float intensity = dist01 (rng);
+
+            const auto weights = budget.compute (macros, progress, intensity);
+
+            float sum = 0.0f;
+            for (auto w : weights.value)
+            {
+                if (! std::isfinite (w) || w < 0.0f || w > 1.0f) invariantHolds = false;
+                sum += w;
+            }
+
+            const float totalBudget = intensity * juce::jlimit (0.0f, 1.0f, progress)
+                                     * (float) ((size_t) drop::BudgetModule::Count) * 0.6f;
+            if (sum > totalBudget + 1.0e-3f) invariantHolds = false;
+        }
+        check (invariantHolds, "computeWeights(): sum(output) <= totalBudget(progress) invariant holds across 500 randomized fuzz inputs, every weight in [0,1] and finite");
+
+        std::array<float, (size_t) drop::BudgetModule::Count> allZeroMacros {};
+        const auto zeroWeights = budget.compute (allZeroMacros, 1.0f, 1.0f);
+        bool allZero = true;
+        for (auto w : zeroWeights.value)
+            if (w != 0.0f) allZero = false;
+        check (allZero, "all-zero macros -> all-zero weights regardless of progress/intensity");
+
+        std::array<float, (size_t) drop::BudgetModule::Count> allFullMacros {};
+        for (auto& m : allFullMacros) m = 1.0f;
+        const auto zeroProgressWeights = budget.compute (allFullMacros, 0.0f, 1.0f);
+        bool allZeroAtZeroProgress = true;
+        for (auto w : zeroProgressWeights.value)
+            if (w != 0.0f) allZeroAtZeroProgress = false;
+        check (allZeroAtZeroProgress, "progress == 0 (Idle/Arming) -> all-zero weights regardless of macros/intensity");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] Six modules - weight==0 transparency\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 256, 2 };
+        auto makeTestBuffer = [] (int numSamples)
+        {
+            juce::AudioBuffer<float> buf (2, numSamples);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < numSamples; ++i)
+                    data[i] = std::sin ((float) i * (0.05f + 0.01f * (float) ch)) * 0.6f;
+            }
+            return buf;
+        };
+
+        auto transparencyCheck = [&] (const char* name, auto&& processFn)
+        {
+            auto buf = makeTestBuffer (256);
+            juce::AudioBuffer<float> reference;
+            reference.makeCopyOf (buf);
+
+            // Prime the smoothed weight to settle exactly at 0 before measuring.
+            for (int i = 0; i < 4; ++i)
+            {
+                auto primeBuf = makeTestBuffer (256);
+                juce::dsp::AudioBlock<float> block (primeBuf);
+                processFn (block);
+            }
+
+            juce::dsp::AudioBlock<float> block (buf);
+            processFn (block);
+
+            float maxDiff = 0.0f;
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float* out = buf.getReadPointer (ch);
+                const float* ref = reference.getReadPointer (ch);
+                for (int i = 0; i < 256; ++i)
+                    maxDiff = std::max (maxDiff, std::abs (out[i] - ref[i]));
+            }
+            check (maxDiff < 1.0e-4f, name);
+        };
+
+        {
+            drop::FilterModule m; m.prepare (spec);
+            transparencyCheck ("FilterModule: weight==0 is near-transparent", [&] (juce::dsp::AudioBlock<float>& b) { m.process (b, 0.0f, 0.5f); });
+        }
+        {
+            drop::WidthModule m; m.prepare (spec);
+            transparencyCheck ("WidthModule: weight==0 is near-transparent", [&] (juce::dsp::AudioBlock<float>& b) { m.process (b, 0.0f, 0.5f); });
+        }
+        {
+            drop::GateModule m; m.prepare (spec);
+            drop::MusicalClock clock; clock.prepare (48000.0);
+            TestPlayHead ph; ph.info = makePosition (120.0, 4, 4, 0.0, 0.0);
+            clock.update (&ph, 0);
+            transparencyCheck ("GateModule: weight==0 is EXACTLY transparent", [&] (juce::dsp::AudioBlock<float>& b) { m.process (b, 0.0f, 0.5f, clock); });
+        }
+        {
+            drop::SaturationModule m; m.prepare (spec);
+            transparencyCheck ("SaturationModule: weight==0 is near-transparent", [&] (juce::dsp::AudioBlock<float>& b) { m.process (b, 0.0f, 0.5f); });
+        }
+        {
+            drop::DelayModule m; m.prepare (spec);
+            drop::MusicalClock clock; clock.prepare (48000.0);
+            TestPlayHead ph; ph.info = makePosition (120.0, 4, 4, 0.0, 0.0);
+            clock.update (&ph, 0);
+            transparencyCheck ("DelayModule: weight==0 is near-transparent", [&] (juce::dsp::AudioBlock<float>& b) { m.process (b, 0.0f, 0.5f, clock); });
+        }
+        {
+            drop::ReverbModule m; m.prepare (spec);
+            transparencyCheck ("ReverbModule: weight==0 is near-transparent", [&] (juce::dsp::AudioBlock<float>& b) { m.process (b, 0.0f, 0.5f); });
+        }
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] FilterModule - stability at max resonance sweep\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 512, 2 };
+        drop::FilterModule filter;
+        filter.prepare (spec);
+
+        std::mt19937 rng (7u);
+        std::uniform_real_distribution<float> noiseDist (-1.0f, 1.0f);
+
+        bool allFinite = true;
+        bool allBounded = true;
+        for (int block = 0; block < 200; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < 512; ++i)
+                    data[i] = noiseDist (rng) * 0.9f;
+            }
+
+            // Rapidly sweeping progress (drives resonance toward its
+            // ceiling at weight==1) across blocks - stresses coefficient
+            // updates at the resonance ceiling.
+            const float progress = (block % 2 == 0) ? 1.0f : 0.0f;
+
+            juce::dsp::AudioBlock<float> block_ (buf);
+            filter.process (block_, 1.0f, progress);
+
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float* out = buf.getReadPointer (ch);
+                for (int i = 0; i < 512; ++i)
+                {
+                    if (! std::isfinite (out[i])) allFinite = false;
+                    if (std::abs (out[i]) > 10.0f) allBounded = false;
+                }
+            }
+        }
+        check (allFinite, "FilterModule: no NaN/Inf across a rapid max-resonance progress sweep with full-scale noise, weight==1");
+        check (allBounded, "FilterModule: output stays bounded (no blow-up) at the resonance ceiling");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] WidthModule - low-band mono-sum protection\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 4096, 2 };
+
+        auto measureCorrelation = [] (const juce::AudioBuffer<float>& buf)
+        {
+            double sumLR = 0.0, sumLL = 0.0, sumRR = 0.0;
+            const auto* l = buf.getReadPointer (0);
+            const auto* r = buf.getReadPointer (1);
+            for (int i = 0; i < buf.getNumSamples(); ++i)
+            {
+                sumLR += (double) l[i] * (double) r[i];
+                sumLL += (double) l[i] * (double) l[i];
+                sumRR += (double) r[i] * (double) r[i];
+            }
+            const double denom = std::sqrt (sumLL * sumRR);
+            return denom > 1.0e-9 ? (float) (sumLR / denom) : 1.0f;
+        };
+
+        // A pure anti-phase (L=s, R=-s) test signal has NO mid component at
+        // all (L+R == 0 always), which makes normalized correlation
+        // scale-invariant - scaling the side gain by ANY nonzero factor
+        // leaves L'==-R' exactly, so correlation would stay at -1
+        // regardless of protection. Use a genuine mid+side construction
+        // instead: mid and side as quadrature (90-degree-shifted) sines at
+        // the SAME frequency - exactly orthogonal (uncorrelated) by
+        // construction, avoiding both the anti-phase degeneracy above AND
+        // the near-silent-channel degeneracy a slowly-drifting/detuned pair
+        // would produce over a short analysis window.
+        auto makeMidSideTestTone = [] (float freqHz, double sampleRate, int numSamples)
+        {
+            juce::AudioBuffer<float> buf (2, numSamples);
+            auto* l = buf.getWritePointer (0);
+            auto* r = buf.getWritePointer (1);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float phase = 2.0f * juce::MathConstants<float>::pi * freqHz * (float) i / (float) sampleRate;
+                const float mid = std::sin (phase) * 0.5f;
+                const float side = std::cos (phase) * 0.5f; // quadrature -> orthogonal/uncorrelated with mid
+                l[i] = mid + side;
+                r[i] = mid - side;
+            }
+            return buf;
+        };
+
+        // progress == 0 maximizes the contrast: at progress 0 the high-band
+        // narrow target is exactly 1.0 (untouched, per WidthModule's
+        // narrowTarget curve), so ONLY the low band's fixed protection gain
+        // (kLowBandProtectedGain, independent of progress) is engaged -
+        // proving low-band protection holds even at full width weight and
+        // regardless of where in the build progress currently sits.
+        drop::WidthModule lowWidth; lowWidth.prepare (spec);
+        {
+            // Prime: let the smoothed low/high-band gains settle to their
+            // targets before measuring (avoids diluting the correlation
+            // measurement with the ~20ms smoothing ramp-up transient).
+            auto primeBuf = makeMidSideTestTone (50.0f, 48000.0, 4096);
+            juce::dsp::AudioBlock<float> block (primeBuf);
+            lowWidth.process (block, 1.0f, 0.0f);
+        }
+        auto lowBuf = makeMidSideTestTone (50.0f, 48000.0, 4096); // below the ~120Hz crossover -> treated as low band
+        {
+            juce::dsp::AudioBlock<float> block (lowBuf);
+            lowWidth.process (block, 1.0f, 0.0f);
+        }
+        const float lowFreqCorrelation = measureCorrelation (lowBuf);
+
+        drop::WidthModule highWidth; highWidth.prepare (spec);
+        {
+            auto primeBuf = makeMidSideTestTone (4000.0f, 48000.0, 4096);
+            juce::dsp::AudioBlock<float> block (primeBuf);
+            highWidth.process (block, 1.0f, 0.0f);
+        }
+        auto highBuf = makeMidSideTestTone (4000.0f, 48000.0, 4096); // above the crossover -> treated as high band
+        {
+            juce::dsp::AudioBlock<float> block (highBuf);
+            highWidth.process (block, 1.0f, 0.0f);
+        }
+        const float highFreqCorrelation = measureCorrelation (highBuf);
+
+        check (lowFreqCorrelation > highFreqCorrelation + 0.3f,
+              "WidthModule: low-frequency (50Hz) content ends up measurably more mono-summed than high-frequency (4kHz) content at full width weight (low-band protection verified via correlation)");
+        check (lowFreqCorrelation > 0.7f, "WidthModule: low-band correlation stays strongly positive (near-mono) even at full width weight");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] GateModule - edge timing + no-click (ramp continuity)\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 4096, 2 };
+        drop::GateModule gate;
+        gate.prepare (spec);
+
+        drop::MusicalClock clock;
+        clock.prepare (48000.0);
+        TestPlayHead ph;
+        ph.info = makePosition (120.0, 4, 4, 0.0, 0.0);
+        clock.update (&ph, 0);
+
+        juce::AudioBuffer<float> buf (2, 4096);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto* data = buf.getWritePointer (ch);
+            for (int i = 0; i < 4096; ++i)
+                data[i] = 0.8f; // constant input -> output IS the gain envelope, directly measurable
+        }
+
+        juce::dsp::AudioBlock<float> block (buf);
+        gate.process (block, 1.0f, 0.9f, clock); // high progress -> fast (audible) rate
+
+        const float* out = buf.getReadPointer (0);
+        float maxDelta = 0.0f;
+        bool sawBothStates = false;
+        float minVal = out[0], maxVal = out[0];
+        for (int i = 1; i < 4096; ++i)
+        {
+            maxDelta = std::max (maxDelta, std::abs (out[i] - out[i - 1]));
+            minVal = std::min (minVal, out[i]);
+            maxVal = std::max (maxVal, out[i]);
+        }
+        sawBothStates = (minVal < 0.1f * 0.8f) && (maxVal > 0.9f * 0.8f);
+
+        // Max sample-to-sample delta bound derived from the anti-click ramp
+        // time (2ms) at 48kHz: a full 0.8-amplitude transition ramped over
+        // 2ms takes ~96 samples, so per-sample delta should be well under
+        // an instant full-amplitude jump (0.8).
+        check (maxDelta < 0.8f * 0.5f, "GateModule: no instantaneous full-amplitude jump between adjacent samples (anti-click ramp active)");
+        check (sawBothStates, "GateModule: rhythmic on/off edges are audible (both near-open and near-closed states reached) at high progress/weight==1");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] SaturationModule - all 5 modes stable across full drive range\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 512, 2 };
+        const drop::SaturationMode modes[] = {
+            drop::SaturationMode::Clean, drop::SaturationMode::Warm, drop::SaturationMode::Driven,
+            drop::SaturationMode::Distorted, drop::SaturationMode::Crushed
+        };
+
+        bool allOk = true;
+        for (auto mode : modes)
+        {
+            drop::SaturationModule sat;
+            sat.prepare (spec);
+            sat.setMode (mode);
+
+            std::mt19937 rng (99u);
+            std::uniform_real_distribution<float> fullScale (-1.0f, 1.0f);
+
+            for (int block = 0; block < 50; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, 512);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    auto* data = buf.getWritePointer (ch);
+                    for (int i = 0; i < 512; ++i)
+                        data[i] = fullScale (rng);
+                }
+
+                juce::dsp::AudioBlock<float> block_ (buf);
+                sat.process (block_, 1.0f, 1.0f); // max drive (progress*weight == 1)
+
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const float* out = buf.getReadPointer (ch);
+                    for (int i = 0; i < 512; ++i)
+                        if (! std::isfinite (out[i]) || std::abs (out[i]) > 4.0f)
+                            allOk = false;
+                }
+            }
+        }
+        check (allOk, "SaturationModule: all 5 modes (Clean/Warm/Driven/Distorted/Crushed) stay finite and bounded across full-scale noise at maximum drive");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] DelayModule - feedback-runaway stress test\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 256, 2 };
+        drop::DelayModule delay;
+        delay.prepare (spec);
+
+        drop::MusicalClock clock;
+        clock.prepare (48000.0);
+        TestPlayHead ph;
+        ph.info = makePosition (174.0, 4, 4, 0.0, 0.0); // fast tempo -> short division -> tight feedback loop
+        clock.update (&ph, 0);
+
+        std::mt19937 rng (2026u);
+        std::uniform_real_distribution<float> weightDist (0.0f, 1.0f);
+
+        bool allFinite = true;
+        bool allBounded = true;
+
+        for (int block = 0; block < 400; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, 256);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < 256; ++i)
+                    data[i] = 0.95f * std::sin ((float) (block * 256 + i) * 0.3f); // full-scale-ish, high-frequency content
+            }
+
+            // Extreme rapid automation: weight/progress jump randomly every
+            // block between 0 and 1 (worst-case for a feedback path).
+            const float weight = weightDist (rng);
+            const float progress = weightDist (rng);
+
+            juce::dsp::AudioBlock<float> block_ (buf);
+            delay.process (block_, weight, progress, clock);
+
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float* out = buf.getReadPointer (ch);
+                for (int i = 0; i < 256; ++i)
+                {
+                    if (! std::isfinite (out[i])) allFinite = false;
+                    if (std::abs (out[i]) > 4.0f) allBounded = false;
+                }
+            }
+        }
+
+        check (allFinite, "DelayModule: no NaN/Inf under extreme rapid weight/progress automation (feedback-runaway stress test)");
+        check (allBounded, "DelayModule: output stays bounded - feedback cannot run away regardless of automation extremes (hard <=0.92 clamp + tanh soft-clip double-guard)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] ReverbModule - finite output at full weight\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 512, 2 };
+        drop::ReverbModule reverb;
+        reverb.prepare (spec);
+
+        bool allFinite = true;
+        for (int block = 0; block < 100; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < 512; ++i)
+                    data[i] = (block == 0 && i == 0) ? 1.0f : 0.0f; // impulse, then silence (tail)
+            }
+
+            juce::dsp::AudioBlock<float> block_ (buf);
+            reverb.process (block_, 1.0f, 1.0f);
+
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float* out = buf.getReadPointer (ch);
+                for (int i = 0; i < 512; ++i)
+                    if (! std::isfinite (out[i])) allFinite = false;
+            }
+        }
+        check (allFinite, "ReverbModule: finite output across an impulse + silence tail at full weight (uses modern dsp::Reverb API exclusively)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.2] Full processBlock() - NaN/Inf/denormal sweep across test signal types\n");
+    {
+        auto runSignalSweep = [] (const char* signalName, std::function<float (int sampleIndex)> generator)
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, 256);
+            p.prepareToPlay (48000.0, 256);
+
+            if (auto* prm = p.parameters.getParameter ("trigger"))
+                prm->setValueNotifyingHost (1.0f);
+
+            bool allFinite = true;
+            int globalSample = 0;
+
+            for (int block = 0; block < 30; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    auto* data = buf.getWritePointer (ch);
+                    for (int i = 0; i < 256; ++i)
+                        data[i] = generator (globalSample + i);
+                }
+                globalSample += 256;
+
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger"))
+                        prm->setValueNotifyingHost (0.0f);
+
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const float* out = buf.getReadPointer (ch);
+                    for (int i = 0; i < 256; ++i)
+                        if (! std::isfinite (out[i])) allFinite = false;
+                }
+            }
+
+            char msg[128];
+            std::snprintf (msg, sizeof (msg), "processBlock(): finite output across an active build with %s input", signalName);
+            check (allFinite, msg);
+            p.releaseResources();
+        };
+
+        runSignalSweep ("silence", [] (int) { return 0.0f; });
+        runSignalSweep ("DC", [] (int) { return 0.5f; });
+        runSignalSweep ("impulse", [] (int i) { return i == 0 ? 1.0f : 0.0f; });
+        runSignalSweep ("sine", [] (int i) { return std::sin ((float) i * 0.05f) * 0.7f; });
+        runSignalSweep ("full-scale", [] (int i) { return (i % 2 == 0) ? 1.0f : -1.0f; });
+
+        std::mt19937 noiseRng (321u);
+        std::uniform_real_distribution<float> noiseDist (-1.0f, 1.0f);
+        runSignalSweep ("noise", [&] (int) { return noiseDist (noiseRng); });
+
+        // Denormal sweep: a tiny, slowly-decaying signal that can drive
+        // recursive filter state (Width's crossover, Delay's feedback
+        // HPF/LPF) toward subnormal values if not handled correctly.
+        runSignalSweep ("denormal-decay", [] (int i) { return 1.0e-30f * std::exp (-(float) i * 0.001f); });
     }
 
     std::printf ("\n%d failure(s)\n", failures);

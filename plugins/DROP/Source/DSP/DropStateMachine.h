@@ -83,6 +83,17 @@ public:
     /** Resets to Idle with zero latched durations (called from prepareToPlay() - a saved project never resumes mid-drop, per architecture.md State Persistence). */
     void reset() noexcept;
 
+    /**
+     * Total (latched) duration of the CURRENT state, in samples (0 for
+     * Idle, which has no scheduled exit). Added in Stage 3 DSP Phase 3.2 so
+     * PluginProcessor can derive "elapsed samples into the current state"
+     * (= currentStateLengthSamples() - samplesUntilNextTransition()) for
+     * IntensityBudget's progress input, without duplicating the
+     * Durations->per-state-length switch that lengthOfState() already
+     * implements privately.
+     */
+    int64_t currentStateLengthSamples() const noexcept { return lengthOfState(state); }
+
 private:
     int64_t lengthOfState(DropState s) const noexcept;
     void enterState(DropState newState) noexcept;

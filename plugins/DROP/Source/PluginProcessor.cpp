@@ -185,6 +185,27 @@ DROPAudioProcessor::DROPAudioProcessor()
                         .withOutput("Output", juce::AudioChannelSet::stereo(), true))
     , parameters(*this, nullptr, "Parameters", createParameterLayout())
 {
+    // Cache all 19 raw parameter pointers once (Stage 3 DSP Phase 3.2
+    // validation carry-over from Phase 3.1 - see PluginProcessor.h comment).
+    triggerParam = parameters.getRawParameterValue("trigger");
+    buildLengthParam = parameters.getRawParameterValue("buildLength");
+    styleParam = parameters.getRawParameterValue("style");
+    intensityParam = parameters.getRawParameterValue("intensity");
+    tensionParam = parameters.getRawParameterValue("tension");
+    chaosParam = parameters.getRawParameterValue("chaos");
+    impactParam = parameters.getRawParameterValue("impact");
+    filterParam = parameters.getRawParameterValue("filter");
+    widthParam = parameters.getRawParameterValue("width");
+    pitchParam = parameters.getRawParameterValue("pitch");
+    gateParam = parameters.getRawParameterValue("gate");
+    stutterParam = parameters.getRawParameterValue("stutter");
+    delayParam = parameters.getRawParameterValue("delay");
+    reverbParam = parameters.getRawParameterValue("reverb");
+    distortionParam = parameters.getRawParameterValue("distortion");
+    digitalParam = parameters.getRawParameterValue("digital");
+    noiseParam = parameters.getRawParameterValue("noise");
+    dryWetParam = parameters.getRawParameterValue("dryWet");
+    outputParam = parameters.getRawParameterValue("output");
 }
 
 DROPAudioProcessor::~DROPAudioProcessor()
@@ -204,8 +225,6 @@ bool DROPAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) cons
 
 void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused(samplesPerBlock);
-
     currentSampleRate = sampleRate;
     musicalClock.prepare(sampleRate);
 
@@ -216,13 +235,38 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     dropStateMachine.reset();
     previousTriggerParamValue = false;
 
-    // Remaining DSP module preparation (the 17 audible DSP modules) arrives
-    // in Stage 3 DSP Phases 3.2-3.5.
+    // Stage 3 DSP Phase 3.2: prepare the six always-process DSP modules.
+    // numChannels/maximumBlockSize drive every module's preallocated
+    // scratch-buffer sizing (RT-safety: no allocation in processBlock()).
+    juce::dsp::ProcessSpec spec;
+    spec.sampleRate = sampleRate;
+    spec.maximumBlockSize = (juce::uint32) juce::jmax(1, samplesPerBlock);
+    spec.numChannels = (juce::uint32) juce::jmax(1, getTotalNumOutputChannels());
+
+    filterModule.prepare(spec);
+    widthModule.prepare(spec);
+    gateModule.prepare(spec);
+    delayModule.prepare(spec);
+    saturationModule.prepare(spec);
+    reverbModule.prepare(spec);
+
+    dryCaptureBuffer.setSize((int) spec.numChannels, (int) spec.maximumBlockSize);
+    dryCaptureBuffer.clear();
+
+    dryWetSmoothed.reset(sampleRate, 0.02);
+    dryWetSmoothed.setCurrentAndTargetValue(dryWetParam != nullptr ? dryWetParam->load() / 100.0f : 1.0f);
+    outputGainSmoothed.reset(sampleRate, 0.02);
+    outputGainSmoothed.setCurrentAndTargetValue(outputParam != nullptr ? juce::Decibels::decibelsToGain(outputParam->load()) : 1.0f);
+
+    // Remaining DSP modules (Pitch/Stutter/Digital/Noise/Vacuum/ImpactEngine
+    // + real IntensityBudget) arrive in Stage 3 DSP Phases 3.3-3.5.
 }
 
 void DROPAudioProcessor::releaseResources()
 {
-    // Cleanup will be added alongside DSP modules in Stage 3 DSP Phases 3.2-3.5.
+    // Cleanup will be added alongside further DSP modules in Stage 3 DSP
+    // Phases 3.3-3.5 if needed; the Phase 3.2 modules' preallocated buffers
+    // are cheap to simply leave allocated until the processor is destroyed.
 }
 
 drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuild()
@@ -245,7 +289,7 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     // mid-build does not shorten/lengthen an in-flight build's
     // sample-position targets").
     static constexpr int kBuildLengthBars[] = { 1, 2, 4, 8, 16 };
-    const int buildLengthChoiceIndex = (int) parameters.getRawParameterValue("buildLength")->load();
+    const int buildLengthChoiceIndex = (int) buildLengthParam->load();
     const int bars = kBuildLengthBars[(size_t) juce::jlimit(0, 4, buildLengthChoiceIndex)];
     d.buildingSamples = (int64_t) std::llround(musicalClock.barsToSamples(bars));
 
@@ -289,6 +333,12 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     if (numSamples <= 0)
         return;
 
+    // Pre-chain dry capture (architecture.md Processing Order step 1:
+    // "must happen before any module touches the buffer") - used by the
+    // final Dry/Wet Mixer stage at the very end of this function.
+    for (int channel = 0; channel < totalNumOutputChannels; ++channel)
+        dryCaptureBuffer.copyFrom(channel, 0, buffer, channel, 0, numSamples);
+
     // MusicalClock: refresh bpm/time-signature/bar-position once per host
     // block (architecture.md: "recomputes samplesPerBeat once per block...
     // never cache across blocks"). Falls back to a fixed 120 BPM / 4/4
@@ -299,12 +349,9 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 
     // TransitionEngine: kept in sync with the `tension` parameter every
     // block (architecture.md: tension "shapes curve steepness /
-    // late-acceleration bias"). Its evaluate() output isn't consumed by any
-    // audible DSP yet (Phase 3.1 scope - no audio-affecting modules exist),
-    // but the component itself is fully implemented and unit-tested this
-    // phase per plan.md's Phase 3.1 component list, ready for Phase 3.2+ to
-    // read `transitionEngine.evaluate(progressWithinBuildingState)`.
-    transitionEngine.setTension(parameters.getRawParameterValue("tension")->load() / 100.0f);
+    // late-acceleration bias"). Consumed via computeIntensityProgress()
+    // during Building (Stage 3 DSP Phase 3.2).
+    transitionEngine.setTension(tensionParam->load() / 100.0f);
 
     // ------------------------------------------------------------------
     // Sample-accurate trigger-event detection (architecture.md
@@ -331,7 +378,7 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // ------------------------------------------------------------------
     int triggerEventOffset = -1; // -1 == no trigger event this block
 
-    const bool triggerParamNow = (parameters.getRawParameterValue("trigger")->load() > 0.5f);
+    const bool triggerParamNow = (triggerParam->load() > 0.5f);
     if (triggerParamNow && !previousTriggerParamValue)
         triggerEventOffset = 0;
     previousTriggerParamValue = triggerParamNow;
@@ -355,10 +402,10 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // Sub-block segmentation loop (architecture.md "Sample-Accurate Events
     // / Block Segmentation"). Splits the block at the trigger-event offset
     // (if any) and every DropStateMachine state transition, advancing the
-    // state machine sample-accurately at each boundary. Audio remains a
-    // real-time-safe PASS-THROUGH this phase - no audible DSP module exists
-    // yet (Stage 3 DSP Phases 3.2-3.5 add FilterModule..NoiseModule, which
-    // will read weights recomputed at these same segment boundaries).
+    // state machine sample-accurately at each boundary. Stage 3 DSP Phase
+    // 3.2: each segment is now also processed through the fixed series DSP
+    // chain (processSegment()) using the state/progress valid for THOSE
+    // samples, before the state machine advances past them.
     // ------------------------------------------------------------------
     int segmentStart = 0;
     while (segmentStart < numSamples)
@@ -382,6 +429,8 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         if (segmentLength <= 0)
             segmentLength = 1; // defensive: guarantee forward progress (tick() above should already have resolved any zero-length boundary)
 
+        processSegment(buffer, segmentStart, (int) segmentLength);
+
         dropStateMachine.advance(segmentLength);
         segmentStart += (int) segmentLength;
     }
@@ -389,6 +438,111 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // Drain any transition that lands exactly on the block's last sample so
     // the state observed at the start of the NEXT block is already correct.
     while (dropStateMachine.tick()) {}
+
+    // ------------------------------------------------------------------
+    // Final Dry/Wet Mixer + Output Gain (architecture.md Processing Order
+    // steps 9-10, always last) - smoothed to avoid zipper per
+    // implementation-spec.md's PARAMETER SMOOTHING. Applied once across the
+    // whole block (not per-segment) since dryWet/output are global,
+    // non-tempo-synced controls with no sample-accuracy requirement.
+    // ------------------------------------------------------------------
+    dryWetSmoothed.setTargetValue(juce::jlimit(0.0f, 1.0f, dryWetParam->load() / 100.0f));
+    outputGainSmoothed.setTargetValue(juce::Decibels::decibelsToGain(outputParam->load()));
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float mixAmt = dryWetSmoothed.getNextValue();
+        const float gain = outputGainSmoothed.getNextValue();
+
+        for (int channel = 0; channel < totalNumOutputChannels; ++channel)
+        {
+            auto* data = buffer.getWritePointer(channel);
+            const float dry = dryCaptureBuffer.getSample(channel, i);
+            const float wet = data[i];
+            data[i] = (dry + (wet - dry) * mixAmt) * gain;
+        }
+    }
+}
+
+void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int startSample, int numSamplesInSegment) noexcept
+{
+    if (numSamplesInSegment <= 0)
+        return;
+
+    juce::dsp::AudioBlock<float> fullBlock(buffer);
+    auto segmentBlock = fullBlock.getSubBlock((size_t) startSample, (size_t) numSamplesInSegment);
+
+    const float progress = computeIntensityProgress();
+
+    // IntensityBudget input: all 10 macro parameters, normalized 0-1
+    // (architecture.md "rawWeight[i] = styleWeight[i](progress) *
+    // (macroParam[i] / 100)"). Pitch/Stutter/Digital/Noise are
+    // budget-tracked here for forward compatibility but not yet consumed by
+    // any DSP module (Phase 3.3 wires them in).
+    std::array<float, (size_t) drop::BudgetModule::Count> macroPercent {};
+    macroPercent[(size_t) drop::BudgetModule::Filter] = filterParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Width] = widthParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Pitch] = pitchParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Gate] = gateParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Stutter] = stutterParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Delay] = delayParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Reverb] = reverbParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Distortion] = distortionParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Digital] = digitalParam->load() / 100.0f;
+    macroPercent[(size_t) drop::BudgetModule::Noise] = noiseParam->load() / 100.0f;
+
+    const float intensity01 = intensityParam->load() / 100.0f;
+    const auto weights = intensityBudget.compute(macroPercent, progress, intensity01);
+
+    // Fixed series order per architecture.md Processing Order / plan.md
+    // Phase 3.2 scope (Pitch/Stutter series slot deferred to Phase 3.3):
+    // Filter -> Width -> Gate -> Delay -> Saturation -> Reverb. Every
+    // module always processes (architecture.md "Always-Process,
+    // Weight-Mix") - weight blends its contribution, never bypasses it.
+    filterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Filter], progress);
+    widthModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Width], progress);
+    gateModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Gate], progress, musicalClock);
+    delayModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Delay], progress, musicalClock);
+    saturationModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Distortion], progress);
+    reverbModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Reverb], progress);
+}
+
+float DROPAudioProcessor::computeIntensityProgress() noexcept
+{
+    switch (dropStateMachine.getState())
+    {
+        case drop::DropState::Idle:
+        case drop::DropState::Arming:
+            return 0.0f;
+
+        case drop::DropState::Building:
+        {
+            const int64_t total = dropStateMachine.currentStateLengthSamples();
+            if (total <= 0)
+                return 1.0f; // zero-length Building edge case -> full progress immediately
+            const int64_t elapsed = total - dropStateMachine.samplesUntilNextTransition();
+            const float t = juce::jlimit(0.0f, 1.0f, (float) ((double) elapsed / (double) total));
+            return transitionEngine.evaluate(t);
+        }
+
+        case drop::DropState::Peak:
+        case drop::DropState::Impact:
+            // Phase 3.2 placeholder: VacuumModule/ImpactEngine (Phase
+            // 3.3-3.4) will gate/override the bus during these states - the
+            // six always-process modules simply hold at full budget here.
+            return 1.0f;
+
+        case drop::DropState::Recovery:
+        {
+            const int64_t total = dropStateMachine.currentStateLengthSamples();
+            if (total <= 0)
+                return 0.0f;
+            const int64_t elapsed = total - dropStateMachine.samplesUntilNextTransition();
+            const float t = juce::jlimit(0.0f, 1.0f, (float) ((double) elapsed / (double) total));
+            return 1.0f - t; // architecture.md: "all module weights ramp back to 0" during Recovery
+        }
+    }
+    return 0.0f;
 }
 
 juce::AudioProcessorEditor* DROPAudioProcessor::createEditor()
