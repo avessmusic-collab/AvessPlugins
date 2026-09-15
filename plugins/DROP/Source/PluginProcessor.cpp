@@ -1,5 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createParameterLayout()
 {
@@ -201,26 +204,77 @@ bool DROPAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) cons
 
 void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // DSP module preparation (MusicalClock, TransitionEngine, DropStateMachine,
-    // and the 17 DSP modules) arrives in Stage 3 DSP Phases 3.1-3.5.
-    juce::ignoreUnused(sampleRate, samplesPerBlock);
+    juce::ignoreUnused(samplesPerBlock);
+
+    currentSampleRate = sampleRate;
+    musicalClock.prepare(sampleRate);
+
+    // DropStateMachine is NEVER restored mid-transition (architecture.md
+    // "State Persistence" > Restore behavior) - every (re)prepare always
+    // starts from Idle, regardless of what setStateInformation() may have
+    // run before or after this call.
+    dropStateMachine.reset();
+    previousTriggerParamValue = false;
+
+    // Remaining DSP module preparation (the 17 audible DSP modules) arrives
+    // in Stage 3 DSP Phases 3.2-3.5.
 }
 
 void DROPAudioProcessor::releaseResources()
 {
-    // Cleanup will be added alongside DSP modules in Stage 3.
+    // Cleanup will be added alongside DSP modules in Stage 3 DSP Phases 3.2-3.5.
+}
+
+drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuild()
+{
+    drop::DropStateMachine::Durations d;
+
+    // Arming: quantize the build's start to the next bar boundary
+    // (architecture.md DropStateMachine > Arming: "snaps to the next
+    // MusicalClock-quantized start point (default: next bar boundary...)").
+    // Uses the bar position MusicalClock last observed at the top of THIS
+    // block (musicalClock.update() is called once per host block, per
+    // architecture.md's "recomputed every block" rule) - a MIDI trigger
+    // landing mid-block is therefore quantized against the block-start bar
+    // position, not its own exact sample offset; documented simplification,
+    // not expected to be audible at any reasonable block size.
+    d.armingToBuildingSamples = (int64_t) std::llround(musicalClock.samplesToNextBarBoundary());
+
+    // Building: buildLength (bars, choice index -> bar count) -> samples,
+    // tempo/time-signature latched now (architecture.md: "a tempo change
+    // mid-build does not shorten/lengthen an in-flight build's
+    // sample-position targets").
+    static constexpr int kBuildLengthBars[] = { 1, 2, 4, 8, 16 };
+    const int buildLengthChoiceIndex = (int) parameters.getRawParameterValue("buildLength")->load();
+    const int bars = kBuildLengthBars[(size_t) juce::jlimit(0, 4, buildLengthChoiceIndex)];
+    d.buildingSamples = (int64_t) std::llround(musicalClock.barsToSamples(bars));
+
+    // Peak/Impact/Recovery: fixed placeholder windows until VacuumModule/
+    // ImpactEngine/DropStyle land (Stage 3 DSP Phases 3.3-3.5, per plan.md -
+    // this phase is scoped to the timing/control skeleton only). These are
+    // deterministic and sample-accurate, not final musical values.
+    d.peakSamples = (int64_t) std::llround(currentSampleRate * kPlaceholderPeakSeconds);
+    d.impactSamples = (int64_t) std::llround(currentSampleRate * kPlaceholderImpactSeconds);
+    d.recoverySamples = (int64_t) std::llround(currentSampleRate * kPlaceholderRecoverySeconds);
+
+    return d;
+}
+
+void DROPAudioProcessor::fireTriggerIfIdle()
+{
+    // DropStateMachine::requestTrigger() itself already enforces re-trigger
+    // safety (no-op unless Idle) - this wrapper exists so
+    // computeDurationsForNewBuild() (which reads parameters/MusicalClock) is
+    // only ever called when a trigger will actually be accepted.
+    if (dropStateMachine.getState() != drop::DropState::Idle)
+        return;
+
+    dropStateMachine.requestTrigger(computeDurationsForNewBuild());
 }
 
 void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused(midiMessages);
-
-    // Stage 1 scaffolding only: real-time-safe pass-through, no allocation,
-    // no locks. The MusicalClock/TransitionEngine/DropStateMachine timing
-    // skeleton and sample-accurate block segmentation (architecture.md
-    // "Sample-Accurate Events / Block Segmentation") land in Stage 3 DSP
-    // Phase 3.1; MIDI trigger-note detection lands alongside it.
 
     // Clear any output channels that didn't come from an input channel
     // (matches JUCE plugin template convention for buses that may not
@@ -231,9 +285,110 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     for (auto channel = totalNumInputChannels; channel < totalNumOutputChannels; ++channel)
         buffer.clear(channel, 0, buffer.getNumSamples());
 
-    // Parameter access example (for Stage 3 DSP implementation):
-    // auto* intensityParam = parameters.getRawParameterValue("intensity");
-    // float intensityValue = intensityParam->load(); // atomic read, real-time safe
+    const int numSamples = buffer.getNumSamples();
+    if (numSamples <= 0)
+        return;
+
+    // MusicalClock: refresh bpm/time-signature/bar-position once per host
+    // block (architecture.md: "recomputes samplesPerBeat once per block...
+    // never cache across blocks"). Falls back to a fixed 120 BPM / 4/4
+    // internal transport (driven by a sample counter, never wall-clock)
+    // when getPlayHead() is null or reports no valid tempo - e.g. a bare
+    // AudioProcessor under test, or a host with no active transport.
+    musicalClock.update(getPlayHead(), numSamples);
+
+    // TransitionEngine: kept in sync with the `tension` parameter every
+    // block (architecture.md: tension "shapes curve steepness /
+    // late-acceleration bias"). Its evaluate() output isn't consumed by any
+    // audible DSP yet (Phase 3.1 scope - no audio-affecting modules exist),
+    // but the component itself is fully implemented and unit-tested this
+    // phase per plan.md's Phase 3.1 component list, ready for Phase 3.2+ to
+    // read `transitionEngine.evaluate(progressWithinBuildingState)`.
+    transitionEngine.setTension(parameters.getRawParameterValue("tension")->load() / 100.0f);
+
+    // ------------------------------------------------------------------
+    // Sample-accurate trigger-event detection (architecture.md
+    // "Sample-Accurate Events / Block Segmentation" + "MIDI Routing").
+    //
+    // `trigger` parameter: AudioProcessorValueTreeState's raw-value
+    // accessor exposes only the CURRENT (already-applied) value, not a list
+    // of sample-accurate automation points within this block - JUCE does
+    // not expose that resolution through APVTS. Its edge is therefore
+    // detected at block granularity (treated as occurring at sample offset
+    // 0 of the block in which it's first observed high) - the finest
+    // resolution actually available without custom per-sample automation
+    // plumbing, and "Host automation Trigger parameter" per
+    // implementation-spec.md always works regardless of triggerMode.
+    //
+    // MIDI trigger note: genuinely sample-accurate via MidiBuffer's
+    // per-event sample offsets. Only scanned when triggerMode == Midi (a
+    // note matching the configured trigger pitch shouldn't accidentally arm
+    // a build if the user hasn't opted into MIDI triggering - e.g. a track
+    // also carrying unrelated MIDI content). TriggerMode::AutoSync is a
+    // documented stub for this phase (architecture.md/plan.md Phase 3.1
+    // scope: "auto may be a stub") - it currently behaves like Manual
+    // (MIDI listener inactive, no auto-triggering logic yet).
+    // ------------------------------------------------------------------
+    int triggerEventOffset = -1; // -1 == no trigger event this block
+
+    const bool triggerParamNow = (parameters.getRawParameterValue("trigger")->load() > 0.5f);
+    if (triggerParamNow && !previousTriggerParamValue)
+        triggerEventOffset = 0;
+    previousTriggerParamValue = triggerParamNow;
+
+    if (getTriggerMode() == TriggerMode::Midi)
+    {
+        const int configuredMidiNote = getMidiTriggerNote();
+        for (const auto metadata : midiMessages)
+        {
+            const auto message = metadata.getMessage();
+            if (message.isNoteOn() && message.getNoteNumber() == configuredMidiNote)
+            {
+                const int offset = metadata.samplePosition;
+                if (triggerEventOffset < 0 || offset < triggerEventOffset)
+                    triggerEventOffset = offset;
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Sub-block segmentation loop (architecture.md "Sample-Accurate Events
+    // / Block Segmentation"). Splits the block at the trigger-event offset
+    // (if any) and every DropStateMachine state transition, advancing the
+    // state machine sample-accurately at each boundary. Audio remains a
+    // real-time-safe PASS-THROUGH this phase - no audible DSP module exists
+    // yet (Stage 3 DSP Phases 3.2-3.5 add FilterModule..NoiseModule, which
+    // will read weights recomputed at these same segment boundaries).
+    // ------------------------------------------------------------------
+    int segmentStart = 0;
+    while (segmentStart < numSamples)
+    {
+        if (triggerEventOffset == segmentStart)
+            fireTriggerIfIdle();
+
+        // Cascade through any exactly-zero-length states (e.g. a bar
+        // boundary already reached, or a zero-duration Peak placeholder)
+        // before consuming any further samples in this segment.
+        while (dropStateMachine.tick()) {}
+
+        int64_t samplesToNextEvent = std::numeric_limits<int64_t>::max();
+        if (triggerEventOffset > segmentStart)
+            samplesToNextEvent = (int64_t) triggerEventOffset - (int64_t) segmentStart;
+
+        int64_t segmentLength = (int64_t) (numSamples - segmentStart);
+        segmentLength = std::min(segmentLength, samplesToNextEvent);
+        segmentLength = std::min(segmentLength, dropStateMachine.samplesUntilNextTransition());
+
+        if (segmentLength <= 0)
+            segmentLength = 1; // defensive: guarantee forward progress (tick() above should already have resolved any zero-length boundary)
+
+        dropStateMachine.advance(segmentLength);
+        segmentStart += (int) segmentLength;
+    }
+
+    // Drain any transition that lands exactly on the block's last sample so
+    // the state observed at the start of the NEXT block is already correct.
+    while (dropStateMachine.tick()) {}
 }
 
 juce::AudioProcessorEditor* DROPAudioProcessor::createEditor()
@@ -318,10 +473,15 @@ void DROPAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 
     parameters.replaceState(newState);
 
-    // DropStateMachine itself is NEVER restored mid-transition - Stage 3
-    // DSP always initializes it to Idle regardless of saved state
-    // (architecture.md "Restore behavior"). No state-machine member exists
-    // yet in Stage 1, so there is nothing to reset here.
+    // DropStateMachine itself is NEVER restored mid-transition (architecture.md
+    // "Restore behavior") - it always initializes to Idle. Deliberately NOT
+    // reset here: setStateInformation() can be called off the audio thread
+    // (per JUCE, and possibly while the audio thread is concurrently
+    // running), and DropStateMachine has no locks/atomics (by design - it's
+    // audio-thread-only, per architecture.md "Thread Boundaries"), so
+    // touching it from here would be a data race. prepareToPlay() - which
+    // every host calls before/around a state load in the normal plugin
+    // lifecycle - already unconditionally resets it to Idle.
 }
 
 //==============================================================================

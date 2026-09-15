@@ -20,12 +20,18 @@ juce_add_plugin(DROP
     NEEDS_WEB_BROWSER TRUE
 )
 
-# Source files
-target_sources(DROP
-    PRIVATE
-        Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp
+# Real translation units shared by the plugin and the console test runner
+# (mirrors plugins/KICKR/CMakeLists.txt's KICKR_CORE_SOURCES convention).
+set(DROP_CORE_SOURCES
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+    # DSP - Stage 3 DSP Phase 3.1 (Timing & Control Skeleton)
+    Source/DSP/MusicalClock.cpp
+    Source/DSP/TransitionEngine.cpp
+    Source/DSP/DropStateMachine.cpp
 )
+
+target_sources(DROP PRIVATE ${DROP_CORE_SOURCES})
 
 # Include paths
 target_include_directories(DROP
@@ -91,3 +97,38 @@ target_compile_definitions(DROP
 #         JUCE_WEB_BROWSER=1
 #         JUCE_USE_CURL=0
 # )
+
+# ---------------------------------------------------------------------------
+# Console test runner - Stage 3 DSP unit-test checkpoints, one block of
+# checks per DSP phase (not part of the default build; run:
+#   cmake --build build --target DROP_Tests
+#   ./build/plugins/DROP/DROP_Tests
+# Mirrors plugins/KICKR/CMakeLists.txt's KICKR_Tests convention exactly.
+# ---------------------------------------------------------------------------
+add_executable(DROP_Tests EXCLUDE_FROM_ALL
+    Source/Tests/RunTests.cpp
+    ${DROP_CORE_SOURCES}
+)
+target_include_directories(DROP_Tests PRIVATE Source)
+target_link_libraries(DROP_Tests
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(DROP_Tests
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+)

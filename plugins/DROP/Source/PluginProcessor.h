@@ -1,6 +1,9 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include "DSP/MusicalClock.h"
+#include "DSP/TransitionEngine.h"
+#include "DSP/DropStateMachine.h"
 #include <atomic>
 #include <vector>
 
@@ -16,8 +19,12 @@
  * Stage 1 (Foundation + Shell) scope: build system, full 19-parameter
  * APVTS, and non-parameter ValueTree state scaffolding (trigger mode, MIDI
  * trigger note, Chaos seed, custom tension curve points, UI expanded flag).
- * processBlock() is a real-time-safe pass-through - no DSP modules exist
- * yet (those arrive in Stage 3 DSP Phases 3.1-3.5).
+ *
+ * Stage 3 DSP Phase 3.1 ("Timing & Control Skeleton") scope: MusicalClock +
+ * TransitionEngine + DropStateMachine + sample-accurate block segmentation
+ * in processBlock(), wired to the `trigger` parameter and the configurable
+ * MIDI trigger note. Audio remains a real-time-safe PASS-THROUGH - no
+ * audible DSP modules exist yet (those arrive in Stage 3 DSP Phases 3.2-3.5).
  */
 class DROPAudioProcessor : public juce::AudioProcessor
 {
@@ -96,8 +103,49 @@ public:
     const std::vector<CurvePoint>& getTensionCurvePoints() const noexcept { return tensionCurvePoints; }
     void setTensionCurvePoints(std::vector<CurvePoint> points) { tensionCurvePoints = std::move(points); }
 
+    // ------------------------------------------------------------------
+    // Stage 3 DSP Phase 3.1 (Timing & Control Skeleton) - read-only access
+    // to the DropStateMachine's current state. Audio-thread-owned data;
+    // reading it from elsewhere (e.g. a future GUI Timer poll) is safe
+    // because DropState is a small enum (effectively atomic-word-sized
+    // reads/writes on every supported platform), but this accessor exists
+    // primarily for the Phase 3.1 unit test harness
+    // (Source/Tests/RunTests.cpp) - real GUI visualization will use the
+    // dedicated lock-free ring buffer described in architecture.md
+    // "Thread Boundaries" once DropGraph exists (Stage 3 GUI Phase 4.3).
+    // ------------------------------------------------------------------
+    drop::DropState getCurrentDropState() const noexcept { return dropStateMachine.getState(); }
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // Sample-accurate trigger/state-machine segmentation helpers
+    // (architecture.md "Sample-Accurate Events / Block Segmentation").
+    // Fires Idle->Arming (re-trigger safety enforced by DropStateMachine
+    // itself) using durations computed fresh for this build.
+    void fireTriggerIfIdle();
+    drop::DropStateMachine::Durations computeDurationsForNewBuild();
+
+    // Stage 3 DSP Phase 3.1 components (declared before non-DSP private
+    // state below, matching this repo's DSP-members-first convention).
+    drop::MusicalClock musicalClock;
+    drop::TransitionEngine transitionEngine;
+    drop::DropStateMachine dropStateMachine;
+
+    double currentSampleRate = 44100.0;
+
+    // Edge-detection state for the `trigger` APVTS parameter (see
+    // processBlock()'s trigger-event-detection comment for why this is
+    // block-granular rather than true sub-sample-accurate).
+    bool previousTriggerParamValue = false;
+
+    // Phase 3.1 placeholder Peak/Impact/Recovery window lengths - VacuumModule/
+    // ImpactEngine/DropStyle (which will supply real, Style-authored values)
+    // land in Stage 3 DSP Phases 3.3-3.5. These are deterministic,
+    // sample-accurate placeholders, not final musical values.
+    static constexpr double kPlaceholderPeakSeconds = 0.01;
+    static constexpr double kPlaceholderImpactSeconds = 0.2;
+    static constexpr double kPlaceholderRecoverySeconds = 0.5;
 
     // Default seed is a fixed constant so a freshly-loaded plugin is still
     // deterministic (architecture.md "State Persistence" restore behavior).
