@@ -41,6 +41,7 @@ Only high-value parameters are exposed (JUCE APVTS). Advanced per-module DSP int
 | Reverb | 0–100% | macro | Advanced: impact/recovery reverb weight |
 | Distortion | 0–100% | macro | Advanced: saturation module weight |
 | Noise | 0–100% | macro | Advanced: noise riser weight |
+| Digital | 0–100% | macro | Advanced: bit/SR crush weight (added as 19th param per architecture.md resolution) |
 | Dry/Wet | 0–100% | 100% | Global mix |
 | Output | -inf–+12 dB | 0 dB | Output gain |
 

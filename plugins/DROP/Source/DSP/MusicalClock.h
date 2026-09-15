@@ -30,7 +30,14 @@ enum class MusicalDivision
     Quarter,        // 1/4
     Eighth,         // 1/8
     Sixteenth,      // 1/16
-    ThirtySecond    // 1/32
+    ThirtySecond,   // 1/32
+    // Stage 3 DSP Phase 3.3 (additive, non-breaking): StutterModule and
+    // VacuumModule both need 1/64-note timing (implementation-spec.md
+    // STUTTERMODULE "Lengths from 1/4 through 1/64", architecture.md
+    // VacuumModule "1/64-1/16 note"), one step finer than architecture.md's
+    // Phase 3.1-era division table went. Every existing division/enum value
+    // above is unchanged.
+    SixtyFourth     // 1/64
 };
 
 class MusicalClock

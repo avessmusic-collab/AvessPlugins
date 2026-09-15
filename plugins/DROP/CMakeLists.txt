@@ -37,6 +37,13 @@ set(DROP_CORE_SOURCES
     Source/DSP/SaturationModule.cpp
     Source/DSP/ReverbModule.cpp
     Source/DSP/IntensityBudget.cpp
+    # DSP - Stage 3 DSP Phase 3.3 (Creative DSP Modules)
+    Source/DSP/PitchModule.cpp
+    Source/DSP/StutterModule.cpp
+    Source/DSP/DigitalModule.cpp
+    Source/DSP/VacuumModule.cpp
+    Source/DSP/NoiseModule.cpp
+    Source/Core/DropRandomizer.cpp
 )
 
 target_sources(DROP PRIVATE ${DROP_CORE_SOURCES})

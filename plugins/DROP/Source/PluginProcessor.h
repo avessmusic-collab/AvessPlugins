@@ -11,6 +11,12 @@
 #include "DSP/SaturationModule.h"
 #include "DSP/ReverbModule.h"
 #include "DSP/IntensityBudget.h"
+#include "DSP/PitchModule.h"
+#include "DSP/StutterModule.h"
+#include "DSP/DigitalModule.h"
+#include "DSP/VacuumModule.h"
+#include "DSP/NoiseModule.h"
+#include "Core/DropRandomizer.h"
 #include <array>
 #include <atomic>
 #include <vector>
@@ -43,6 +49,15 @@
  * steps 9-10). Every module always processes (architecture.md
  * "Always-Process, Weight-Mix Architecture") - IntensityBudget-computed
  * weights (0-1) blend each module's contribution, never bypass it.
+ *
+ * Stage 3 DSP Phase 3.3 ("Creative DSP Modules") scope: PitchModule,
+ * StutterModule, DigitalModule, NoiseModule, and VacuumModule added,
+ * plus Source/Core/DropRandomizer.h (Chaos seed management). Wired into
+ * the fixed series order Filter -> Width -> Gate -> Pitch -> Stutter ->
+ * Delay -> Saturation -> Digital, with Noise as a parallel add and
+ * VacuumModule state-gated to the DropStateMachine Peak state (per
+ * architecture.md's Processing Chain / this phase's explicit wiring
+ * instructions - full ImpactEngine coordination lands in Phase 3.4).
  */
 class DROPAudioProcessor : public juce::AudioProcessor
 {
@@ -177,6 +192,22 @@ private:
     drop::SaturationModule saturationModule;
     drop::ReverbModule reverbModule;
     drop::IntensityBudget intensityBudget;
+
+    // Stage 3 DSP Phase 3.3 components (Creative DSP Modules). Wired into
+    // processSegment() in the architecture.md-mandated fixed series order:
+    // ... Gate -> Pitch -> Stutter -> Delay -> Saturation -> Digital -> [+
+    // Noise parallel add] -> Reverb. VacuumModule is State-gated (not
+    // IntensityBudget weight-blended) - applied only during the
+    // DropStateMachine Peak state (this phase's placeholder pre-Impact
+    // window; full ImpactEngine coordination lands in Phase 3.4).
+    // DropRandomizer is control-rate only (Chaos seed management +
+    // musically-constrained randomization, all draws latched at Arming).
+    drop::PitchModule pitchModule;
+    drop::StutterModule stutterModule;
+    drop::DigitalModule digitalModule;
+    drop::VacuumModule vacuumModule;
+    drop::NoiseModule noiseModule;
+    drop::DropRandomizer dropRandomizer;
 
     // Pre-chain dry capture (architecture.md Processing Order step 1) +
     // final global Dry/Wet mix / Output gain smoothing (steps 9-10) -

@@ -104,6 +104,7 @@ double MusicalClock::beatsForDivision(MusicalDivision division) noexcept
         case MusicalDivision::Eighth:       return 0.5;
         case MusicalDivision::Sixteenth:    return 0.25;
         case MusicalDivision::ThirtySecond: return 0.125;
+        case MusicalDivision::SixtyFourth:  return 0.0625;
     }
     return 1.0;
 }

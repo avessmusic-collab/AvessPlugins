@@ -250,6 +250,13 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     saturationModule.prepare(spec);
     reverbModule.prepare(spec);
 
+    // Stage 3 DSP Phase 3.3 modules.
+    pitchModule.prepare(spec);
+    stutterModule.prepare(spec);
+    digitalModule.prepare(spec);
+    vacuumModule.prepare(spec);
+    noiseModule.prepare(spec);
+
     dryCaptureBuffer.setSize((int) spec.numChannels, (int) spec.maximumBlockSize);
     dryCaptureBuffer.clear();
 
@@ -258,8 +265,8 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     outputGainSmoothed.reset(sampleRate, 0.02);
     outputGainSmoothed.setCurrentAndTargetValue(outputParam != nullptr ? juce::Decibels::decibelsToGain(outputParam->load()) : 1.0f);
 
-    // Remaining DSP modules (Pitch/Stutter/Digital/Noise/Vacuum/ImpactEngine
-    // + real IntensityBudget) arrive in Stage 3 DSP Phases 3.3-3.5.
+    // Remaining DSP (ImpactEngine + real Style-driven IntensityBudget)
+    // arrives in Stage 3 DSP Phases 3.4-3.5.
 }
 
 void DROPAudioProcessor::releaseResources()
@@ -312,6 +319,26 @@ void DROPAudioProcessor::fireTriggerIfIdle()
     // only ever called when a trigger will actually be accepted.
     if (dropStateMachine.getState() != drop::DropState::Idle)
         return;
+
+    // Stage 3 DSP Phase 3.3: Chaos RNG draws happen ONLY here, at Arming
+    // (architecture.md DropRandomizer: "RNG draws happen only at
+    // well-defined points: once at Arming... latching this build's jitter
+    // values"). Reseeded from the persisted `chaos` seed EVERY Arming (see
+    // DropRandomizer.h's class doc comment for the determinism rationale).
+    dropRandomizer.setSeed(getChaosSeed());
+    dropRandomizer.setChaosAmount01(chaosParam->load() / 100.0f);
+    dropRandomizer.drawForNewBuild();
+
+    pitchModule.setSemitoneTarget(dropRandomizer.getPitchSemitoneChoice());
+    stutterModule.setMode(static_cast<drop::StutterMode>(dropRandomizer.getStutterModeChoice()));
+    noiseModule.setSeed(dropRandomizer.getSeed());
+    // GateModule/DelayModule division-choice jitter consumption and the
+    // per-module IntensityBudget intensity jitter (dropRandomizer.
+    // getIntensityJitter()) are deferred to Phase 3.5's real
+    // Style-driven IntensityBudget (architecture.md: jitter is applied
+    // INSIDE IntensityBudget's weight computation, which is still a fixed
+    // Phase 3.2 placeholder until then) - drawn deterministically above
+    // regardless, so the values are already latched and ready to consume.
 
     dropStateMachine.requestTrigger(computeDurationsForNewBuild());
 }
@@ -476,9 +503,9 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
 
     // IntensityBudget input: all 10 macro parameters, normalized 0-1
     // (architecture.md "rawWeight[i] = styleWeight[i](progress) *
-    // (macroParam[i] / 100)"). Pitch/Stutter/Digital/Noise are
-    // budget-tracked here for forward compatibility but not yet consumed by
-    // any DSP module (Phase 3.3 wires them in).
+    // (macroParam[i] / 100)"). As of Phase 3.3, all 10 weights are consumed
+    // by a real DSP module below (Pitch/Stutter/Digital/Noise joined
+    // Filter/Width/Gate/Delay/Reverb/Distortion from Phase 3.2).
     std::array<float, (size_t) drop::BudgetModule::Count> macroPercent {};
     macroPercent[(size_t) drop::BudgetModule::Filter] = filterParam->load() / 100.0f;
     macroPercent[(size_t) drop::BudgetModule::Width] = widthParam->load() / 100.0f;
@@ -494,17 +521,42 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     const float intensity01 = intensityParam->load() / 100.0f;
     const auto weights = intensityBudget.compute(macroPercent, progress, intensity01);
 
-    // Fixed series order per architecture.md Processing Order / plan.md
-    // Phase 3.2 scope (Pitch/Stutter series slot deferred to Phase 3.3):
-    // Filter -> Width -> Gate -> Delay -> Saturation -> Reverb. Every
+    // Fixed series order per architecture.md Processing Order step 4:
+    // Filter -> Width -> Gate -> Pitch -> Stutter -> Delay -> Saturation ->
+    // Digital, then Noise as a PARALLEL ADD (step 5, not a series insert),
+    // then Reverb (Phase 3.2's placeholder position - the Recovery-phase
+    // tail's final restructuring per Processing Order step 9 lands in
+    // Phase 3.4 alongside ImpactEngine). Every IntensityBudget-managed
     // module always processes (architecture.md "Always-Process,
     // Weight-Mix") - weight blends its contribution, never bypasses it.
     filterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Filter], progress);
     widthModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Width], progress);
     gateModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Gate], progress, musicalClock);
+    pitchModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Pitch], progress);
+    stutterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Stutter], progress, musicalClock);
     delayModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Delay], progress, musicalClock);
     saturationModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Distortion], progress);
+    digitalModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Digital], progress,
+                           tensionParam->load() / 100.0f, chaosParam->load() / 100.0f);
+    noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f);
     reverbModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Reverb], progress);
+
+    // VacuumModule: state-gated (NOT IntensityBudget weight-blended,
+    // architecture.md Processing Chain "Routing notes") - applied to the
+    // WHOLE post-chain bus only during the DropStateMachine Peak state
+    // (this phase's placeholder pre-Impact window - see
+    // kPlaceholderPeakSeconds; real Vacuum-window timing/coordination with
+    // ImpactEngine lands in Phase 3.4). The segmentation loop in
+    // processBlock() guarantees the entire segment stays within Peak
+    // before this runs (segments are split exactly at state transitions).
+    if (dropStateMachine.getState() == drop::DropState::Peak)
+    {
+        const int64_t total = dropStateMachine.currentStateLengthSamples();
+        const int64_t remaining = dropStateMachine.samplesUntilNextTransition();
+        const int64_t elapsedAtSegmentStart = total - remaining;
+        const float depthAmount = impactParam->load() / 100.0f;
+        vacuumModule.process(segmentBlock, (double) elapsedAtSegmentStart, (double) total, depthAmount);
+    }
 }
 
 float DROPAudioProcessor::computeIntensityProgress() noexcept

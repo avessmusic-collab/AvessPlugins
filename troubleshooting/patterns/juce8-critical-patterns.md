@@ -1306,6 +1306,55 @@ HTML/JS itself.
 
 **Documented in:** `troubleshooting/gui-issues/webview-stale-cached-page-across-relaunches-Transitionist-20260827.md`
 
+## 25. dsp::DelayLine Multi-Tap Reads - readPos Advances ONLY When Told (CRITICAL)
+
+### ❌ WRONG (every tap reads a frozen, increasingly-stale position)
+
+```cpp
+// Multiple taps per sample, all with updateReadPointer=false:
+for (auto& tap : taps)
+    out += delayLine.popSample (ch, tap.delaySamples, /*updateReadPointer*/ false);
+// readPos NEVER advances -> "delaySamples" is resolved against a readPos
+// frozen at its initial value while writePos keeps moving. Every read
+// drifts further from "N samples behind now". (Found in DROP Phase 3.3:
+// pitch shifter produced structurally wrong output.)
+```
+
+### ✅ CORRECT
+
+```cpp
+// Advance readPos exactly ONCE per sample: last tap passes true.
+for (size_t i = 0; i < taps.size(); ++i)
+{
+    const bool last = (i == taps.size() - 1);
+    out += delayLine.popSample (ch, taps[i].delaySamples, /*updateReadPointer*/ last);
+}
+// All taps read relative to a consistent "now"; readPos stays in lockstep
+// with writePos. Verified against juce_DelayLine.cpp internals (JUCE 8.0.15).
+```
+
+## 26. Granular/SOLA Pitch Shifting - Blind Overlap-Add Fails on Tonal Material (CRITICAL)
+
+### Problem
+
+Blind (non-pitch-synchronous) granular/SOLA pitch shifting with N overlapping
+grains self-cancels on tonal input: at each grain restart the content-position
+offset between overlapping voices is (hop)*(1-ratio) samples, whose phase at
+the signal's period T0 is arbitrary - destructive for many ratio/T0 pairs.
+No grain-length tuning fixes all musical ratios at once (proven for DROP:
+requested +1 and +2 semitones measured the SAME output ratio; -12 ran 7% flat).
+
+### ✅ CORRECT (pitch-synchronous retriggering)
+
+At each voice restart, estimate the input's local period with a bounded-lag
+normalized autocorrelation (once per crossfade event, preallocated scratch,
+RT-safe), then search +/-T0_est/2 around the nominal offset for the delay that
+best phase-matches the outgoing voice's tail and snap to it; gate on a minimum
+correlation (~0.5) and fall back to the nominal offset for noise/transients.
+A +/-T0/2 window PROVABLY contains a phase-aligned offset. Result in DROP:
+all 8 quantized semitone steps within 0.1% (was failing 5%).
+See plugins/DROP/Source/DSP/PitchModule.* (GranularGrainEngine).
+
 ---
 
 All patterns documented with full context in:
