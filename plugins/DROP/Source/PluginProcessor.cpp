@@ -257,6 +257,9 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     vacuumModule.prepare(spec);
     noiseModule.prepare(spec);
 
+    // Stage 3 DSP Phase 3.4.
+    impactEngine.prepare(spec);
+
     dryCaptureBuffer.setSize((int) spec.numChannels, (int) spec.maximumBlockSize);
     dryCaptureBuffer.clear();
 
@@ -300,13 +303,25 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     const int bars = kBuildLengthBars[(size_t) juce::jlimit(0, 4, buildLengthChoiceIndex)];
     d.buildingSamples = (int64_t) std::llround(musicalClock.barsToSamples(bars));
 
-    // Peak/Impact/Recovery: fixed placeholder windows until VacuumModule/
-    // ImpactEngine/DropStyle land (Stage 3 DSP Phases 3.3-3.5, per plan.md -
-    // this phase is scoped to the timing/control skeleton only). These are
-    // deterministic and sample-accurate, not final musical values.
-    d.peakSamples = (int64_t) std::llround(currentSampleRate * kPlaceholderPeakSeconds);
-    d.impactSamples = (int64_t) std::llround(currentSampleRate * kPlaceholderImpactSeconds);
-    d.recoverySamples = (int64_t) std::llround(currentSampleRate * kPlaceholderRecoverySeconds);
+    // Stage 3 DSP Phase 3.4: Peak's ENTIRE duration IS the Vacuum window
+    // (architecture.md VacuumModule: "1/64-1/16 note... e.g. 1/32 note at
+    // current tempo"; see processSegment()'s ImpactEngine doc comment for
+    // this phase's Peak/Impact handoff design). Clamped to a fixed
+    // millisecond floor so extreme tempos never produce a too-short-to-be-
+    // click-free window (see kVacuumMinFloorSeconds's doc comment).
+    const double vacuumWindowSamples = musicalClock.divisionToSamples(drop::MusicalDivision::ThirtySecond, false);
+    const double vacuumFloorSamples = currentSampleRate * kVacuumMinFloorSeconds;
+    d.peakSamples = (int64_t) std::llround(juce::jmax(vacuumWindowSamples, vacuumFloorSamples));
+
+    // Impact: ImpactEngine's own burst/sub/tail window (see
+    // kImpactWindowSeconds's doc comment) - DropStyle-authored per-Style
+    // values land in Phase 3.5.
+    d.impactSamples = (int64_t) std::llround(currentSampleRate * kImpactWindowSeconds);
+
+    // Recovery: half a bar (architecture.md: "Style-configurable, e.g.
+    // 1/8-1 bar") - a musically-derived settle window that scales with
+    // tempo, replacing the Phase 3.1-era fixed-seconds placeholder.
+    d.recoverySamples = (int64_t) std::llround(musicalClock.divisionToSamples(drop::MusicalDivision::Half, false));
 
     return d;
 }
@@ -332,6 +347,7 @@ void DROPAudioProcessor::fireTriggerIfIdle()
     pitchModule.setSemitoneTarget(dropRandomizer.getPitchSemitoneChoice());
     stutterModule.setMode(static_cast<drop::StutterMode>(dropRandomizer.getStutterModeChoice()));
     noiseModule.setSeed(dropRandomizer.getSeed());
+    impactEngine.setSeed(dropRandomizer.getSeed()); // deterministic burst noise (a "seeded equivalent" of NoiseModule's generator, internally XORed - see ImpactEngine::kSeedXorConstant)
     // GateModule/DelayModule division-choice jitter consumption and the
     // per-module IntensityBudget intensity jitter (dropRandomizer.
     // getIntensityJitter()) are deferred to Phase 3.5's real
@@ -521,21 +537,51 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     const float intensity01 = intensityParam->load() / 100.0f;
     const auto weights = intensityBudget.compute(macroPercent, progress, intensity01);
 
+    const float impactAmount01 = juce::jlimit(0.0f, 1.0f, impactParam->load() / 100.0f);
+
+    // Stage 3 DSP Phase 3.4: ImpactEngine's coordination-drive values
+    // (architecture.md: ImpactEngine "drives existing modules into a
+    // specific configuration") are computed BEFORE the series chain below
+    // so the SAME-segment WidthModule/SaturationModule calls can be driven
+    // by them. Non-zero ONLY during the Impact state (state-gated, like
+    // VacuumModule below) - architecture.md Processing Chain "Routing
+    // notes": "VacuumModule and ImpactEngine are state-gated, not
+    // weight-blended."
+    drop::ImpactEngine::DriveValues impactDrive {};
+    if (dropStateMachine.getState() == drop::DropState::Impact)
+    {
+        const int64_t total = dropStateMachine.currentStateLengthSamples();
+        const int64_t remaining = dropStateMachine.samplesUntilNextTransition();
+        const int64_t elapsedAtSegmentStart = total - remaining;
+        impactDrive = drop::ImpactEngine::computeDriveValues((double) elapsedAtSegmentStart, (double) total, impactAmount01);
+    }
+
     // Fixed series order per architecture.md Processing Order step 4:
     // Filter -> Width -> Gate -> Pitch -> Stutter -> Delay -> Saturation ->
     // Digital, then Noise as a PARALLEL ADD (step 5, not a series insert),
-    // then Reverb (Phase 3.2's placeholder position - the Recovery-phase
-    // tail's final restructuring per Processing Order step 9 lands in
-    // Phase 3.4 alongside ImpactEngine). Every IntensityBudget-managed
-    // module always processes (architecture.md "Always-Process,
-    // Weight-Mix") - weight blends its contribution, never bypasses it.
+    // then Reverb (Phase 3.2's placeholder Building/Recovery-ambience
+    // position - Impact's own SEPARATE short-tail reverb instance lives
+    // inside ImpactEngine, not here). Every IntensityBudget-managed module
+    // always processes (architecture.md "Always-Process, Weight-Mix") -
+    // weight blends its contribution, never bypasses it.
     filterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Filter], progress);
-    widthModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Width], progress);
+    widthModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Width], progress, impactDrive.widthExpansionAmount);
     gateModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Gate], progress, musicalClock);
     pitchModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Pitch], progress);
     stutterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Stutter], progress, musicalClock);
     delayModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Delay], progress, musicalClock);
-    saturationModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Distortion], progress);
+
+    // SaturationModule: Impact-state overlay (architecture.md ImpactEngine
+    // "light SaturationModule pass") is blended in via max() - never LESS
+    // saturation than the shared budget alone would produce, but also never
+    // double-applies when the budget weight already exceeds the light
+    // overlay amount (it won't, since IntensityBudget's weight is 0
+    // throughout Peak AND Impact - see computeIntensityProgress() - but
+    // max() is the correct, order-independent way to express "at least this
+    // much").
+    const float saturationWeight = juce::jmax(weights.value[(size_t) drop::BudgetModule::Distortion], impactDrive.saturationOverlayAmount);
+    saturationModule.process(segmentBlock, saturationWeight, progress);
+
     digitalModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Digital], progress,
                            tensionParam->load() / 100.0f, chaosParam->load() / 100.0f);
     noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f);
@@ -543,19 +589,41 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
 
     // VacuumModule: state-gated (NOT IntensityBudget weight-blended,
     // architecture.md Processing Chain "Routing notes") - applied to the
-    // WHOLE post-chain bus only during the DropStateMachine Peak state
-    // (this phase's placeholder pre-Impact window - see
-    // kPlaceholderPeakSeconds; real Vacuum-window timing/coordination with
-    // ImpactEngine lands in Phase 3.4). The segmentation loop in
-    // processBlock() guarantees the entire segment stays within Peak
-    // before this runs (segments are split exactly at state transitions).
+    // WHOLE post-chain bus only during the DropStateMachine Peak state.
+    // Stage 3 DSP Phase 3.4: Peak's ENTIRE latched duration now IS the
+    // Vacuum window (see computeDurationsForNewBuild()) - the segmentation
+    // loop in processBlock() guarantees the entire segment stays within
+    // Peak before this runs (segments are split exactly at state
+    // transitions).
     if (dropStateMachine.getState() == drop::DropState::Peak)
     {
         const int64_t total = dropStateMachine.currentStateLengthSamples();
         const int64_t remaining = dropStateMachine.samplesUntilNextTransition();
         const int64_t elapsedAtSegmentStart = total - remaining;
-        const float depthAmount = impactParam->load() / 100.0f;
-        vacuumModule.process(segmentBlock, (double) elapsedAtSegmentStart, (double) total, depthAmount);
+        vacuumModule.process(segmentBlock, (double) elapsedAtSegmentStart, (double) total, impactAmount01);
+    }
+
+    // ImpactEngine: state-gated to Impact (Stage 3 DSP Phase 3.4). Peak's
+    // Vacuum collapse ramps its floor back up to unity EXACTLY as Peak ends
+    // (VacuumModule::computeGain() returns 1.0 at elapsed >= totalWindow) -
+    // the segmentation loop guarantees a fresh segment starts at Impact's
+    // very first sample, so ImpactEngine's own attack begins exactly where
+    // Vacuum's release ends, with NO overlap and therefore no
+    // double-envelope bump (architecture.md VacuumModule config: "the ramp
+    // back up and Impact's attack are designed together so there is no
+    // double-envelope bump"). computeIntensityProgress() already ducked the
+    // 10 shared-budget modules to 0 starting back at Peak entry (so their
+    // ~20ms internal smoothers are GENUINELY settled by now, not merely
+    // targeting 0 - a post-3.4-review bugfix) and holds them there through
+    // this Impact state too (TRANSIENT PRESERVATION: "duck the effect
+    // chain, not the source") - ImpactEngine's own additive sub-hit/burst/
+    // tail content is layered on top of that ducked (near-dry) bus here.
+    if (dropStateMachine.getState() == drop::DropState::Impact)
+    {
+        const int64_t total = dropStateMachine.currentStateLengthSamples();
+        const int64_t remaining = dropStateMachine.samplesUntilNextTransition();
+        const int64_t elapsedAtSegmentStart = total - remaining;
+        impactEngine.process(segmentBlock, (double) elapsedAtSegmentStart, (double) total, impactAmount01);
     }
 }
 
@@ -579,10 +647,29 @@ float DROPAudioProcessor::computeIntensityProgress() noexcept
 
         case drop::DropState::Peak:
         case drop::DropState::Impact:
-            // Phase 3.2 placeholder: VacuumModule/ImpactEngine (Phase
-            // 3.3-3.4) will gate/override the bus during these states - the
-            // six always-process modules simply hold at full budget here.
-            return 1.0f;
+            // Stage 3 DSP Phase 3.4 bugfix (TRANSIENT PRESERVATION,
+            // implementation-spec.md: "duck the effect chain, not the
+            // source"): the 10 shared-budget modules snap to 0 starting at
+            // PEAK ENTRY (not Impact entry) - each module's OWN internal
+            // weightSmoothed ramp (~20ms) needs real elapsed time to settle
+            // fully to 0, and Peak's ENTIRE latched duration (>= 25ms even
+            // at the floor-clamped extreme-tempo edge case - see
+            // kVacuumMinFloorSeconds) comfortably provides that, so by the
+            // time Impact's first sample arrives the shared chain is
+            // GENUINELY transparent (weight exactly 0, smoothers settled),
+            // not merely "targeting 0." Ducking during Peak is also
+            // musically free: VacuumModule multiplies the whole bus down
+            // during this same window anyway (architecture.md ImpactEngine
+            // config: "weights the state machine snaps toward ~0 for most
+            // modules right at Impact" - interpreted here as starting the
+            // snap at the Vacuum collapse that immediately precedes it, per
+            // coordinator guidance, since a lingering ~20ms of stale
+            // pre-collapse weight is exactly what let a test impulse placed
+            // at Impact's first sample get partially reprocessed before this
+            // fix). ImpactEngine's own sub/burst/width-expansion/light-
+            // saturation/tail additions are layered on top of this ducked
+            // bus in processSegment(), independently of this progress value.
+            return 0.0f;
 
         case drop::DropState::Recovery:
         {

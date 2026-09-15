@@ -16,6 +16,7 @@
 #include "DSP/DigitalModule.h"
 #include "DSP/VacuumModule.h"
 #include "DSP/NoiseModule.h"
+#include "DSP/ImpactEngine.h"
 #include "Core/DropRandomizer.h"
 #include <array>
 #include <atomic>
@@ -58,6 +59,24 @@
  * VacuumModule state-gated to the DropStateMachine Peak state (per
  * architecture.md's Processing Chain / this phase's explicit wiring
  * instructions - full ImpactEngine coordination lands in Phase 3.4).
+ *
+ * Stage 3 DSP Phase 3.4 ("ImpactEngine") scope: Peak's ENTIRE latched
+ * duration now IS the musically-derived Vacuum window (1/32 note, floor-
+ * clamped to >= 25ms - see kVacuumMinFloorSeconds), and a new Impact-state
+ * window (architecture.md: "typically 50-300ms") is state-gated to
+ * Source/DSP/ImpactEngine.* - a coordinator adding a band-limited 40-80Hz
+ * sub-hit + noise burst on top of the bus, driving WidthModule's
+ * stereo-expansion and a light SaturationModule overlay for the same
+ * segment, and owning a dedicated short-tail ReverbModule instance.
+ * computeIntensityProgress() ducks the 10 shared-budget modules to 0
+ * starting at PEAK ENTRY (not Impact entry - a post-3.4-review bugfix: each
+ * module's own ~20ms internal weightSmoothed ramp needs real elapsed time
+ * to actually settle to 0, not just start targeting it, so the duck must
+ * begin early enough that it has GENUINELY finished by Impact's first
+ * sample) and holds at 0 through the entire Impact state (TRANSIENT
+ * PRESERVATION: "duck the effect chain, not the source") so the (near-)dry
+ * source transient survives the drop. Recovery's musically-derived duration
+ * (half a bar) also replaces its Phase 3.1-era fixed-seconds placeholder.
  */
 class DROPAudioProcessor : public juce::AudioProcessor
 {
@@ -167,14 +186,16 @@ private:
     // loop, once per segment.
     void processSegment(juce::AudioBuffer<float>& buffer, int startSample, int numSamplesInSegment) noexcept;
 
-    // Stage 3 DSP Phase 3.2: derives the 0-1 "budget progress" input fed to
-    // IntensityBudget::compute() from the DropStateMachine's CURRENT state -
-    // 0 during Idle/Arming, TransitionEngine::evaluate(t) during Building
-    // (t = elapsed/total within Building), 1.0 during Peak/Impact (Phase
-    // 3.2 placeholder - VacuumModule/ImpactEngine in Phase 3.3/3.4 will
-    // gate/override the bus during these states), ramping 1.0->0.0 across
-    // Recovery (architecture.md: "all module weights ramp back to 0" during
-    // Recovery).
+    // Derives the 0-1 "budget progress" input fed to IntensityBudget::compute()
+    // from the DropStateMachine's CURRENT state - 0 during Idle/Arming,
+    // TransitionEngine::evaluate(t) during Building (t = elapsed/total
+    // within Building), 0.0 across BOTH Peak and Impact (Stage 3 DSP Phase
+    // 3.4 bugfix, TRANSIENT PRESERVATION: "duck the effect chain, not the
+    // source" - ducking starts at Peak/Vacuum entry, not Impact entry, so
+    // each module's internal weightSmoothed ramp has genuinely settled to 0
+    // by Impact's first sample; see this method's .cpp doc comment),
+    // ramping 1.0->0.0 across Recovery (architecture.md: "all module
+    // weights ramp back to 0" during Recovery).
     float computeIntensityProgress() noexcept;
 
     // Stage 3 DSP Phase 3.1 components (declared before non-DSP private
@@ -209,6 +230,12 @@ private:
     drop::NoiseModule noiseModule;
     drop::DropRandomizer dropRandomizer;
 
+    // Stage 3 DSP Phase 3.4 component. State-gated to the DropStateMachine
+    // Impact state (like VacuumModule is state-gated to Peak) - see
+    // processSegment()'s ImpactEngine doc comment for the Vacuum->Impact
+    // handoff design.
+    drop::ImpactEngine impactEngine;
+
     // Pre-chain dry capture (architecture.md Processing Order step 1) +
     // final global Dry/Wet mix / Output gain smoothing (steps 9-10) -
     // preallocated in prepareToPlay(), RT-safe.
@@ -223,13 +250,34 @@ private:
     // block-granular rather than true sub-sample-accurate).
     bool previousTriggerParamValue = false;
 
-    // Phase 3.1 placeholder Peak/Impact/Recovery window lengths - VacuumModule/
-    // ImpactEngine/DropStyle (which will supply real, Style-authored values)
-    // land in Stage 3 DSP Phases 3.3-3.5. These are deterministic,
-    // sample-accurate placeholders, not final musical values.
-    static constexpr double kPlaceholderPeakSeconds = 0.01;
-    static constexpr double kPlaceholderImpactSeconds = 0.2;
-    static constexpr double kPlaceholderRecoverySeconds = 0.5;
+    // Stage 3 DSP Phase 3.4: musically-derived Peak(Vacuum)/Impact/Recovery
+    // window lengths, replacing the Phase 3.1-era fixed-seconds placeholders.
+    // DropStyle-authored per-Style values (architecture.md: Vacuum
+    // duration/floor, Impact tail length, Recovery length are all
+    // Style-configurable) land in Phase 3.5 - these are deterministic,
+    // documented architecture defaults, not yet Style-driven.
+    //
+    // kVacuumMinFloorSeconds: architecture.md Implementation Risks >
+    // VacuumModule Click-Free Collapse fallback: "clamp the minimum Vacuum
+    // duration to a fixed millisecond floor (e.g. 8-10ms)... a
+    // barely-longer Vacuum is a smaller compromise than an audible click."
+    // Stage 3 DSP Phase 3.4 bugfix: raised from the originally-documented
+    // 8ms to 25ms - this floor now does DOUBLE duty. Since
+    // computeIntensityProgress() ducks the 10 shared-budget modules to 0
+    // starting at PEAK entry (not Impact entry - see that method's doc
+    // comment), Peak's ACTUAL duration must exceed each module's internal
+    // weightSmoothed ramp time (~20ms, see e.g. WidthModule.cpp's
+    // kWeightSmoothingSeconds) with margin, so the duck has GENUINELY
+    // settled (not merely started ramping) by the time Impact's first
+    // sample arrives, at every tempo (jmax() below guarantees Peak's
+    // duration is never shorter than this floor, regardless of how short a
+    // literal 1/32 note becomes at extreme tempos).
+    // kImpactWindowSeconds: architecture.md ImpactEngine config: "typically
+    // 50-300ms" - a fixed, non-tempo-synced duration (unlike Peak/Vacuum,
+    // this window is characterized by the sub-hit's own AR-envelope timing,
+    // not a musical division).
+    static constexpr double kVacuumMinFloorSeconds = 0.025;
+    static constexpr double kImpactWindowSeconds = 0.22;
 
     // Default seed is a fixed constant so a freshly-loaded plugin is still
     // deterministic (architecture.md "State Persistence" restore behavior).

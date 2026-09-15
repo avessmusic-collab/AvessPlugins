@@ -34,6 +34,24 @@
       - Zero-allocation-in-process() conventions: verified by code review
         (every module preallocates in prepare()), per plan.md's own wording
         for this test criterion - not a runtime-checkable assertion.
+
+    Phase 3.4 (ImpactEngine) scope, per plugins/DROP/.ideas/plan.md:
+      - Sub-hit spectral concentration in the 40-80Hz band (isolated FFT
+        check via ImpactEngine::renderSubHitOnly(), same conventions -
+        Hann-windowed juce::dsp::FFT + parabolic peak interpolation - as the
+        Phase 3.3 GranularGrainEngine FFT test).
+      - Vacuum->Impact handoff: windowed-RMS single-trough (no
+        double-envelope bump) verification, using VacuumModule + ImpactEngine
+        directly (isolated from the other 10 always-process modules'
+        interference) on a sustained test tone.
+      - Full processBlock() transient-preservation check: a mono impulse
+        placed exactly at the Impact-state's first sample (computed via the
+        same deterministic fallback-transport arithmetic style as the Phase
+        3.3 end-to-end test) survives with a documented fraction of its dry
+        amplitude.
+      - `impact` parameter scaling monotonicity (0/50/100%).
+      - Low-end soft-clip safety on bass-heavy material at full impact.
+      - Short-tail reverb decay bounded within a generous tail window.
 */
 #include "PluginProcessor.h"
 #include "DSP/MusicalClock.h"
@@ -51,6 +69,7 @@
 #include "DSP/DigitalModule.h"
 #include "DSP/VacuumModule.h"
 #include "DSP/NoiseModule.h"
+#include "DSP/ImpactEngine.h"
 #include "Core/DropRandomizer.h"
 
 #include <algorithm>
@@ -1501,21 +1520,23 @@ int main()
         bool sawRecovery = false;
         bool backToIdle = false;
 
-        // Block-budget arithmetic (fixed post-3.3-review: the original 600-
-        // block budget was too short and the build never even reached
-        // Peak): no playhead is set, so MusicalClock uses its 120 BPM/4/4
-        // fallback transport - samplesPerBeat = 24000, barLength = 96000.
-        // buildLength choice index 0 = 1 bar -> buildingSamples = 96000.
-        // Arming quantizes to the next bar boundary, but MusicalClock's
-        // fallback transport has already been advanced by this SAME
-        // block's 256 samples before the trigger is detected (update() runs
-        // before trigger detection in processBlock()), so
-        // armingToBuildingSamples = 96000 - 256 = 95744, not ~0. Plus the
-        // Phase 3.1-era placeholder Peak/Impact/Recovery windows (480 +
-        // 9600 + 24000 samples). Total = 95744 + 96000 + 480 + 9600 + 24000
-        // = 225824 samples = ~883 blocks of 256 - the old 600-block
-        // (153600-sample) budget fell well short of even reaching Peak.
-        // 1300 blocks (332800 samples) gives a ~47% safety margin.
+        // Block-budget arithmetic (updated post-Phase-3.4: Peak/Impact/
+        // Recovery are now musically-derived, not Phase-3.1-era fixed-
+        // seconds placeholders - see computeDurationsForNewBuild()): no
+        // playhead is set, so MusicalClock uses its 120 BPM/4/4 fallback
+        // transport - samplesPerBeat = 24000, barLength = 96000. buildLength
+        // choice index 0 = 1 bar -> buildingSamples = 96000. Arming
+        // quantizes to the next bar boundary, but MusicalClock's fallback
+        // transport has already been advanced by this SAME block's 256
+        // samples before the trigger is detected (update() runs before
+        // trigger detection in processBlock()), so armingToBuildingSamples
+        // = 96000 - 256 = 95744, not ~0. Plus this phase's musically-derived
+        // windows: peakSamples (Vacuum, 1/32 note @120bpm) = 3000,
+        // impactSamples (fixed 220ms) = 10560, recoverySamples (half a bar)
+        // = 48000. Total = 95744 + 96000 + 3000 + 10560 + 48000 = 253304
+        // samples = ~990 blocks of 256. The existing 1300-block (332800-
+        // sample) budget still comfortably covers this (~31% margin), so it
+        // is intentionally left unchanged this phase.
         for (int block = 0; block < 1300 && ! backToIdle; ++block)
         {
             juce::AudioBuffer<float> buf (2, 256);
@@ -1553,6 +1574,362 @@ int main()
         check (allFinite, "Full build (Idle->Arming->Building->Peak->Impact->Recovery->Idle): finite output throughout, with PitchModule/StutterModule/DigitalModule/NoiseModule/VacuumModule all wired into the live chain");
         check (sawPeak && sawImpact && sawRecovery && backToIdle, "Full build reaches Peak (VacuumModule engaged), Impact, Recovery, and returns to Idle within the test's block budget");
         p.releaseResources();
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.4] ImpactEngine - sub-hit spectral concentration (isolated FFT check)\n");
+    {
+        constexpr double testSampleRate = 48000.0;
+        constexpr int fftOrder = 13;
+        constexpr int fftSize = 1 << fftOrder; // 8192 samples (~170ms @48kHz) - comfortably spans the sub-hit's ~1.5ms attack + 120ms decay
+
+        juce::dsp::ProcessSpec spec { testSampleRate, 4096, 2 };
+        drop::ImpactEngine engine;
+        engine.prepare (spec);
+
+        std::vector<float> subOut ((size_t) fftSize, 0.0f);
+        engine.renderSubHitOnly (subOut.data(), fftSize, 0.0, 1.0f);
+
+        juce::dsp::FFT fft (fftOrder);
+        juce::dsp::WindowingFunction<float> window (fftSize, juce::dsp::WindowingFunction<float>::hann);
+
+        std::vector<float> fftData ((size_t) (2 * fftSize), 0.0f);
+        for (int i = 0; i < fftSize; ++i)
+            fftData[(size_t) i] = subOut[(size_t) i];
+        window.multiplyWithWindowingTable (fftData.data(), fftSize);
+        fft.performRealOnlyForwardTransform (fftData.data());
+
+        const double binHz = testSampleRate / (double) fftSize;
+        const int bandLowBin  = (int) std::floor (40.0 / binHz);
+        const int bandHighBin = (int) std::ceil  (80.0 / binHz);
+
+        double bandEnergy = 0.0, totalEnergy = 0.0;
+        int peakBin = 1;
+        double peakMag2 = 0.0;
+        for (int bin = 1; bin < fftSize / 2; ++bin)
+        {
+            const float re = fftData[(size_t) (2 * bin)];
+            const float im = fftData[(size_t) (2 * bin + 1)];
+            const double mag2 = (double) re * (double) re + (double) im * (double) im;
+            totalEnergy += mag2;
+            if (bin >= bandLowBin && bin <= bandHighBin) bandEnergy += mag2;
+            if (mag2 > peakMag2) { peakMag2 = mag2; peakBin = bin; }
+        }
+
+        // Parabolic (quadratic) log-magnitude interpolation for sub-bin peak
+        // precision - same convention as the Phase 3.3 GranularGrainEngine
+        // FFT test.
+        auto magAt = [&] (int bin) -> float
+        {
+            const float re = fftData[(size_t) (2 * bin)];
+            const float im = fftData[(size_t) (2 * bin + 1)];
+            return std::sqrt (re * re + im * im) + 1.0e-12f;
+        };
+        float delta = 0.0f;
+        if (peakBin > 1 && peakBin < fftSize / 2 - 1)
+        {
+            const float lm = std::log (magAt (peakBin - 1));
+            const float cm = std::log (magAt (peakBin));
+            const float rm = std::log (magAt (peakBin + 1));
+            const float denom = lm - 2.0f * cm + rm;
+            if (std::abs (denom) > 1.0e-9f)
+                delta = juce::jlimit (-0.5f, 0.5f, 0.5f * (lm - rm) / denom);
+        }
+        const double measuredPeakHz = ((double) peakBin + (double) delta) * binHz;
+        const double concentration = totalEnergy > 1.0e-20 ? bandEnergy / totalEnergy : 0.0;
+
+        std::printf ("  peak frequency: %.2f Hz, energy concentration in [40,80]Hz: %.4f\n", measuredPeakHz, concentration);
+        check (measuredPeakHz >= 35.0 && measuredPeakHz <= 85.0,
+              "ImpactEngine sub-hit: FFT-measured peak frequency lands within (a small margin around) the 40-80Hz target band");
+        check (concentration >= 0.85,
+              "ImpactEngine sub-hit: at least 85% of spectral energy is concentrated within the 40-80Hz band (band-limited, per architecture.md)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.4] Vacuum->Impact handoff - no double-envelope bump\n");
+    {
+        // Isolated from the other 10 always-process modules (which are
+        // ducked to weight==0 during the real Impact state anyway, per
+        // computeIntensityProgress() - testing VacuumModule+ImpactEngine
+        // directly avoids any risk of unrelated modules' own dynamics
+        // (e.g. GateModule's rhythmic gating during Peak) polluting the
+        // RMS-envelope shape being verified here).
+        constexpr double testSampleRate = 48000.0;
+        constexpr int peakSamples = 3000;             // Vacuum window
+        constexpr int impactAnalysisSamples = 300;    // just past the sub-hit's ~72-sample (1.5ms @48kHz) attack
+        constexpr int totalSamples = peakSamples + impactAnalysisSamples;
+
+        juce::dsp::ProcessSpec spec { testSampleRate, 8192, 2 };
+        drop::VacuumModule vacuum;
+        vacuum.prepare (spec);
+        drop::ImpactEngine impact;
+        impact.prepare (spec);
+        impact.setSeed (2026u);
+
+        juce::AudioBuffer<float> buf (2, totalSamples);
+        constexpr float testFreqHz = 1000.0f; // period = 48 samples - well resolved by the 150-sample analysis window below
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto* data = buf.getWritePointer (ch);
+            for (int i = 0; i < totalSamples; ++i)
+                data[i] = 0.3f * std::sin ((float) (2.0 * juce::MathConstants<double>::pi * testFreqHz * (double) i / testSampleRate));
+        }
+
+        juce::dsp::AudioBlock<float> fullBlock (buf);
+        auto peakBlock = fullBlock.getSubBlock (0, (size_t) peakSamples);
+        vacuum.process (peakBlock, 0.0, (double) peakSamples, 0.5f);
+
+        auto impactBlock = fullBlock.getSubBlock ((size_t) peakSamples, (size_t) impactAnalysisSamples);
+        impact.process (impactBlock, 0.0, 10560.0, 0.5f);
+
+        // Windowed RMS envelope (window == 150 samples == ~3.1 periods of
+        // the 1kHz test tone, for a stable per-window RMS estimate; both
+        // peakSamples and totalSamples are exact multiples of it).
+        constexpr int windowLen = 150;
+        const int numWindows = totalSamples / windowLen;
+        std::vector<double> rms ((size_t) numWindows, 0.0);
+        const float* ch0 = buf.getReadPointer (0);
+        for (int w = 0; w < numWindows; ++w)
+        {
+            double sumSq = 0.0;
+            for (int i = 0; i < windowLen; ++i)
+            {
+                const float s = ch0[w * windowLen + i];
+                sumSq += (double) s * (double) s;
+            }
+            rms[(size_t) w] = std::sqrt (sumSq / (double) windowLen);
+        }
+
+        int minIdx = 0;
+        for (int w = 1; w < numWindows; ++w)
+            if (rms[(size_t) w] < rms[(size_t) minIdx]) minIdx = w;
+
+        const double tol = 0.15 * rms[0];
+        bool monotoneDownThenUp = true;
+        for (int w = 0; w < minIdx; ++w)
+            if (rms[(size_t) (w + 1)] > rms[(size_t) w] + tol) monotoneDownThenUp = false;
+        for (int w = minIdx; w < numWindows - 1; ++w)
+            if (rms[(size_t) (w + 1)] < rms[(size_t) w] - tol) monotoneDownThenUp = false;
+
+        std::printf ("  rms[0]=%.4f (pre-vacuum) rms[min@%d]=%.4f (floor) rms[last]=%.4f (post-attack) -> %s\n",
+                     rms[0], minIdx, rms[(size_t) minIdx], rms[(size_t) (numWindows - 1)],
+                     monotoneDownThenUp ? "single-trough" : "HUMP DETECTED");
+
+        check (monotoneDownThenUp,
+              "Vacuum->Impact handoff: windowed RMS envelope is monotone-down-then-up around a SINGLE trough (no intermediate hump/double-envelope) across the collapse+attack region");
+        check (rms[(size_t) minIdx] < rms[0] * 0.5,
+              "Vacuum->Impact handoff: the collapse floor is meaningfully lower than the pre-vacuum level (a genuine collapse occurred)");
+        check (rms[(size_t) (numWindows - 1)] > rms[(size_t) minIdx] * 1.3,
+              "Vacuum->Impact handoff: the level recovers measurably above the floor by the end of the analyzed attack window");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.4] Full processBlock() - transient preservation through the Vacuum->Impact window\n");
+    {
+        // Exact deterministic sample-offset arithmetic (same fallback-
+        // transport style as the Phase 3.3 end-to-end test, updated for
+        // this phase's musically-derived durations - see
+        // computeDurationsForNewBuild()): 120 BPM/4/4 @48kHz ->
+        // samplesPerBeat=24000, barLength=96000; buildLength choice index 0
+        // = 1 bar. armingToBuildingSamples = 96000-256 = 95744 (fallback
+        // transport already advanced by the triggering block's own 256
+        // samples before the trigger is detected); buildingSamples =
+        // 96000; peakSamples (Vacuum, 1/32 note @120bpm) = 3000; Impact
+        // begins at global sample 95744+96000+3000 = 194744 -> block index
+        // 194744/256 = 760 (remainder 184, i.e. local sample offset 184
+        // within block 760).
+        constexpr int blockSize = 256;
+        constexpr int impactStartBlock = 760;
+        constexpr int impactStartLocalOffset = 184;
+
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+
+        if (auto* prm = p.parameters.getParameter ("buildLength"))
+            prm->setValueNotifyingHost (0.0f); // shortest: 1 bar
+        if (auto* prm = p.parameters.getParameter ("trigger"))
+            prm->setValueNotifyingHost (1.0f);
+
+        constexpr float dryImpulseAmplitude = 1.0f;
+        float peakAbsAroundImpulse = 0.0f;
+        bool allFinite = true;
+
+        for (int block = 0; block <= impactStartBlock + 4; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+
+            if (block == impactStartBlock)
+            {
+                // Mono (L==R) impulse: WidthModule's M/S side signal is
+                // exactly 0 for identical L/R content, so the stereo-
+                // expansion drive hook cannot attenuate/distort this
+                // specific test signal - isolates amplitude preservation
+                // from stereo-image effects entirely.
+                buf.setSample (0, impactStartLocalOffset, dryImpulseAmplitude);
+                buf.setSample (1, impactStartLocalOffset, dryImpulseAmplitude);
+            }
+
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger"))
+                    prm->setValueNotifyingHost (0.0f);
+
+            if (block >= impactStartBlock && block <= impactStartBlock + 1)
+            {
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const float* out = buf.getReadPointer (ch);
+                    for (int i = 0; i < blockSize; ++i)
+                    {
+                        if (! std::isfinite (out[i])) allFinite = false;
+                        peakAbsAroundImpulse = std::max (peakAbsAroundImpulse, std::abs (out[i]));
+                    }
+                }
+            }
+        }
+
+        check (allFinite, "transient-preservation test: finite output around the impulse");
+
+        // Documented fraction: >= 50% of the dry impulse's amplitude must
+        // survive through the Vacuum->Impact window (TRANSIENT PRESERVATION:
+        // "duck the effect chain, not the source" - the shared 10
+        // IntensityBudget modules are exactly/near-exactly transparent at
+        // weight==0, and ImpactEngine's own additive content at the exact
+        // hand-off sample is itself near-zero at that instant, so a much
+        // higher fraction is expected in practice; 50% is a conservative,
+        // clearly-motivated floor, not a precise prediction).
+        check (peakAbsAroundImpulse >= dryImpulseAmplitude * 0.5f,
+              "Impact window: source transient (impulse placed exactly at Impact-state entry) survives with >= 50% of its dry amplitude - TRANSIENT PRESERVATION ('duck the effect chain, not the source')");
+        p.releaseResources();
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.4] ImpactEngine - impact parameter scaling monotonicity (0/50/100%%)\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 4096, 2 };
+
+        auto measureRms = [&] (float impactAmount01) -> double
+        {
+            drop::ImpactEngine engine;
+            engine.prepare (spec);
+            engine.setSeed (4242u); // identical seed across all three runs -> same burst noise sequence, isolating the effect of impactAmount01 alone
+
+            constexpr int numSamples = 4096;
+            juce::AudioBuffer<float> buf (2, numSamples);
+            buf.clear();
+
+            juce::dsp::AudioBlock<float> block (buf);
+            engine.process (block, 0.0, 10560.0, impactAmount01);
+
+            double sumSq = 0.0;
+            const float* out = buf.getReadPointer (0);
+            for (int i = 0; i < numSamples; ++i)
+                sumSq += (double) out[i] * (double) out[i];
+            return std::sqrt (sumSq / (double) numSamples);
+        };
+
+        const double rms0   = measureRms (0.0f);
+        const double rms50  = measureRms (0.5f);
+        const double rms100 = measureRms (1.0f);
+
+        std::printf ("  impact=0%%: rms=%.6f  impact=50%%: rms=%.6f  impact=100%%: rms=%.6f\n", rms0, rms50, rms100);
+
+        check (rms0 < 1.0e-6, "ImpactEngine: impact==0% produces exactly-silent (no sub/burst/tail) output on a silent bus");
+        check (rms50 > rms0 + 1.0e-6, "ImpactEngine: impact==50% produces measurably more energy than impact==0%");
+        check (rms100 > rms50 + 1.0e-6, "ImpactEngine: impact==100% produces measurably more energy than impact==50% (monotonic scaling)");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.4] ImpactEngine - low-end soft-clip safety on bass-heavy material\n");
+    {
+        juce::dsp::ProcessSpec spec { 48000.0, 4096, 2 };
+        drop::ImpactEngine engine;
+        engine.prepare (spec);
+        engine.setSeed (99u);
+
+        constexpr int numSamples = 4096;
+        juce::AudioBuffer<float> buf (2, numSamples);
+        constexpr float bassAmplitude = 5.0f; // deliberately far beyond unity - stress-tests the soft-clip
+        constexpr float bassFreqHz = 55.0f;   // low-frequency-dominant content, well within the low band (below the ~120Hz crossover)
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto* data = buf.getWritePointer (ch);
+            for (int i = 0; i < numSamples; ++i)
+                data[i] = bassAmplitude * std::sin ((float) (2.0 * juce::MathConstants<double>::pi * bassFreqHz * (double) i / 48000.0));
+        }
+
+        juce::dsp::AudioBlock<float> block (buf);
+        engine.process (block, 0.0, 10560.0, 1.0f); // full impact -> maximal additive content on top of the already-huge bass input
+
+        bool allFinite = true;
+        float peakAbs = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float* out = buf.getReadPointer (ch);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                if (! std::isfinite (out[i])) allFinite = false;
+                peakAbs = std::max (peakAbs, std::abs (out[i]));
+            }
+        }
+
+        std::printf ("  bass-heavy input amplitude=%.1f -> output peak=%.4f\n", bassAmplitude, peakAbs);
+        check (allFinite, "ImpactEngine: finite output on bass-heavy full-scale-exceeding material at full impact");
+        check (peakAbs < bassAmplitude * 0.5f,
+              "ImpactEngine: low-end soft-clip safety measurably bounds a bass-heavy input well below its raw (5x-over-unity) amplitude");
+    }
+
+    //==========================================================================
+    std::printf ("\n[Phase 3.4] ImpactEngine - short-tail reverb decay is bounded within the tail window\n");
+    {
+        constexpr double testSampleRate = 48000.0;
+        constexpr int chunkSize = 512;
+        constexpr int totalSamples = (int) (testSampleRate * 4.0); // 4 seconds - generously beyond any expected short-tail decay
+
+        juce::dsp::ProcessSpec spec { testSampleRate, chunkSize, 2 };
+        drop::ImpactEngine engine;
+        engine.prepare (spec);
+        engine.setSeed (5150u);
+
+        std::vector<float> captured ((size_t) totalSamples, 0.0f);
+        int elapsed = 0;
+        while (elapsed < totalSamples)
+        {
+            const int thisChunk = std::min (chunkSize, totalSamples - elapsed);
+            juce::AudioBuffer<float> buf (2, thisChunk);
+            buf.clear();
+
+            juce::dsp::AudioBlock<float> block (buf);
+            engine.process (block, (double) elapsed, 10560.0, 1.0f); // impactAmount01 held at 1.0 throughout -> the reverb's own natural decay is what's being measured, not a weight fade-out
+
+            const float* out = buf.getReadPointer (0);
+            for (int i = 0; i < thisChunk; ++i)
+                captured[(size_t) (elapsed + i)] = out[i];
+
+            elapsed += thisChunk;
+        }
+
+        auto windowRms = [&] (int startSample, int len) -> double
+        {
+            double sumSq = 0.0;
+            for (int i = 0; i < len; ++i)
+                sumSq += (double) captured[(size_t) (startSample + i)] * (double) captured[(size_t) (startSample + i)];
+            return std::sqrt (sumSq / (double) len);
+        };
+
+        const double earlyRms = windowRms ((int) (0.5 * testSampleRate), (int) (0.05 * testSampleRate));  // ~0.5s in, 50ms window
+        const double lateRms  = windowRms (totalSamples - (int) (0.05 * testSampleRate), (int) (0.05 * testSampleRate)); // last 50ms of the 4s capture
+
+        std::printf ("  earlyRms (~0.5s)=%.6f  lateRms (~4s)=%.6f\n", earlyRms, lateRms);
+
+        check (lateRms < 0.05,
+              "ImpactEngine short-tail reverb: tail RMS falls below a bounded threshold well within a generous 4-second window (not an unbounded/sustained tail)");
+        check (earlyRms > lateRms * 2.0,
+              "ImpactEngine short-tail reverb: tail genuinely decays over time (later measurement is meaningfully quieter than an earlier one), not stuck/growing");
     }
 
     std::printf ("\n%d failure(s)\n", failures);

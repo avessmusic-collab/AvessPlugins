@@ -30,7 +30,7 @@ void WidthModule::reset()
     highGainSmoothed.setCurrentAndTargetValue(1.0f);
 }
 
-void WidthModule::process(juce::dsp::AudioBlock<float> block, float weight, float progress) noexcept
+void WidthModule::process(juce::dsp::AudioBlock<float> block, float weight, float progress, float expansionOverride01) noexcept
 {
     const int numSamples = (int) block.getNumSamples();
     if (block.getNumChannels() < 2 || numSamples <= 0)
@@ -38,6 +38,7 @@ void WidthModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
 
     weight = juce::jlimit(0.0f, 1.0f, weight);
     progress = juce::jlimit(0.0f, 1.0f, progress);
+    expansionOverride01 = juce::jlimit(0.0f, 1.0f, expansionOverride01);
 
     auto* left = block.getChannelPointer(0);
     auto* right = block.getChannelPointer(1);
@@ -55,8 +56,15 @@ void WidthModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
     const float highBandTargetGain = juce::jlimit(0.1f, 1.8f, 1.0f + (narrowTarget - 1.0f) * weight);
     const float lowBandTargetGain = juce::jlimit(0.05f, 1.0f, 1.0f + (kLowBandProtectedGain - 1.0f) * weight);
 
+    // Stage 3 DSP Phase 3.4: Impact-state stereo-expansion drive (see class
+    // doc comment) - blends the HIGH band's target further toward
+    // kExpandTargetGain on TOP of (not instead of) the normal weight-mix
+    // narrow/expand blend above, independent of `weight`.
+    const float expandedHighBandTargetGain = juce::jlimit(0.1f, 1.8f,
+        highBandTargetGain + (kExpandTargetGain - highBandTargetGain) * expansionOverride01);
+
     lowGainSmoothed.setTargetValue(lowBandTargetGain);
-    highGainSmoothed.setTargetValue(highBandTargetGain);
+    highGainSmoothed.setTargetValue(expandedHighBandTargetGain);
 
     for (int i = 0; i < numSamples; ++i)
     {
