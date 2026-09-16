@@ -1,11 +1,112 @@
 # DROP Changelog
 
+### Fixed — 2026-09-16 (curve progression)
+
+- **Build was inaudible until the final bar** (user DAW report: "I chose 8 bars and the effect
+  is active only at the end of the last bar, while the visual on the curve moves"). Two
+  compounding causes, both fixed:
+  1. **Module-sweep curves were far too end-weighted at the default tension (root cause).**
+     Audibility during a build is dominated by each module's internal sweep position (filter
+     cutoff, gate rate, pitch amount, noise rise), all driven by `TransitionEngine::evaluate()`.
+     At the `tension` default of 50% these measured `Exponential=0.031` and
+     `LateAcceleration=0.075` at 25% elapsed — the filter had swept 3–8% two bars into an
+     8-bar build and nothing was audible. `LateAcceleration` was the worst offender, reaching
+     only 22.5% of its progress across 75% of the build.
+     Fix: every shaped curve is now blended toward linear by `TransitionEngine::kCurveBlendDepth`
+     (0.6), and LateAcceleration's slow-ramp factor was raised 0.3 → 0.55. New values at default
+     tension: Exponential 0.119/0.306/0.592, SCurve 0.168/0.500/0.832, LateAcceleration
+     0.183/0.365/0.548 at t=0.25/0.50/0.75. Curve character, relative ordering, and the
+     `tension` parameter's meaning are all preserved (verified by test).
+  2. **Style weight curves were double-curved.** `IntensityBudget::computeWeights()` received
+     the already-curved transition progress and then evaluated the Style's own end-weighted
+     curves (EaseInCubic/PeakLate) on top of it. Weight position input is now the linear
+     elapsed-build fraction, so any given curve is applied exactly once; the curved value keeps
+     driving module-internal sweeps and the UI's tension readout. Seven styles' `budgetEnvelope`
+     shapes were retuned EaseInCubic → Linear (endpoints unchanged) to suit the single
+     application.
+- **Visualization/audio agreement:** `VisualizationFrame::progress` (curve dot + progress strip)
+  now uses the same linear basis as the audio weights; `tensionLevel` carries the curved value.
+
+Tests: 167/167. New `[POST-1.0] Module-sweep progression` block asserts every curve type clears
+musical early/mid-build floors at default tension (pre-fix Exponential and LateAcceleration
+failed all three), that shaped curves stay meaningfully end-weighted vs Linear, and that
+`tension` still controls end-weighting. Three Phase 3.1 curve-shape assertions were superseded
+with documented rationale (the shapes changed deliberately; properties still asserted).
+
+
 ## v1.0.0 — 2026-09-16
 
 Stays at 1.0.0 per this repo's factory convention (a plugin stays at 1.0.0 for
 every improvement until public release). This entry documents a post-1.0.0
 user-directed improvement session fixing three real-DAW-testing bugs plus one
 approved feature.
+
+### Fixed (fourth pass — "curve progression" bug, same session)
+
+- **"I chose 8 bars and the effect is active only at the end of the last bar,
+  while the visual dot on the curve moves."** — real-DAW-testing report.
+  **Root cause:** stacked end-weighted easing. `PluginProcessor::
+  computeIntensityProgress()`'s `Building` case returned
+  `transitionEngine.evaluate(t)` — the CURVED (already end-weighted:
+  SCurve/Exponential/LateAcceleration all bias "most tension near the end")
+  progress. `PluginProcessor::processSegment()` then fed that SAME curved
+  value into `IntensityBudget::computeWeights()`, which evaluates it against
+  the active Style's OWN authored `moduleCurves[i]`/`budgetEnvelope` — most of
+  which (`EaseInCubic`, `PeakLate`) are ALSO end-weighted shapes
+  (`Source/Core/DropStyle.cpp`). Two end-weighted curves composed together
+  compress virtually all audible weight into the last ~10-15% of the build —
+  at 8 bars, effectively "only the last bar."
+  **Fix:** single-curve-application architecture. `computeIntensityProgress()`
+  (CURVED) is now consumed ONLY by (a) each fixed-series DSP module's own
+  internal-sweep `progress` argument (filter cutoff sweep, gate/stutter
+  step-length interpolation, pitch-ramp shape, delay feedback ramp,
+  saturation drive, digital severity, noise rise/brightness, reverb
+  roomSize — all simple linear lerps inside their own modules, verified by
+  source inspection, so a single curve application there is musically
+  correct and matches `tension`'s documented job), and (b) the new
+  `VisualizationFrame::tensionLevel` field ("what the user feels", ramping
+  with the shaped curve). A new `computeLinearBuildProgress()` method
+  (LINEAR elapsed-build fraction, same Building-only state-gating) now feeds
+  `IntensityBudget::computeWeights()` instead — the single point where a
+  Style's `moduleCurves`/`budgetEnvelope` shapes are applied, now applied
+  exactly once. `VisualizationFrame::progress` (the curve dot's X-position /
+  progress-strip fill) switched to this SAME linear basis, so the dot's
+  motion now genuinely agrees with the audio weights it represents — the
+  user explicitly compared the two. See `PluginProcessor.h`'s
+  `computeIntensityProgress()`/`computeLinearBuildProgress()` doc comments
+  for the full decision matrix.
+- **Style table adjustment.** 7 of the 16 Styles (Clean EDM, Big Room, Dark
+  Techno, Cinematic, Vocal Build, Synth Build, Destroy) authored
+  `budgetEnvelope` as `EaseInCubic` — reasonable when composed with an
+  already-curved input (the pre-fix bug), but still far too end-weighted on
+  its own once applied to the linear elapsed fraction directly (verified by
+  construction in `RunTests.cpp`'s new weight-progression test). Changed
+  shape `EaseInCubic` → `Linear` for these 7 styles' `budgetEnvelope` only
+  (start/end values byte-identical, so each style's final `t=1` ceiling —
+  and therefore the drop's peak intensity — is unaffected; only the ramp-up
+  shape changed). The other 9 styles' `budgetEnvelope` were already
+  front-loaded enough (`EaseOutCubic`/`Linear`/`Bump`/`PeakLate`) and were
+  left untouched; `Reverse Energy`'s intentionally-declining `Linear`
+  envelope (a documented structural exception, not part of this bug) was
+  also left untouched. `moduleCurves` (the 10 per-module shapes) were NOT
+  changed — the `budgetEnvelope` is the binding constraint (proportional-cap
+  normalization) through nearly the entire build for every affected style,
+  so it alone governs the audible ramp-up shape.
+- **Testing:** 3 new `[POST-1.0]` test blocks in `RunTests.cpp` — weight
+  progression milestones (proven to fail the OLD stacked-curve path "by
+  construction," using the real project math for both paths), per-curve-type
+  coverage (weight-path immunity to `transitionCurveType` post-fix;
+  `TransitionEngine`'s own Linear/Exponential/SCurve/LateAcceleration
+  relative character preserved for module-internal sweeps), and
+  visualization consistency (`VisualizationFrame::progress` linear basis
+  matches the audio weights; `::tensionLevel` matches
+  `TransitionEngine::evaluate()`). All pre-existing tests (including the
+  16-style pairwise-distinctness test and the Phase 3.4
+  transient-preservation test) remain green — the `budgetEnvelope` shape
+  changes preserve every style's endpoint values and the distinctness
+  metric compares full 9-point trajectories across all 10 `moduleCurves`
+  (unchanged) plus `budgetEnvelope`, so per-style distinctness is retained
+  by a wide margin.
 
 ### Fixed (third pass — build/test feedback, same session)
 

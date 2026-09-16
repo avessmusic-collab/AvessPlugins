@@ -42,6 +42,13 @@ public:
     // architecture.md: Custom curve control points "sampled at 9-17 control points."
     static constexpr int kMaxCustomPoints = 17;
 
+    // How far each shaped (non-Linear, non-Custom) curve is blended toward
+    // linear in evaluate(). 0 = pure linear, 1 = the raw shaped curve.
+    // 0.6 keeps each curve's end-weighted character and their relative
+    // ordering while guaranteeing audible early-build motion - see the
+    // MUSICAL-PROGRESSION FIX comment in TransitionEngine.cpp::evaluate().
+    static constexpr float kCurveBlendDepth = 0.6f;
+
     void setCurveType(CurveType type) noexcept { curveType = type; }
     CurveType getCurveType() const noexcept { return curveType; }
 

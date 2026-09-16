@@ -374,17 +374,80 @@ private:
     // not re-applied per segment, since they only ever change per-build).
     void processSegment(juce::AudioBuffer<float>& buffer, int startSample, int numSamplesInSegment) noexcept;
 
-    // Derives the 0-1 "budget progress" input fed to IntensityBudget::computeWeights()
-    // from the DropStateMachine's CURRENT state - 0 during Idle/Arming,
-    // TransitionEngine::evaluate(t) during Building (t = elapsed/total
-    // within Building), 0.0 across BOTH Peak and Impact (Stage 3 DSP Phase
-    // 3.4 bugfix, TRANSIENT PRESERVATION: "duck the effect chain, not the
-    // source" - ducking starts at Peak/Vacuum entry, not Impact entry, so
-    // each module's internal weightSmoothed ramp has genuinely settled to 0
-    // by Impact's first sample; see this method's .cpp doc comment),
-    // ramping 1.0->0.0 across Recovery (architecture.md: "all module
-    // weights ramp back to 0" during Recovery).
+    // Derives the 0-1 CURVED "tension" progress from the DropStateMachine's
+    // CURRENT state - 0 during Idle/Arming, TransitionEngine::evaluate(t)
+    // during Building (t = elapsed/total within Building), 0.0 across BOTH
+    // Peak and Impact (Stage 3 DSP Phase 3.4 bugfix, TRANSIENT PRESERVATION:
+    // "duck the effect chain, not the source" - ducking starts at
+    // Peak/Vacuum entry, not Impact entry, so each module's internal
+    // weightSmoothed ramp has genuinely settled to 0 by Impact's first
+    // sample; see this method's .cpp doc comment), and 0.0 across Recovery
+    // (Bug B fix, see this class's top doc comment).
+    //
+    // POST-1.0 BUGFIX #2 (2026-09-16, "curve progression" - user-reported
+    // real-DAW bug: "I chose 8 bars and the effect is active only at the end
+    // of the last bar, while the visual dot on the curve moves"):
+    //
+    // DECISION MATRIX - this CURVED value (TransitionEngine's own
+    // tension-shaped output, itself potentially end-weighted - SCurve/
+    // Exponential/LateAcceleration all bias "most tension near the end" by
+    // design) is now consumed ONLY by:
+    //   1. Each fixed-series DSP module's own `progress` argument
+    //      (FilterModule's log-cutoff sweep position, WidthModule's narrow
+    //      target, GateModule/StutterModule's step-length interpolation,
+    //      PitchModule's semitone-ramp shape, DelayModule's feedback-amount
+    //      ramp, SaturationModule's drive ramp, DigitalModule's severity,
+    //      NoiseModule's rise/brightness, ReverbModule's roomSize) - every
+    //      one of these is a SIMPLE linear lerp/map inside its own module
+    //      (verified by source inspection, Source/DSP/*.cpp), so feeding
+    //      this curved value applies exactly ONE curve to "how the
+    //      character of each effect sweeps over time" - musically
+    //      appropriate, since shaping that sweep's steepness/late-
+    //      acceleration bias is literally `tension`'s documented job
+    //      (parameter-spec.md: "TransitionEngine progress-curve steepness /
+    //      late-acceleration bias"). UNCHANGED from pre-fix behavior.
+    //   2. The visualization tensionLevel field (lastComputedTensionLevel,
+    //      see processSegment()) - "what the user feels" right now, ramping
+    //      with the shaped curve and ducking at Peak/Impact/Recovery exactly
+    //      like the audio's own module-internal sweeps do.
+    //
+    // It is DELIBERATELY NO LONGER passed to
+    // drop::IntensityBudget::computeWeights() (that call site now uses
+    // computeLinearBuildProgress() instead, see below) - computeWeights()
+    // internally evaluates EACH module's Style-authored ModuleCurve (itself
+    // often ALSO an end-weighted shape, e.g. EaseInCubic - see
+    // Source/Core/DropStyle.cpp) plus budgetEnvelope at whatever progress
+    // value it's given. Feeding this ALREADY-curved value into a SECOND
+    // end-weighted curve composed two end-weighted shapes together
+    // (verified: at t=0.25 elapsed through an 8-bar Building with Clean
+    // EDM's SCurve/tension=50%, the old stacked path produced ~7% of the
+    // final drop's total weight-sum vs. the fixed path's ~36% - see
+    // RunTests.cpp's "[POST-1.0] weight progression" test block, which
+    // reproduces both the old and new math live and asserts the old path
+    // fails the audible-early-progression floor) - exactly the reported
+    // "inert for 7 of 8 bars, everything at the end" symptom. THE INVARIANT:
+    // no module's effective WET WEIGHT may be the composition of two
+    // end-weighted curves; each curve (TransitionEngine's OR a Style's
+    // ModuleCurve/budgetEnvelope) is now applied exactly once, in
+    // orthogonal roles (WEIGHT vs. internal-sweep TIMBRE/tensionLevel).
     float computeIntensityProgress() noexcept;
+
+    // POST-1.0 addition ("curve progression" fix, see computeIntensityProgress()'s
+    // doc comment above for the full decision matrix). Returns the LINEAR
+    // elapsed-fraction t (0-1) within the current Building state (0 during
+    // every other DropState, matching computeIntensityProgress()'s own
+    // state-gating exactly - only the SHAPE of the Building-state value
+    // differs between the two methods, not which states duck to 0).
+    // Deliberately independent of transitionEngine.evaluate() - this is the
+    // SINGLE-CURVE-APPLICATION input fed to
+    // drop::IntensityBudget::computeWeights() in processSegment(), so that
+    // Style's own authored ModuleCurve/budgetEnvelope shapes are each
+    // applied exactly once, not composed on top of TransitionEngine's own
+    // curve. Kept as a small, independent, deliberately-duplicated
+    // elapsed/total calculation (rather than refactoring
+    // computeIntensityProgress() to share a helper) to avoid any risk of
+    // perturbing that already-extensively-tested method's exact behavior.
+    float computeLinearBuildProgress() noexcept;
 
     // Stage 3 DSP Phase 3.1 components (declared before non-DSP private
     // state below, matching this repo's DSP-members-first convention).
@@ -510,7 +573,30 @@ private:
     // processBlock() by the visualization-frame push at the end of the
     // segmentation loop - see processBlock()'s doc comment there).
     drop::IntensityBudget::Weights lastComputedWeights {};
+    // POST-1.0 ("curve progression" fix): now the LINEAR elapsed-build
+    // fraction (computeLinearBuildProgress()'s output - the SAME basis fed
+    // to IntensityBudget::computeWeights()), not the curved
+    // computeIntensityProgress() value it held pre-fix - see
+    // computeIntensityProgress()'s doc comment. This is what
+    // VisualizationFrame::progress publishes to the UI (drives the tension-
+    // curve display dot's X-position and the progress-strip fill), so the
+    // dot's motion along the timeline now shares the EXACT same progress
+    // basis as the audio weights it's meant to represent (the user
+    // explicitly compared the two - "the visual dot on the curve moves"
+    // while the audio stayed inert).
     float lastComputedProgress = 0.0f;
+    // POST-1.0 addition ("curve progression" fix): the CURVED
+    // computeIntensityProgress() value, cached once per processSegment()
+    // call for the visualization-frame push at the end of processBlock().
+    // Published as VisualizationFrame::tensionLevel - "the curved tension
+    // the user feels" building over the course of Building and ducking at
+    // Peak/Impact/Recovery exactly like the audio's own module-internal
+    // sweeps (computeIntensityProgress()'s consumers) do. DOCUMENTED
+    // SUPERSESSION of the pre-fix `tensionParam->load() / 100.0f` (a flat,
+    // time-invariant readout of the Tension KNOB's raw setting, not an
+    // actual curve-evaluation output, despite PluginEditor.cpp's own
+    // pre-existing doc comment already describing it as one).
+    float lastComputedTensionLevel = 0.0f;
 
     // Stage 3 GUI Phase 4.2 DOCUMENTED SUPERSESSION: the Phase 3.1-era
     // `bool previousTriggerParamValue` block-granular POLLING flag is

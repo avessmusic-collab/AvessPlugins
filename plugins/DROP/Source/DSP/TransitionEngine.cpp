@@ -54,6 +54,26 @@ float TransitionEngine::evaluate(float t) const noexcept
         default:                          result = t; break;
     }
 
+    // MUSICAL-PROGRESSION FIX (2026-09-16, user DAW report: "8 bars and the
+    // effect is active only at the end of the last bar"). Every non-linear
+    // curve above is end-weighted BY DESIGN ("most tension near the end"),
+    // but at the DEFAULT tension of 50% they were so extreme that the
+    // module-internal sweeps they drive (filter cutoff position, gate rate,
+    // pitch amount, noise rise) barely moved for most of the build:
+    // evaluate(0.25) measured Exponential=0.031, LateAcceleration=0.075,
+    // SCurve=0.113 - i.e. a quarter of the way into an 8-bar build the
+    // filter had swept 3-11% and was therefore inaudible.
+    //
+    // Fix: blend every shaped curve a fixed amount toward linear. The
+    // linear term guarantees continuous, audible early motion; the shaped
+    // term preserves each curve type's character and their relative
+    // ordering (Exponential still later-blooming than SCurve than
+    // LateAcceleration than Linear at the same tension), so the `tension`
+    // parameter keeps its documented meaning. Custom curves are exempt:
+    // the user drew that shape explicitly and it is honored verbatim.
+    if (curveType != CurveType::Linear && curveType != CurveType::Custom)
+        result = t + (result - t) * kCurveBlendDepth;
+
     return juce::jlimit(0.0f, 1.0f, result);
 }
 
@@ -95,7 +115,7 @@ float TransitionEngine::evaluateLateAcceleration(float t) const noexcept
     // tensionBias at 0.25 - "most tension near the end by default."
     const float tensionBias = juce::jlimit(0.05f, 0.95f, 0.25f + (tension - 0.5f) * 0.5f);
     const float breakpointT = 1.0f - tensionBias;              // fraction of TIME before acceleration begins
-    const float breakpointValue = breakpointT * 0.3f;          // fraction of PROGRESS reached by the slow ramp
+    const float breakpointValue = breakpointT * 0.55f;         // fraction of PROGRESS reached by the slow ramp (was 0.3f - see MUSICAL-PROGRESSION FIX in evaluate(): the slow ramp reached only 22.5% of progress in 75% of the build)
 
     if (t <= breakpointT)
         return breakpointT > 0.0f ? (t / breakpointT) * breakpointValue : 0.0f;

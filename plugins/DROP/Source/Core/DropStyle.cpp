@@ -132,7 +132,27 @@ namespace
                 C(ShapeKind::Flat,         0.0f,  0.05f, 0.0f), // Digital
                 C(ShapeKind::EaseOutCubic, 0.0f,  0.0f, 0.3f),  // Noise
             } };
-            t[0].budgetEnvelope = C(ShapeKind::EaseInCubic, 0.05f, 0.0f, 0.85f);
+            // POST-1.0 ADJUSTMENT (2026-09-16, "curve progression" fix -
+            // see PluginProcessor.h's computeIntensityProgress() doc
+            // comment for the full decision matrix): budgetEnvelope's shape
+            // changed EaseInCubic -> Linear (start/end UNCHANGED: 0.05/0.85).
+            // Before this session, this curve was evaluated on an
+            // ALREADY-curved TransitionEngine progress, so its own
+            // additional cubic ease-in was a SECOND end-weighted curve
+            // stacked on the first - together they held the total budget
+            // ceiling near-zero until very late in the build (the reported
+            // "inert for 7 of 8 bars" bug). Now that this curve is evaluated
+            // on the LINEAR elapsed-build fraction (single-curve-application
+            // invariant), keeping the cubic shape would STILL fail the
+            // audible-early/mid-build-progression requirement on its own
+            // (verified by construction in RunTests.cpp's "[POST-1.0] weight
+            // progression" test) - EaseInCubic's t^3 shape is simply too
+            // extreme for a single application across a full 0-1 build.
+            // Linear preserves Clean EDM's exact FINAL (t=1) ceiling (0.85,
+            // unaffected - both shapes agree at their endpoints) and its
+            // "more headroom late than early" build character, while
+            // reaching audible fractions of that ceiling much earlier.
+            t[0].budgetEnvelope = C(ShapeKind::Linear, 0.05f, 0.0f, 0.85f);
             t[0].digitalActivationCurve = C(ShapeKind::EaseInCubic, 0.0f, 0.0f, 0.5f);
             t[0].vacuumDivision = MusicalDivision::ThirtySecond;
             t[0].vacuumFloorSeconds = 0.025;
@@ -163,7 +183,10 @@ namespace
                 C(ShapeKind::Flat,         0.0f,  0.05f, 0.0f),
                 C(ShapeKind::EaseOutCubic, 0.0f,  0.0f, 0.4f),
             } };
-            t[1].budgetEnvelope = C(ShapeKind::EaseInCubic, 0.05f, 0.0f, 0.95f);
+            // POST-1.0 ADJUSTMENT (2026-09-16, "curve progression" fix, see
+            // style 0's comment above for the full rationale) - shape
+            // EaseInCubic -> Linear, start/end unchanged (0.05/0.95).
+            t[1].budgetEnvelope = C(ShapeKind::Linear, 0.05f, 0.0f, 0.95f);
             t[1].digitalActivationCurve = C(ShapeKind::EaseInCubic, 0.0f, 0.0f, 0.55f);
             t[1].vacuumDivision = MusicalDivision::Sixteenth;
             t[1].vacuumFloorSeconds = 0.03;
@@ -225,7 +248,10 @@ namespace
                 C(ShapeKind::EaseInCubic, 0.0f,  0.0f, 0.6f),
                 C(ShapeKind::EaseInCubic, 0.0f,  0.0f, 0.35f),
             } };
-            t[3].budgetEnvelope = C(ShapeKind::EaseInCubic, 0.05f, 0.0f, 0.9f);
+            // POST-1.0 ADJUSTMENT (2026-09-16, "curve progression" fix, see
+            // style 0's comment above) - shape EaseInCubic -> Linear,
+            // start/end unchanged (0.05/0.9).
+            t[3].budgetEnvelope = C(ShapeKind::Linear, 0.05f, 0.0f, 0.9f);
             t[3].digitalActivationCurve = C(ShapeKind::EaseInCubic, 0.0f, 0.0f, 0.8f);
             t[3].vacuumDivision = MusicalDivision::ThirtySecond;
             t[3].vacuumFloorSeconds = 0.03;
@@ -349,7 +375,10 @@ namespace
                 C(ShapeKind::Flat,        0.0f,  0.02f, 0.0f),
                 C(ShapeKind::EaseInCubic, 0.0f,  0.0f, 0.45f),
             } };
-            t[7].budgetEnvelope = C(ShapeKind::EaseInCubic, 0.1f, 0.0f, 0.75f);
+            // POST-1.0 ADJUSTMENT (2026-09-16, "curve progression" fix, see
+            // style 0's comment above) - shape EaseInCubic -> Linear,
+            // start/end unchanged (0.1/0.75).
+            t[7].budgetEnvelope = C(ShapeKind::Linear, 0.1f, 0.0f, 0.75f);
             t[7].digitalActivationCurve = C(ShapeKind::Flat, 0.0f, 0.05f, 0.0f);
             t[7].vacuumDivision = MusicalDivision::Sixteenth;
             t[7].vacuumFloorSeconds = 0.04;
@@ -411,7 +440,10 @@ namespace
                 C(ShapeKind::Flat,         0.0f,  0.02f, 0.0f),
                 C(ShapeKind::EaseInCubic,  0.0f,  0.0f, 0.3f),
             } };
-            t[9].budgetEnvelope = C(ShapeKind::EaseInCubic, 0.05f, 0.0f, 0.7f);
+            // POST-1.0 ADJUSTMENT (2026-09-16, "curve progression" fix, see
+            // style 0's comment above) - shape EaseInCubic -> Linear,
+            // start/end unchanged (0.05/0.7).
+            t[9].budgetEnvelope = C(ShapeKind::Linear, 0.05f, 0.0f, 0.7f);
             t[9].digitalActivationCurve = C(ShapeKind::Flat, 0.0f, 0.03f, 0.0f);
             t[9].vacuumDivision = MusicalDivision::Sixteenth;
             t[9].vacuumFloorSeconds = 0.03;
@@ -473,7 +505,10 @@ namespace
                 C(ShapeKind::EaseInCubic, 0.0f,  0.0f, 0.5f),
                 C(ShapeKind::EaseInCubic, 0.0f,  0.0f, 0.55f),
             } };
-            t[11].budgetEnvelope = C(ShapeKind::EaseInCubic, 0.05f, 0.0f, 0.85f);
+            // POST-1.0 ADJUSTMENT (2026-09-16, "curve progression" fix, see
+            // style 0's comment above) - shape EaseInCubic -> Linear,
+            // start/end unchanged (0.05/0.85).
+            t[11].budgetEnvelope = C(ShapeKind::Linear, 0.05f, 0.0f, 0.85f);
             t[11].digitalActivationCurve = C(ShapeKind::EaseInCubic, 0.0f, 0.0f, 0.65f);
             t[11].vacuumDivision = MusicalDivision::Sixteenth;
             t[11].vacuumFloorSeconds = 0.025;
@@ -538,7 +573,10 @@ namespace
                 C(ShapeKind::EaseInCubic, 0.0f,  0.0f, 0.85f),
                 C(ShapeKind::EaseInCubic, 0.0f,  0.0f, 0.6f),
             } };
-            t[13].budgetEnvelope = C(ShapeKind::EaseInCubic, 0.1f, 0.0f, 1.0f);
+            // POST-1.0 ADJUSTMENT (2026-09-16, "curve progression" fix, see
+            // style 0's comment above) - shape EaseInCubic -> Linear,
+            // start/end unchanged (0.1/1.0).
+            t[13].budgetEnvelope = C(ShapeKind::Linear, 0.1f, 0.0f, 1.0f);
             t[13].digitalActivationCurve = C(ShapeKind::EaseInCubic, 0.0f, 0.0f, 0.95f);
             t[13].vacuumDivision = MusicalDivision::Sixteenth;
             t[13].vacuumFloorSeconds = 0.035;
@@ -608,6 +646,11 @@ namespace
                 C(ShapeKind::Linear, 0.15f, 0.0f, 0.02f),
                 C(ShapeKind::Linear, 0.4f,  0.0f, 0.1f),
             } };
+            // POST-1.0 NOTE (2026-09-16, "curve progression" fix): NOT
+            // adjusted - already Linear, and its DECLINING (0.7->0.25)
+            // shape is the intentional "Reverse Energy" structural exception
+            // (see this style's top doc comment) - linear-position input
+            // only reinforces that it was never part of the double-curve bug.
             t[15].budgetEnvelope = C(ShapeKind::Linear, 0.7f, 0.0f, 0.25f); // recedes toward the drop - understated Impact by design
             t[15].digitalActivationCurve = C(ShapeKind::Flat, 0.0f, 0.1f, 0.0f);
             t[15].vacuumDivision = MusicalDivision::ThirtySecond;

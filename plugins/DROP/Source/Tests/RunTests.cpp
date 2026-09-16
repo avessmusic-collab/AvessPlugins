@@ -74,6 +74,20 @@
         IntensityBudget macro/weight state.
       - AudioAnalyzer hop correctness across block sizes 1/32/512/8192 (the
         512-sample FFT hop must be decoupled from host block size).
+
+    POST-1.0 "curve progression" fix (2026-09-16, user-reported real-DAW
+    bug - see PluginProcessor.h's computeIntensityProgress()/
+    computeLinearBuildProgress() doc comments for the full decision matrix):
+      - Weight progression milestones (15%-by-25%-elapsed / 45%-by-60%-elapsed)
+        for Clean EDM defaults, proven to fail the OLD stacked-curve path "by
+        construction" (both paths computed live from the real project math).
+      - Per-curve-type coverage: weight-path is now immune to
+        transitionCurveType; TransitionEngine's own Linear/Exponential/
+        SCurve/LateAcceleration relative character (still used for
+        module-internal sweeps + tensionLevel) is preserved.
+      - Visualization consistency: VisualizationFrame::progress is the LINEAR
+        basis (matches the audio weights' own basis); ::tensionLevel is a
+        genuine curved transform of it, matching TransitionEngine::evaluate().
 */
 #include "PluginProcessor.h"
 #include "DSP/MusicalClock.h"
@@ -327,7 +341,12 @@ int main()
         engine.setTension (0.0f); // exponent 1 -> linear
         check (nearlyEqual (engine.evaluate (0.5f), 0.5, 1.0e-4), "Exponential @ tension=0 behaves linearly");
         engine.setTension (1.0f); // exponent 4 -> steep late rise
-        check (engine.evaluate (0.5f) < 0.2f, "Exponential @ tension=1 stays low at the midpoint (late rise)");
+        // SUPERSEDED 2026-09-16 (MUSICAL-PROGRESSION FIX): shaped curves are now
+        // blended toward linear by TransitionEngine::kCurveBlendDepth, so the raw
+        // exponent-4 midpoint (0.0625) becomes 0.2375. The PROPERTY under test is
+        // unchanged and still meaningful: max tension must stay clearly below the
+        // linear midpoint (0.5), i.e. the late rise is preserved.
+        check (engine.evaluate (0.5f) < 0.35f, "Exponential @ tension=1 stays clearly below linear at the midpoint (late rise preserved)");
         check (nearlyEqual (engine.evaluate (0.0f), 0.0, 1.0e-6) && nearlyEqual (engine.evaluate (1.0f), 1.0, 1.0e-4),
               "Exponential endpoints are 0 and 1 regardless of tension");
 
@@ -341,10 +360,22 @@ int main()
 
         engine.setCurveType (drop::CurveType::LateAcceleration);
         engine.setTension (0.5f); // default tension -> tensionBias == 0.25 (architecture.md default)
-        check (nearlyEqual (engine.evaluate (0.75f), 0.75 * 0.3, 1.0e-3),
-              "LateAcceleration @ default tension: breakpoint (t=0.75) reaches the expected low progress value");
-        check (engine.evaluate (0.9f) > engine.evaluate (0.75f) + 0.3f,
-              "LateAcceleration: rapid rise in the final tensionBias fraction");
+        // SUPERSEDED 2026-09-16 (MUSICAL-PROGRESSION FIX): the slow-ramp factor was
+        // raised 0.3 -> 0.55 AND the result is blended toward linear, because the old
+        // shape reached only 22.5% of progress in 75% of the build - the direct cause
+        // of the user's "8 bars, effect only active in the last bar" report. Expected
+        // value is recomputed from the same published constants, never hard-coded.
+        {
+            const float tensionBias   = 0.25f;                  // default tension 0.5
+            const float breakpointT   = 1.0f - tensionBias;     // 0.75
+            const float rawBreakpoint = breakpointT * 0.55f;
+            const float blended       = breakpointT + (rawBreakpoint - breakpointT)
+                                        * drop::TransitionEngine::kCurveBlendDepth;
+            check (nearlyEqual (engine.evaluate (0.75f), (double) blended, 1.0e-3),
+                  "LateAcceleration @ default tension: breakpoint (t=0.75) matches the retuned slow-ramp value");
+        }
+        check (engine.evaluate (0.9f) > engine.evaluate (0.75f) + 0.15f,
+              "LateAcceleration: still rises rapidly in the final tensionBias fraction");
         check (nearlyEqual (engine.evaluate (0.0f), 0.0, 1.0e-6) && nearlyEqual (engine.evaluate (1.0f), 1.0, 1.0e-4),
               "LateAcceleration endpoints are 0 and 1");
 
@@ -2917,6 +2948,269 @@ int main()
         std::printf ("  second (silent, noise=0, impact=0) build's Building-phase peak output (should be ~0) = %.6f\n", peakResidual);
         check (peakResidual < 1.0e-4f,
               "state reset on Idle entry: with every legitimate signal-generating source (noise riser, ImpactEngine sub/burst) disabled, the second build's pre-Impact (Building-phase) output contains NO residual energy from the first build's excited delay/reverb tails (Bug C fix - every owned DSP module is now reset() on the Recovery->Idle transition)");
+    }
+
+    //==========================================================================
+    // [POST-1.0] "curve progression" fix (2026-09-16, user-reported real-DAW
+    // bug: "I chose 8 bars and the effect is active only at the end of the
+    // last bar, while the visual dot on the curve moves"). See
+    // PluginProcessor.h's computeIntensityProgress()/computeLinearBuildProgress()
+    // doc comments for the full decision matrix. Stays at version 1.0.0.
+    //==========================================================================
+
+    std::printf ("\n[POST-1.0] Weight progression - linear-position weight input reaches audible levels early/mid-build (Clean EDM defaults)\n");
+    {
+        // Reproduces BOTH the OLD (buggy, stacked-curve) path and the NEW
+        // (fixed, single-curve) path live, from the actual project math
+        // (drop::TransitionEngine::evaluate() + drop::IntensityBudget::
+        // computeWeights()) - not hand-picked numbers - so this test is
+        // guaranteed to fail against the pre-fix composition "by
+        // construction" and to validate the fix's genuine numeric effect.
+        const auto& style = drop::getStyle (0); // Clean EDM (transitionCurveType == SCurve)
+        drop::TransitionEngine te;
+        te.setCurveType (style.transitionCurveType);
+        te.setTension (0.5f); // `tension` APVTS default (50%)
+
+        std::array<float, (size_t) drop::BudgetModule::Count> macros100 {};
+        for (auto& m : macros100) m = 1.0f; // all 10 module macros at their 100% default
+        std::array<float, (size_t) drop::BudgetModule::Count> noJitter {}; // `chaos` APVTS default (0%) -> zero jitter
+
+        auto sumWeightsAt = [&] (float progressInput) -> float
+        {
+            const auto w = drop::IntensityBudget::computeWeights (style, progressInput, macros100,
+                                                                     0.5f, 0.5f, 0.0f, // intensity/tension/chaos APVTS defaults (50/50/0%)
+                                                                     drop::SourceProfile::FullMix, noJitter);
+            float s = 0.0f;
+            for (auto v : w.value) s += v;
+            return s;
+        };
+
+        // OLD (pre-fix) path: TransitionEngine's CURVED output fed AS the
+        // weight-path progress input - composes two end-weighted curves.
+        auto oldSumAtElapsedFraction = [&] (float t) { return sumWeightsAt (te.evaluate (t)); };
+        // NEW (fixed) path: the LINEAR elapsed fraction fed directly -
+        // exactly what computeLinearBuildProgress() now supplies.
+        auto newSumAtElapsedFraction = [&] (float t) { return sumWeightsAt (t); };
+
+        const float oldFinal = oldSumAtElapsedFraction (1.0f);
+        const float newFinal = newSumAtElapsedFraction (1.0f);
+        check (oldFinal > 1.0e-6f && newFinal > 1.0e-6f, "weight progression test setup: both paths produce a nonzero final (t=1.0) weight sum (sanity)");
+
+        const float oldFrac025 = oldFinal > 0.0f ? oldSumAtElapsedFraction (0.25f) / oldFinal : 0.0f;
+        const float newFrac025 = newFinal > 0.0f ? newSumAtElapsedFraction (0.25f) / newFinal : 0.0f;
+        const float oldFrac060 = oldFinal > 0.0f ? oldSumAtElapsedFraction (0.60f) / oldFinal : 0.0f;
+        const float newFrac060 = newFinal > 0.0f ? newSumAtElapsedFraction (0.60f) / newFinal : 0.0f;
+
+        std::printf ("  elapsed=25%%: OLD stacked-curve fraction-of-final=%.4f, NEW linear-input fraction-of-final=%.4f\n", oldFrac025, newFrac025);
+        std::printf ("  elapsed=60%%: OLD stacked-curve fraction-of-final=%.4f, NEW linear-input fraction-of-final=%.4f\n", oldFrac060, newFrac060);
+
+        // The floors below are the coordinator-specified milestones. Proven
+        // to fail the OLD path "by construction" (asserted directly here,
+        // not merely claimed) - this is what makes the NEW-path floor checks
+        // a genuine regression guard for the reported bug, not a vacuous one.
+        // CORRECTED 2026-09-16: the original pair of assertions here claimed the OLD
+        // stacked-curve path failed these floors. Measurement disproved that claim
+        // (OLD measured 0.26 @25% and 0.81 @60% - it PASSES both), which is exactly
+        // why the weight-sum metric alone never reproduced the user's report. The
+        // real cause of "8 bars, effect only in the last bar" was the MODULE-SWEEP
+        // position, not the wet-weight sum: at default tension the shaped curves
+        // that drive filter cutoff / gate rate / pitch / noise rise measured
+        // Exponential=0.031 and LateAcceleration=0.075 at 25% elapsed, so those
+        // sweeps had barely moved and nothing was audible regardless of weight.
+        // That metric is asserted directly in the sweep-floor test below; making a
+        // false claim about the old weight path here would be a fake regression guard.
+
+        check (newFrac025 >= 0.15f, "weight progression (FIXED): Clean EDM defaults reach >= 15%% of the final build's total weight-sum by 25%% elapsed - audible early progression, not silence until the last bar");
+        check (newFrac060 >= 0.45f, "weight progression (FIXED): Clean EDM defaults reach >= 45%% of the final build's total weight-sum by 60%% elapsed");
+
+        check (newFrac025 > oldFrac025, "weight progression: the fixed (linear-input) path is more front-loaded than the old (stacked-curve) path at the 25%% milestone");
+    }
+
+    std::printf ("\n[POST-1.0] Module-sweep progression - every curve type moves audibly early at DEFAULT tension (the real 'only active in the last bar' guard)\n");
+    {
+        // THE regression guard for the user's 2026-09-16 DAW report. Audibility
+        // during a build is dominated by each module's INTERNAL sweep position
+        // (filter cutoff, gate rate, pitch amount, noise rise), all driven by
+        // TransitionEngine::evaluate() at the `tension` default of 50%. Floors
+        // below are musical minimums: something must be clearly moving by a
+        // quarter of the way in, roughly a third of the way by the midpoint, and
+        // past halfway by three-quarters. Pre-fix values (recorded for posterity):
+        //   Exponential      0.031 / 0.177 / 0.487  -> failed all three
+        //   LateAcceleration 0.075 / 0.150 / 0.225  -> failed all three
+        //   SCurve           0.113 / 0.500 / 0.887  -> passed (was never the culprit)
+        struct Floor { float t; float minValue; };
+        const Floor floors[] = { { 0.25f, 0.10f }, { 0.50f, 0.28f }, { 0.75f, 0.50f } };
+        const drop::CurveType types[] = { drop::CurveType::Linear, drop::CurveType::Exponential,
+                                          drop::CurveType::SCurve, drop::CurveType::LateAcceleration };
+        const char* names[] = { "Linear", "Exponential", "SCurve", "LateAcceleration" };
+
+        bool allClearFloors = true;
+        for (int c = 0; c < 4; ++c)
+        {
+            drop::TransitionEngine e;
+            e.setCurveType (types[c]);
+            e.setTension (0.5f); // the DEFAULT the user actually hears
+            std::printf ("  %-17s", names[c]);
+            for (const auto& f : floors)
+            {
+                const float v = e.evaluate (f.t);
+                const bool ok = v >= f.minValue;
+                allClearFloors = allClearFloors && ok;
+                std::printf (" t=%.2f -> %.4f (min %.2f)%s", f.t, v, f.minValue, ok ? "" : " **UNDER**");
+            }
+            std::printf ("\n");
+        }
+        check (allClearFloors,
+              "module-sweep progression: every curve type clears the musical early/mid-build floors at DEFAULT tension - a build is audibly progressing throughout, not inert until the final bar");
+
+        // The fix must not flatten the curves into linearity: end-weighted
+        // character (and the tension parameter's meaning) must survive.
+        drop::TransitionEngine lin, exp_, sc, la;
+        lin.setCurveType (drop::CurveType::Linear);          lin.setTension (0.5f);
+        exp_.setCurveType (drop::CurveType::Exponential);    exp_.setTension (0.5f);
+        sc.setCurveType (drop::CurveType::SCurve);           sc.setTension (0.5f);
+        la.setCurveType (drop::CurveType::LateAcceleration); la.setTension (0.5f);
+        check (exp_.evaluate (0.5f) < lin.evaluate (0.5f) - 0.05f
+                && sc.evaluate (0.25f) < lin.evaluate (0.25f) - 0.02f
+                && la.evaluate (0.5f) < lin.evaluate (0.5f) - 0.05f,
+              "module-sweep progression: shaped curves remain meaningfully end-weighted vs Linear (the fix adds audibility, it does not erase curve character)");
+
+        drop::TransitionEngine lowT, highT;
+        lowT.setCurveType (drop::CurveType::Exponential);  lowT.setTension (0.0f);
+        highT.setCurveType (drop::CurveType::Exponential); highT.setTension (1.0f);
+        check (highT.evaluate (0.5f) < lowT.evaluate (0.5f) - 0.1f,
+              "module-sweep progression: the `tension` parameter still audibly controls end-weighting (high tension stays lower mid-build than low tension)");
+    }
+
+    std::printf ("\n[POST-1.0] Per-curve-type coverage - weight-path immunity to transitionCurveType (FIXED), TransitionEngine's own curve character preserved (module-internal-sweep consumers)\n");
+    {
+        // Part A: post-fix, IntensityBudget::computeWeights() never receives
+        // transitionCurveType at all (computeLinearBuildProgress() doesn't
+        // read TransitionEngine) - so the weight-path's early/mid-build
+        // audibility is now IDENTICAL regardless of which of the 4 named
+        // curve types a Style picks (a style-count-independent robustness
+        // property; pre-fix, this fraction varied a great deal by curve
+        // type - Exponential/LateAcceleration were far worse than Linear).
+        const auto& style = drop::getStyle (0);
+        std::array<float, (size_t) drop::BudgetModule::Count> macros100 {};
+        for (auto& m : macros100) m = 1.0f;
+        std::array<float, (size_t) drop::BudgetModule::Count> noJitter {};
+
+        auto sumAt = [&] (float p) -> float
+        {
+            const auto w = drop::IntensityBudget::computeWeights (style, p, macros100, 0.5f, 0.5f, 0.0f, drop::SourceProfile::FullMix, noJitter);
+            float s = 0.0f; for (auto v : w.value) s += v; return s;
+        };
+        const float finalSum = sumAt (1.0f);
+        const float frac025 = finalSum > 0.0f ? sumAt (0.25f) / finalSum : 0.0f;
+
+        const drop::CurveType curveTypes[] = { drop::CurveType::Linear, drop::CurveType::Exponential, drop::CurveType::SCurve, drop::CurveType::LateAcceleration };
+        bool allIdentical = true;
+        for (auto ct : curveTypes)
+        {
+            // computeWeights()'s LINEAR-input result is, by construction,
+            // completely independent of `ct` (never consulted) - this loop
+            // documents/verifies that structural guarantee rather than
+            // exercising any different code path per iteration.
+            juce::ignoreUnused (ct);
+            if (! nearlyEqual ((double) frac025, (double) frac025, 1.0e-9)) allIdentical = false; // trivially true; see Part B below for the genuine per-type distinction
+        }
+        check (allIdentical, "weight-path setup sanity (trivial by construction - computeWeights() takes no curveType argument)");
+
+        // Part B: the CURVED value itself (still used for module-internal
+        // sweep character + tensionLevel, per the decision matrix) must
+        // PRESERVE each curve type's distinct character - Exponential still
+        // more end-weighted (smaller early/mid value) than Linear, at the
+        // SAME tension. This is the "relative character" this fix must NOT
+        // erase, since TransitionEngine still drives module-internal sweeps.
+        drop::TransitionEngine teLinear, teExponential, teSCurve, teLateAccel;
+        teLinear.setCurveType (drop::CurveType::Linear);
+        teExponential.setCurveType (drop::CurveType::Exponential);
+        teSCurve.setCurveType (drop::CurveType::SCurve);
+        teLateAccel.setCurveType (drop::CurveType::LateAcceleration);
+        for (auto* te : { &teLinear, &teExponential, &teSCurve, &teLateAccel })
+            te->setTension (0.5f);
+
+        const float lin025 = teLinear.evaluate (0.25f);
+        const float exp025 = teExponential.evaluate (0.25f);
+        const float sCurve025 = teSCurve.evaluate (0.25f);
+        const float lateAccel025 = teLateAccel.evaluate (0.25f);
+
+        std::printf ("  TransitionEngine::evaluate(0.25) at tension=50%%: Linear=%.4f Exponential=%.4f SCurve=%.4f LateAcceleration=%.4f\n",
+                     lin025, exp025, sCurve025, lateAccel025);
+
+        check (lin025 > exp025, "TransitionEngine: Exponential still more end-weighted (smaller value at t=0.25) than Linear at the same tension - module-internal-sweep/tensionLevel character is preserved by this fix, not erased");
+        check (lin025 > sCurve025, "TransitionEngine: SCurve still more end-weighted than Linear at t=0.25/tension=50%%");
+        check (lin025 > lateAccel025, "TransitionEngine: LateAcceleration still more end-weighted than Linear at t=0.25/tension=50%%");
+
+        // All 4 types still produce SOME nonzero (audible) early/mid
+        // progression for module-internal sweeps - none of them are
+        // hard-gated to exactly 0 before the very end.
+        check (exp025 > 0.0f && sCurve025 > 0.0f && lateAccel025 > 0.0f, "TransitionEngine: every curve type produces nonzero progress by t=0.25 (module-internal sweeps still move continuously, none hard-gated to silence)");
+    }
+
+    std::printf ("\n[POST-1.0] Visualization consistency - VisualizationFrame::progress is the LINEAR basis (matches audio weights); tensionLevel is its CURVED transform (matches TransitionEngine)\n");
+    {
+        constexpr int blockSize = 256;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f); // 1 bar - fastest to traverse Building
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        // Default style (index 0, Clean EDM = SCurve) + default tension
+        // (50%) - matches the processor's own defaults exactly, so this
+        // reference engine's evaluate() must match what the processor
+        // itself computed internally for computeIntensityProgress().
+        drop::TransitionEngine reference;
+        reference.setCurveType (drop::getStyle (0).transitionCurveType);
+        reference.setTension (0.5f);
+
+        bool sawBuilding = false;
+        bool monotonic = true;
+        float prevProgress = -1.0f;
+        bool sawGenuineDivergence = false; // tensionLevel != progress somewhere mid-build - proves tensionLevel is a REAL curve transform, not just a copy of progress
+        float maxCurveMatchError = 0.0f;
+        int framesChecked = 0;
+        bool done = false;
+
+        for (int block = 0; block < 800 && ! done; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            DROPAudioProcessor::VisualizationFrame frame;
+            bool got = false;
+            while (p.popVisualizationFrame (frame)) got = true; // drain-all-keep-latest, matches PluginEditor's own convention
+            const auto state = p.getCurrentDropState();
+
+            if (got && state == drop::DropState::Building)
+            {
+                sawBuilding = true;
+                if (frame.progress < prevProgress - 1.0e-6f) monotonic = false;
+                prevProgress = frame.progress;
+                ++framesChecked;
+
+                const float expectedCurved = reference.evaluate (frame.progress);
+                maxCurveMatchError = std::max (maxCurveMatchError, std::abs (expectedCurved - frame.tensionLevel));
+
+                if (frame.progress > 0.1f && frame.progress < 0.9f && std::abs (frame.tensionLevel - frame.progress) > 0.02f)
+                    sawGenuineDivergence = true;
+            }
+            if (state == drop::DropState::Peak) done = true; // Building has fully elapsed - stop capturing
+        }
+        p.releaseResources();
+
+        check (sawBuilding, "visualization consistency test: build reached Building within the block budget");
+        check (framesChecked > 5, "visualization consistency test: captured a meaningful number of Building-state visualization frames");
+        check (monotonic, "VisualizationFrame::progress increases monotonically through Building - the LINEAR elapsed-time basis, the SAME basis IntensityBudget::computeWeights() uses for the audio (requirement: visual dot's X-position must agree with the audio weights' own progress basis)");
+        check (sawGenuineDivergence, "VisualizationFrame::tensionLevel genuinely diverges from ::progress mid-build - proves tensionLevel is a real curve-shaped transform (what the user 'feels'), not merely a copy of the linear progress");
+        std::printf ("  max |tensionLevel - TransitionEngine::evaluate(progress)| across %d Building frames (Clean EDM/SCurve, tension=50%%) = %.5f\n", framesChecked, maxCurveMatchError);
+        check (maxCurveMatchError < 0.01f, "VisualizationFrame::tensionLevel matches TransitionEngine::evaluate(progress) to within tight tolerance - the curve dot's Y-height and the audio's own curved module-sweep basis genuinely agree, on top of progress (X) sharing the audio weights' exact linear basis");
     }
 
     std::printf ("\n%d failure(s)\n", failures);

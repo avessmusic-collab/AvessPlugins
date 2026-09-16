@@ -704,8 +704,16 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // ~30-60Hz GUI drain rate (Stage 3 GUI Phase 4.3, not wired yet).
     {
         VisualizationFrame frame;
+        // POST-1.0 ("curve progression" fix): frame.progress is now the
+        // LINEAR elapsed-build fraction (same basis as the audio weights -
+        // see lastComputedProgress's doc comment in PluginProcessor.h);
+        // frame.tensionLevel is the CURVED progress (DOCUMENTED
+        // SUPERSESSION of the pre-fix flat `tensionParam->load() / 100.0f`
+        // readout, which was time-invariant despite representing itself as
+        // "the real curve-evaluation output" in PluginEditor.cpp's own
+        // pre-existing doc comment).
         frame.progress = lastComputedProgress;
-        frame.tensionLevel = tensionParam->load() / 100.0f;
+        frame.tensionLevel = lastComputedTensionLevel;
         frame.currentState = (int) dropStateMachine.getState();
         frame.inputRMS = audioAnalyzer.getMetrics().rms;
         for (int i = 0; i < 10; ++i)
@@ -746,7 +754,21 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     juce::dsp::AudioBlock<float> fullBlock(buffer);
     auto segmentBlock = fullBlock.getSubBlock((size_t) startSample, (size_t) numSamplesInSegment);
 
+    // POST-1.0 ("curve progression" fix): TWO distinct progress values, per
+    // the decision matrix documented at computeIntensityProgress()'s
+    // declaration in PluginProcessor.h -
+    //   `progress`       - CURVED (TransitionEngine-shaped) - feeds every
+    //                       fixed-series module's own internal-sweep
+    //                       `progress` argument below, unchanged from
+    //                       pre-fix behavior.
+    //   `linearProgress` - LINEAR elapsed fraction - feeds ONLY
+    //                       IntensityBudget::computeWeights() below (the
+    //                       single point where a Style's own ModuleCurve/
+    //                       budgetEnvelope shapes are applied), so that
+    //                       shape is applied exactly ONCE, not composed on
+    //                       top of TransitionEngine's curve too.
     const float progress = computeIntensityProgress();
+    const float linearProgress = computeLinearBuildProgress();
     const auto dropState = dropStateMachine.getState(); // POST-1.0 addition: cached once, reused by the tail-envelope/ImpactEngine-carryover logic below
 
     // IntensityBudget input: all 10 macro parameters, normalized 0-1
@@ -780,14 +802,23 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
         chaosJitter[i] = dropRandomizer.getIntensityJitter((int) i);
 
     const auto& style = drop::getStyle(activeStyleIndexForBuild);
-    const auto weights = drop::IntensityBudget::computeWeights(style, progress, macroPercent, intensity01,
+    // POST-1.0 ("curve progression" fix): `linearProgress`, NOT `progress` -
+    // see this method's doc comment above and computeIntensityProgress()'s
+    // decision-matrix doc comment in PluginProcessor.h. This is the single
+    // point where style.moduleCurves[i]/style.budgetEnvelope's own authored
+    // shapes are evaluated; feeding them the ALREADY-curved `progress` here
+    // (the pre-fix behavior) composed two end-weighted curves together,
+    // which was the exact reported bug.
+    const auto weights = drop::IntensityBudget::computeWeights(style, linearProgress, macroPercent, intensity01,
                                                                  tension01, chaos01, audioAnalyzer.getSourceProfile(),
                                                                  chaosJitter);
 
     // Cached for the visualization-frame push at the end of processBlock()
-    // (see that call site's doc comment).
+    // (see that call site's doc comment, and the lastComputedProgress/
+    // lastComputedTensionLevel member doc comments in PluginProcessor.h).
     lastComputedWeights = weights;
-    lastComputedProgress = progress;
+    lastComputedProgress = linearProgress; // same basis as the weights above (requirement: visual dot / progress strip must agree with the audio)
+    lastComputedTensionLevel = progress;   // curved - "what the user feels"
 
     const float impactAmount01 = juce::jlimit(0.0f, 1.0f, impactParam->load() / 100.0f);
 
@@ -1086,6 +1117,27 @@ float DROPAudioProcessor::computeIntensityProgress() noexcept
             return 0.0f;
     }
     return 0.0f;
+}
+
+float DROPAudioProcessor::computeLinearBuildProgress() noexcept
+{
+    // POST-1.0 addition ("curve progression" fix) - see this method's
+    // declaration-site doc comment in PluginProcessor.h for the full
+    // decision matrix. Deliberately a small, independent duplicate of
+    // computeIntensityProgress()'s Building-case elapsed/total arithmetic
+    // (NOT a shared/refactored helper) - the two methods differ ONLY in
+    // whether transitionEngine.evaluate() is applied to `t`, and keeping
+    // them fully independent avoids any risk of perturbing
+    // computeIntensityProgress()'s own extensively-tested exact behavior.
+    if (dropStateMachine.getState() != drop::DropState::Building)
+        return 0.0f; // matches computeIntensityProgress()'s state-gating exactly: 0 for Idle/Arming/Peak/Impact/Recovery
+
+    const int64_t total = dropStateMachine.currentStateLengthSamples();
+    if (total <= 0)
+        return 1.0f; // zero-length Building edge case -> full progress immediately (matches computeIntensityProgress())
+
+    const int64_t elapsed = total - dropStateMachine.samplesUntilNextTransition();
+    return juce::jlimit(0.0f, 1.0f, (float) ((double) elapsed / (double) total));
 }
 
 void DROPAudioProcessor::setCurrentProgram(int index)
