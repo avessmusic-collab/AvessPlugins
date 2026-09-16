@@ -212,7 +212,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
     // build.
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "noiseTension", 1 },
-        "Noise Tension",
+        "Noise Curve", // UI chip reads "NOISE"; DAW name stays distinct from the "Noise" macro so automation lists are unambiguous (ID unchanged - sessions/automation intact)
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
         50.0f,
         "%"));

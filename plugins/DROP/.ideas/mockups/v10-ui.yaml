@@ -837,3 +837,12 @@ notes:
      v9-ui-test.html and v9-ui.yaml retain identical mtimes and md5 checksums
      throughout."
   - "No git commit made for this iteration (per explicit instruction); .continue-here.md not touched."
+
+noise_chip_rename_and_layout_polish:
+  date: 2026-09-17
+  reason: "User: 'rename tension noize to noize' + 'make the knob placing of the new knobs better'."
+  changes:
+    - "NOISE TENSION chip renamed to 'NOISE' (UI label only). The DAW-visible parameter name became 'Noise Curve' so automation lists stay unambiguous against the NOISE macro knob in the MODULES row; the APVTS ID `noiseTension` is UNCHANGED, so sessions and existing automation are unaffected."
+    - "Layout: the chip moved from its own lower row (40,230,128x56 - lone, wider than its siblings) into the SHAPE row as the third sibling at (276,150,108x56), exactly matching TENSION (40,150) and CHAOS (158,150) in size and baseline. Gap to the IMPACT knob (starts x=435) is 51px."
+    - "TAIL knob moved from (620,235) - shoved against the graph's left edge - to (675,231), centred in the span between the graph's left edge and the SYNC chip, with its knob centre (258px) now exactly level with SYNC's centre (258px)."
+  validation: "Advanced-page geometry re-validated: zero overlaps, all gaps >=10px, all edges >=15px."
