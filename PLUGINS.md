@@ -45,7 +45,7 @@
 | KICKR | 📦 Installed | 1.0.0 | Synth (Kick Instrument + Sampler) | 2026-09-07 |
 | CORRUPTR | 📦 Installed | 1.0.1 | Audio Effect (Multi-Distortion/Glitch) | 2026-09-08 |
 | Materia | 📦 Installed | 1.0.0 | Synth (Material Percussion Instrument) | 2026-09-09 |
-| DROP | 📦 Installed | 1.0.0 | Audio Effect (Transition Engine) | 2026-09-16 |
+| DROP | 📦 Installed | 1.0.0 | Audio Effect (Transition Engine) | 2026-09-17 |
 
 **For detailed plugin information (lifecycle timeline, known issues, parameters, etc.), see:**
 `plugins/[PluginName]/NOTES.md`
