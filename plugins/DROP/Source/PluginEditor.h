@@ -46,17 +46,19 @@
  * discrete user preference, not something a host automates), so it is
  * bridged via two native functions instead ("setTriggerMode" JS->C++,
  * "getInitialUIState" JS->C++ one-shot read at load) - see v10-ui.html's
- * own top-of-script doc comment for the JS side. The MIDI-trigger-note
- * picker (also non-parameter state per architecture.md) had NO UI element
- * in the finalized v10 mockup - flagged as a gap in
- * v10-integration-checklist.md Section 5 - RESOLVED in Stage 3 GUI Phase
- * 4.2 via a small design-consistent "MIDI NOTE" mini-screen chip
- * (#midiNoteChip, matching the Tension/Chaos readout family) on the
- * Advanced page, bridged via two more native functions
- * ("setMidiTriggerNote" JS->C++, folded into the existing
- * "getInitialUIState" one-shot read) rather than a WebSliderRelay - same
- * non-parameter-state treatment as triggerMode. Documented as a
- * post-finalization amendment in v10-ui.yaml.
+ * own top-of-script doc comment for the JS side.
+ *
+ * POST-1.0 (2026-09-17, user-directed: "remove midi note selection"): the
+ * MIDI-trigger-note picker ("MIDI NOTE" mini-screen chip, #midiNoteChip,
+ * added Stage 3 GUI Phase 4.2) and its "setMidiTriggerNote" native-function
+ * bridge are REMOVED from this class - DOCUMENTED SUPERSESSION. MIDI trigger
+ * mode now responds to ANY note-on message (see PluginProcessor.cpp's
+ * processBlock() doc comment) rather than a user-configurable one, so no
+ * note-picker UI is needed. `getInitialUIState`'s response no longer
+ * includes a `midiTriggerNote` field. `DROPAudioProcessor::
+ * getMidiTriggerNote()`/`setMidiTriggerNote()` remain on the processor
+ * (unused by this editor now) purely for saved-session backward
+ * compatibility - see PluginProcessor.h's doc comment.
  *
  * VISUALIZATION (Stage 3 GUI Phase 4.3, COMPLETE): a private juce::Timer
  * (30Hz) drains DROPAudioProcessor::popVisualizationFrame() (the real

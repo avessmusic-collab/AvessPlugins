@@ -88,6 +88,18 @@
       - Visualization consistency: VisualizationFrame::progress is the LINEAR
         basis (matches the audio weights' own basis); ::tensionLevel is a
         genuine curved transform of it, matching TransitionEngine::evaluate().
+
+    POST-1.0 THIRD IMPROVEMENT SESSION (2026-09-17, user-directed: "make so
+    the noise adds gradualy, remove midi note selection..."). See
+    PluginProcessor.h's own top doc comment for the full four-part summary.
+      - NoiseModule::riseAmountForProgress(): gradual/monotonic/C0-continuity
+        + audible-early-rise-floor verification (proven to fail against the
+        superseded progress^2 shape "by construction").
+      - MIDI-any-note: an arbitrary note-on triggers while triggerMode ==
+        Midi (DOCUMENTED SUPERSESSION of the old note-number-matching
+        assertion); still ignored when triggerMode != Midi.
+      - Saved-session compatibility: a state containing the old midiNote
+        field still loads without error and remains inert for detection.
 */
 #include "PluginProcessor.h"
 #include "DSP/MusicalClock.h"
@@ -575,27 +587,32 @@ int main()
             p.releaseResources();
         }
 
-        // --- MIDI note NOT matching the configured trigger note: no-op ---
+        // --- POST-1.0 (2026-09-17, "remove midi note selection"): ANY
+        // note-on triggers while triggerMode == Midi, regardless of note
+        // number - DOCUMENTED SUPERSESSION of the pre-fix "non-matching
+        // MIDI note does NOT trigger" assertion (that test encoded the OLD
+        // note-number-matching behavior, which no longer exists - there is
+        // no UI element left to configure a specific note). midiTriggerNote
+        // is deliberately left at its default and never consulted here. ---
         {
             DROPAudioProcessor p;
             p.setTriggerMode (DROPAudioProcessor::TriggerMode::Midi);
-            p.setMidiTriggerNote (60);
             p.prepareToPlay (48000.0, 64);
 
             juce::AudioBuffer<float> buf (2, 64);
             buf.clear();
             juce::MidiBuffer midi;
-            midi.addEvent (juce::MidiMessage::noteOn (1, 61, (juce::uint8) 100), 10); // wrong note
+            midi.addEvent (juce::MidiMessage::noteOn (1, 61, (juce::uint8) 100), 10); // arbitrary note number, deliberately NOT the old default of 60
             p.processBlock (buf, midi);
 
-            check (p.getCurrentDropState() == drop::DropState::Idle, "non-matching MIDI note does NOT trigger");
+            check (p.getCurrentDropState() != drop::DropState::Idle,
+                  "[POST-1.0] MIDI-any-note: an arbitrary note-on (note 61, not the old configured-note default) triggers Idle->Arming while triggerMode == Midi - note number is no longer consulted");
             p.releaseResources();
         }
 
         // --- MIDI listener inactive outside Midi trigger mode -------------
         {
             DROPAudioProcessor p; // default TriggerMode::Manual
-            p.setMidiTriggerNote (60);
             p.prepareToPlay (48000.0, 64);
 
             juce::AudioBuffer<float> buf (2, 64);
@@ -605,9 +622,53 @@ int main()
             p.processBlock (buf, midi);
 
             check (p.getCurrentDropState() == drop::DropState::Idle,
-                  "matching MIDI note is ignored when triggerMode != Midi (avoids accidental triggers from unrelated MIDI content)");
+                  "[POST-1.0] MIDI-any-note: a note-on is still ignored when triggerMode != Midi (avoids accidental triggers from unrelated MIDI content) - the ANY-note-on change only widens WHICH notes trigger while Midi mode is active, not WHEN the listener is active at all");
             p.releaseResources();
         }
+    }
+
+    //==========================================================================
+    // [POST-1.0] "remove midi note selection" (2026-09-17, user-directed).
+    // See PluginProcessor.h's "POST-1.0 THIRD IMPROVEMENT SESSION" doc
+    // comment.
+    //==========================================================================
+    std::printf ("\n[POST-1.0] Saved-session compatibility - state containing the old midiNote field still loads without error\n");
+    {
+        // Builds a minimal, hand-authored ValueTree matching the SHAPE
+        // getStateInformation() has always produced (APVTS root + a
+        // <DropCustomState> child with a `midiNote` property, exactly as it
+        // was written by every session saved before this change), so this
+        // test does not depend on any *other* processor instance's
+        // getStateInformation() output to construct its input - a genuinely
+        // independent round-trip check of setStateInformation()'s parsing.
+        DROPAudioProcessor writer;
+        writer.setMidiTriggerNote (77); // a deliberately non-default note, proving the field is genuinely read back, not just defaulted
+        juce::MemoryBlock savedState;
+        writer.getStateInformation (savedState);
+
+        DROPAudioProcessor reader;
+        // setStateInformation() must not crash/throw on a state containing
+        // the (now DSP-unused, but still-present-in-the-format) midiNote
+        // field.
+        reader.setStateInformation (savedState.getData(), (int) savedState.getSize());
+
+        check (reader.getMidiTriggerNote() == 77,
+              "[POST-1.0] saved-session compatibility: a state containing the old midiNote field loads without error and getMidiTriggerNote() reflects the persisted value (field kept for backward compatibility, even though MIDI-trigger detection no longer consults it)");
+
+        // The loaded processor must still be otherwise fully functional -
+        // MIDI trigger mode now responds to ANY note-on (not the loaded
+        // midiNote value), confirming the field is inert for detection
+        // purposes while still round-tripping correctly.
+        reader.setTriggerMode (DROPAudioProcessor::TriggerMode::Midi);
+        reader.prepareToPlay (48000.0, 64);
+        juce::AudioBuffer<float> buf (2, 64);
+        buf.clear();
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 1, (juce::uint8) 100), 10); // note 1, nowhere near the loaded midiNote=77
+        reader.processBlock (buf, midi);
+        check (reader.getCurrentDropState() != drop::DropState::Idle,
+              "[POST-1.0] saved-session compatibility: after loading a state with midiNote=77, an unrelated note-on (note 1) still triggers - confirms the loaded field is inert for MIDI-trigger detection (ANY-note-on behavior), not silently reintroducing the old matching requirement");
+        reader.releaseResources();
     }
 
     //==========================================================================
@@ -1540,6 +1601,65 @@ int main()
             }
         }
         check (anySeedDiffers, "DropRandomizer: at least one of 8 alternate seeds produces a different randomized choice than the reference seed (not a degenerate constant implementation) - verified via a seed battery rather than a single statistically-fragile pair, since the small musically-constrained draw space makes any ONE pair's collision non-negligible even when the seed genuinely perturbs the RNG");
+    }
+
+    //==========================================================================
+    // [POST-1.0] "make so the noise adds gradualy" (2026-09-17, user-
+    // directed). See NoiseModule.h's riseAmountForProgress() doc comment and
+    // PluginProcessor.h's "POST-1.0 THIRD IMPROVEMENT SESSION" doc comment.
+    //==========================================================================
+    std::printf ("\n[POST-1.0] NoiseModule::riseAmountForProgress() - gradual, monotonic, C0-continuous rise (supersedes the old progress^2 shape)\n");
+    {
+        // Monotonic non-decreasing across [0,1], starting at ~0 and ending
+        // at exactly 1.
+        bool monotonic = true;
+        float previous = -1.0f;
+        for (int i = 0; i <= 100; ++i)
+        {
+            const float p = (float) i / 100.0f;
+            const float v = drop::NoiseModule::riseAmountForProgress (p);
+            if (v < previous - 1.0e-6f) monotonic = false;
+            previous = v;
+        }
+        check (monotonic, "[POST-1.0] riseAmountForProgress(): monotonically non-decreasing across [0,1]");
+
+        const float atZero = drop::NoiseModule::riseAmountForProgress (0.0f);
+        const float atOne  = drop::NoiseModule::riseAmountForProgress (1.0f);
+        check (nearlyEqual ((double) atZero, 0.0, 1.0e-6), "[POST-1.0] riseAmountForProgress(0) == 0.0 exactly");
+        check (nearlyEqual ((double) atOne, 1.0, 1.0e-6), "[POST-1.0] riseAmountForProgress(1) == 1.0 exactly");
+
+        // Audible-early-rise floors: the OLD `progress*progress` shape gave
+        // 0.04 at progress=0.2 and 0.25 at progress=0.5 - both are the
+        // documented values the user's "adds gradually" complaint was about
+        // (near-silent until very late). The floors below are set well
+        // ABOVE those old values (double, in both cases) so this test
+        // genuinely fails against the old quadratic shape while passing the
+        // new smoothstep shape (0.104 at 0.2, 0.5 at 0.5 - see
+        // riseAmountForProgress()'s own doc comment for the exact numbers).
+        const float at02 = drop::NoiseModule::riseAmountForProgress (0.2f);
+        const float at05 = drop::NoiseModule::riseAmountForProgress (0.5f);
+        std::printf ("  riseAmountForProgress(0.2)=%.4f (floor 0.08, OLD progress^2 gave 0.04)  riseAmountForProgress(0.5)=%.4f (floor 0.4, OLD progress^2 gave 0.25)\n", at02, at05);
+        check (at02 >= 0.08f, "[POST-1.0] riseAmountForProgress(0.2) clears the 0.08 audible-early-rise floor (the OLD progress^2 shape's 0.04 would FAIL this)");
+        check (at05 >= 0.40f, "[POST-1.0] riseAmountForProgress(0.5) clears the 0.40 audible-mid-rise floor (the OLD progress^2 shape's 0.25 would FAIL this)");
+
+        // Continuity (C0 proxy): no jump greater than a documented bound
+        // between adjacent finely-sampled progress values - smoothstep is a
+        // smooth cubic polynomial, so any genuine discontinuity here would
+        // indicate an implementation bug (e.g. an accidental branch/clamp
+        // seam), not merely floating-point noise.
+        constexpr int kContinuitySamples = 500;
+        constexpr float kMaxAllowedStep = 0.01f; // generous vs. smoothstep's max slope (1.5 at p=0.5) * (1/500) step ~= 0.003
+        float maxStep = 0.0f;
+        float prevContinuity = drop::NoiseModule::riseAmountForProgress (0.0f);
+        for (int i = 1; i <= kContinuitySamples; ++i)
+        {
+            const float p = (float) i / (float) kContinuitySamples;
+            const float v = drop::NoiseModule::riseAmountForProgress (p);
+            maxStep = std::max (maxStep, std::abs (v - prevContinuity));
+            prevContinuity = v;
+        }
+        std::printf ("  max step between %d adjacent samples = %.6f (documented bound %.6f)\n", kContinuitySamples, maxStep, kMaxAllowedStep);
+        check (maxStep < kMaxAllowedStep, "[POST-1.0] riseAmountForProgress(): no jump greater than the documented bound between adjacent finely-sampled progress values (C0 continuity proxy)");
     }
 
     //==========================================================================

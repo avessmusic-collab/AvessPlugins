@@ -87,23 +87,21 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
                         setTriggerModeIndex(static_cast<int>(args[0]));
                     completion(true);
                 })
-            // --- Non-APVTS "MIDI trigger note" bridge (Stage 3 GUI Phase
-            // 4.2 gap resolution - v10-integration-checklist.md Section 5;
-            // same non-parameter-state category/reasoning as triggerMode
-            // above, see index.html's #midiNoteChip markup comment) ---
-            .withNativeFunction("setMidiTriggerNote",
-                [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion)
-                {
-                    if (args.size() >= 1)
-                        processorRef.setMidiTriggerNote(juce::jlimit(0, 127, static_cast<int>(args[0])));
-                    completion(true);
-                })
+            // POST-1.0 (2026-09-17, user-directed: "remove midi note
+            // selection"): the "setMidiTriggerNote" native function
+            // (Stage 3 GUI Phase 4.2 addition) is REMOVED - MIDI trigger
+            // mode now responds to ANY note-on (see PluginProcessor.cpp's
+            // processBlock() doc comment), so there is no longer a
+            // per-note UI value to push to the processor. DOCUMENTED
+            // SUPERSESSION.
             .withNativeFunction("getInitialUIState",
                 [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
                 {
                     auto* obj = new juce::DynamicObject();
                     obj->setProperty("triggerMode", getTriggerModeIndex());
-                    obj->setProperty("midiTriggerNote", processorRef.getMidiTriggerNote());
+                    // POST-1.0 (2026-09-17): `midiTriggerNote` field REMOVED
+                    // from this response - see this native function's doc
+                    // comment above.
                     // Stage 3 GUI Phase 4.3 (plan.md criterion: "closing and
                     // reopening the editor mid-transition shows correct
                     // current state, not reset state"): seed the WebView's

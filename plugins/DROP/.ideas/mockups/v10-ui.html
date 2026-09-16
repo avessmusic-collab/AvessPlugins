@@ -145,15 +145,11 @@
   .mchev.up { border-left: 0.22rem solid transparent; border-right: 0.22rem solid transparent; border-bottom: 0.28rem solid var(--accent); }
   .mchev.down { border-left: 0.22rem solid transparent; border-right: 0.22rem solid transparent; border-top: 0.28rem solid var(--accent); }
 
-  /* ---------- MIDI trigger note chip (Stage 3 GUI Phase 4.2 addition,
-     post-finalization amendment - see v10-ui.yaml's midi_trigger_note_chip
-     note and v10-integration-checklist.md Section 5). Reuses the
-     .mini-screen family verbatim (same dark inset LCD treatment as
-     Tension/Chaos) - only an added `.disabled` state, shown while
-     triggerMode != MIDI (non-APVTS native-function-bridged state, same
-     category as the trigger-mode pill itself, so it has no drag-to-adjust,
-     chevron-step only). ---------- */
-  .mini-screen.disabled { opacity: 0.4; pointer-events: none; transition: opacity 220ms ease; }
+  /* POST-1.0 (2026-09-17, user-directed: "remove midi note selection"): the
+     MIDI trigger note chip (#midiNoteChip, added Stage 3 GUI Phase 4.2) and
+     its .mini-screen.disabled rule are REMOVED - see v10-ui.yaml's
+     midi_trigger_note_chip_removal amendment note. MIDI trigger mode now
+     responds to ANY note-on message, so no note picker is needed. */
 
   /* ---------- Phase chip + progress track - light neumorphic recessed wells,
      driven by the live "dropVisUpdate" feed (see script below), dark text
@@ -356,18 +352,12 @@
         <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
       </div>
 
-      <!-- MIDI trigger note - NON-APVTS state (architecture.md), bridged via
-           "setMidiTriggerNote"/"getInitialUIState" native functions (see
-           PluginEditor.cpp) - NOT a WebSliderRelay, matching triggerMode's
-           own non-parameter treatment. Stage 3 GUI Phase 4.2 addition
-           resolving the gap flagged in v10-integration-checklist.md Section
-           5; dimmed/inert (see .mini-screen.disabled) except while
-           triggerMode == MIDI. -->
-      <div class="mini-screen disabled" id="midiNoteChip" style="left:17.25rem; top:9.375rem; width:6.75rem; height:3.5rem;">
-        <div class="mini-screen-label">MIDI NOTE</div>
-        <div class="mini-screen-value" style="font-size:1.05rem;"><span id="midiNoteName">C3</span></div>
-        <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
-      </div>
+      <!-- POST-1.0 (2026-09-17, user-directed: "remove midi note
+           selection"): the MIDI NOTE chip (added Stage 3 GUI Phase 4.2) is
+           REMOVED - MIDI trigger mode now responds to ANY note-on message
+           (see PluginProcessor.cpp's processBlock() doc comment), so no
+           note-picker UI is needed. See v10-ui.yaml's
+           midi_trigger_note_chip_removal amendment note. -->
 
       <!-- Tail - POST-1.0 addition (2026-09-16, user-directed improvement).
            Small macro-style knob, same visual family as the 10 module
@@ -394,15 +384,27 @@
         <div class="mini-screen-value" style="font-size:1.05rem;"><span id="syncValue">INT 120</span></div>
       </div>
 
+      <!-- POST-1.0 (2026-09-17, user-directed: "add a second curve to the
+           graph... make the main purple and make the second gray the
+           second curve will be the noise, how it gradualy adds"). Second
+           curve (#curvePathNoise, GRAY #8A8F98 - reused from the tension
+           curve's own prior color) plots drop::NoiseModule::
+           riseAmountForProgress() (mirrored in JS below, see redrawCurve())
+           against the SAME x-axis as the tension curve. Main tension curve
+           (#curvePath) recolored PURPLE (#A78BFA). See v10-ui.yaml's
+           tension_noise_dual_curve amendment note for the color rationale. -->
       <div id="curveBox" style="left:38.75rem; top:5rem; width:18.75rem; height:8.75rem;">
         <div class="curve-label">TENSION CURVE</div>
         <div class="curve-type-label" id="curveTypeLabel">S-CURVE</div>
         <svg width="100%" height="100%" viewBox="0 0 300 140" preserveAspectRatio="none">
           <g id="curveGrid"></g>
-          <path id="curvePath" fill="none" stroke="#8A8F98" stroke-width="1.4"></path>
+          <path id="curvePathNoise" fill="none" stroke="#8A8F98" stroke-width="1.2"></path>
+          <path id="curvePath" fill="none" stroke="#A78BFA" stroke-width="1.4"></path>
           <circle id="curveDot" cx="8" cy="84" r="2.6" fill="#E8823C" style="filter:drop-shadow(0 0 4px rgba(232,130,60,0.75));"></circle>
           <text x="8" y="130" font-size="8" fill="#5A5F68" letter-spacing="1">BUILD</text>
           <text x="292" y="130" font-size="8" fill="#5A5F68" letter-spacing="1" text-anchor="end">DROP</text>
+          <text x="8" y="118" font-size="6" fill="#A78BFA" letter-spacing="0.6">— TENSION</text>
+          <text x="292" y="118" font-size="6" fill="#8A8F98" letter-spacing="0.6" text-anchor="end">— NOISE</text>
         </svg>
       </div>
 
@@ -634,42 +636,16 @@
   const modeButtons = Array.from(modePill.querySelectorAll('button'));
   const MODE_VALUES = ['manual', 'midi', 'auto'];
 
-  /* MIDI trigger note chip - NON-APVTS state, bridged via native functions
-     (Stage 3 GUI Phase 4.2 gap resolution - see this file's own markup
-     comment above #midiNoteChip and v10-integration-checklist.md Section
-     5). Chevron-step only (no drag), matching a discrete note picker rather
-     than a continuous parameter; enabled/dimmed by triggerMode below. */
-  const midiNoteChip = document.getElementById('midiNoteChip');
-  const midiNoteNameEl = document.getElementById('midiNoteName');
-  const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  let midiTriggerNote = 60; // matches PluginProcessor.h's kDefaultMidiTriggerNote (C3, see noteNumberToName below)
-  function noteNumberToName(n) {
-    const name = NOTE_NAMES[((n % 12) + 12) % 12];
-    const octave = Math.floor(n / 12) - 2; // note 60 -> "C3" (internal convention, self-consistent between JS and PluginEditor.cpp - not tied to any specific DAW's octave numbering)
-    return name + octave;
-  }
-  function renderMidiNote() { midiNoteNameEl.textContent = noteNumberToName(midiTriggerNote); }
-  renderMidiNote();
-  function setMidiNoteChipEnabled(enabled) { midiNoteChip.classList.toggle('disabled', !enabled); }
-  let cachedSetMidiTriggerNoteFn = null;
-  function callSetMidiTriggerNote(n) {
-    if (!backendAvailable) return;
-    if (!cachedSetMidiTriggerNoteFn) cachedSetMidiTriggerNoteFn = Juce.getNativeFunction('setMidiTriggerNote');
-    cachedSetMidiTriggerNoteFn(n);
-  }
-  midiNoteChip.querySelectorAll('.mchev').forEach((chev) => {
-    chev.addEventListener('click', () => {
-      const dir = parseFloat(chev.dataset.dir);
-      midiTriggerNote = Math.min(127, Math.max(0, midiTriggerNote + dir));
-      renderMidiNote();
-      callSetMidiTriggerNote(midiTriggerNote);
-    });
-  });
+  // POST-1.0 (2026-09-17, user-directed: "remove midi note selection"): the
+  // MIDI trigger note chip's JS (element refs, note-name formatting,
+  // chevron handlers, setMidiTriggerNote native-function bridge) is
+  // REMOVED - MIDI trigger mode now responds to ANY note-on message (see
+  // PluginProcessor.cpp's processBlock() doc comment), so there is no
+  // per-note UI value to track or push. DOCUMENTED SUPERSESSION.
 
   function setTriggerModeUI(index) {
     modeButtons.forEach((b, i) => b.classList.toggle('active', i === index));
     modeIndicator.style.transform = `translateX(${index * 100}%)`;
-    setMidiNoteChipEnabled(index === 1); // 1 = midi
   }
   let cachedSetTriggerModeFn = null;
   function callSetTriggerMode(index) {
@@ -685,15 +661,17 @@
       callSetTriggerMode(i);
     });
   });
-  // Fetch the persisted trigger mode + MIDI trigger note once at load
-  // (non-parameter state does not round-trip through a relay's own
-  // sendInitialUpdate() the way APVTS parameters do) - see
-  // v10-PluginEditor.cpp's "getInitialUIState" native function.
+  // Fetch the persisted trigger mode once at load (non-parameter state does
+  // not round-trip through a relay's own sendInitialUpdate() the way APVTS
+  // parameters do) - see v10-PluginEditor.cpp's "getInitialUIState" native
+  // function. (POST-1.0, 2026-09-17: no longer also fetches a MIDI trigger
+  // note - see this file's MIDI-note-removal doc comment above.)
   if (backendAvailable) {
     const getInitialUIState = Juce.getNativeFunction('getInitialUIState');
     getInitialUIState().then((state) => {
       if (state && typeof state.triggerMode === 'number') setTriggerModeUI(state.triggerMode);
-      if (state && typeof state.midiTriggerNote === 'number') { midiTriggerNote = state.midiTriggerNote; renderMidiNote(); }
+      // POST-1.0 (2026-09-17): `midiTriggerNote` field parsing REMOVED - see
+      // this file's own MIDI-note-removal doc comment above.
       // Phase 4.3 (plan.md criterion): seed the live-visualization state
       // immediately from this one-shot load-time fetch, using the EXACT
       // SAME field parsing as the "dropVisUpdate" event listener above, so
@@ -950,9 +928,23 @@
      this JS approximation - flagged as a possible future refinement, not
      required for a faithful port of the finalized mockup's visual design. */
   const curvePath = document.getElementById('curvePath');
+  const curvePathNoise = document.getElementById('curvePathNoise');
   const curveDot = document.getElementById('curveDot');
   const curveTypeLabel = document.getElementById('curveTypeLabel');
   const CURVE_X0 = 8, CURVE_X1 = 188, CURVE_Y0 = 84, CURVE_H = 68;
+
+  // POST-1.0 (2026-09-17, user-directed: "the second curve will be the
+  // noise, how it gradualy adds"). Mirrors drop::NoiseModule::
+  // riseAmountForProgress() (Source/DSP/NoiseModule.h - the C++ source of
+  // truth) EXACTLY: smoothstep, p*p*(3-2p). Verified to agree with the C++
+  // implementation via RunTests.cpp's "[POST-1.0] noise rise gradual" test
+  // block (both are simple enough - 2 multiplies, no transcendental calls -
+  // that a byte-for-byte port is unambiguous; any future change to either
+  // side should update both plus that test).
+  function riseAmountForProgress(p) {
+    const c = Math.min(1, Math.max(0, p));
+    return c * c * (3 - 2 * c);
+  }
   function buildCurveGrid() {
     const svgNS = 'http://www.w3.org/2000/svg';
     const g = document.getElementById('curveGrid');
@@ -976,11 +968,30 @@
     const tNorm = bareRefs.tension.get();
     const exponent = 1 + tNorm * 3.2;
     const pts = [];
+    const ptsNoise = [];
     const N = 24;
-    for (let i = 0; i <= N; i++) { const x = i / N; pts.push([CURVE_X0 + x * (CURVE_X1 - CURVE_X0), curveY(x, exponent)]); }
+    for (let i = 0; i <= N; i++) {
+      const x = i / N;
+      const px = CURVE_X0 + x * (CURVE_X1 - CURVE_X0);
+      pts.push([px, curveY(x, exponent)]);
+      // NOISE curve (POST-1.0, 2026-09-17): NoiseModule::process() receives
+      // this SAME curved-progress value (Math.pow(x, exponent), the tension
+      // curve's own normalized 0..1 shape) as its `progress` argument - see
+      // PluginProcessor.cpp processSegment()'s noiseModule.process() call -
+      // so plotting riseAmountForProgress(curvedProgress) at each linear-x
+      // sample shows exactly what the user hears the riser do across the
+      // build, not merely riseAmountForProgress(x) in isolation.
+      const curvedProgress = Math.pow(x, exponent);
+      ptsNoise.push([px, CURVE_Y0 - riseAmountForProgress(curvedProgress) * CURVE_H]);
+    }
     let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)} `;
     for (let i = 1; i < pts.length; i++) d += `L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)} `;
     curvePath.setAttribute('d', d);
+
+    let dNoise = `M ${ptsNoise[0][0].toFixed(1)} ${ptsNoise[0][1].toFixed(1)} `;
+    for (let i = 1; i < ptsNoise.length; i++) dNoise += `L ${ptsNoise[i][0].toFixed(1)} ${ptsNoise[i][1].toFixed(1)} `;
+    curvePathNoise.setAttribute('d', dNoise);
+
     curveTypeLabel.textContent = tNorm < 0.33 ? 'GENTLE' : (tNorm < 0.66 ? 'S-CURVE' : 'LATE ACCEL');
     let dotT = 0;
     const st = dropVis.currentState;

@@ -385,6 +385,10 @@ controls:
 
   # POST-FINALIZATION AMENDMENT (2026-09-15, Stage 3 GUI Phase 4.2) - see
   # midi_trigger_note_chip note below for full rationale/geometry-derivation.
+  # REMOVED 2026-09-17 (user-directed: "remove midi note selection") - see
+  # midi_trigger_note_chip_removal amendment note below. Entry kept here
+  # (not deleted) purely as a historical record, matching this file's own
+  # established convention of amending-forward rather than rewriting history.
   - id: midiNoteChip
     type: readout_stepped
     page: advanced
@@ -393,6 +397,7 @@ controls:
     non_apvts: true
     default: 60 # C3 - matches PluginProcessor.h's kDefaultMidiTriggerNote
     label: "MIDI Note"
+    status: "REMOVED 2026-09-17 - see midi_trigger_note_chip_removal amendment note"
     control_style: "identical mini-LCD treatment to Tension/Chaos (dark inset screen, orange monospace note-name readout, up/down chevron step - no drag, discrete note picker) - dimmed/inert (0.4 opacity, pointer-events:none) except while Trigger Mode == MIDI; bridged via 'setMidiTriggerNote'/'getInitialUIState' native functions, NOT a WebSliderRelay (same non-parameter-state treatment as triggerMode)"
 
   - id: curveBox
@@ -575,6 +580,27 @@ sync_bpm_chip:
   binding: "Additive VisualizationFrame fields (bpm, hostPlayheadValid - PluginProcessor.h), piped through the EXISTING 'dropVisUpdate' event / 'getInitialUIState' visualization payload (no new native function/event needed) - parsed in both the dropVisUpdate listener and the getInitialUIState .then() handler, rendered once per rAF frame via updateSyncChip() (folded into the existing frame_() loop alongside redrawCurve()/updatePhaseChip()/updateProgressStrip())."
   files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup (#syncChip), JS (dropVis.bpm/hostPlayheadValid fields + both parsing sites, updateSyncChip()); Source/PluginProcessor.h (VisualizationFrame additive fields); Source/PluginProcessor.cpp (populated at the visualization-frame push site); Source/PluginEditor.cpp (buildDropVisUpdateVar() additive properties); this YAML (this note + the layout_validation control-count update below)."
 
+midi_trigger_note_chip_removal:
+  date: 2026-09-17
+  phase: "POST-1.0 third improvement session (dsp-agent), user-directed verbatim request: 'remove midi note selection'."
+  reason: "User explicitly asked to remove the MIDI NOTE picker UI (midi_trigger_note_chip, added 2026-09-15 to resolve a previously-flagged gap). With no UI element left to choose a specific note, MIDI trigger mode needed a new default behavior."
+  design_decision: "MIDI trigger mode now responds to ANY note-on message, not a specific configured note - the most useful behavior for the realistic remaining use case (triggering from a MIDI clip or a controller pad, where the exact note number is incidental). Implemented in PluginProcessor.cpp's processBlock() MIDI-trigger scan (DOCUMENTED SUPERSESSION of the prior note-number-matching check)."
+  removed: "The #midiNoteChip markup + its .mini-screen.disabled CSS rule (index.html + .ideas/mockups/v10-ui.html, kept byte-identical); the 'setMidiTriggerNote' native function and its call site inside 'getInitialUIState' (PluginEditor.cpp); the chip's JS (element refs, note-name formatting, chevron handlers, enabled-state wiring) from both HTML files."
+  kept_for_compatibility: "PluginProcessor.h/.cpp's midiTriggerNote atomic + getMidiTriggerNote()/setMidiTriggerNote() accessors + the persisted <DropCustomState midiNote=\"...\"> ValueTree field are UNCHANGED - kept purely so a session saved before this change (which may have stored a non-default note) still loads without error. They are simply no longer consulted by MIDI-trigger detection."
+  layout_validation_update: "Advanced-page control count: 25 -> 24 (midiNoteChip removed)."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup/CSS/JS removal; Source/PluginEditor.h/.cpp (native function + doc comments); Source/PluginProcessor.h/.cpp (MIDI-trigger-detection logic + doc comments); Source/Tests/RunTests.cpp (MIDI-note test block updated for ANY-note-on behavior + new saved-session-compatibility test); this YAML (midiNoteChip control entry status + this note)."
+
+tension_noise_dual_curve:
+  date: 2026-09-17
+  phase: "POST-1.0 third improvement session (dsp-agent), user-directed verbatim request: 'add a second curve to the graph make the main purple and make the second gray the second curve will be the noise, how it gradualy adds'."
+  reason: "The Advanced page's TENSION CURVE display (curveBox) previously drew only one curve (the transition/tension shape) plus the traveling progress dot. The user asked for a second curve showing the noise riser's own gradual rise, plus a color scheme distinguishing the two (purple main / gray second)."
+  design: "A new #curvePathNoise SVG <path> (stroke-width 1.2, drawn BEHIND #curvePath in z-order so the main tension curve stays fully visible on top) plots drop::NoiseModule::riseAmountForProgress() - the exact same pure function the DSP uses (Source/DSP/NoiseModule.h) - evaluated at the tension curve's own curved-progress value (Math.pow(x, exponent)) for each linear-x sample, matching how PluginProcessor.cpp's processSegment() actually feeds NoiseModule.process()'s `progress` argument. Two small inline SVG <text> legend labels ('— TENSION' / '— NOISE', font-size 6, same LCD-readout letter-spacing convention as the existing BUILD/DROP labels) were added at y=118, colored to match each curve, distinguishing them without a separate legend box."
+  colors:
+    tension_purple: "#A78BFA"
+    noise_gray: "#8A8F98"
+    rationale: "#A78BFA (a soft violet) was chosen for the main curve because it sits clearly on the dark #202226->#17181B LCD gradient panel and reads as visually distinct from the UI's single existing accent color (#E8823C orange, used everywhere else - knob arcs, progress strip, style-nav text) - purple was otherwise entirely absent from this design, so no other element competes with it. #8A8F98 for the noise curve is the SAME gray #curvePath itself used before this change (a legible mid-gray already proven to read clearly against the dark screen background in production) - reusing it for the now-secondary curve is a deliberate 'demote, don't invent' choice: the curve that used to be the only one keeps its old understated color, and the newly-primary tension curve gets the new, more prominent purple."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup (#curvePathNoise path + legend <text> elements, #curvePath stroke color change), JS (riseAmountForProgress() mirror function, redrawCurve()'s ptsNoise computation + curvePathNoise.setAttribute); Source/DSP/NoiseModule.h (new static riseAmountForProgress(), the C++ source of truth); this YAML (this note)."
+
 midi_trigger_note_chip:
   date: 2026-09-15
   phase: "Stage 3 GUI Phase 4.2 (Parameter Binding and Interaction), gui-agent"
@@ -609,7 +635,7 @@ module_weight_arc_glow:
 
 layout_validation:
   method: "Custom Python bounds/overlap/edge-padding/min-gap validator, coordinates converted from the HTML's rem values at base 16px/rem (matches BASE_W/BASE_H 1000x560)."
-  result: "PASS — 0 errors across 12 Main controls (was 13; orbWrap removed 2026-09-14) and 25 Advanced controls (was 24; `syncChip` added 2026-09-16, see sync_bpm_chip amendment note - manually verified clear of every neighbor with >= 10px gaps, not re-run through the Python validator this pass; was 23 before `tail` added 2026-09-16, see tail_parameter amendment note). Post-removal Main center column re-verified: all four center elements share center x=500, vertical gaps 92/44/36px (all >= 10px min), no overlaps with the flanking knobs (center column x 360-640 vs Intensity ending x=286 / DryWet starting x=714), max content bottom y=372 leaves 188px bottom margin."
+  result: "PASS — 0 errors across 12 Main controls (was 13; orbWrap removed 2026-09-14) and 24 Advanced controls (was 25; `midiNoteChip` REMOVED 2026-09-17, see midi_trigger_note_chip_removal amendment note - was 25 with `syncChip` added 2026-09-16, see sync_bpm_chip amendment note - manually verified clear of every neighbor with >= 10px gaps, not re-run through the Python validator this pass; was 23 before `tail` added 2026-09-16, see tail_parameter amendment note). Post-removal Main center column re-verified: all four center elements share center x=500, vertical gaps 92/44/36px (all >= 10px min), no overlaps with the flanking knobs (center column x 360-640 vs Intensity ending x=286 / DryWet starting x=714), max content bottom y=372 leaves 188px bottom margin."
   edge_padding_min: 15
   control_gap_min: 10
   impact_center_x_verified: 500

@@ -258,6 +258,39 @@
  *   a "SYNC" readout confirming lock-to-host at a glance (Source/ui/public/
  *   index.html's #syncChip, Advanced page).
  *
+ * POST-1.0 THIRD IMPROVEMENT SESSION (2026-09-17, user-directed, stays at
+ * 1.0.0). Four related changes, all from one user request:
+ *
+ *   1. GRADUAL NOISE: NoiseModule's riser used `progress * progress`
+ *      (quadratic) - inaudible until very late in the build, then arriving
+ *      abruptly. Replaced with the new `drop::NoiseModule::
+ *      riseAmountForProgress()` (smoothstep, monotonic, C1-continuous at
+ *      both ends) - a pure `static` function so it is provably the SAME
+ *      math the Advanced-page TENSION CURVE display's new second curve
+ *      plots (see #3). See NoiseModule.h/.cpp for the shape justification.
+ *   2. MIDI NOTE SELECTION REMOVED: the "MIDI NOTE" mini-screen chip (added
+ *      2026-09-15, Stage 3 GUI Phase 4.2) and its "setMidiTriggerNote"
+ *      native-function bridge are removed from Source/PluginEditor.{h,cpp}
+ *      and Source/ui/public/index.html (+ the byte-identical
+ *      .ideas/mockups/v10-ui.html). DESIGN DECISION: with no UI element left
+ *      to pick a note, MIDI trigger mode now responds to ANY note-on
+ *      message (see processBlock()'s MIDI-trigger doc comment) - most
+ *      useful for triggering from a MIDI clip or a pad. The underlying
+ *      `midiTriggerNote` atomic + its persisted `<DropCustomState
+ *      midiNote="...">` field are KEPT (unused by trigger detection now) so
+ *      a session saved before this change still loads cleanly - see
+ *      getMidiTriggerNote()/setStateInformation() below, both unchanged.
+ *   3. SECOND CURVE: the Advanced page's TENSION CURVE display now draws a
+ *      second curve (GRAY) alongside the existing tension curve (now
+ *      PURPLE) showing the noise riser's own rise shape from #1, using the
+ *      SAME curved-progress basis the tension curve's x-axis already uses.
+ *   4. COLORS: tension curve -> purple (#A78BFA), noise curve -> gray
+ *      (#8A8F98, reused from the tension curve's own prior color).
+ *
+ * No APVTS parameter IDs changed; no DSP processing-chain reordering. See
+ * plugins/DROP/CHANGELOG.md for the user-facing changelog entry and
+ * .ideas/mockups/v10-ui.yaml for the UI-side amendment notes.
+ *
  * See plugins/DROP/CHANGELOG.md for the user-facing changelog entries.
  */
 class DROPAudioProcessor : public juce::AudioProcessor,
@@ -788,7 +821,14 @@ private:
     // Default seed is a fixed constant so a freshly-loaded plugin is still
     // deterministic (architecture.md "State Persistence" restore behavior).
     static constexpr uint32_t kDefaultChaosSeed = 1;
-    static constexpr int kDefaultMidiTriggerNote = 60; // C3 - arbitrary, configurable; no default UI element yet (flagged gap, v10-integration-checklist.md #5)
+    // C3 - arbitrary. POST-1.0 (2026-09-17): the MIDI trigger note is no
+    // longer consulted by processBlock()'s MIDI-trigger detection (MIDI
+    // trigger mode now responds to ANY note-on - see processBlock()'s doc
+    // comment); this default and the getMidiTriggerNote()/
+    // setMidiTriggerNote() accessors below are kept only so a session saved
+    // before this change (which may have persisted a non-default note in
+    // <DropCustomState midiNote="...">) still loads without error.
+    static constexpr int kDefaultMidiTriggerNote = 60;
 
     std::atomic<int> triggerMode { static_cast<int>(TriggerMode::Manual) };
     std::atomic<int> midiTriggerNote { kDefaultMidiTriggerNote };

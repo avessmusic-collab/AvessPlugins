@@ -1,5 +1,56 @@
 # DROP Changelog
 
+### Changed / Removed — 2026-09-17 (gradual noise rise / MIDI note selection removed / dual tension-noise curve)
+
+Stays at 1.0.0 per this repo's factory convention. User-directed session, four
+related changes from one request: "make so the noise adds gradualy, remove
+midi note selection and add a second curve to the graph make the main purple
+and make the second gray the second curve will be the noise, how it gradualy
+adds."
+
+- **Changed:** `NoiseModule`'s riser used `progress * progress` (quadratic) -
+  inaudible until very late in the build, then arriving abruptly (the same
+  class of complaint as the earlier "curve progression" bug). Replaced with a
+  new, pure, shared `drop::NoiseModule::riseAmountForProgress()` (smoothstep,
+  `p*p*(3-2p)`) - monotonic, genuinely C1-continuous at both endpoints, clearly
+  audible by 20% progress (0.104 vs. the old shape's 0.04) and well underway
+  by 50% (0.5 vs. 0.25). Exposed as a `static` function specifically so the
+  UI's new second curve (see below) is provably the same math the DSP uses -
+  no duplicated formula that could silently drift. The brightness sweep was
+  left unchanged (a plain linear map, never quadratic, so it didn't share the
+  "abrupt" character).
+- **Removed:** the "MIDI NOTE" mini-screen chip (`#midiNoteChip`, added
+  2026-09-15) and its `setMidiTriggerNote` native-function bridge, from
+  `Source/PluginEditor.{h,cpp}` and `Source/ui/public/index.html` (+ the
+  byte-identical `.ideas/mockups/v10-ui.html`). **Design decision:** with no
+  UI element left to pick a note, MIDI trigger mode now responds to **ANY**
+  note-on message - most useful for triggering from a MIDI clip or a
+  controller pad. The underlying `midiTriggerNote` atomic and its persisted
+  `<DropCustomState midiNote="...">` field are **kept**, unused by trigger
+  detection now, purely so a session saved before this change still loads
+  without error.
+- **Added:** a second curve on the Advanced page's TENSION CURVE display,
+  showing `NoiseModule::riseAmountForProgress()`'s shape (evaluated at the
+  same curved-progress basis `NoiseModule::process()` itself receives) - "what
+  the user will actually hear the riser do across the build," on the same
+  linear x-axis as the existing tension curve. Small "— TENSION" / "— NOISE"
+  inline legend labels distinguish the two, in the existing LCD text style.
+- **Changed (colors):** the main (tension) curve is now **purple**
+  (`#A78BFA`); the second (noise) curve is **gray** (`#8A8F98`, reused from
+  the tension curve's own prior color). The rest of the UI's orange accent
+  (`#E8823C`) is unchanged.
+
+Tests: all 186 pre-existing assertions preserved (no supersessions of noise-
+rise-curve assertions were needed - the old `progress*progress` shape was
+never itself directly asserted on). One pre-existing MIDI test assertion
+("non-matching MIDI note does NOT trigger") is a DOCUMENTED SUPERSESSION - it
+encoded the now-removed note-matching behavior; replaced with an assertion
+that an arbitrary note-on DOES trigger. Plus 3 new `[POST-1.0]` test blocks:
+noise-rise gradual/monotonic/continuity + audible-early-rise floors (proven to
+fail against the old quadratic shape "by construction"), MIDI-any-note
+trigger/non-trigger coverage, and saved-session backward compatibility for the
+old `midiNote` field. See `Source/Tests/RunTests.cpp`.
+
 ### Fixed — 2026-09-16 (grid lock / transport-stop safety / TAIL=CUT)
 
 Stays at 1.0.0 per this repo's factory convention. Second real-DAW-testing

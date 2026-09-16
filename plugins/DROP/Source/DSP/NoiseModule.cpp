@@ -57,12 +57,25 @@ void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
     progress = juce::jlimit(0.0f, 1.0f, progress);
     stereoWidth01 = juce::jlimit(0.0f, 1.0f, stereoWidth01);
 
-    // Phase 3.3 placeholder curves (real Style-authored rise/brightness
-    // curves land in Phase 3.5): slow rise with progress. This module runs
-    // unconditionally (always-process pattern); the "sharp cutoff right at
-    // Vacuum" that architecture.md describes comes from VacuumModule
-    // attenuating the whole bus during Peak - see processSegment().
-    const float riseAmount = progress * progress;
+    // POST-1.0 fix (2026-09-17, user-directed: "make so the noise adds
+    // gradualy"). DOCUMENTED SUPERSESSION of the Phase 3.3 placeholder
+    // `progress * progress` quadratic shape: that curve stayed almost
+    // inaudible until very late in the build, then arrived abruptly (the
+    // exact user complaint). Replaced with the shared, pure
+    // riseAmountForProgress() (smoothstep, see this class's header doc
+    // comment for the full shape justification/comparison table) - the
+    // SAME math Source/ui/public/index.html's TENSION CURVE display plots
+    // as its second ("NOISE") curve, so what the user sees on the graph is
+    // provably what they hear. This module still runs unconditionally
+    // (always-process pattern); the "sharp cutoff right at Vacuum" that
+    // architecture.md describes still comes from VacuumModule attenuating
+    // the whole bus during Peak - see processSegment().
+    //
+    // The brightness sweep below is left as a plain linear jmap
+    // (unchanged) - it does not share the old rise curve's "abrupt"
+    // character (it was never quadratic to begin with), so no equivalent
+    // gradual-ization was needed there.
+    const float riseAmount = riseAmountForProgress(progress);
     const float brightnessCutoffHz = juce::jmap(progress, 0.0f, 1.0f, 400.0f, 12000.0f);
     const float lpCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * brightnessCutoffHz / (float) sampleRate);
 

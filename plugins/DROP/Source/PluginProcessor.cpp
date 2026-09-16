@@ -768,14 +768,31 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // plumbing, and "Host automation Trigger parameter" per
     // implementation-spec.md always works regardless of triggerMode.
     //
-    // MIDI trigger note: genuinely sample-accurate via MidiBuffer's
-    // per-event sample offsets. Only scanned when triggerMode == Midi (a
-    // note matching the configured trigger pitch shouldn't accidentally arm
-    // a build if the user hasn't opted into MIDI triggering - e.g. a track
-    // also carrying unrelated MIDI content). TriggerMode::AutoSync is a
+    // MIDI trigger: genuinely sample-accurate via MidiBuffer's per-event
+    // sample offsets. Only scanned when triggerMode == Midi (unrelated MIDI
+    // content on the same track shouldn't accidentally arm a build if the
+    // user hasn't opted into MIDI triggering). TriggerMode::AutoSync is a
     // documented stub for this phase (architecture.md/plan.md Phase 3.1
     // scope: "auto may be a stub") - it currently behaves like Manual
     // (MIDI listener inactive, no auto-triggering logic yet).
+    //
+    // POST-1.0 THIRD IMPROVEMENT SESSION (2026-09-17, user-directed: "remove
+    // midi note selection"): with no UI element left to pick a specific
+    // trigger note (see PluginEditor.cpp - the "MIDI NOTE" chip and its
+    // native-function bridge were removed), MIDI trigger mode now responds
+    // to ANY note-on message, DOCUMENTED SUPERSESSION of the prior
+    // note-number-matching behavior (`message.getNoteNumber() ==
+    // configuredMidiNote`). This is the most useful behavior for the
+    // remaining realistic use case - triggering from a MIDI clip or a pad on
+    // a controller, where the exact note number is incidental. The
+    // underlying `midiTriggerNote` atomic + its `<DropCustomState
+    // midiNote="...">` persisted field are KEPT, unused by this detection
+    // logic, purely so a session saved before this change (which may have
+    // stored a non-default note) still loads without error (APVTS/ValueTree
+    // convention: an unused-but-present field is harmless) - see
+    // getMidiTriggerNote()/setMidiTriggerNote() and
+    // setStateInformation()/getStateInformation() in this file, both
+    // unchanged.
     // ------------------------------------------------------------------
     int triggerEventOffset = -1; // -1 == no trigger event this block
 
@@ -794,11 +811,13 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 
     if (getTriggerMode() == TriggerMode::Midi)
     {
-        const int configuredMidiNote = getMidiTriggerNote();
+        // POST-1.0 (2026-09-17): ANY note-on triggers - see this block's
+        // doc comment above. getMidiTriggerNote() is deliberately NOT
+        // consulted here any more.
         for (const auto metadata : midiMessages)
         {
             const auto message = metadata.getMessage();
-            if (message.isNoteOn() && message.getNoteNumber() == configuredMidiNote)
+            if (message.isNoteOn())
             {
                 const int offset = metadata.samplePosition;
                 if (triggerEventOffset < 0 || offset < triggerEventOffset)

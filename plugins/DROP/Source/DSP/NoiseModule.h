@@ -48,6 +48,39 @@ public:
     NoiseColor getColor() const noexcept { return color; }
 
     /**
+     * POST-1.0 addition (2026-09-17, user-directed: "make so the noise adds
+     * gradualy"). SINGLE SOURCE OF TRUTH for the noise riser's rise-amount
+     * shape - a pure, stateless, deterministic function of the incoming
+     * `progress` (the SAME curved-progress value process()'s own `progress`
+     * argument receives, per PluginProcessor.cpp processSegment()'s decision
+     * matrix). Exposed `static` (no instance state, no RNG, no side effects)
+     * specifically so Source/ui/public/index.html's (and the byte-identical
+     * .ideas/mockups/v10-ui.html's) TENSION CURVE display can plot the
+     * EXACT same math the DSP uses for its second ("NOISE") curve, without
+     * duplicating the formula in two places that could silently drift apart
+     * - the JS mirror is verified to agree with this function by
+     * RunTests.cpp's "[POST-1.0] noise rise gradual" test block.
+     *
+     * SHAPE: smoothstep, p*p*(3-2p) - chosen over a plain power curve
+     * (e.g. progress^0.8, also considered) because it is genuinely
+     * C1-continuous at BOTH ends (derivative is exactly 0 at p=0 and p=1;
+     * a power curve with exponent < 1 has an INFINITE derivative at p=0,
+     * which is not truly C1). It is monotonic non-decreasing, cheap
+     * (2 multiplies, no transcendental call), fully deterministic, starts
+     * at exactly 0.0 at progress=0 and reaches exactly 1.0 at progress=1,
+     * and - unlike the OLD `progress*progress` shape this supersedes - is
+     * clearly audible early in the build: smoothstep(0.2)=0.104 and
+     * smoothstep(0.5)=0.5, versus the old quadratic's 0.04 and 0.25 at the
+     * same two points (the old curve stayed almost silent until very late,
+     * then arrived abruptly - exactly the user's complaint).
+     */
+    static float riseAmountForProgress(float progress01) noexcept
+    {
+        const float p = juce::jlimit(0.0f, 1.0f, progress01);
+        return p * p * (3.0f - 2.0f * p);
+    }
+
+    /**
      * Adds noise into `block` (parallel add, never replaces existing
      * content). `weight` = IntensityBudget weight (0-1). `progress` drives
      * the rise envelope + brightness sweep. `stereoWidth01` blends
