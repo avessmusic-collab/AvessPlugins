@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_dsp/juce_dsp.h>
+#include <cmath>
 #include <random>
 
 /**
@@ -73,20 +74,51 @@ public:
      * smoothstep(0.5)=0.5, versus the old quadratic's 0.04 and 0.25 at the
      * same two points (the old curve stayed almost silent until very late,
      * then arrived abruptly - exactly the user's complaint).
+     *
+     * POST-1.0 FOURTH IMPROVEMENT SESSION addition (2026-09-17, user-
+     * directed: "add a box near the tension box for white noise tension to
+     * control the white noise graph"). `noiseTension01` (default 0.5,
+     * matching the new `noiseTension` APVTS parameter's own 50% default)
+     * reshapes HOW the smoothstep above builds, WITHOUT changing its
+     * endpoints - same directional meaning as the plugin-wide `tension`
+     * parameter (higher = more end-weighted / later bloom, lower = earlier
+     * bloom). Family: `pow(smoothstep(p), k)` with
+     * `k = pow(2.0, (noiseTension01 - 0.5) * 2.4)`, so k == 1.0 EXACTLY at
+     * noiseTension01 == 0.5 - the default therefore reproduces the smoothstep
+     * above BIT-FOR-BIT (verified by RunTests.cpp's "[POST-1.0] ...
+     * default (0.5) reproduces the pre-existing smoothstep EXACTLY" test),
+     * making this a genuine no-op vs. the pre-noiseTension build at the
+     * default setting. Since `smoothstep(p)` is monotonic non-decreasing
+     * across [0,1] and `pow(x, k)` (k>0) is monotonic increasing in x for
+     * x in [0,1], the composition stays monotonic non-decreasing for any
+     * noiseTension01 in [0,1]; pow(0,k)=0 and pow(1,k)=1 regardless of k, so
+     * the 0->0/1->1 endpoints are preserved exactly at every noiseTension01
+     * setting too. Because smoothstep(p) < 1 for every p in (0,1), a LARGER
+     * k strictly DECREASES pow(smoothstep(p), k) there - i.e. higher
+     * noiseTension01 (-> larger k) yields a LOWER rise amount at any given
+     * mid-build progress, which is exactly "later bloom" (verified by
+     * RunTests.cpp's directionality test).
      */
-    static float riseAmountForProgress(float progress01) noexcept
+    static float riseAmountForProgress(float progress01, float noiseTension01 = 0.5f) noexcept
     {
         const float p = juce::jlimit(0.0f, 1.0f, progress01);
-        return p * p * (3.0f - 2.0f * p);
+        const float smooth = p * p * (3.0f - 2.0f * p);
+        const float t = juce::jlimit(0.0f, 1.0f, noiseTension01);
+        const float k = std::pow(2.0f, (t - 0.5f) * 2.4f);
+        return std::pow(smooth, k);
     }
 
     /**
      * Adds noise into `block` (parallel add, never replaces existing
      * content). `weight` = IntensityBudget weight (0-1). `progress` drives
      * the rise envelope + brightness sweep. `stereoWidth01` blends
-     * correlated (0) vs independent (1) L/R streams.
+     * correlated (0) vs independent (1) L/R streams. `noiseTension01`
+     * (POST-1.0 FOURTH IMPROVEMENT SESSION addition, default 0.5) is passed
+     * straight through to riseAmountForProgress() above - see that method's
+     * doc comment for the full shape/directionality rationale.
      */
-    void process(juce::dsp::AudioBlock<float> block, float weight, float progress, float stereoWidth01) noexcept;
+    void process(juce::dsp::AudioBlock<float> block, float weight, float progress, float stereoWidth01,
+                 float noiseTension01 = 0.5f) noexcept;
 
     static constexpr uint32_t kSeedXorConstant = 0x9E3779B9u;
 

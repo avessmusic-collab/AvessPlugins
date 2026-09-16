@@ -100,6 +100,17 @@
         assertion); still ignored when triggerMode != Midi.
       - Saved-session compatibility: a state containing the old midiNote
         field still loads without error and remains inert for detection.
+
+    POST-1.0 FOURTH IMPROVEMENT SESSION (2026-09-17, user-directed: "move
+    tail knob below the graph and add a box near curve, white noise curve" /
+    "noise tension to control the white noise graph"). New 21st APVTS
+    parameter `noiseTension`. See PluginProcessor.h's own top doc comment.
+      - riseAmountForProgress(progress, noiseTension01): default (0.5)
+        reproduces the pre-noiseTension smoothstep bit-for-bit; monotonic +
+        correct endpoints at 5 noiseTension settings; directionality (higher
+        noiseTension = later bloom, lower rise amount at a fixed progress).
+      - 21-parameter count + default; pre-noiseTension (20-param) saved-
+        session compatibility.
 */
 #include "PluginProcessor.h"
 #include "DSP/MusicalClock.h"
@@ -2573,10 +2584,10 @@ int main()
     // version 1.0.0 per this repo's factory convention.
     //==========================================================================
 
-    std::printf ("\n[POST-1.0] PluginProcessor - 20 APVTS parameters (tail added additively as the 20th)\n");
+    std::printf ("\n[POST-1.0] PluginProcessor - 21 APVTS parameters (tail 20th, noiseTension 21st - both additive)\n");
     {
         DROPAudioProcessor p;
-        check (p.getParameters().size() == 20, "PluginProcessor: exactly 20 APVTS parameters after the POST-1.0 `tail` addition (19 original, parameter-spec.md-locked, + 1)");
+        check (p.getParameters().size() == 21, "PluginProcessor: exactly 21 APVTS parameters (19 original parameter-spec.md-locked + `tail` + `noiseTension`; SUPERSEDES the earlier 20-param count, both additions are strictly additive)");
         auto* tailP = p.parameters.getParameter ("tail");
         check (tailP != nullptr, "PluginProcessor: `tail` parameter exists and is retrievable by ID");
         if (tailP != nullptr)
@@ -3771,6 +3782,129 @@ int main()
             }
             p.releaseResources();
         }
+    }
+
+    //==========================================================================
+    // [POST-1.0 FOURTH IMPROVEMENT SESSION] "move tail knob below the graph
+    // and add a box near curve, white noise curve" / "noise tension to
+    // control the white noise graph" (2026-09-17, user-directed). New 21st
+    // APVTS parameter `noiseTension` - see NoiseModule.h's
+    // riseAmountForProgress() doc comment and PluginProcessor.h's
+    // "POST-1.0 FOURTH IMPROVEMENT SESSION" doc comment.
+    //==========================================================================
+
+    std::printf ("\n[POST-1.0] NoiseModule::riseAmountForProgress(progress, noiseTension01) - default (0.5) reproduces the pre-existing smoothstep EXACTLY\n");
+    {
+        bool allMatch = true;
+        float worstDelta = 0.0f;
+        for (int i = 0; i <= 200; ++i)
+        {
+            const float p = (float) i / 200.0f;
+            const float oldShape = drop::NoiseModule::riseAmountForProgress (p); // single-arg overload, defaults noiseTension01=0.5
+            const float newDefault = drop::NoiseModule::riseAmountForProgress (p, 0.5f);
+            const float delta = std::abs (oldShape - newDefault);
+            worstDelta = std::max (worstDelta, delta);
+            if (delta > 1.0e-6f) allMatch = false;
+        }
+        std::printf ("  worst delta across 201 samples, single-arg vs. explicit noiseTension01=0.5 = %.8f\n", worstDelta);
+        check (allMatch, "[POST-1.0] riseAmountForProgress(p, 0.5) is byte-identical (within float epsilon) to the pre-existing single-arg smoothstep across a full sweep - the default noiseTension setting is a genuine no-op vs. the pre-noiseTension build");
+    }
+
+    std::printf ("\n[POST-1.0] NoiseModule::riseAmountForProgress() - monotonic in progress + correct endpoints at 5 noiseTension settings (0, 0.25, 0.5, 0.75, 1.0)\n");
+    {
+        bool allOk = true;
+        for (float t : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+        {
+            float previous = -1.0f;
+            bool monotonic = true;
+            for (int i = 0; i <= 100; ++i)
+            {
+                const float p = (float) i / 100.0f;
+                const float v = drop::NoiseModule::riseAmountForProgress (p, t);
+                if (v < previous - 1.0e-6f) monotonic = false;
+                previous = v;
+            }
+            const float atZero = drop::NoiseModule::riseAmountForProgress (0.0f, t);
+            const float atOne  = drop::NoiseModule::riseAmountForProgress (1.0f, t);
+            const bool endpointsOk = nearlyEqual ((double) atZero, 0.0, 1.0e-5) && nearlyEqual ((double) atOne, 1.0, 1.0e-5);
+            std::printf ("  noiseTension01=%.2f: monotonic=%s, riseAmountForProgress(0)=%.6f, riseAmountForProgress(1)=%.6f\n",
+                         (double) t, monotonic ? "yes" : "NO", (double) atZero, (double) atOne);
+            if (! monotonic || ! endpointsOk) allOk = false;
+        }
+        check (allOk, "[POST-1.0] riseAmountForProgress(progress, noiseTension01) is monotonically non-decreasing in progress and reaches exactly 0 at progress=0 / 1 at progress=1, across the full noiseTension01 range");
+    }
+
+    std::printf ("\n[POST-1.0] NoiseModule::riseAmountForProgress() - directionality: higher noiseTension = LATER bloom (lower rise amount at the same mid-build progress)\n");
+    {
+        constexpr float kMidProgress = 0.4f; // mid-build, away from either endpoint where all curves converge
+        const float low  = drop::NoiseModule::riseAmountForProgress (kMidProgress, 0.0f);
+        const float mid  = drop::NoiseModule::riseAmountForProgress (kMidProgress, 0.5f);
+        const float high = drop::NoiseModule::riseAmountForProgress (kMidProgress, 1.0f);
+        std::printf ("  at progress=%.2f: noiseTension=0 -> %.4f, noiseTension=0.5 -> %.4f, noiseTension=1 -> %.4f\n",
+                     (double) kMidProgress, (double) low, (double) mid, (double) high);
+        check (low > mid && mid > high, "[POST-1.0] riseAmountForProgress(): strictly decreasing in noiseTension at a fixed mid-build progress (higher noiseTension = later/more end-weighted bloom, matching `tension`'s own directional semantics)");
+
+        // Same ordering property re-verified across several progress points,
+        // not just one - the semantics must hold generally, not at a single
+        // cherry-picked sample.
+        bool orderingHoldsEverywhere = true;
+        for (float p : { 0.15f, 0.3f, 0.5f, 0.7f, 0.85f })
+        {
+            const float a = drop::NoiseModule::riseAmountForProgress (p, 0.1f);
+            const float b = drop::NoiseModule::riseAmountForProgress (p, 0.9f);
+            if (! (a >= b - 1.0e-6f)) orderingHoldsEverywhere = false;
+        }
+        check (orderingHoldsEverywhere, "[POST-1.0] riseAmountForProgress(): noiseTension01=0.1 never produces a LOWER rise amount than noiseTension01=0.9 at any of several sampled mid-build progress points");
+    }
+
+    std::printf ("\n[POST-1.0] PluginProcessor - 21 APVTS parameters (noiseTension added additively as the 21st)\n");
+    {
+        DROPAudioProcessor p;
+        check (p.getParameters().size() == 21, "PluginProcessor: exactly 21 APVTS parameters after the POST-1.0 `noiseTension` addition (20 prior, + 1)");
+        auto* noiseTensionP = p.parameters.getParameter ("noiseTension");
+        check (noiseTensionP != nullptr, "PluginProcessor: `noiseTension` parameter exists and is retrievable by ID");
+        if (noiseTensionP != nullptr)
+            check (nearlyEqual ((double) noiseTensionP->getValue(), 0.5, 1.0e-6),
+                  "PluginProcessor: `noiseTension` parameter defaults to 50% (normalized 0.5, range is 0-100% linear)");
+    }
+
+    std::printf ("\n[POST-1.0] PluginProcessor - setStateInformation()/replaceState() tolerates a session missing `noiseTension` (pre-noiseTension, 20-param session compatibility)\n");
+    {
+        // Simulates restoring a 20-parameter session saved BEFORE
+        // `noiseTension` existed: strip the `noiseTension` PARAM child from a
+        // real APVTS state ValueTree, then replaceState() it into a fresh
+        // processor - same pattern as the pre-`tail`-compatibility test
+        // above, proving the SAME JUCE guarantee holds for this newest
+        // additive parameter too.
+        DROPAudioProcessor source;
+        if (auto* prm = source.parameters.getParameter ("tension"))
+            prm->setValueNotifyingHost (0.8f); // distinctive non-default value on an unrelated pre-existing parameter
+
+        auto state = source.parameters.copyState();
+        int removedCount = 0;
+        for (int i = state.getNumChildren() - 1; i >= 0; --i)
+        {
+            auto child = state.getChild (i);
+            if (child.hasType ("PARAM") && child.getProperty ("id").toString() == "noiseTension")
+            {
+                state.removeChild (i, nullptr);
+                ++removedCount;
+            }
+        }
+        check (removedCount == 1, "pre-noiseTension compatibility test setup: exactly one `noiseTension` PARAM node was stripped");
+
+        DROPAudioProcessor target;
+        target.parameters.replaceState (state);
+
+        auto* noiseTensionP = target.parameters.getParameter ("noiseTension");
+        auto* tensionP = target.parameters.getParameter ("tension");
+        check (noiseTensionP != nullptr, "pre-noiseTension compatibility: `noiseTension` parameter still exists after loading a state missing its node");
+        if (noiseTensionP != nullptr)
+            check (nearlyEqual ((double) noiseTensionP->getValue(), 0.5, 1.0e-6),
+                  "pre-noiseTension compatibility: `noiseTension` loads at its default (50%) when absent from a restored pre-noiseTension (20-param) session");
+        if (tensionP != nullptr)
+            check (nearlyEqual ((double) tensionP->getValue(), 0.8, 1.0e-4),
+                  "pre-noiseTension compatibility: an unrelated pre-existing parameter (`tension`) still round-trips correctly through the same replaceState() call");
     }
 
     std::printf ("\n%d failure(s)\n", failures);

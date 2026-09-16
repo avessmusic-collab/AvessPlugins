@@ -291,6 +291,34 @@
  * plugins/DROP/CHANGELOG.md for the user-facing changelog entry and
  * .ideas/mockups/v10-ui.yaml for the UI-side amendment notes.
  *
+ * POST-1.0 FOURTH IMPROVEMENT SESSION (2026-09-17, same day, user-directed:
+ * "move tail knob below the graph and add a box near curve, white noise
+ * curve" - clarified as "box near the tension box for white noise tension to
+ * control the white noise graph"). Two related changes:
+ *
+ *   1. NEW 21st APVTS PARAMETER `noiseTension` (Float 0-100%, default 50%,
+ *      strictly additive - parameter IDs 1-20 above are byte-for-byte
+ *      untouched). Shapes HOW the white-noise riser builds (same directional
+ *      meaning as `tension`: higher = later bloom, lower = earlier bloom) -
+ *      it does NOT change the noise LEVEL (still the `noise` macro). Wired
+ *      into `drop::NoiseModule::riseAmountForProgress(progress01,
+ *      noiseTension01)`'s new second argument (see NoiseModule.h's doc
+ *      comment for the exact `pow(smoothstep(p), k)` shape family) - at
+ *      noiseTension01==0.5 (the default) this reproduces the prior
+ *      single-argument smoothstep BIT-FOR-BIT, so a session saved before
+ *      this parameter existed (and any session simply left at the default)
+ *      sounds byte-identical to the pre-`noiseTension` build.
+ *   2. UI: a new "NOISE TENSION" dark-LCD chip (same family/interaction as
+ *      TENSION/CHAOS) was added directly beneath TENSION/CHAOS on the
+ *      Advanced page, in the space the TAIL knob vacated when IT moved to a
+ *      new home below the tension-curve graph (freeing that spot for the new
+ *      chip rather than leaving an orphaned gap). The graph's gray NOISE
+ *      curve now redraws live from `noiseTension`, using the exact same
+ *      `riseAmountForProgress()` math the DSP runs (JS mirror in
+ *      Source/ui/public/index.html's redrawCurve()). See
+ *      .ideas/mockups/v10-ui.yaml's `noise_tension_chip_and_tail_relocation`
+ *      amendment note for the full geometry derivation.
+ *
  * See plugins/DROP/CHANGELOG.md for the user-facing changelog entries.
  */
 class DROPAudioProcessor : public juce::AudioProcessor,
@@ -876,6 +904,13 @@ private:
     // standard behavior for a ValueTree missing a since-added parameter
     // node - see createParameterLayout()'s doc comment at the `tail` entry).
     std::atomic<float>* tailParam = nullptr;
+    // POST-1.0 FOURTH IMPROVEMENT SESSION addition: the 21st parameter (see
+    // this class's top doc comment). Cached alongside the original 20 for
+    // consistency, appended AFTER them (not interleaved) so parameter IDs
+    // 1-20 remain byte-for-byte untouched - a session saved before this
+    // parameter existed loads cleanly with the default (same APVTS guarantee
+    // `tailParam` above already relies on).
+    std::atomic<float>* noiseTensionParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DROPAudioProcessor)
 };

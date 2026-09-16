@@ -359,17 +359,22 @@
            note-picker UI is needed. See v10-ui.yaml's
            midi_trigger_note_chip_removal amendment note. -->
 
-      <!-- Tail - POST-1.0 addition (2026-09-16, user-directed improvement).
-           Small macro-style knob, same visual family as the 10 module
-           macros below (60x72px well/dome/caption), placed in the free
-           zone below the Tension/Chaos/MIDI-Note mini-screens (which end at
-           top:9.375rem+height:3.5rem=12.875rem) and above the module-macro
-           grid (top:20rem) - see .ideas/mockups/v10-ui.yaml's amendment for
-           the geometry derivation/gap verification. -->
-      <div class="knob-wrap" style="left:2.5rem; top:14.375rem; width:3.75rem;"
-           data-param="tail" data-min="0" data-max="100" data-default="35" data-unit="%" data-decimals="0">
-        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
-        <span class="knob-label knob-label-small">TAIL &middot; <span class="kv-num">35</span><span class="unit">%</span></span>
+      <!-- NOISE TENSION - POST-1.0 FOURTH IMPROVEMENT SESSION addition
+           (2026-09-17, user-directed: "add a box near the tension box for
+           white noise tension to control the white noise graph"). Same
+           dark-LCD mini-screen family/interaction as TENSION/CHAOS directly
+           above (drag + chevrons + gesture bracketing, all generic via
+           initMiniScreen() below - no new JS needed), placed in the space
+           the TAIL knob vacated when it moved below the tension-curve graph
+           (see that knob-wrap's own comment) - fills the freed gap rather
+           than leaving it orphaned, AND reads as "near the tension box" per
+           the user's request. See .ideas/mockups/v10-ui.yaml's
+           `noise_tension_chip_and_tail_relocation` amendment note. -->
+      <div class="mini-screen" style="left:2.5rem; top:14.375rem; width:8rem; height:3.5rem;"
+           data-param="noiseTension" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-step="1">
+        <div class="mini-screen-label">NOISE TENSION</div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">50</span><span style="font-size:0.6rem;">%</span></div>
+        <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
       </div>
 
       <!-- BPM SYNC diagnostic - POST-1.0 addition (2026-09-16 improvement
@@ -406,6 +411,24 @@
           <text x="8" y="118" font-size="6" fill="#A78BFA" letter-spacing="0.6">— TENSION</text>
           <text x="292" y="118" font-size="6" fill="#8A8F98" letter-spacing="0.6" text-anchor="end">— NOISE</text>
         </svg>
+      </div>
+
+      <!-- Tail - POST-1.0 addition (2026-09-16), RELOCATED POST-1.0 FOURTH
+           IMPROVEMENT SESSION (2026-09-17, user-directed: "move tail knob
+           below the graph"). Same small macro-style knob (60x72px
+           well/dome/caption, identical visual treatment) as before, now
+           placed BELOW curveBox (which occupies left:38.75rem top:5rem
+           width:18.75rem height:8.75rem -> bottom edge 13.75rem), left of
+           the SYNC chip (left:49.375rem top:14.375rem) - see
+           .ideas/mockups/v10-ui.yaml's
+           `noise_tension_chip_and_tail_relocation` amendment note for the
+           gap-verification math. Its old spot (left column, below
+           Tension/Chaos) is now occupied by the new NOISE TENSION chip
+           above. -->
+      <div class="knob-wrap" style="left:38.75rem; top:14.6875rem; width:3.75rem;"
+           data-param="tail" data-min="0" data-max="100" data-default="35" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">TAIL &middot; <span class="kv-num">35</span><span class="unit">%</span></span>
       </div>
 
       <!-- Impact hero: LED-dot-ring treatment -->
@@ -941,9 +964,20 @@
   // block (both are simple enough - 2 multiplies, no transcendental calls -
   // that a byte-for-byte port is unambiguous; any future change to either
   // side should update both plus that test).
-  function riseAmountForProgress(p) {
+  //
+  // POST-1.0 FOURTH IMPROVEMENT SESSION addition (2026-09-17, same day,
+  // user-directed: "noise tension to control the white noise graph"):
+  // second argument `noiseTension01` (default 0.5, matching the new
+  // `noiseTension` APVTS parameter's own default) mirrors NoiseModule.h's
+  // `pow(smoothstep(p), k)` shape family EXACTLY - k==1 at 0.5 (byte-
+  // identical to the pre-noiseTension smoothstep above), k>1 for higher
+  // noiseTension (later bloom), k<1 for lower (earlier bloom).
+  function riseAmountForProgress(p, noiseTension01) {
     const c = Math.min(1, Math.max(0, p));
-    return c * c * (3 - 2 * c);
+    const smooth = c * c * (3 - 2 * c);
+    const t = Math.min(1, Math.max(0, noiseTension01 === undefined ? 0.5 : noiseTension01));
+    const k = Math.pow(2, (t - 0.5) * 2.4);
+    return Math.pow(smooth, k);
   }
   function buildCurveGrid() {
     const svgNS = 'http://www.w3.org/2000/svg';
@@ -981,8 +1015,13 @@
       // so plotting riseAmountForProgress(curvedProgress) at each linear-x
       // sample shows exactly what the user hears the riser do across the
       // build, not merely riseAmountForProgress(x) in isolation.
+      // POST-1.0 FOURTH IMPROVEMENT SESSION: the NOISE TENSION chip's own
+      // live normalized value is now the second argument, so dragging that
+      // chip visibly reshapes this curve in real time - see the NOISE
+      // TENSION mini-screen markup above (bareRefs.noiseTension, generically
+      // wired by initMiniScreen(), same as bareRefs.tension/chaos).
       const curvedProgress = Math.pow(x, exponent);
-      ptsNoise.push([px, CURVE_Y0 - riseAmountForProgress(curvedProgress) * CURVE_H]);
+      ptsNoise.push([px, CURVE_Y0 - riseAmountForProgress(curvedProgress, bareRefs.noiseTension.get()) * CURVE_H]);
     }
     let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)} `;
     for (let i = 1; i < pts.length; i++) d += `L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)} `;

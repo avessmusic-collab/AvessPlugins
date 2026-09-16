@@ -12,9 +12,11 @@
 
 **POST-1.0 AMENDMENT — 2026-09-16 (user-directed improvement, post-1.0.0 release-candidate; plugin stays at version 1.0.0 per this repo's factory convention until public release):** ADDED `tail` as the 20th parameter, fixing three real-DAW-testing bugs (instant cut at Impact→Recovery, a post-impact effect-blast artifact, and stale delay/reverb tails muted mid-ring with no reset before the next build — see `plugins/DROP/CHANGELOG.md` and `PluginProcessor.h`'s "POST-1.0 IMPROVEMENT" doc comment for full root-cause detail). `tail` is strictly additive (parameter IDs 1-19 above are byte-for-byte untouched); a 1.0.0 session saved before this parameter existed loads with the default below.
 
+**POST-1.0 FOURTH AMENDMENT — 2026-09-17 (user-directed improvement, stays at 1.0.0):** ADDED `noiseTension` as the 21st parameter ("move tail knob below the graph and add a box near curve, white noise curve" — clarified as "box near the tension box for white noise tension to control the white noise graph"). Shapes HOW `NoiseModule`'s white-noise riser builds (same directional semantics as `tension`: higher = later bloom), does NOT change the noise LEVEL (still the `noise` macro). Strictly additive (parameter IDs 1-20 above are byte-for-byte untouched); a session saved before this parameter existed loads with the default below (50%), which reproduces the pre-`noiseTension` behavior bit-for-bit.
+
 ## Total Parameter Count
 
-**Total:** 20 parameters (all `juce::AudioProcessorValueTreeState`-managed) — 19 original (locked 2026-09-14) + `tail` (added 2026-09-16, POST-1.0 amendment)
+**Total:** 21 parameters (all `juce::AudioProcessorValueTreeState`-managed) — 19 original (locked 2026-09-14) + `tail` (added 2026-09-16, POST-1.0 amendment) + `noiseTension` (added 2026-09-17, POST-1.0 fourth amendment)
 
 Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architecture.md's State Persistence section — out of scope for this file, listed here only so gui-agent/dsp-agent don't mistake them for missing parameters): trigger mode (manual/MIDI/auto-sync), configured MIDI trigger note number, Chaos random seed (`uint32_t`), custom tension curve control points (used only when a Custom curve type is selected), UI advanced-row-expanded flag. The finalized v10 mockup binds trigger mode via a dedicated native-function bridge (see `v10-integration-checklist.md` §4); it has **no UI element at all** for the MIDI trigger note (flagged gap, `v10-integration-checklist.md` §5).
 
@@ -174,8 +176,16 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 - **Range:** 0 to 100 %
 - **Default:** 35
 - **Skew Factor:** linear (the 0-100% UI range itself is linear; it is then mapped EXPONENTIALLY to seconds internally — see DSP Usage)
-- **UI Control:** Small neumorphic macro knob (same visual family as the 10 module macros), "TAIL · NN%" caption (Advanced page, left column below the Tension/Chaos/MIDI-Note mini-screens).
+- **UI Control:** Small neumorphic macro knob (same visual family as the 10 module macros), "TAIL · NN%" caption (Advanced page, below the tension-curve graph, left of the SYNC chip — relocated 2026-09-17, POST-1.0 fourth amendment; originally placed in the left column below Tension/Chaos, now occupied by `noiseTension`).
 - **DSP Usage:** **POST-1.0 addition — 2026-09-16 (user-directed improvement).** Latched at Arming (like `buildLength`). SETS the `Recovery` state's duration (Recovery IS the ring-out window during which DelayModule/ReverbModule/ImpactEngine's already-excited tails decay to silence) — OVERRIDES the active DropStyle's own `recoveryDivision` timing preference. Exact exponential mapping (see `PluginProcessor::computeDurationsForNewBuild()`): `tailSeconds = 0.15 * (4.0 / 0.15) ^ (tail/100)`. `tail=0%` → ~0.15s; `tail=100%` → ~4.0s; `tail=35%` (default) → ~0.47s.
+
+### noiseTension
+- **Type:** Float
+- **Range:** 0 to 100 %
+- **Default:** 50
+- **Skew Factor:** linear
+- **UI Control:** Dark inset mini-LCD, identical treatment to Tension/Chaos (Advanced page, directly beneath them — takes the slot `tail` vacated when it moved below the tension-curve graph). "NOISE TENSION" label.
+- **DSP Usage:** **POST-1.0 addition — 2026-09-17 (user-directed improvement).** Shapes HOW `NoiseModule`'s white-noise riser builds — same directional semantics as `tension` (higher = more end-weighted / later bloom; lower = earlier bloom). Does **NOT** change the noise LEVEL (that remains the `noise` macro's job). Wired into `drop::NoiseModule::riseAmountForProgress(progress01, noiseTension01)`'s second argument: `pow(smoothstep(progress01), k)` where `k = pow(2.0, (noiseTension01 - 0.5) * 2.4)` — `k == 1.0` exactly at the 50% default, so `riseAmountForProgress()` reproduces the pre-`noiseTension` smoothstep bit-for-bit at default (a genuine no-op vs. the pre-`noiseTension` build). Also drives the Advanced page's TENSION CURVE display's gray NOISE curve, which redraws live using the same shared function (single source of truth, cross-checked by `RunTests.cpp`).
 
 ## Parameter Groups
 
@@ -202,11 +212,12 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 
 **POST-1.0 addition (Advanced page):**
 - tail
+- noiseTension
 
 ## Notes
 
-- Parameters are implemented in EXACT order during Stage 2 Shell (order above matches `v10-PluginEditor.h`'s relay/attachment declaration order, which itself follows the mockup's page layout: Main-page controls first, then Advanced-page controls top-to-bottom/left-to-right). `tail` (added 2026-09-16) is APPENDED after `output` rather than interleaved, matching `createParameterLayout()`'s own append-only ordering — this preserves parameter IDs 1-19 byte-for-byte.
-- Parameter IDs must remain consistent across all stages: `trigger, buildLength, style, intensity, tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, dryWet, output, tail`.
-- UI controls are implemented from finalized mockup v10 during Stage 3 GUI Phases 4.1-4.3 (`plugins/DROP/.ideas/mockups/v10-ui.html`, `v10-PluginEditor.h`/`.cpp`, `v10-CMakeLists.txt`, `v10-integration-checklist.md`); `tail`'s knob was added directly to the production `Source/ui/public/index.html` (and mirrored byte-identically into `v10-ui.html`) as a POST-1.0 amendment, 2026-09-16.
+- Parameters are implemented in EXACT order during Stage 2 Shell (order above matches `v10-PluginEditor.h`'s relay/attachment declaration order, which itself follows the mockup's page layout: Main-page controls first, then Advanced-page controls top-to-bottom/left-to-right). `tail` (added 2026-09-16) and `noiseTension` (added 2026-09-17) are APPENDED after `output`/`tail` respectively rather than interleaved, matching `createParameterLayout()`'s own append-only ordering — this preserves parameter IDs 1-20 byte-for-byte.
+- Parameter IDs must remain consistent across all stages: `trigger, buildLength, style, intensity, tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, dryWet, output, tail, noiseTension`.
+- UI controls are implemented from finalized mockup v10 during Stage 3 GUI Phases 4.1-4.3 (`plugins/DROP/.ideas/mockups/v10-ui.html`, `v10-PluginEditor.h`/`.cpp`, `v10-CMakeLists.txt`, `v10-integration-checklist.md`); `tail`'s knob was added directly to the production `Source/ui/public/index.html` (and mirrored byte-identically into `v10-ui.html`) as a POST-1.0 amendment, 2026-09-16, then relocated below the tension-curve graph 2026-09-17; `noiseTension`'s mini-LCD chip was added 2026-09-17 in the slot `tail` vacated — see `.ideas/mockups/v10-ui.yaml`'s `noise_tension_chip_and_tail_relocation` amendment note.
 - All 10 module-macro parameters (filter…noise) share identical type/range/default/skew (Float, 0-100%, default 100, linear) — the per-parameter entries above are kept separate rather than collapsed into one shared block so each has its own DSP-component cross-reference, matching this template's standard per-parameter format.
 - `triggerMode`, MIDI trigger note, Chaos seed, and custom tension curve points are intentionally NOT listed as parameters above — they are non-parameter `ValueTree` state per `architecture.md`'s State Persistence section. Do not add APVTS parameters for them.

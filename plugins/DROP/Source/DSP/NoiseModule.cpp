@@ -46,7 +46,8 @@ float NoiseModule::nextPink(std::mt19937& rng, PinkFilterState& s) noexcept
     return pink * 0.11f;
 }
 
-void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, float progress, float stereoWidth01) noexcept
+void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, float progress, float stereoWidth01,
+                           float noiseTension01) noexcept
 {
     const int numSamples = (int) block.getNumSamples();
     const int numChannels = (int) block.getNumChannels();
@@ -56,6 +57,7 @@ void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
     weight = juce::jlimit(0.0f, 1.0f, weight);
     progress = juce::jlimit(0.0f, 1.0f, progress);
     stereoWidth01 = juce::jlimit(0.0f, 1.0f, stereoWidth01);
+    noiseTension01 = juce::jlimit(0.0f, 1.0f, noiseTension01);
 
     // POST-1.0 fix (2026-09-17, user-directed: "make so the noise adds
     // gradualy"). DOCUMENTED SUPERSESSION of the Phase 3.3 placeholder
@@ -75,7 +77,7 @@ void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
     // (unchanged) - it does not share the old rise curve's "abrupt"
     // character (it was never quadratic to begin with), so no equivalent
     // gradual-ization was needed there.
-    const float riseAmount = riseAmountForProgress(progress);
+    const float riseAmount = riseAmountForProgress(progress, noiseTension01);
     const float brightnessCutoffHz = juce::jmap(progress, 0.0f, 1.0f, 400.0f, 12000.0f);
     const float lpCoeff = 1.0f - std::exp(-2.0f * juce::MathConstants<float>::pi * brightnessCutoffHz / (float) sampleRate);
 

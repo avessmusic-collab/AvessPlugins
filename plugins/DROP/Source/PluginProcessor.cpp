@@ -196,6 +196,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         35.0f,
         "%"));
 
+    // --- POST-1.0 FOURTH IMPROVEMENT SESSION addition (2026-09-17, user-
+    // directed) --------------------------------------------------------
+    // noiseTension - the 21st parameter, added STRICTLY additively at the
+    // END of the layout (parameter IDs 1-20 above are byte-for-byte
+    // untouched). Shapes HOW NoiseModule's white-noise riser builds (see
+    // PluginProcessor.h's top doc comment and NoiseModule.h's
+    // riseAmountForProgress() doc comment for the exact shape family) -
+    // does NOT change the noise LEVEL (still the `noise` macro above). At
+    // its 50% default, drop::NoiseModule::riseAmountForProgress() reproduces
+    // the pre-noiseTension smoothstep bit-for-bit, so a session saved before
+    // this parameter existed (APVTS's standard missing-parameter-node ->
+    // constructor-default behavior, same guarantee `tail` above already
+    // relies on) loads and sounds byte-identical to the pre-noiseTension
+    // build.
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "noiseTension", 1 },
+        "Noise Tension",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
+        50.0f,
+        "%"));
+
     return layout;
 }
 
@@ -227,6 +248,7 @@ DROPAudioProcessor::DROPAudioProcessor()
     dryWetParam = parameters.getRawParameterValue("dryWet");
     outputParam = parameters.getRawParameterValue("output");
     tailParam = parameters.getRawParameterValue("tail"); // POST-1.0 addition, 20th parameter
+    noiseTensionParam = parameters.getRawParameterValue("noiseTension"); // POST-1.0 FOURTH IMPROVEMENT SESSION addition, 21st parameter
 
     // Stage 3 GUI Phase 4.2: event-latched trigger edge-detection (see
     // PluginProcessor.h's parameterChanged()/triggerEventPendingFlag doc
@@ -1203,7 +1225,13 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
 
     digitalModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Digital], progress,
                            tension01, chaos01);
-    noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f);
+    // POST-1.0 FOURTH IMPROVEMENT SESSION addition: `noiseTension` (21st
+    // parameter) shapes the rise-amount curve only - see NoiseModule.h's
+    // riseAmountForProgress() doc comment and PluginProcessor.h's top doc
+    // comment. Read fresh every segment (cheap atomic load, matches every
+    // other macro parameter's own per-segment read pattern above).
+    noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f,
+                         noiseTensionParam->load() / 100.0f);
     // POST-1.0 bugfix (Bug C "stale tails"): send/return split, same
     // rationale as DelayModule above.
     reverbModule.processWithSendReturn(segmentBlock, reverbSendWeight, reverbReturnWeight, progress);

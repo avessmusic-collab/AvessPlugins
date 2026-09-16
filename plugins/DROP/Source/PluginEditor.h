@@ -34,13 +34,16 @@
  * 3. Relays destroyed LAST (safe, nothing using them)
  * ============================================================================
  *
- * PARAMETER COVERAGE: all 20 APVTS parameters get a Relay + Attachment pair
- * below (trigger=toggle, buildLength/style=combo, the remaining 17=slider),
+ * PARAMETER COVERAGE: all 21 APVTS parameters get a Relay + Attachment pair
+ * below (trigger=toggle, buildLength/style=combo, the remaining 18=slider),
  * matching plugins/DROP/.ideas/parameter-spec.md exactly. The 20th, `tail`,
  * is a POST-1.0 addition (2026-09-16, user-directed improvement - see
  * PluginProcessor.h's "POST-1.0 IMPROVEMENT" doc comment) appended AFTER
  * the original 19 (not interleaved), matching createParameterLayout()'s own
- * append-only ordering.
+ * append-only ordering. The 21st, `noiseTension`, is a POST-1.0 FOURTH
+ * IMPROVEMENT SESSION addition (2026-09-17, user-directed - see
+ * PluginProcessor.h's own top doc comment) appended AFTER `tail`, same
+ * append-only convention.
  * `triggerMode` is deliberately NOT a Relay/Attachment pair - per
  * architecture.md it is NON-PARAMETER state (manual/MIDI/auto-sync is a
  * discrete user preference, not something a host automates), so it is
@@ -185,6 +188,10 @@ private:
     // --- Tail (Advanced page, POST-1.0 addition - see this header's top doc comment) ---
     std::unique_ptr<juce::WebSliderRelay> tailRelay;
 
+    // --- Noise Tension (Advanced page, POST-1.0 FOURTH IMPROVEMENT SESSION
+    // addition - see this header's top doc comment / PluginProcessor.h) ---
+    std::unique_ptr<juce::WebSliderRelay> noiseTensionRelay;
+
     // ------------------------------------------------------------------------
     // 2) WEBVIEW SECOND
     // ------------------------------------------------------------------------
@@ -220,6 +227,9 @@ private:
 
     // POST-1.0 addition (see this header's top doc comment).
     std::unique_ptr<juce::WebSliderParameterAttachment> tailAttachment;
+
+    // POST-1.0 FOURTH IMPROVEMENT SESSION addition (see this header's top doc comment).
+    std::unique_ptr<juce::WebSliderParameterAttachment> noiseTensionAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DROPAudioProcessorEditor)
 };

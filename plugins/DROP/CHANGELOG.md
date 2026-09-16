@@ -1,5 +1,46 @@
 # DROP Changelog
 
+### Added / Changed — 2026-09-17 (noiseTension parameter + TAIL knob relocation)
+
+Stays at 1.0.0 per this repo's factory convention. User-directed session, same
+day as the "gradual noise rise" session below: "move tail knob below the graph
+and add a box near curve, white noise curve" — clarified as "box near the
+tension box for white noise tension to control the white noise graph."
+
+- **Added:** `noiseTension`, the 21st APVTS parameter (Float 0–100%, default
+  50%, strictly additive — parameter IDs 1–20 unchanged). Shapes HOW
+  `NoiseModule`'s white-noise riser builds (same directional semantics as
+  `tension`: higher = later bloom, lower = earlier bloom) — does **not**
+  change the noise LEVEL (still the `noise` macro's job). Implementation:
+  `drop::NoiseModule::riseAmountForProgress()` gained a second argument
+  (`noiseTension01`, default 0.5) implementing `pow(smoothstep(progress), k)`
+  with `k = pow(2.0, (noiseTension01 - 0.5) * 2.4)` — `k == 1.0` exactly at
+  the 50% default, so the new default reproduces the pre-`noiseTension`
+  smoothstep bit-for-bit (verified by test). A session saved before this
+  parameter existed (APVTS's standard missing-node → constructor-default
+  behavior) loads and sounds byte-identical to the pre-`noiseTension` build.
+- **Added (UI):** a new "NOISE TENSION" dark-LCD chip, same family/
+  interaction as TENSION/CHAOS (drag + chevrons + gesture bracketing),
+  placed directly beneath them — in the spot the TAIL knob vacated (see
+  below), reading as "near the tension box" while also avoiding an orphaned
+  gap. The Advanced page's gray NOISE curve now redraws live as this chip is
+  dragged, using the exact same shared `riseAmountForProgress()` math the DSP
+  runs.
+- **Changed (UI):** the TAIL knob moved from the Advanced page's left column
+  (below Tension/Chaos) to a new spot directly below the tension-curve graph,
+  left of the SYNC chip — per the user's explicit request. Its visual
+  treatment, "TAIL · NN%"/"TAIL · CUT" caption, and all existing behavior are
+  unchanged, only its position moved.
+
+Tests: all 194 pre-existing assertions preserved (no supersessions — nothing
+prior encoded the fixed-shape noise rise's exact numeric output at a
+non-default noiseTension, since noiseTension didn't exist yet). 5 new
+`[POST-1.0]` test blocks added: default-reproduces-smoothstep-exactly,
+monotonic+endpoints across 5 noiseTension settings, directionality
+(higher noiseTension ⇒ later bloom), 21-parameter count + default, and
+pre-noiseTension (20-param) saved-session compatibility. See
+`Source/Tests/RunTests.cpp`.
+
 ### Changed / Removed — 2026-09-17 (gradual noise rise / MIDI note selection removed / dual tension-noise curve)
 
 Stays at 1.0.0 per this repo's factory convention. User-directed session, four
