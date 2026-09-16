@@ -9,9 +9,10 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
     : AudioProcessorEditor(&p), processorRef(p)
 {
     // ------------------------------------------------------------------------
-    // STEP 1: CREATE RELAYS (before WebView!) - all 19 APVTS parameters,
+    // STEP 1: CREATE RELAYS (before WebView!) - all 20 APVTS parameters,
     // parameter IDs exactly matching plugins/DROP/.ideas/parameter-spec.md /
-    // PluginProcessor.cpp's createParameterLayout().
+    // PluginProcessor.cpp's createParameterLayout(). `tail` (POST-1.0, 20th)
+    // is appended after `output` below.
     // ------------------------------------------------------------------------
 
     triggerRelay     = std::make_unique<juce::WebToggleButtonRelay>("trigger");
@@ -37,6 +38,11 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
     noiseRelay      = std::make_unique<juce::WebSliderRelay>("noise");
 
     outputRelay = std::make_unique<juce::WebSliderRelay>("output");
+
+    // POST-1.0 addition (see PluginEditor.h's top doc comment "PARAMETER
+    // COVERAGE") - appended after the original 19, matching
+    // createParameterLayout()'s own append-only ordering.
+    tailRelay = std::make_unique<juce::WebSliderRelay>("tail");
 
     // ------------------------------------------------------------------------
     // STEP 2: CREATE WEBVIEW (with relay options + the non-APVTS
@@ -68,6 +74,7 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
             .withOptionsFrom(*digitalRelay)
             .withOptionsFrom(*noiseRelay)
             .withOptionsFrom(*outputRelay)
+            .withOptionsFrom(*tailRelay)
 
             // --- Non-APVTS "trigger mode" bridge (architecture.md: manual/
             // MIDI/auto-sync is non-parameter state, not an APVTS parameter -
@@ -121,7 +128,7 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
     );
 
     // ------------------------------------------------------------------------
-    // STEP 3: CREATE PARAMETER ATTACHMENTS (after WebView!) - 19 total.
+    // STEP 3: CREATE PARAMETER ATTACHMENTS (after WebView!) - 20 total.
     // JUCE 8 requires the 3-argument constructor (parameter, relay,
     // undoManager) - juce8-critical-patterns.md #12.
     //
@@ -174,6 +181,10 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
 
     outputAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.parameters.getParameter("output"), *outputRelay, nullptr);
+
+    // POST-1.0 addition (see this file's "STEP 1" doc comment above).
+    tailAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
+        *processorRef.parameters.getParameter("tail"), *tailRelay, nullptr);
 
     // ------------------------------------------------------------------------
     // WEBVIEW SETUP

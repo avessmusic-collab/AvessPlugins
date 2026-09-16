@@ -101,6 +101,16 @@ struct DropStyleData
     MusicalDivision vacuumDivision = MusicalDivision::ThirtySecond;
     double vacuumFloorSeconds = 0.025;
     double impactWindowSeconds = 0.22;
+    // POST-1.0 OVERRIDE NOTE (2026-09-16, user-directed improvement, see
+    // plugins/DROP/CHANGELOG.md): this field is now VESTIGIAL for Recovery's
+    // actual duration - PluginProcessor::computeDurationsForNewBuild() no
+    // longer reads it there, having been superseded by the new `tail` APVTS
+    // parameter's exponential seconds mapping (Recovery IS the tail's
+    // ring-out window - see PluginProcessor.h's "POST-1.0 IMPROVEMENT" doc
+    // comment). Left in place (not removed) purely for authoring-data
+    // completeness/documentation of each Style's ORIGINAL recommended
+    // recovery-length intent; Vacuum/Impact timing above remain fully
+    // Style-driven and unaffected by this override.
     MusicalDivision recoveryDivision = MusicalDivision::Half;
 
     // Source-awareness: per-SourceProfile, per-module scalar multiplier,

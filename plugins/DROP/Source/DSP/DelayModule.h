@@ -22,6 +22,24 @@
  * never resized in process(). Always processes (never bypassed) per
  * architecture.md's "Always-Process, Weight-Mix" pattern - a delay line
  * that's always running has no cold-start transient when weight rises.
+ *
+ * POST-1.0 BUGFIX (2026-09-16, user-directed improvement, see
+ * plugins/DROP/CHANGELOG.md): process(weight, ...) is now a thin wrapper
+ * around processWithSendReturn(weight, weight, ...) - the "current
+ * behavior" split point per the bugfix design. The new two-weight entry
+ * point lets PluginProcessor::processSegment() decouple what NEW content
+ * enters the delay line's feedback loop (sendWeight - forced to 0 during
+ * Peak/Impact/Recovery so the ducked/transient bus never leaks fresh
+ * material into the tail) from how much of what's ALREADY circulating is
+ * mixed back to the output (returnWeight - driven by PluginProcessor's
+ * tail envelope during those same states, instead of snapping to 0 through
+ * this module's own 20ms smoother, which was Bug C: "delay/reverb wet
+ * mixes hit 0 while internal buffers still hold decaying content - muted
+ * mid-ring"). The feedback loop itself (delayLine.pushSample/popSample,
+ * the HPF/LPF/tanh chain, kMaxFeedback clamp) is COMPLETELY unchanged -
+ * only which signal is written in (dry*sendWeight instead of unconditional
+ * dry) and which signal is blended to output (delayed*returnWeight instead
+ * of delayed*weight) changed.
  */
 namespace drop
 {
@@ -34,7 +52,20 @@ public:
     void prepare(const juce::dsp::ProcessSpec& spec);
     void reset();
 
+    /** Legacy single-weight entry point - both send and return use the same weight (Building-state behavior, unchanged). */
     void process(juce::dsp::AudioBlock<float> block, float weight, float progress, const MusicalClock& clock) noexcept;
+
+    /**
+     * POST-1.0 addition (see class doc comment): `sendWeight` gates what
+     * NEW dry content is written into the delay line's feedback loop this
+     * segment; `returnWeight` gates how much of the (already-circulating)
+     * delayed signal is blended into the output. During Building both are
+     * identical to `weight` (process() above delegates here with
+     * sendWeight==returnWeight==weight, so the two entry points are
+     * observably identical whenever the caller passes equal weights).
+     */
+    void processWithSendReturn(juce::dsp::AudioBlock<float> block, float sendWeight, float returnWeight,
+                                float progress, const MusicalClock& clock) noexcept;
 
     /**
      * Stage 3 DSP Phase 3.5: the base (left-channel) delay division is
@@ -50,7 +81,7 @@ private:
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> delayLine;
     juce::dsp::IIR::Filter<float> feedbackHpf[2], feedbackLpf[2];
     juce::AudioBuffer<float> dryBuffer;
-    juce::SmoothedValue<float> weightSmoothed;
+    juce::SmoothedValue<float> sendWeightSmoothed, returnWeightSmoothed;
 
     double sampleRate = 44100.0;
     double maxDelaySamples = 0.0;

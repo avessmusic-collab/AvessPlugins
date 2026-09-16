@@ -528,12 +528,37 @@ controls:
     label: "Output"
     control_style: "dark inset mini-LCD, orange monospace dB readout, chevron step buttons"
 
+  # POST-1.0 addition (2026-09-16, user-directed improvement) - see the
+  # `tail_parameter` amendment note below for full rationale/geometry
+  # derivation.
+  - id: tail
+    type: slider
+    page: advanced
+    position: { x: 40, y: 230 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 35.0
+    label: "Tail"
+    control_style: "small neumorphic macro knob (identical treatment to the 10 module macros, e.g. Filter), 'TAIL · NN%' caption"
+
 parameter_id_reference:
-  # All 19 APVTS parameters (exact IDs from architecture.md), confirmed present:
+  # All 20 APVTS parameters (exact IDs from architecture.md / PluginProcessor.h,
+  # confirmed present) - 19 original (locked 2026-09-14) + `tail` (POST-1.0,
+  # appended 2026-09-16, NOT interleaved - preserves the original 19 IDs
+  # byte-for-byte):
   all: [trigger, buildLength, style, intensity, tension, chaos, impact, filter,
         width, pitch, gate, stutter, delay, reverb, distortion, digital, noise,
-        dryWet, output]
-  binding_pattern: "trigger -> Juce.getToggleState('trigger'); buildLength/style -> Juce.getComboBoxState(id); all 15 remaining knobs/sliders -> Juce.getSliderState(id) with normalised [0,1] value — identical pattern to v1-v9"
+        dryWet, output, tail]
+  binding_pattern: "trigger -> Juce.getToggleState('trigger'); buildLength/style -> Juce.getComboBoxState(id); all 17 remaining knobs/sliders (incl. tail; corrected from a pre-existing '15' miscount in the 19-parameter version of this line) -> Juce.getSliderState(id) with normalised [0,1] value — identical pattern to v1-v9"
+
+tail_parameter:
+  date: 2026-09-16
+  phase: "POST-1.0 improvement (dsp-agent), user-directed - fixes 3 real-DAW-testing bugs (instant cut at Impact->Recovery, a post-impact effect-blast artifact, stale delay/reverb tails with no reset before the next build) plus this approved feature. Plugin stays at version 1.0.0 per this repo's factory convention until public release."
+  reason: "The fix design requires a user-controllable ring-out length for the Recovery state (previously a fixed/Style-derived musical division with no user control and no way to let tails audibly ring out) - see plugins/DROP/CHANGELOG.md and PluginProcessor.h's 'POST-1.0 IMPROVEMENT' doc comment for full root-cause detail."
+  design: "A small macro-style knob (id `tail`), IDENTICAL visual treatment to the 10 existing module-macro knobs (Filter/Width/.../Noise - same 60x72px knob-wrap, 3.4rem well, 2.1rem dome, knob-label-small caption class), placed in the Advanced page's left column below the Tension/Chaos/MIDI-Note mini-screens (which occupy top:150px, height:56px -> bottom edge 206px) and above the module-macro grid (top:320px) - the x=40-160/y=230-320 zone was verified free of every other Advanced-page control via the same bounds/overlap/min-gap validator this file's other amendments use. Vertical gaps: 206px (mini-screens bottom) -> 230px (tail top) = 24px clearance; 230+72=302px (tail bottom) -> 320px (macro row top) = 18px clearance - both comfortably clear the documented control_gap_min of 10px."
+  caption_format: "'TAIL · NN%' - includes the '%' unit span (unlike the other 10 small macro knobs, which omit it since their underlying macro-multiplier semantics don't read naturally as a percentage of anything visible) because `tail` IS meaningfully a percentage of its own 0-100% UI range, exactly like the hero knobs' caption convention (e.g. 'INTENSITY · NN%')."
+  binding: "Standard WebSliderRelay/WebSliderParameterAttachment pair (APVTS parameter, NOT non-parameter state) - Source/PluginEditor.h/.cpp gained the 20th relay+attachment (tailRelay/tailAttachment), appended after outputRelay/outputAttachment, matching createParameterLayout()'s own append-only parameter ordering."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup only (#knob-wrap[data-param='tail'], auto-discovered by the existing generic `document.querySelectorAll('.knob-wrap')` initKnob() loop - NO JS changes needed, gesture-bracketing/drag/wheel/dblclick/glow behavior is already fully generic); Source/PluginEditor.h/.cpp (20th relay+attachment); this YAML (control entry + this note + parameter_id_reference update); plugins/DROP/.ideas/parameter-spec.md (new `tail` entry + amendment note); plugins/DROP/.ideas/creative-brief.md (parameter table row + UI concept note)."
 
 midi_trigger_note_chip:
   date: 2026-09-15
@@ -569,7 +594,7 @@ module_weight_arc_glow:
 
 layout_validation:
   method: "Custom Python bounds/overlap/edge-padding/min-gap validator, coordinates converted from the HTML's rem values at base 16px/rem (matches BASE_W/BASE_H 1000x560)."
-  result: "PASS — 0 errors across 12 Main controls (was 13; orbWrap removed 2026-09-14) and 23 Advanced controls. Post-removal Main center column re-verified: all four center elements share center x=500, vertical gaps 92/44/36px (all >= 10px min), no overlaps with the flanking knobs (center column x 360-640 vs Intensity ending x=286 / DryWet starting x=714), max content bottom y=372 leaves 188px bottom margin."
+  result: "PASS — 0 errors across 12 Main controls (was 13; orbWrap removed 2026-09-14) and 24 Advanced controls (was 23; `tail` added 2026-09-16, see tail_parameter amendment note - manually verified clear of every neighbor with >= 10px gaps, not re-run through the Python validator this pass). Post-removal Main center column re-verified: all four center elements share center x=500, vertical gaps 92/44/36px (all >= 10px min), no overlaps with the flanking knobs (center column x 360-640 vs Intensity ending x=286 / DryWet starting x=714), max content bottom y=372 leaves 188px bottom margin."
   edge_padding_min: 15
   control_gap_min: 10
   impact_center_x_verified: 500

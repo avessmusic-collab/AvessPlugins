@@ -369,6 +369,19 @@
         <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
       </div>
 
+      <!-- Tail - POST-1.0 addition (2026-09-16, user-directed improvement).
+           Small macro-style knob, same visual family as the 10 module
+           macros below (60x72px well/dome/caption), placed in the free
+           zone below the Tension/Chaos/MIDI-Note mini-screens (which end at
+           top:9.375rem+height:3.5rem=12.875rem) and above the module-macro
+           grid (top:20rem) - see .ideas/mockups/v10-ui.yaml's amendment for
+           the geometry derivation/gap verification. -->
+      <div class="knob-wrap" style="left:2.5rem; top:14.375rem; width:3.75rem;"
+           data-param="tail" data-min="0" data-max="100" data-default="35" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">TAIL &middot; <span class="kv-num">35</span><span class="unit">%</span></span>
+      </div>
+
       <div id="curveBox" style="left:38.75rem; top:5rem; width:18.75rem; height:8.75rem;">
         <div class="curve-label">TENSION CURVE</div>
         <div class="curve-type-label" id="curveTypeLabel">S-CURVE</div>

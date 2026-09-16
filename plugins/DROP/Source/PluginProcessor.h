@@ -32,7 +32,8 @@
  * normal musical passage into BUILD -> TENSION -> VACUUM -> IMPACT ->
  * RECOVERY. See plugins/DROP/.ideas/architecture.md (authoritative DSP
  * spec) and plugins/DROP/.ideas/parameter-spec.md (LOCKED, 19 APVTS
- * parameters) for full detail.
+ * parameters + `tail`, added 2026-09-16 as a POST-1.0 amendment - 20 total)
+ * for full detail.
  *
  * Stage 1 (Foundation + Shell) scope: build system, full 19-parameter
  * APVTS, and non-parameter ValueTree state scaffolding (trigger mode, MIDI
@@ -106,6 +107,85 @@
  * the original spec's separate DropGraph/MeterDisplay components) - see
  * VisualizationFrame's doc comment for the PINNED activeModuleWeights[10]
  * index order.
+ *
+ * POST-1.0 IMPROVEMENT (2026-09-16, user-directed, see plugins/DROP/CHANGELOG.md
+ * - stays at version 1.0.0 per this repo's factory convention until public
+ * release). Fixes three user-reported real-DAW-testing bugs plus one
+ * approved feature, all interdependent:
+ *
+ *   BUG A ("instant cut"): ImpactEngine::process() was state-gated to
+ *   Impact ONLY - its sub-hit decay (~120ms) and dedicated short-tail
+ *   reverb's own algorithmic decay were amputated at the exact
+ *   Impact->Recovery boundary whenever that boundary landed before those
+ *   envelopes/that reverb had genuinely finished ringing.
+ *
+ *   BUG B ("post-impact artifact"): computeIntensityProgress() returned
+ *   `1.0f - t` (ramping 1->0) for Recovery, so the 10 shared-budget modules
+ *   (freshly settled to exactly 0 through Peak/Impact) SLAMMED back up
+ *   toward full weight at the instant Recovery began, then ramped back
+ *   down - an audible post-impact effect blast. Fixed: Recovery now also
+ *   returns 0.0f (matches implementation-spec.md's IMPACT PHILOSOPHY:
+ *   "BUILD -> TENSION -> VACUUM -> ORIGINAL/CLEAN IMPACT -> SHORT TAIL ->
+ *   RECOVERY" - Recovery stays clean, tails only).
+ *
+ *   BUG C ("stale tails"): DelayModule/ReverbModule's wet mix followed the
+ *   same (now-zero) shared weight, so their already-circulating
+ *   echoes/reverb tails were muted within one ~20ms smoother ramp instead
+ *   of ringing out - mid-ring, and stale for the NEXT build since nothing
+ *   ever reset their internal state either.
+ *
+ *   FEATURE: new 20th APVTS parameter `tail` (0-100%, default 35%),
+ *   exponentially mapped to a Recovery-state duration of ~0.15s (0%) to
+ *   ~4.0s (100%) - see computeDurationsForNewBuild()'s doc comment for the
+ *   exact formula. Latched at Arming (like buildLength), OVERRIDES the
+ *   active DropStyle's own `recoveryDivision` timing preference (Style
+ *   authoring still governs Vacuum/Impact timing, only Recovery's length is
+ *   now user-controlled).
+ *
+ * Fix design (see processSegment()'s "tail envelope" doc comment and
+ * DelayModule.h/ReverbModule.h's own class doc comments for the DSP-level
+ * detail): DelayModule/ReverbModule gained an additive send/return-weight
+ * API (existing single-weight process() unchanged/still used during
+ * Building). During Recovery ONLY, INPUT-SEND is forced to 0 (no fresh
+ * ducked-bus material re-excites the tail) while WET-RETURN is driven by a
+ * raised-cosine "tail envelope" (1.0 at Recovery's first sample, decaying
+ * 1->0 exactly across Recovery's tail-parameter-derived duration) multiplied
+ * against the LAST weight value Building actually used (so the tail starts
+ * exactly where the source content left off, not at an arbitrary reset
+ * value). ImpactEngine continues processing through Recovery too, with
+ * elapsed time tracked continuously across the boundary
+ * (impactCarryoverElapsedSamples) and its own effective strength scaled by
+ * the SAME tail envelope. At the click-free instant the tail envelope
+ * reaches exactly 0 (Recovery->Idle), every owned DSP module is reset() so
+ * nothing stale replays into the next build (advanceStateMachineTicks()) -
+ * deliberately NOT done at Idle->Arming, since audio is still live at that
+ * transition.
+ *
+ * POST-1.0 SECOND-PASS FIX (2026-09-16, same session, coordinator-reported
+ * build/test feedback after the first pass): two bugs found and fixed via
+ * source inspection of DropStyle.cpp/IntensityBudget.cpp -
+ *   1. Peak AND Impact are now BYTE-IDENTICAL to the pre-existing (already-
+ *      passing) legacy behavior for DelayModule/ReverbModule send/return -
+ *      the tail envelope/frozen-weight treatment applies ONLY during
+ *      Recovery. The first pass incorrectly held the tail envelope at 1.0
+ *      through Peak+Impact too, substituting the frozen (Building-end)
+ *      weight for the live (small, ~0.05-0.15-ish) Peak/Impact weight -
+ *      this DILUTED the Impact-state transient (crossfading it toward a
+ *      near-silent "wet" signal at a much higher blend ratio than before),
+ *      regressing the transient-preservation floor. DropStyle.cpp's
+ *      budgetEnvelope/moduleCurves are authored with nonzero startWeight
+ *      (e.g. 0.05) - IntensityBudget weights at progress==0 were NEVER
+ *      exactly 0.0f even before any of this session's changes; "duck the
+ *      chain" only ever meant "small", not "exactly zero" - restoring the
+ *      untouched legacy path for Peak/Impact fixes the regression.
+ *   2. The buffer-hygiene reset (advanceStateMachineTicks()) now covers
+ *      EVERY owned DSP module (Filter/Width/Gate/Saturation/Pitch/Digital/
+ *      Vacuum/Noise, in addition to the original Delay/Reverb/Impact/
+ *      Stutter four) - since every module carries a genuinely nonzero live
+ *      weight even while "ducked" (point 1 above), every module with
+ *      persistent internal filter/oscillator state was ALREADY live-
+ *      processing real signal throughout the previous build and needs
+ *      resetting, not just the four originally-scoped tail-capable ones.
  */
 class DROPAudioProcessor : public juce::AudioProcessor,
                             private juce::AudioProcessorValueTreeState::Listener
@@ -268,6 +348,19 @@ private:
     void fireTriggerIfIdle();
     drop::DropStateMachine::Durations computeDurationsForNewBuild();
 
+    // POST-1.0 bugfix helper: advances dropStateMachine.tick() in a loop
+    // (same cascade-through-zero-length-states contract as every other
+    // `while (dropStateMachine.tick()) {}` call site this class already
+    // used - both call sites in processBlock() now route through this
+    // method instead), additionally detecting the exact Recovery->Idle
+    // transition (the tail envelope's click-free, guaranteed-reached-zero
+    // instant - see processSegment()'s "tail envelope" doc comment) and
+    // resetting DelayModule/ReverbModule/ImpactEngine/StutterModule at that
+    // moment so no stale tail/capture content replays into the next build
+    // (Bug C "stale tails" fix). Deliberately NOT triggered at Idle->Arming
+    // (audio is still live then).
+    void advanceStateMachineTicks() noexcept;
+
     // Stage 3 DSP Phase 3.2: processes one sample-accurate segment
     // [startSample, startSample+numSamplesInSegment) of `buffer` through the
     // fixed series DSP chain (Filter -> Width -> Gate -> Delay -> Saturation
@@ -348,6 +441,43 @@ private:
     juce::SmoothedValue<float> outputGainSmoothed;
 
     double currentSampleRate = 44100.0;
+
+    // POST-1.0 bugfix state (see this class's top doc comment "POST-1.0
+    // IMPROVEMENT" and processSegment()'s "tail envelope" doc comment).
+    // Audio-thread-owned, no atomics needed (read/written only from
+    // processBlock()/processSegment()/advanceStateMachineTicks(), all
+    // audio-thread-only per this class's existing convention).
+    //
+    // previousObservedState: the "previous state" half of the Recovery->Idle
+    // edge test in advanceStateMachineTicks() - updated on every actual
+    // dropStateMachine.tick() transition (NOT polled once per block), so a
+    // Recovery state shorter than one segment can never be missed (mirrors
+    // this class's existing trigger-edge-detection rationale, just for a
+    // DIFFERENT edge).
+    drop::DropState previousObservedState = drop::DropState::Idle;
+
+    // frozenDelayReturnWeight / frozenReverbReturnWeight: the LAST
+    // Building-state weight actually used for DelayModule/ReverbModule,
+    // continuously re-captured every segment while state == Building (so by
+    // the time state advances past Building, each holds exactly its final
+    // Building-segment value) - the tail envelope's WET-RETURN multiplier
+    // during Peak/Impact/Recovery starts from THIS value (not an arbitrary
+    // reset), which is what makes the tail envelope C0-continuous at the
+    // Building->Peak boundary too, not just Impact->Recovery.
+    float frozenDelayReturnWeight = 0.0f;
+    float frozenReverbReturnWeight = 0.0f;
+
+    // impactCarryoverElapsedSamples: elapsed-sample counter for
+    // ImpactEngine, tracked CONTINUOUSLY across the Impact->Recovery
+    // boundary (unlike dropStateMachine's own per-state samplesIntoState,
+    // which resets to 0 at every transition) so ImpactEngine's
+    // self-terminating envelopes/shortTailReverb never see a discontinuity
+    // when PluginProcessor keeps calling it through Recovery (Bug A fix).
+    // -1 == "Impact has not been entered yet this build" (or already
+    // reset after Recovery ended) - guards against ever calling
+    // ImpactEngine during Recovery for a build that never actually reached
+    // Impact (e.g. a hypothetical zero-length-Impact edge case).
+    int64_t impactCarryoverElapsedSamples = -1;
 
     // Stage 3 DSP Phase 3.5: the `style` APVTS parameter's value, LATCHED at
     // Arming (mirroring buildLength/tempo's own latching - architecture.md
@@ -467,6 +597,14 @@ private:
     std::atomic<float>* noiseParam = nullptr;
     std::atomic<float>* dryWetParam = nullptr;
     std::atomic<float>* outputParam = nullptr;
+    // POST-1.0 addition: the 20th parameter (see this class's top doc
+    // comment "POST-1.0 IMPROVEMENT"). Cached alongside the original 19 for
+    // consistency, but added AFTER them (not interleaved) so parameter IDs
+    // 1-19 remain byte-for-byte untouched, and a 1.0.0 session saved before
+    // this parameter existed loads cleanly with the default (APVTS's
+    // standard behavior for a ValueTree missing a since-added parameter
+    // node - see createParameterLayout()'s doc comment at the `tail` entry).
+    std::atomic<float>* tailParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DROPAudioProcessor)
 };

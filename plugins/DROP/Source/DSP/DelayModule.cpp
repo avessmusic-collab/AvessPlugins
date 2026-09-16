@@ -37,7 +37,8 @@ void DelayModule::prepare(const juce::dsp::ProcessSpec& spec)
 
     dryBuffer.setSize((int) juce::jmax(1u, spec.numChannels), (int) juce::jmax(1u, spec.maximumBlockSize));
 
-    weightSmoothed.reset(spec.sampleRate, kWeightSmoothingSeconds);
+    sendWeightSmoothed.reset(spec.sampleRate, kWeightSmoothingSeconds);
+    returnWeightSmoothed.reset(spec.sampleRate, kWeightSmoothingSeconds);
 
     reset();
 }
@@ -50,17 +51,25 @@ void DelayModule::reset()
         feedbackHpf[ch].reset();
         feedbackLpf[ch].reset();
     }
-    weightSmoothed.setCurrentAndTargetValue(0.0f);
+    sendWeightSmoothed.setCurrentAndTargetValue(0.0f);
+    returnWeightSmoothed.setCurrentAndTargetValue(0.0f);
 }
 
 void DelayModule::process(juce::dsp::AudioBlock<float> block, float weight, float progress, const MusicalClock& clock) noexcept
+{
+    processWithSendReturn(block, weight, weight, progress, clock);
+}
+
+void DelayModule::processWithSendReturn(juce::dsp::AudioBlock<float> block, float sendWeight, float returnWeight,
+                                         float progress, const MusicalClock& clock) noexcept
 {
     const int numSamples = (int) block.getNumSamples();
     const int numChannels = (int) block.getNumChannels();
     if (numSamples <= 0 || numChannels <= 0)
         return;
 
-    weight = juce::jlimit(0.0f, 1.0f, weight);
+    sendWeight = juce::jlimit(0.0f, 1.0f, sendWeight);
+    returnWeight = juce::jlimit(0.0f, 1.0f, returnWeight);
     progress = juce::jlimit(0.0f, 1.0f, progress);
 
     for (int ch = 0; ch < numChannels; ++ch)
@@ -78,13 +87,19 @@ void DelayModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
     // tanh soft-clip (bounds to [-1,1]) is applied BEFORE this coefficient,
     // which is itself hard-clamped to <= kMaxFeedback, so the recursive loop
     // gain can never reach/exceed 1.0 regardless of automation extremes.
-    const float feedbackAmount = juce::jlimit(0.0f, kMaxFeedback, 0.2f + 0.5f * progress * weight);
+    // Uses returnWeight (== sendWeight during Building, where progress is
+    // also nonzero) - during the ducked Peak/Impact/Recovery states
+    // `progress` is exactly 0 (computeIntensityProgress()) so this reduces
+    // to the flat 0.2 floor regardless of which weight is passed.
+    const float feedbackAmount = juce::jlimit(0.0f, kMaxFeedback, 0.2f + 0.5f * progress * returnWeight);
 
-    weightSmoothed.setTargetValue(weight);
+    sendWeightSmoothed.setTargetValue(sendWeight);
+    returnWeightSmoothed.setTargetValue(returnWeight);
 
     for (int i = 0; i < numSamples; ++i)
     {
-        const float w = weightSmoothed.getNextValue();
+        const float sw = sendWeightSmoothed.getNextValue();
+        const float rw = returnWeightSmoothed.getNextValue();
 
         for (int ch = 0; ch < numChannels; ++ch)
         {
@@ -98,10 +113,16 @@ void DelayModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
             fb = std::tanh(fb * kFeedbackDrive);
             fb *= feedbackAmount;
 
-            delayLine.pushSample(ch, dry + fb);
+            // POST-1.0 bugfix: the dry content written back into the loop is
+            // gated by `sw` (sendWeight) - 0 during Peak/Impact/Recovery, so
+            // no fresh (ducked-bus/transient) material enters the tail; the
+            // already-circulating feedback (`fb`, derived from what was
+            // already in the line) is NOT gated here, so it keeps decaying
+            // under its own feedbackAmount/filter dynamics regardless of sw.
+            delayLine.pushSample(ch, dry * sw + fb);
 
             const float wet = delayed;
-            block.getChannelPointer((size_t) ch)[i] = dry + (wet - dry) * w;
+            block.getChannelPointer((size_t) ch)[i] = dry + (wet - dry) * rw;
         }
     }
 }

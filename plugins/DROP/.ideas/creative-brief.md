@@ -44,6 +44,7 @@ Only high-value parameters are exposed (JUCE APVTS). Advanced per-module DSP int
 | Digital | 0–100% | macro | Advanced: bit/SR crush weight (added as 19th param per architecture.md resolution) |
 | Dry/Wet | 0–100% | 100% | Global mix |
 | Output | -inf–+12 dB | 0 dB | Output gain |
+| Tail | 0–100% | 35% | **POST-1.0 (2026-09-16):** ring-out length of the Recovery state (~0.15s–4.0s, exponential mapping); overrides the Style's recovery timing — see [parameter-spec.md](parameter-spec.md)'s `tail` entry and `plugins/DROP/CHANGELOG.md` |
 
 ## UI Concept
 
@@ -58,7 +59,7 @@ Only high-value parameters are exposed (JUCE APVTS). Advanced per-module DSP int
 **Key Elements:**
 - **(Amended 2026-09-14: the soap-bubble visualization was REMOVED at user direction — see mockups/v10-ui.yaml `bubble_removal`.)** The Main page centers on the hero DROP trigger; the progress strip carries the visualization contract (fill tracks build progress; fill brightness/glow scales with tension × input level via the AudioAnalyzer ring-buffer feed) alongside the phase chip + LED.
 - DROP trigger: raised neumorphic pill at hero scale, press-in physics, orange arm glow; full-groove orange progress bar beneath.
-- 19 APVTS parameters bound (incl. `digital`; module macros default 100%).
+- 20 APVTS parameters bound (incl. `digital`; module macros default 100%; `tail` added 2026-09-16 as a POST-1.0 amendment, small macro-style knob in the Advanced page's left column).
 
 ## Use Cases
 

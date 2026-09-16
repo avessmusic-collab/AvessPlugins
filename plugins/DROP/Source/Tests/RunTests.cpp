@@ -2403,6 +2403,522 @@ int main()
         check (drop::kNumPresets == drop::kNumStyles, "DropPreset: preset count exactly matches style count (16 == 16)");
     }
 
+    //==========================================================================
+    // [POST-1.0] Bug A/B/C fix + `tail` parameter tests (2026-09-16,
+    // user-directed improvement, see plugins/DROP/CHANGELOG.md and
+    // PluginProcessor.h's "POST-1.0 IMPROVEMENT" doc comment). Stays at
+    // version 1.0.0 per this repo's factory convention.
+    //==========================================================================
+
+    std::printf ("\n[POST-1.0] PluginProcessor - 20 APVTS parameters (tail added additively as the 20th)\n");
+    {
+        DROPAudioProcessor p;
+        check (p.getParameters().size() == 20, "PluginProcessor: exactly 20 APVTS parameters after the POST-1.0 `tail` addition (19 original, parameter-spec.md-locked, + 1)");
+        auto* tailP = p.parameters.getParameter ("tail");
+        check (tailP != nullptr, "PluginProcessor: `tail` parameter exists and is retrievable by ID");
+        if (tailP != nullptr)
+            check (nearlyEqual ((double) tailP->getValue(), 0.35, 1.0e-6),
+                  "PluginProcessor: `tail` parameter defaults to 35% (normalized 0.35, range is 0-100% linear)");
+    }
+
+    std::printf ("\n[POST-1.0] PluginProcessor - setStateInformation()/replaceState() tolerates a session missing `tail` (pre-1.0.0-tail compatibility)\n");
+    {
+        // Simulates restoring a 1.0.0 session saved BEFORE `tail` existed:
+        // strip the `tail` PARAM child from a real APVTS state ValueTree,
+        // then replaceState() it into a fresh processor - proves JUCE's
+        // documented APVTS behavior (a parameter absent from a loaded state
+        // is left at its constructor-supplied default) holds for this
+        // specific additive parameter, and that every OTHER parameter still
+        // round-trips correctly through the SAME call (not a broken/no-op
+        // restore).
+        DROPAudioProcessor source;
+        if (auto* prm = source.parameters.getParameter ("intensity"))
+            prm->setValueNotifyingHost (0.9f); // distinctive non-default value
+
+        auto state = source.parameters.copyState(); // ValueTree, type "Parameters", one <PARAM id="..." value="..."/> child per parameter
+        int removedCount = 0;
+        for (int i = state.getNumChildren() - 1; i >= 0; --i)
+        {
+            auto child = state.getChild (i);
+            if (child.hasType ("PARAM") && child.getProperty ("id").toString() == "tail")
+            {
+                state.removeChild (i, nullptr);
+                ++removedCount;
+            }
+        }
+        check (removedCount == 1, "pre-tail compatibility test setup: exactly one `tail` PARAM node was stripped");
+
+        DROPAudioProcessor target;
+        target.parameters.replaceState (state);
+
+        auto* tailP = target.parameters.getParameter ("tail");
+        auto* intensityP = target.parameters.getParameter ("intensity");
+        check (tailP != nullptr, "pre-tail compatibility: `tail` parameter still exists after loading a state missing its node");
+        if (tailP != nullptr)
+            check (nearlyEqual ((double) tailP->getValue(), 0.35, 1.0e-6),
+                  "pre-tail compatibility: `tail` loads at its default (35%) when absent from a restored pre-1.0.0-tail session");
+        if (intensityP != nullptr)
+            check (nearlyEqual ((double) intensityP->getValue(), 0.9, 1.0e-4),
+                  "pre-tail compatibility: the OTHER 19 parameters (e.g. intensity) still round-trip correctly through the SAME replaceState() call - proves this is a targeted `tail`-only default fallback, not a broken/no-op restore");
+    }
+
+    std::printf ("\n[POST-1.0] PluginProcessor - `tail` parameter scales Recovery's duration (0%% ~0.15s, 100%% ~4.0s)\n");
+    {
+        constexpr int blockSize = 256;
+
+        auto measureRecoverySamples = [] (float tailPercent) -> int64_t
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f); // shortest: 1 bar
+            if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (tailPercent / 100.0f);
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+            int64_t recoverySampleCount = 0;
+            bool sawRecovery = false;
+            bool done = false;
+            for (int block = 0; block < 5000 && ! done; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                buf.clear();
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+                if (p.getCurrentDropState() == drop::DropState::Recovery)
+                {
+                    sawRecovery = true;
+                    recoverySampleCount += blockSize;
+                }
+                if (sawRecovery && p.getCurrentDropState() == drop::DropState::Idle)
+                    done = true;
+            }
+            p.releaseResources();
+            return recoverySampleCount;
+        };
+
+        const int64_t recovery0Samples = measureRecoverySamples (0.0f);
+        const int64_t recovery100Samples = measureRecoverySamples (100.0f);
+        const double recovery0Seconds = (double) recovery0Samples / 48000.0;
+        const double recovery100Seconds = (double) recovery100Samples / 48000.0;
+
+        std::printf ("  tail=0%%: Recovery ~%.4fs (%lld samples, block-granular measurement); tail=100%%: Recovery ~%.4fs (%lld samples)\n",
+                     recovery0Seconds, (long long) recovery0Samples, recovery100Seconds, (long long) recovery100Samples);
+
+        // Block-granularity (256 samples = ~5.3ms @48kHz) measurement
+        // tolerance, generously widened for the practical fuzz of
+        // "count whole blocks the state machine reports Recovery".
+        check (nearlyEqual (recovery0Seconds, 0.15, 0.02),
+              "tail param scales Recovery duration: tail=0% -> ~0.15s (kTailMinSeconds, see computeDurationsForNewBuild())");
+        check (nearlyEqual (recovery100Seconds, 4.0, 0.15),
+              "tail param scales Recovery duration: tail=100% -> ~4.0s (kTailMaxSeconds)");
+        check (recovery100Samples > recovery0Samples * 10,
+              "tail param scales Recovery duration: 100% produces a MUCH longer Recovery than 0% (monotonic exponential mapping, not a flat/ignored parameter)");
+    }
+
+    std::printf ("\n[POST-1.0] PluginProcessor - shared IntensityBudget weights during Recovery never exceed their Peak/Impact ducked baseline (Bug B fix, CORRECTED test)\n");
+    {
+        // CORRECTED (coordinator-reported test-design contradiction, second
+        // pass): the original version of this test asserted budget weights
+        // are EXACTLY 0.0f throughout Recovery. That premise is FALSE for
+        // the live system, independent of anything in this improvement
+        // session - DropStyle.cpp authors budgetEnvelope/moduleCurves with
+        // NONZERO startWeight (e.g. Clean EDM's budgetEnvelope starts at
+        // 0.05, Filter/Delay/Reverb curves start at 0.05/0.1/0.15), so
+        // IntensityBudget::computeWeights(style, progress==0, ...) legitimately
+        // returns small-but-nonzero weights for several modules - this was
+        // already true, unmodified, for Idle/Arming/Peak/Impact BEFORE any
+        // of this session's changes (verified by reading IntensityBudget.cpp/
+        // DropStyle.cpp directly), so it is equally true during Recovery
+        // once computeIntensityProgress() returns 0 there too (Bug B's
+        // actual fix). "Duck the effect chain" means SMALL, not "exactly
+        // zero" - the true, meaningful, regression-preventing property is
+        // that Recovery does NOT exceed what Peak/Impact already had (the
+        // OLD `1.0f - t` ramp's bug was specifically that it grew SUBSTANTIALLY
+        // above the ducked baseline) - that is what this rewritten test
+        // verifies instead.
+        constexpr int blockSize = 256;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f); // 1 bar
+        if (auto* prm = p.parameters.getParameter ("intensity")) prm->setValueNotifyingHost (1.0f); // max intensity - largest ducked baseline to compare against
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        std::array<float, 10> duckedBaseline {}; // last-seen Peak/Impact frame's weights
+        bool sawPeakOrImpact = false;
+        bool sawRecovery = false;
+        bool exceededBaseline = false;
+        bool done = false;
+        constexpr float kTolerance = 1.0e-4f; // generous vs. float/smoothing noise, tiny vs. any real "ramp back up"
+
+        for (int block = 0; block < 1300 && ! done; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < blockSize; ++i)
+                    data[i] = 0.5f * std::sin ((float) (block * blockSize + i) * 0.02f);
+            }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            DROPAudioProcessor::VisualizationFrame frame;
+            bool got = false;
+            while (p.popVisualizationFrame (frame)) got = true; // drain-all-keep-latest, matches PluginEditor's own convention
+            if (! got)
+                continue;
+
+            const auto state = p.getCurrentDropState();
+            if (state == drop::DropState::Peak || state == drop::DropState::Impact)
+            {
+                sawPeakOrImpact = true;
+                for (int i = 0; i < 10; ++i)
+                    duckedBaseline[(size_t) i] = frame.activeModuleWeights[i]; // Peak/Impact weights are ~constant (progress==0 throughout both) - last-seen value is representative
+            }
+            else if (state == drop::DropState::Recovery)
+            {
+                sawRecovery = true;
+                if (sawPeakOrImpact)
+                {
+                    for (int i = 0; i < 10; ++i)
+                        if (frame.activeModuleWeights[i] > duckedBaseline[(size_t) i] + kTolerance)
+                            exceededBaseline = true;
+                }
+            }
+            if (sawRecovery && state == drop::DropState::Idle)
+                done = true;
+        }
+        p.releaseResources();
+
+        check (sawPeakOrImpact, "ducked-baseline test: build reached Peak/Impact within the block budget");
+        check (sawRecovery, "ducked-baseline test: build reached Recovery within the block budget");
+        check (! exceededBaseline,
+              "PluginProcessor: shared IntensityBudget module weights during Recovery never exceed their Peak/Impact ducked baseline (Bug B fix - computeIntensityProgress() now returns 0 for Recovery, matching Peak/Impact exactly; DOCUMENTED SUPERSESSION of the pre-bugfix `1.0f - t` ramp, which specifically grew weights substantially ABOVE this same baseline right after Impact)");
+    }
+
+    std::printf ("\n[POST-1.0] PluginProcessor - post-impact continuity: no instant cut, no post-impact spike (Bug A/B fix)\n");
+    {
+        // Exact deterministic sample-offset arithmetic (SAME fallback-
+        // transport style as the Phase 3.4 transient-preservation test
+        // above, extended with this bugfix's `tail`-parameter-derived
+        // Recovery duration): 120 BPM/4/4 @48kHz -> samplesPerBeat=24000,
+        // barLength=96000; buildLength choice index 0 = 1 bar.
+        // armingToBuildingSamples = 96000-256 = 95744 (fallback transport
+        // already advanced by the triggering block's own 256 samples before
+        // the trigger is detected); buildingSamples = 96000; peakSamples
+        // (Vacuum, 1/32 note @120bpm) = 3000; impactSamples (fixed 220ms) =
+        // 10560 -> Impact begins at global sample 95744+96000+3000 = 194744
+        // (matches the Phase 3.4 test's own precomputed value exactly).
+        // tail=0% -> recoverySeconds EXACTLY kTailMinSeconds (0.15s, see
+        // computeDurationsForNewBuild()'s doc comment) -> recoverySamples =
+        // 7200 -> Recovery begins at global sample 194744+10560 = 205304.
+        constexpr int blockSize = 256;
+        constexpr int64_t impactStartSample = 194744;
+        constexpr int64_t recoveryStartSample = 205304;
+        constexpr int64_t recoverySamplesForTest = 7200;
+
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        const int64_t captureFromBlock = (impactStartSample / blockSize) - 2;
+        const int64_t captureUntilBlock = ((recoveryStartSample + recoverySamplesForTest) / blockSize) + 4;
+
+        std::vector<float> captured; // relative to captureFromBlock*blockSize
+        bool allFinite = true;
+
+        // CORRECTED (coordinator-reported bug, third pass): the ORIGINAL
+        // version of this test fed a CONTINUOUS tone straight through
+        // Recovery too. That made the "does the tail decay" measurement
+        // meaningless - Recovery's job is to let the LIVE SOURCE return
+        // cleanly (TRANSIENT PRESERVATION's whole point), so with a live
+        // tone still playing, the bus's steady-state RMS approaches the
+        // DRY tone's OWN level (~0.4/sqrt(2) =~ 0.283) as the tail's wet
+        // contribution fades out and reveals the (near-transparent, small-
+        // weight) dry bus underneath - a RISE toward that dry level is
+        // therefore CORRECT, EXPECTED behavior, not a decay-chain bug (this
+        // is exactly what the coordinator's round-3 evidence, RMS rising to
+        // 0.2512, matches almost exactly). To genuinely isolate "does the
+        // TAIL (echoes/reverb of PAST content) decay to silence", the
+        // SOURCE itself must actually go silent - a raised-cosine fade-out
+        // (50ms, kFadeSamples) ending EXACTLY at Recovery's first sample
+        // silences the input smoothly (no click of its own) before Recovery
+        // begins, so the boundary-discontinuity check below still measures
+        // genuine DSP continuity (not an artificial input-signal edge), and
+        // the post-boundary RMS decay check now measures ONLY the decaying
+        // tail (delay/reverb wet-return + ImpactEngine's continued output),
+        // exactly matching Bug C's own framing ("echoes... decay audibly and
+        // smoothly instead of being muted").
+        constexpr int64_t kFadeSamples = 2400; // 50ms @48kHz
+        constexpr int64_t kFadeStartSample = recoveryStartSample - kFadeSamples;
+
+        for (int64_t block = 0; block < captureUntilBlock; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const int64_t globalSample = block * blockSize + i;
+                    float toneAmp = 0.4f;
+                    if (globalSample >= recoveryStartSample)
+                        toneAmp = 0.0f; // fully silent from Recovery's first sample onward
+                    else if (globalSample >= kFadeStartSample)
+                    {
+                        const float fadeT = (float) (globalSample - kFadeStartSample) / (float) kFadeSamples;
+                        toneAmp = 0.4f * 0.5f * (1.0f + std::cos (juce::MathConstants<float>::pi * fadeT)); // smooth 1->0 raised-cosine fade, reaching exactly 0 at recoveryStartSample
+                    }
+                    data[i] = toneAmp * std::sin ((float) globalSample * 0.05f);
+                }
+            }
+
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            if (block >= captureFromBlock)
+            {
+                const float* out = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    if (! std::isfinite (out[i])) allFinite = false;
+                    captured.push_back (out[i]);
+                }
+            }
+        }
+        p.releaseResources();
+
+        check (allFinite, "post-impact continuity test: finite output throughout the capture window");
+
+        const int64_t captureStartSample = captureFromBlock * blockSize;
+        const int64_t boundaryIndex = recoveryStartSample - captureStartSample;
+        const bool boundaryInRange = boundaryIndex > 8 && boundaryIndex + 8 < (int64_t) captured.size();
+        check (boundaryInRange, "post-impact continuity test: the exact Impact->Recovery boundary sample falls within the captured window");
+
+        if (boundaryInRange)
+        {
+            // No single-sample discontinuity larger than this documented
+            // bound at the EXACT state boundary (Bug A: previously
+            // ImpactEngine was state-gated OFF at this exact instant,
+            // producing an audible instant cut - this bound catches any
+            // reintroduction of that).
+            constexpr float kMaxAllowedStepAtBoundary = 0.35f;
+            float maxStepNearBoundary = 0.0f;
+            for (int64_t i = boundaryIndex - 8; i < boundaryIndex + 8; ++i)
+                maxStepNearBoundary = std::max (maxStepNearBoundary,
+                    std::abs (captured[(size_t) i] - captured[(size_t) (i - 1)]));
+
+            std::printf ("  Impact->Recovery boundary sample=%lld, max adjacent-sample step within +-8 samples = %.4f (bound %.2f)\n",
+                         (long long) recoveryStartSample, maxStepNearBoundary, kMaxAllowedStepAtBoundary);
+            check (maxStepNearBoundary < kMaxAllowedStepAtBoundary,
+                  "post-impact continuity: no instantaneous discontinuity at the exact Impact->Recovery boundary sample (Bug A fix)");
+
+            // Windowed-RMS decay check, RESTRICTED to the Recovery window
+            // itself (recoverySamplesForTest) - deliberately NOT extended
+            // into Idle, where the live pass-through tone naturally resumes
+            // at full amplitude once the state machine returns to Idle
+            // (correct, expected behavior, not part of what this test
+            // measures).
+            //
+            // CORRECTED (coordinator-reported bug, second pass): the
+            // original version of this check required monotonic-ish decay
+            // starting from window 0 (Recovery's very first sample). That
+            // predicate is WRONG given the actual, intended design: at
+            // Recovery's first sample, DelayModule/ReverbModule's
+            // RETURN-weight TARGET jumps from Impact's small live weight up
+            // to the frozen (Building-end) weight * tailEnvelope(0) - a
+            // legitimate, intentional, LARGER value (that is the whole point
+            // of the tail ringing out audibly). This jump is smoothed by
+            // each module's own ~20ms internal SmoothedValue ramp
+            // (kWeightSmoothingSeconds in DelayModule.cpp/ReverbModule.cpp),
+            // producing a genuine, expected ATTACK phase (~20ms rise)
+            // immediately followed by the tail envelope's much slower
+            // raised-cosine DECAY across the rest of Recovery. A predicate
+            // requiring decay from sample 0 necessarily mischaracterizes
+            // this attack phase as a bug - it isn't; asserting decay only
+            // AFTER the attack phase has settled is the correct, honest test
+            // of "no post-impact effect-blast spike" (Bug B), which is
+            // specifically about the shared IntensityBudget modules (tested
+            // separately above, and unaffected by this attack/decay shape,
+            // which is local to the tail-capable modules' RETURN smoothing
+            // only).
+            constexpr int windowLen = 128;
+            const int64_t samplesAfterBoundary = std::min ((int64_t) captured.size() - boundaryIndex, recoverySamplesForTest);
+            const int numWindows = (int) (samplesAfterBoundary / windowLen);
+            std::vector<double> rms ((size_t) juce::jmax (0, numWindows), 0.0);
+            for (int w = 0; w < numWindows; ++w)
+            {
+                double sumSq = 0.0;
+                for (int i = 0; i < windowLen; ++i)
+                {
+                    const float s = captured[(size_t) (boundaryIndex + w * windowLen + i)];
+                    sumSq += (double) s * (double) s;
+                }
+                rms[(size_t) w] = std::sqrt (sumSq / (double) windowLen);
+            }
+
+            // Attack-phase allowance: generously 2x the ~20ms smoother
+            // settle time (kWeightSmoothingSeconds == 0.02s in DelayModule.cpp/
+            // ReverbModule.cpp), rounded up to whole windows - rise is
+            // permitted (not required) only within this many leading windows.
+            constexpr double kSmootherSeconds = 0.02;
+            constexpr double kTestSampleRate = 48000.0;
+            const int attackWindows = juce::jmax (1, (int) std::ceil (2.0 * kSmootherSeconds * kTestSampleRate / (double) windowLen));
+
+            int peakWindowIndex = 0;
+            double peakValue = rms.empty() ? 0.0 : rms[0];
+            for (int w = 1; w < numWindows; ++w)
+                if (rms[(size_t) w] > peakValue) { peakValue = rms[(size_t) w]; peakWindowIndex = w; }
+
+            const double tol = 0.10 * peakValue + 0.01;
+            bool decaysAfterAttack = true;
+            for (int w = juce::jmax (peakWindowIndex, attackWindows); w + 1 < numWindows; ++w)
+                if (rms[(size_t) (w + 1)] > rms[(size_t) w] + tol)
+                    decaysAfterAttack = false;
+
+            const bool peakWithinAttackWindow = peakWindowIndex <= attackWindows;
+
+            std::printf ("  post-boundary (within Recovery only) windowed RMS: first=%.4f peak=%.4f @window %d (attack allowance %d windows) last=%.4f (%d windows of %d samples) -> %s\n",
+                         rms.empty() ? 0.0 : rms[0], peakValue, peakWindowIndex, attackWindows,
+                         rms.empty() ? 0.0 : rms[(size_t) (numWindows - 1)], numWindows, windowLen,
+                         (decaysAfterAttack && peakWithinAttackWindow) ? "attack-then-decay (expected)" : "UNEXPECTED SHAPE");
+            check (peakWithinAttackWindow,
+                  "post-impact continuity: the RMS peak occurs within the expected ~20ms return-weight smoother attack window, not later (rules out a pathological late-growing artifact)");
+            check (decaysAfterAttack,
+                  "post-impact continuity: windowed RMS trends down (monotonically-ish) for the remainder of Recovery once the expected initial attack settles - no post-impact effect-blast spike beyond the smoother's own known settle time (Bug B fix)");
+        }
+    }
+
+    std::printf ("\n[POST-1.0] PluginProcessor - state reset on Recovery->Idle entry: no stale residue in the NEXT build (Bug C fix)\n");
+    {
+        constexpr int blockSize = 256;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f); // 1 bar
+        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (1.0f); // 100% - longest possible tail, maximizes residual-energy risk if the reset were missing
+        if (auto* prm = p.parameters.getParameter ("delay")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("reverb")) prm->setValueNotifyingHost (1.0f);
+        // CORRECTED (coordinator-reported test-premise bug, third pass):
+        // NoiseModule generates seeded noise independently of input
+        // (architecture.md: "supplementary energy... RNG streams advance
+        // every sample regardless of weight" - a deliberate design choice so
+        // Chaos-seeded reproducibility stays independent of automation
+        // history), so even with pure silence input, a legitimate,
+        // DETERMINISTIC riser is added during Building on EVERY build,
+        // including the second one - this is NOT stale-buffer residue, it's
+        // the SAME seed regenerating the SAME riser (bit-identical across
+        // both builds, confirmed by the coordinator: observed residue
+        // matched to 6 decimal places across two independent runs, the
+        // signature of a deterministic regenerated signal, not leftover
+        // decaying state). Setting `noise` (and `impact`, for the same
+        // reason - ImpactEngine's sub/burst is ALSO deterministic/seeded)
+        // to 0 removes every legitimate signal-generating source, so any
+        // remaining nonzero output during the second build's silent-input
+        // Building phase can ONLY be genuine stale state left over from the
+        // first build - exactly what this test is meant to isolate.
+        if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("impact")) prm->setValueNotifyingHost (0.0f);
+
+        // --- First build: a loud, sustained tone strongly excites the
+        // delay/reverb tails (and ImpactEngine's shortTailReverb). Block
+        // budget widened to 1700 (vs. the 1300 used elsewhere in this file)
+        // because tail=100% here deliberately maximizes Recovery's own
+        // duration (~4.0s = ~192000 samples = ~750 blocks @256/block) to
+        // stress-test the reset as hard as possible - total build length
+        // (~397304 samples) needs ~1552 blocks, not ~990 like the Phase 3.3
+        // end-to-end test's default-tail build. ---
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+        bool firstBuildBackToIdle = false;
+        for (int block = 0; block < 1700 && ! firstBuildBackToIdle; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < blockSize; ++i)
+                    data[i] = 0.8f * std::sin ((float) (block * blockSize + i) * 0.07f);
+            }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+            if (p.getCurrentDropState() == drop::DropState::Idle && block > 10)
+                firstBuildBackToIdle = true;
+        }
+        check (firstBuildBackToIdle, "state reset test: the first (excitation) build returned to Idle within the block budget");
+
+        // --- Brief silence gap between builds (per the test design's
+        // "silence between" requirement). ---
+        for (int block = 0; block < 20; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+        }
+
+        // --- Second build: PURE SILENCE input throughout (both the
+        // pre-trigger gap above and this entire build) - any nonzero output
+        // during this build's pre-Impact (Building-phase) portion can ONLY
+        // come from STALE internal state left over from the first build's
+        // excited delay/reverb tails, since a zero-state linear
+        // filter/delay-line fed zero input produces exactly zero output. ---
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+        std::vector<float> secondBuildBuildingOutput;
+        bool sawImpactSecondBuild = false;
+        bool secondBuildBackToIdle = false;
+        for (int block = 0; block < 1700 && ! secondBuildBackToIdle; ++block) // same widened budget as the first build above (tail is still 100% for this second build too)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            if (p.getCurrentDropState() == drop::DropState::Building)
+            {
+                const float* out = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                    secondBuildBuildingOutput.push_back (out[i]);
+            }
+            if (p.getCurrentDropState() == drop::DropState::Impact) sawImpactSecondBuild = true;
+            if (sawImpactSecondBuild && p.getCurrentDropState() == drop::DropState::Idle) secondBuildBackToIdle = true;
+        }
+        p.releaseResources();
+
+        check (sawImpactSecondBuild, "state reset test: the second (silent) build also reached Impact within the block budget (state machine itself is unaffected by the reset)");
+        check (! secondBuildBuildingOutput.empty(), "state reset test: the second build's Building phase produced a non-empty capture window");
+
+        float peakResidual = 0.0f;
+        for (float s : secondBuildBuildingOutput)
+            peakResidual = std::max (peakResidual, std::abs (s));
+
+        // With `noise`/`impact` both 0 (see the parameter setup above), the
+        // ONLY legitimate signal-generating sources are removed, so this
+        // measurement now genuinely isolates stale-buffer residue (not a
+        // deterministic regenerated riser, which round-3 evidence confirmed
+        // by matching to 6 decimal places across two independent runs -
+        // the signature of a reproducible GENERATED signal, not decaying
+        // leftover state).
+        std::printf ("  second (silent, noise=0, impact=0) build's Building-phase peak output (should be ~0) = %.6f\n", peakResidual);
+        check (peakResidual < 1.0e-4f,
+              "state reset on Idle entry: with every legitimate signal-generating source (noise riser, ImpactEngine sub/burst) disabled, the second build's pre-Impact (Building-phase) output contains NO residual energy from the first build's excited delay/reverb tails (Bug C fix - every owned DSP module is now reset() on the Recovery->Idle transition)");
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

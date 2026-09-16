@@ -176,6 +176,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         0.0f,
         "dB"));
 
+    // --- POST-1.0 addition (2026-09-16, user-directed improvement) --------
+    // tail - the 20th parameter, added STRICTLY additively at the END of the
+    // layout (parameter IDs 1-19 above are byte-for-byte untouched). See
+    // PluginProcessor.h's top doc comment "POST-1.0 IMPROVEMENT" and
+    // computeDurationsForNewBuild()'s doc comment for the exact exponential
+    // seconds mapping. A 1.0.0 session saved before this parameter existed
+    // loads with the default below (APVTS's standard, well-documented
+    // behavior for a ValueTree missing a since-added parameter's node -
+    // parameters.replaceState() simply leaves any parameter absent from the
+    // loaded state at its constructor-supplied default, verified against
+    // this repo's existing getStateInformation()/setStateInformation()
+    // round-trip pattern, which already relies on the same guarantee for
+    // every parameter).
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "tail", 1 },
+        "Tail",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
+        35.0f,
+        "%"));
+
     return layout;
 }
 
@@ -206,6 +226,7 @@ DROPAudioProcessor::DROPAudioProcessor()
     noiseParam = parameters.getRawParameterValue("noise");
     dryWetParam = parameters.getRawParameterValue("dryWet");
     outputParam = parameters.getRawParameterValue("output");
+    tailParam = parameters.getRawParameterValue("tail"); // POST-1.0 addition, 20th parameter
 
     // Stage 3 GUI Phase 4.2: event-latched trigger edge-detection (see
     // PluginProcessor.h's parameterChanged()/triggerEventPendingFlag doc
@@ -271,6 +292,15 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // code's own `previousTriggerParamValue = false;` reset here).
     triggerEventEdgeSeenHigh.store(false, std::memory_order_relaxed);
     triggerEventPendingFlag.store(false, std::memory_order_relaxed);
+
+    // POST-1.0 bugfix state (see this class's top doc comment "POST-1.0
+    // IMPROVEMENT") - mirrors dropStateMachine.reset() above: a (re)prepare
+    // never resumes mid-build, so the tail-envelope carryover state must
+    // restart fresh too.
+    previousObservedState = drop::DropState::Idle;
+    frozenDelayReturnWeight = 0.0f;
+    frozenReverbReturnWeight = 0.0f;
+    impactCarryoverElapsedSamples = -1;
 
     // Stage 3 DSP Phase 3.2: prepare the six always-process DSP modules.
     // numChannels/maximumBlockSize drive every module's preallocated
@@ -360,9 +390,31 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     // (architecture.md: "typically 50-300ms").
     d.impactSamples = (int64_t) std::llround(currentSampleRate * style.impactWindowSeconds);
 
-    // Recovery: Style-authored musical division (architecture.md:
-    // "Style-configurable, e.g. 1/8-1 bar").
-    d.recoverySamples = (int64_t) std::llround(musicalClock.divisionToSamples(style.recoveryDivision, false));
+    // Recovery: POST-1.0 bugfix (2026-09-16, user-directed improvement) -
+    // the `tail` APVTS parameter now SETS Recovery's duration directly,
+    // OVERRIDING the active Style's own `recoveryDivision` timing preference
+    // (style.recoveryDivision is intentionally left unused here - see
+    // Source/Core/DropStyle.h's doc comment at that field for the override
+    // note). Recovery IS the tail's ring-out window (PluginProcessor.h's
+    // top doc comment "POST-1.0 IMPROVEMENT" / processSegment()'s "tail
+    // envelope" doc comment): DelayModule/ReverbModule/ImpactEngine's
+    // wet-return decays via a raised cosine across exactly this duration.
+    //
+    // EXACT MAPPING (exponential/log-linear, so equal steps in `tail` feel
+    // like roughly equal PROPORTIONAL changes in ring-out time, matching how
+    // decay-time controls are conventionally scaled):
+    //   tailSeconds = kTailMinSeconds * (kTailMaxSeconds / kTailMinSeconds) ^ (tail / 100)
+    // tail=0% -> exactly kTailMinSeconds (0.15s); tail=100% -> exactly
+    // kTailMaxSeconds (4.0s); tail=35% (the default) -> ~0.47s. Independent
+    // of tempo/time-signature (unlike the other Style-driven timings above,
+    // which are all musical-division-based) - a deliberate choice, since a
+    // ring-out/decay-time control is conventionally an absolute-time
+    // parameter (like a reverb's decay time), not a musical subdivision.
+    static constexpr double kTailMinSeconds = 0.15;
+    static constexpr double kTailMaxSeconds = 4.0;
+    const float tail01 = juce::jlimit(0.0f, 1.0f, tailParam->load() / 100.0f);
+    const double tailSeconds = kTailMinSeconds * std::pow(kTailMaxSeconds / kTailMinSeconds, (double) tail01);
+    d.recoverySamples = (int64_t) std::llround(currentSampleRate * tailSeconds);
 
     return d;
 }
@@ -423,6 +475,86 @@ void DROPAudioProcessor::fireTriggerIfIdle()
     // duration of the build, not a one-shot "apply at Arming" setter).
 
     dropStateMachine.requestTrigger(computeDurationsForNewBuild());
+}
+
+void DROPAudioProcessor::advanceStateMachineTicks() noexcept
+{
+    // See this method's declaration-site doc comment in PluginProcessor.h.
+    // previousObservedState is updated on every ACTUAL transition (not
+    // polled once per block), so a Recovery state shorter than one segment
+    // can never be missed - mirrors this class's existing trigger-edge-
+    // detection rationale (parameterChanged()'s doc comment), applied here
+    // to a different edge (Recovery->Idle instead of the trigger parameter's
+    // low->high).
+    while (dropStateMachine.tick())
+    {
+        const auto newState = dropStateMachine.getState();
+        if (previousObservedState == drop::DropState::Recovery && newState == drop::DropState::Idle)
+        {
+            // POST-1.0 bugfix (Bug C "stale tails" - see this class's top
+            // doc comment "POST-1.0 IMPROVEMENT"): the tail envelope
+            // (processSegment()'s doc comment) has, by construction, reached
+            // EXACTLY 0 at this precise transition - a guaranteed click-free
+            // instant to clear internal DSP state so nothing stale replays
+            // into the NEXT build. Deliberately NOT done at Idle->Arming
+            // (audio is still live then, unlike this Recovery-exhausted
+            // moment where the tail's own output contribution is already 0).
+            //
+            // POST-1.0 SECOND-PASS FIX (coordinator-reported build/test
+            // feedback, "Bug C reset not effective"): the reset scope is
+            // widened beyond the original four modules. Root cause: EVERY
+            // module in the fixed series chain is legitimately fed a
+            // small-but-nonzero live weight even while "ducked" (see
+            // processSegment()'s doc comment above - DropStyle.cpp's
+            // budgetEnvelope/moduleCurves are authored with nonzero
+            // startWeight, e.g. 0.05, for Filter/Delay/Reverb/Digital - this
+            // was already true, unmodified, throughout the ENTIRE prior
+            // architecture, including Idle/Arming/Building/Peak/Impact of
+            // every build). Every module with persistent internal filter/
+            // oscillator state (StateVariableTPTFilter, crossover one-poles,
+            // DC blockers, the granular delay line, etc.) was therefore
+            // ALREADY live-processing real signal throughout the previous
+            // build, and NONE of them were ever reset between builds prior
+            // to this improvement session - only DelayModule/ReverbModule/
+            // ImpactEngine/StutterModule were in the originally-approved
+            // reset scope, which was insufficient: FilterModule's resonant
+            // StateVariableTPTFilter in particular can hold audible energy
+            // well past the excitation that produced it. Resetting the
+            // FULL set of owned DSP modules here (not just the four
+            // explicitly tail-capable ones) is the only way to genuinely
+            // guarantee "nothing stale replays into the next build" for
+            // every module that can carry inter-build memory - measured to
+            // be necessary via source inspection (DropStyle.cpp's authored
+            // curve data) since a live rebuild/test cycle wasn't available
+            // in this pass.
+            filterModule.reset();
+            widthModule.reset();
+            gateModule.reset();
+            delayModule.reset();
+            saturationModule.reset();
+            reverbModule.reset();
+            pitchModule.reset();
+            stutterModule.reset();
+            digitalModule.reset();
+            vacuumModule.reset();
+            noiseModule.reset();
+            impactEngine.reset();
+
+            // Frozen tail-envelope weights are pure per-build snapshots
+            // (re-captured fresh every Building segment of the NEXT build
+            // anyway - see the "if (dropState == Building)" capture above in
+            // processSegment()) - reset to 0 here purely for defensive
+            // hygiene/consistency with everything else in this block, not
+            // because a stale value could otherwise leak (it provably
+            // cannot: Recovery is the only state that reads them, and the
+            // next build's Recovery cannot begin before its OWN Building
+            // segment has already overwritten them).
+            frozenDelayReturnWeight = 0.0f;
+            frozenReverbReturnWeight = 0.0f;
+            impactCarryoverElapsedSamples = -1;
+        }
+        previousObservedState = newState;
+    }
 }
 
 void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -540,7 +672,7 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         // Cascade through any exactly-zero-length states (e.g. a bar
         // boundary already reached, or a zero-duration Peak placeholder)
         // before consuming any further samples in this segment.
-        while (dropStateMachine.tick()) {}
+        advanceStateMachineTicks();
 
         int64_t samplesToNextEvent = std::numeric_limits<int64_t>::max();
         if (triggerEventOffset > segmentStart)
@@ -561,7 +693,7 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 
     // Drain any transition that lands exactly on the block's last sample so
     // the state observed at the start of the NEXT block is already correct.
-    while (dropStateMachine.tick()) {}
+    advanceStateMachineTicks();
 
     // Stage 3 DSP Phase 3.5: push one visualization frame per processBlock()
     // call (architecture.md Thread Boundaries: "pushed once per processed
@@ -615,6 +747,7 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     auto segmentBlock = fullBlock.getSubBlock((size_t) startSample, (size_t) numSamplesInSegment);
 
     const float progress = computeIntensityProgress();
+    const auto dropState = dropStateMachine.getState(); // POST-1.0 addition: cached once, reused by the tail-envelope/ImpactEngine-carryover logic below
 
     // IntensityBudget input: all 10 macro parameters, normalized 0-1
     // (architecture.md "rawWeight[i] = styleWeight[i](progress) *
@@ -658,6 +791,95 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
 
     const float impactAmount01 = juce::jlimit(0.0f, 1.0f, impactParam->load() / 100.0f);
 
+    // ------------------------------------------------------------------
+    // POST-1.0 bugfix: "tail envelope" (see PluginProcessor.h's top doc
+    // comment "POST-1.0 IMPROVEMENT"). CORRECTED (second pass,
+    // coordinator-reported regression): this envelope now governs
+    // DelayModule/ReverbModule's WET-RETURN and ImpactEngine's effective
+    // strength during RECOVERY ONLY - value 1.0 exactly at Recovery's first
+    // sample, raised-cosine decay 1->0 across EXACTLY Recovery's
+    // (tail-parameter-derived) duration, reaching precisely 0 at Recovery's
+    // last sample (the click-free instant advanceStateMachineTicks() uses to
+    // reset every owned DSP module - Bug C "stale tails" fix). Peak and
+    // Impact are UNCHANGED/untouched by this envelope - they use the LIVE
+    // IntensityBudget weight directly for both send and return, exactly like
+    // the pre-existing (already-verified-correct) legacy behavior; holding
+    // this envelope at 1.0 through Peak+Impact was the first-pass bug (see
+    // this method's "REGRESSION FIX" doc comment below, at the
+    // delaySendWeight/delayReturnWeight computation) - it substituted a
+    // potentially much larger frozen weight for the small live one during
+    // Impact specifically, diluting the transient.
+    //
+    // frozenDelayReturnWeight/frozenReverbReturnWeight are continuously
+    // re-captured every segment below while state == Building, so by the
+    // time state advances past Building each holds exactly Building's OWN
+    // final weight - multiplying the envelope by this frozen value (rather
+    // than a flat 1.0) is what makes Recovery's tail start exactly where the
+    // source content left off, C0/C1-continuous through the return-weight
+    // smoother's own ~20ms ramp (NOT instantaneously - see the "post-impact
+    // continuity" test's doc comment in RunTests.cpp for the expected
+    // attack-then-decay shape this produces).
+    // ------------------------------------------------------------------
+    float tailEnvelope = 1.0f;
+    if (dropState == drop::DropState::Recovery)
+    {
+        const int64_t recoveryTotal = dropStateMachine.currentStateLengthSamples();
+        if (recoveryTotal > 0)
+        {
+            const int64_t recoveryRemaining = dropStateMachine.samplesUntilNextTransition();
+            const int64_t recoveryElapsed = recoveryTotal - recoveryRemaining;
+            const float recoveryT = juce::jlimit(0.0f, 1.0f, (float) ((double) recoveryElapsed / (double) recoveryTotal));
+            tailEnvelope = 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * recoveryT));
+        }
+        else
+        {
+            tailEnvelope = 0.0f; // zero-length Recovery edge case: matches the raised cosine's t==1 limit, immediately click-free-resettable
+        }
+    }
+
+    if (dropState == drop::DropState::Building)
+    {
+        frozenDelayReturnWeight = weights.value[(size_t) drop::BudgetModule::Delay];
+        frozenReverbReturnWeight = weights.value[(size_t) drop::BudgetModule::Reverb];
+    }
+
+    // POST-1.0 REGRESSION FIX (2026-09-16, second pass - coordinator-reported
+    // build/test feedback): the tail envelope/frozen-weight treatment below
+    // applies ONLY during Recovery, NOT Peak/Impact. Peak and Impact are
+    // UNCHANGED/BYTE-IDENTICAL to the pre-tail-bugfix behavior - both send
+    // and return equal the LIVE weights.value[...] (whatever
+    // IntensityBudget::computeWeights() genuinely produces at progress==0 -
+    // NOT necessarily exactly 0.0f: DropStyle.cpp's budgetEnvelope curves are
+    // authored with startWeight=0.05, not 0.0, so Filter/Delay/Reverb/Digital
+    // legitimately carry small-but-nonzero weight even when "ducked" - this
+    // was already true, unmodified, throughout Peak/Impact BEFORE this
+    // improvement session and is what the already-passing Phase 3.4
+    // transient-preservation test was calibrated against).
+    //
+    // ROOT CAUSE of the first-pass regression: the previous version of this
+    // code used `frozenDelayReturnWeight * tailEnvelope` (tailEnvelope==1.0
+    // throughout Peak+Impact) as the RETURN weight for ALL THREE states,
+    // instead of only Recovery. Since Building's captured frozen weight can
+    // be substantially larger than the tiny live Peak/Impact weight (e.g.
+    // Clean EDM's Delay curve ends Building at 0.5 vs. its progress==0 value
+    // of ~0.1), AND the delay line/reverb's "wet" content was legitimately
+    // near-silent during a silence-except-one-impulse test run (nothing had
+    // been written to send-gated buffers), the crossfade
+    // `dry + (wet - dry) * returnWeight` with wet≈0 and returnWeight
+    // substantially > the original small value DILUTED the dry impulse
+    // itself (`dry * (1 - returnWeight)`) well below the required 50% floor -
+    // this is the exact mechanism that broke the Phase 3.4 transient-
+    // preservation test. Recovery is the ONLY state where wet-return legitimately
+    // needs to exceed the live IntensityBudget weight (to let the tail ring
+    // out under user control) - restoring Peak/Impact to the untouched
+    // legacy path fixes the regression while keeping Recovery's new tail
+    // behavior intact.
+    const bool inRecovery = (dropState == drop::DropState::Recovery);
+    const float delaySendWeight = inRecovery ? 0.0f : weights.value[(size_t) drop::BudgetModule::Delay];
+    const float delayReturnWeight = inRecovery ? (frozenDelayReturnWeight * tailEnvelope) : delaySendWeight;
+    const float reverbSendWeight = inRecovery ? 0.0f : weights.value[(size_t) drop::BudgetModule::Reverb];
+    const float reverbReturnWeight = inRecovery ? (frozenReverbReturnWeight * tailEnvelope) : reverbSendWeight;
+
     // Stage 3 DSP Phase 3.4: ImpactEngine's coordination-drive values
     // (architecture.md: ImpactEngine "drives existing modules into a
     // specific configuration") are computed BEFORE the series chain below
@@ -667,7 +889,7 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // notes": "VacuumModule and ImpactEngine are state-gated, not
     // weight-blended."
     drop::ImpactEngine::DriveValues impactDrive {};
-    if (dropStateMachine.getState() == drop::DropState::Impact)
+    if (dropState == drop::DropState::Impact)
     {
         const int64_t total = dropStateMachine.currentStateLengthSamples();
         const int64_t remaining = dropStateMachine.samplesUntilNextTransition();
@@ -688,7 +910,12 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     gateModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Gate], progress, musicalClock);
     pitchModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Pitch], progress);
     stutterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Stutter], progress, musicalClock);
-    delayModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Delay], progress, musicalClock);
+    // POST-1.0 bugfix (Bug C "stale tails"): send/return split - see this
+    // function's "tail envelope" doc comment above and DelayModule.h's class
+    // doc comment. Identical to the prior single-weight process() call
+    // whenever delaySendWeight == delayReturnWeight (always true outside
+    // Peak/Impact/Recovery).
+    delayModule.processWithSendReturn(segmentBlock, delaySendWeight, delayReturnWeight, progress, musicalClock);
 
     // SaturationModule: Impact-state overlay (architecture.md ImpactEngine
     // "light SaturationModule pass") is blended in via max() - never LESS
@@ -704,7 +931,9 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     digitalModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Digital], progress,
                            tension01, chaos01);
     noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f);
-    reverbModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Reverb], progress);
+    // POST-1.0 bugfix (Bug C "stale tails"): send/return split, same
+    // rationale as DelayModule above.
+    reverbModule.processWithSendReturn(segmentBlock, reverbSendWeight, reverbReturnWeight, progress);
 
     // VacuumModule: state-gated (NOT IntensityBudget weight-blended,
     // architecture.md Processing Chain "Routing notes") - applied to the
@@ -714,7 +943,7 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // loop in processBlock() guarantees the entire segment stays within
     // Peak before this runs (segments are split exactly at state
     // transitions).
-    if (dropStateMachine.getState() == drop::DropState::Peak)
+    if (dropState == drop::DropState::Peak)
     {
         const int64_t total = dropStateMachine.currentStateLengthSamples();
         const int64_t remaining = dropStateMachine.samplesUntilNextTransition();
@@ -737,12 +966,51 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // this Impact state too (TRANSIENT PRESERVATION: "duck the effect
     // chain, not the source") - ImpactEngine's own additive sub-hit/burst/
     // tail content is layered on top of that ducked (near-dry) bus here.
-    if (dropStateMachine.getState() == drop::DropState::Impact)
+    //
+    // POST-1.0 bugfix (Bug A "instant cut" - see PluginProcessor.h's top doc
+    // comment "POST-1.0 IMPROVEMENT" and ImpactEngine::process()'s doc
+    // comment): PluginProcessor now continues calling ImpactEngine::process()
+    // through the Recovery state too (previously state-gated to Impact
+    // ONLY), so the sub-hit/burst envelopes and - critically - the dedicated
+    // shortTailReverb's own algorithmic decay are never abruptly cut off at
+    // the exact Impact->Recovery boundary. `elapsed` is tracked CONTINUOUSLY
+    // across that boundary via impactCarryoverElapsedSamples (member;
+    // dropStateMachine's own per-state samplesIntoState resets to 0 at every
+    // transition and would reintroduce a discontinuity if used directly for
+    // the Recovery portion). The (re)start condition below
+    // (elapsedAtSegmentStart == 0) relies on the SAME segmentation guarantee
+    // the original code already depended on: a fresh segment always starts
+    // exactly at Impact's first sample.
+    if (dropState == drop::DropState::Impact)
     {
         const int64_t total = dropStateMachine.currentStateLengthSamples();
         const int64_t remaining = dropStateMachine.samplesUntilNextTransition();
         const int64_t elapsedAtSegmentStart = total - remaining;
-        impactEngine.process(segmentBlock, (double) elapsedAtSegmentStart, (double) total, impactAmount01);
+        if (elapsedAtSegmentStart == 0)
+            impactCarryoverElapsedSamples = 0; // fresh Impact entry - (re)start the continuous counter
+    }
+
+    if ((dropState == drop::DropState::Impact || dropState == drop::DropState::Recovery)
+        && impactCarryoverElapsedSamples >= 0)
+    {
+        // impactAmount01Effective: scaled by the SAME tail envelope governing
+        // DelayModule/ReverbModule above (tailEnvelope == 1.0 throughout
+        // Impact, so this is a no-op there - only Recovery's raised-cosine
+        // decay actually attenuates it, letting the Tail knob govern
+        // ImpactEngine's continued tail exactly as it governs Delay/Reverb's).
+        const float impactAmount01Effective = impactAmount01 * tailEnvelope;
+        // reverbSendWeightOverride: -1 (sentinel, "no override") during
+        // Impact - preserves the EXACT prior single-weight behavior
+        // (send==return==impactAmount01). During Recovery, forced to 0.0f so
+        // the live pass-through audio arriving at that point (unrelated to
+        // the drop by then) never re-excites shortTailReverb - only its
+        // ALREADY-excited internal state keeps ringing out, governed by
+        // impactAmount01Effective's tail-envelope decay.
+        const float reverbSendWeightOverride = (dropState == drop::DropState::Recovery) ? 0.0f : -1.0f;
+        impactEngine.process(segmentBlock, (double) impactCarryoverElapsedSamples,
+                              (double) dropStateMachine.currentStateLengthSamples(),
+                              impactAmount01Effective, reverbSendWeightOverride);
+        impactCarryoverElapsedSamples += numSamplesInSegment;
     }
 }
 
@@ -792,14 +1060,30 @@ float DROPAudioProcessor::computeIntensityProgress() noexcept
             return 0.0f;
 
         case drop::DropState::Recovery:
-        {
-            const int64_t total = dropStateMachine.currentStateLengthSamples();
-            if (total <= 0)
-                return 0.0f;
-            const int64_t elapsed = total - dropStateMachine.samplesUntilNextTransition();
-            const float t = juce::jlimit(0.0f, 1.0f, (float) ((double) elapsed / (double) total));
-            return 1.0f - t; // architecture.md: "all module weights ramp back to 0" during Recovery
-        }
+            // POST-1.0 BUGFIX (2026-09-16, user-directed improvement, Bug B
+            // "post-impact artifact" - see PluginProcessor.h's top doc
+            // comment "POST-1.0 IMPROVEMENT"): DOCUMENTED SUPERSESSION of the
+            // original `1.0f - t` ramp (architecture.md's literal "all
+            // module weights ramp back to 0" during Recovery, taken at face
+            // value, implied ramping FROM full weight DOWN to 0 across
+            // Recovery - but the 10 shared-budget modules were already
+            // settled to EXACTLY 0 through the whole preceding Peak+Impact
+            // window per this same function's Peak/Impact case above, so a
+            // `1.0f - t` ramp starting at Recovery's first sample actually
+            // SLAMMED them from 0 back up toward full weight (through each
+            // module's own ~20ms smoother) before ramping down again - an
+            // audible post-impact effect blast, not the intended smooth
+            // settle). Recovery now ALSO returns 0.0f, matching
+            // implementation-spec.md's own IMPACT PHILOSOPHY section verbatim:
+            // "BUILD -> TENSION -> VACUUM -> ORIGINAL/CLEAN IMPACT -> SHORT
+            // TAIL -> RECOVERY" - Recovery stays clean (shared modules stay
+            // ducked), TAILS ONLY ring out during it, via the separate
+            // send/return-weight tail envelope in processSegment() (NOT this
+            // shared-budget progress value at all - DelayModule/
+            // ReverbModule/ImpactEngine's Recovery-state wet-return is driven
+            // by the tail envelope, independently of computeWeights()'s
+            // now-permanently-0 output during this state).
+            return 0.0f;
     }
     return 0.0f;
 }

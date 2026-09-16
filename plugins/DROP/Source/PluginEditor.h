@@ -34,9 +34,13 @@
  * 3. Relays destroyed LAST (safe, nothing using them)
  * ============================================================================
  *
- * PARAMETER COVERAGE: all 19 APVTS parameters get a Relay + Attachment pair
- * below (trigger=toggle, buildLength/style=combo, the remaining 16=slider),
- * matching plugins/DROP/.ideas/parameter-spec.md exactly.
+ * PARAMETER COVERAGE: all 20 APVTS parameters get a Relay + Attachment pair
+ * below (trigger=toggle, buildLength/style=combo, the remaining 17=slider),
+ * matching plugins/DROP/.ideas/parameter-spec.md exactly. The 20th, `tail`,
+ * is a POST-1.0 addition (2026-09-16, user-directed improvement - see
+ * PluginProcessor.h's "POST-1.0 IMPROVEMENT" doc comment) appended AFTER
+ * the original 19 (not interleaved), matching createParameterLayout()'s own
+ * append-only ordering.
  * `triggerMode` is deliberately NOT a Relay/Attachment pair - per
  * architecture.md it is NON-PARAMETER state (manual/MIDI/auto-sync is a
  * discrete user preference, not something a host automates), so it is
@@ -143,7 +147,8 @@ private:
     // ========================================================================
 
     // ------------------------------------------------------------------------
-    // 1) RELAYS FIRST - all 19 APVTS parameters (parameter-spec.md order)
+    // 1) RELAYS FIRST - all 20 APVTS parameters (parameter-spec.md order;
+    // `tail` is the POST-1.0 20th, appended after `output` below)
     // ------------------------------------------------------------------------
 
     // --- Trigger / Timing / Style (Main page) ---
@@ -175,13 +180,16 @@ private:
     // --- Output (Advanced page) ---
     std::unique_ptr<juce::WebSliderRelay> outputRelay;
 
+    // --- Tail (Advanced page, POST-1.0 addition - see this header's top doc comment) ---
+    std::unique_ptr<juce::WebSliderRelay> tailRelay;
+
     // ------------------------------------------------------------------------
     // 2) WEBVIEW SECOND
     // ------------------------------------------------------------------------
     std::unique_ptr<juce::WebBrowserComponent> webView;
 
     // ------------------------------------------------------------------------
-    // 3) ATTACHMENTS LAST - matches relay list 1:1 (19 of 19)
+    // 3) ATTACHMENTS LAST - matches relay list 1:1 (20 of 20)
     // ------------------------------------------------------------------------
 
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> triggerAttachment;
@@ -207,6 +215,9 @@ private:
     std::unique_ptr<juce::WebSliderParameterAttachment> noiseAttachment;
 
     std::unique_ptr<juce::WebSliderParameterAttachment> outputAttachment;
+
+    // POST-1.0 addition (see this header's top doc comment).
+    std::unique_ptr<juce::WebSliderParameterAttachment> tailAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DROPAudioProcessorEditor)
 };

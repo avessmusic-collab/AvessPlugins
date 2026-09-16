@@ -104,9 +104,29 @@ public:
      * above the original level). The gain-multiplication approach
      * guarantees |output| <= |summed| by construction, plus a final hard
      * clamp as a defensive absolute ceiling.
+     *
+     * POST-1.0 BUGFIX (2026-09-16, user-directed improvement, see
+     * plugins/DROP/CHANGELOG.md - Bug A "instant cut"): PluginProcessor now
+     * continues calling process() through the Recovery state too (not
+     * state-gated to Impact only), with `elapsedSamplesAtSegmentStart`
+     * measured continuously from Impact's own entry (never reset at the
+     * Impact->Recovery boundary) so the sub-hit/burst envelopes (which are
+     * pure functions of elapsed time, self-terminating well within ~140ms)
+     * and - critically - the dedicated `shortTailReverb`'s own algorithmic
+     * decay are never abruptly cut off. `reverbSendWeightOverride` (new,
+     * defaulted to preserve the exact prior 4-argument call signature/
+     * behavior for the Impact state and every existing test call site) lets
+     * the caller silence the shortTailReverb's INPUT independently of
+     * `impactAmount01` - PluginProcessor passes 0.0f during the Recovery
+     * carryover (so the live pass-through audio arriving during Recovery,
+     * which by then has nothing to do with the drop, never re-excites the
+     * tail) while `impactAmount01` itself is passed already scaled by the
+     * tail envelope (so the ALREADY-excited reverb's output rings out
+     * smoothly to 0 by Recovery's end, governed by the `tail` parameter).
      */
     void process(juce::dsp::AudioBlock<float> block, double elapsedSamplesAtSegmentStart,
-                 double totalWindowSamples, float impactAmount01) noexcept;
+                 double totalWindowSamples, float impactAmount01,
+                 float reverbSendWeightOverride = -1.0f) noexcept;
 
     /**
      * Isolated sub-hit-ONLY renderer (sine + AR envelope + bandpass; no

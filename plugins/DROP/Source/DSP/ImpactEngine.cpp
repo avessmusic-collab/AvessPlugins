@@ -116,7 +116,8 @@ void ImpactEngine::renderSubHitOnly(float* monoOut, int numSamples, double elaps
 }
 
 void ImpactEngine::process(juce::dsp::AudioBlock<float> block, double elapsedSamplesAtSegmentStart,
-                            double totalWindowSamples, float impactAmount01) noexcept
+                            double totalWindowSamples, float impactAmount01,
+                            float reverbSendWeightOverride) noexcept
 {
     juce::ignoreUnused(totalWindowSamples); // see header doc comment - every envelope here self-terminates from its own (much shorter) duration
 
@@ -182,12 +183,18 @@ void ImpactEngine::process(juce::dsp::AudioBlock<float> block, double elapsedSam
 
     // Dedicated short-tail reverb (architecture.md: small room / high
     // damping -> a punchy, bounded tail, not "an indistinct wash").
+    // POST-1.0 bugfix: sendWeight defaults to impactAmount01 (identical to
+    // the pre-bugfix single-weight processWithParams() call) unless the
+    // caller explicitly overrides it (Recovery carryover - see this
+    // method's header doc comment) - `reverbSendWeightOverride < 0` is the
+    // sentinel meaning "no override, use legacy behavior".
+    const float reverbSendWeight = (reverbSendWeightOverride >= 0.0f) ? reverbSendWeightOverride : impactAmount01;
     juce::dsp::Reverb::Parameters shortTailParams;
     shortTailParams.roomSize = kShortTailRoomSize;
     shortTailParams.damping = kShortTailDamping;
     shortTailParams.width = 1.0f;
     shortTailParams.freezeMode = 0.0f;
-    shortTailReverb.processWithParams(block, impactAmount01, shortTailParams);
+    shortTailReverb.processWithParamsSendReturn(block, reverbSendWeight, impactAmount01, shortTailParams);
 
     // The low-end soft-clip above bounds the summed (bus + sub + burst)
     // signal, but the short-tail reverb runs AFTER it and its early
