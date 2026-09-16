@@ -382,6 +382,18 @@
         <span class="knob-label knob-label-small">TAIL &middot; <span class="kv-num">35</span><span class="unit">%</span></span>
       </div>
 
+      <!-- BPM SYNC diagnostic - POST-1.0 addition (2026-09-16 improvement
+           pass). Read-only (no data-param/chevrons - purely a live dropVis-
+           feed consumer), same .mini-screen dark-LCD family treatment as
+           Tension/Chaos/MIDI-Note/Output. Placed in the free zone between
+           curveBox's bottom edge (13.75rem) and the OUTPUT screen's top
+           edge (20.3125rem) - see .ideas/mockups/v10-ui.yaml's
+           `sync_bpm_chip` amendment for the exact gap-verification math. -->
+      <div class="mini-screen" id="syncChip" style="left:49.375rem; top:14.375rem; width:10rem; height:3.5rem;">
+        <div class="mini-screen-label">SYNC</div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span id="syncValue">INT 120</span></div>
+      </div>
+
       <div id="curveBox" style="left:38.75rem; top:5rem; width:18.75rem; height:8.75rem;">
         <div class="curve-label">TENSION CURVE</div>
         <div class="curve-type-label" id="curveTypeLabel">S-CURVE</div>
@@ -589,7 +601,11 @@
   // with it - phaseChip/progressStrip/curveDot all consume currentState/
   // progress directly and never needed the sub-phase split.)
   // =========================================================================
-  const dropVis = { currentState: 'idle', progress: 0, tensionLevel: 0, inputRMS: 0, activeModuleWeights: new Array(10).fill(0) };
+  // POST-1.0 additive fields (2026-09-16, BPM diagnostic feature): bpm/
+  // hostPlayheadValid - see PluginProcessor.h's VisualizationFrame doc
+  // comment. bpm defaults to 120 (matches the fallback transport's own
+  // fixed BPM) so #syncChip reads sensibly even before the first frame.
+  const dropVis = { currentState: 'idle', progress: 0, tensionLevel: 0, inputRMS: 0, activeModuleWeights: new Array(10).fill(0), bpm: 120, hostPlayheadValid: false };
   if (backendAvailable) {
     window.__JUCE__.backend.addEventListener('dropVisUpdate', (payload) => {
       if (!payload) return;
@@ -598,6 +614,8 @@
       if (typeof payload.tensionLevel === 'number') dropVis.tensionLevel = payload.tensionLevel;
       if (typeof payload.inputRMS === 'number') dropVis.inputRMS = payload.inputRMS;
       if (Array.isArray(payload.activeModuleWeights)) dropVis.activeModuleWeights = payload.activeModuleWeights;
+      if (typeof payload.bpm === 'number') dropVis.bpm = payload.bpm;
+      if (typeof payload.hostPlayheadValid === 'boolean') dropVis.hostPlayheadValid = payload.hostPlayheadValid;
       // activeModuleWeights[10]'s original planned consumer (the bubble's
       // per-region agitation modulation) was removed along with the bubble
       // (see v10-ui.yaml's bubble_removal note). Stage 3 GUI Phase 4.3 gave
@@ -691,6 +709,8 @@
         if (typeof v.tensionLevel === 'number') dropVis.tensionLevel = v.tensionLevel;
         if (typeof v.inputRMS === 'number') dropVis.inputRMS = v.inputRMS;
         if (Array.isArray(v.activeModuleWeights)) dropVis.activeModuleWeights = v.activeModuleWeights;
+        if (typeof v.bpm === 'number') dropVis.bpm = v.bpm;
+        if (typeof v.hostPlayheadValid === 'boolean') dropVis.hostPlayheadValid = v.hostPlayheadValid;
       }
     }).catch((e) => console.warn('[DROP] getInitialUIState failed:', e));
   }
@@ -786,10 +806,18 @@
     const wellDiv = root.querySelector('.knob-well');
     const domeInner = root.querySelector('.knob-dome-inner');
     const numEl = root.querySelector('.kv-num');
+    const unitEl = root.querySelector('.unit');
     const state = getSliderState(paramId);
     const arc = buildKnobArc(wellDiv);
     const isHero = paramId === 'impact';
     const ledDots = isHero ? buildLedRing(wellDiv, 28) : null;
+    // POST-1.0 addition (2026-09-16, "TAIL = CUT" feature - user chose:
+    // TAIL knob at 0% reads as an explicit clean-cut indicator rather than
+    // "0%", matching PluginProcessor.h's computeDurationsForNewBuild()
+    // kTailCutEpsilon exactly (both compare the SAME 0-100 raw parameter
+    // value against 1.0e-4). See .ideas/mockups/v10-ui.yaml's
+    // `tail_cut_label` amendment note.
+    const isTail = paramId === 'tail';
 
     function skewOf() { try { return (state.properties && state.properties.skew) || 1; } catch (e) { return 1; } }
     function normFromValue(v) { const p = (v - min) / (max - min); const sk = skewOf(); return (!sk || sk === 1) ? p : Math.pow(Math.max(0, p), sk); }
@@ -797,7 +825,13 @@
 
     function render(norm) {
       const value = valueFromNorm(norm);
-      numEl.textContent = value.toFixed(decimals);
+      if (isTail && value <= 1.0e-4) {
+        numEl.textContent = 'CUT';
+        if (unitEl) unitEl.textContent = '';
+      } else {
+        numEl.textContent = value.toFixed(decimals);
+        if (unitEl && isTail) unitEl.textContent = '%';
+      }
       arc.fill.setAttribute('stroke-dasharray', `${(norm * arc.VIS).toFixed(2)} ${arc.C.toFixed(2)}`);
       domeInner.style.transform = `rotate(${(-135 + norm * 270).toFixed(1)}deg)`;
       if (ledDots) {
@@ -1000,6 +1034,19 @@
       : 'none';
   }
 
+  /* SYNC readout (BPM diagnostic, POST-1.0 addition, 2026-09-16) - shows
+     "128.0 BPM" when locked to a real host transport (hostPlayheadValid),
+     or "INT 120" (the fixed fallback transport's own BPM, rounded) when no
+     host transport is present - lets the user confirm at a glance whether
+     DROP is genuinely locked to their track. */
+  const syncValueEl = document.getElementById('syncValue');
+  function updateSyncChip() {
+    if (!syncValueEl) return;
+    syncValueEl.textContent = dropVis.hostPlayheadValid
+      ? `${dropVis.bpm.toFixed(1)} BPM`
+      : `INT ${Math.round(dropVis.bpm)}`;
+  }
+
   /* =========================================================
      REMOVED (user direction, 2026-09-14): the liquid soap-bubble
      centerpiece (28-point soft-body physics, HD densified render,
@@ -1075,7 +1122,7 @@
       ref.setWeightGlow(moduleGlowCurrent[i]);
     }
 
-    redrawCurve(); updatePhaseChip(); updateProgressStrip();
+    redrawCurve(); updatePhaseChip(); updateProgressStrip(); updateSyncChip();
     requestAnimationFrame(frame_);
   }
   requestAnimationFrame(frame_);

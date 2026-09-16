@@ -69,6 +69,20 @@ public:
     /** True when the last update() call had no valid host tempo/transport and the fixed-BPM fallback is active. */
     bool isUsingFallbackTransport() const noexcept { return !hasValidPlayHead; }
 
+    /**
+     * POST-1.0 addition (2026-09-16, TRANSPORT-STOP SAFETY user-directed
+     * improvement - see PluginProcessor.h's top doc comment and
+     * processBlock()'s "transport-stop" doc comment). True when the host
+     * reported an actively running transport at the most recent update()
+     * call. ONLY MEANINGFUL when isUsingFallbackTransport() == false (a
+     * valid host bpm/position was observed that call) - defaults to true
+     * (never a false "stopped" reading) whenever the fallback is active, so
+     * callers that forget to check isUsingFallbackTransport() first fail
+     * safe rather than spuriously treating the standalone/no-playhead path
+     * as "stopped".
+     */
+    bool isHostPlaying() const noexcept { return hostIsPlaying; }
+
     double getSamplesPerBeat() const noexcept;
     double getBarLengthSamples() const noexcept;
 
@@ -94,6 +108,12 @@ private:
     int timeSigNumerator = kFallbackTimeSigNumerator;
     int timeSigDenominator = kFallbackTimeSigDenominator;
     bool hasValidPlayHead = false;
+
+    // POST-1.0 addition (see isHostPlaying()'s doc comment above). Defaults
+    // to true - only ever set to a meaningful value inside update()'s valid-
+    // host-bpm branch; left at its safe default whenever the fallback
+    // transport is active this call.
+    bool hostIsPlaying = true;
 
     // Position within the current bar, in samples (0 <= value < barLengthSamples),
     // latched at the most recent update() call.

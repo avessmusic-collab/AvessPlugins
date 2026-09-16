@@ -1,5 +1,71 @@
 # DROP Changelog
 
+### Fixed — 2026-09-16 (grid lock / transport-stop safety / TAIL=CUT)
+
+Stays at 1.0.0 per this repo's factory convention. Second real-DAW-testing
+session the same day: three new user-reported bugs plus one approved
+feature, independent of (and layered on top of) the earlier "curve
+progression" and "tail envelope" sessions below.
+
+- **"It's not locking to the grid at all — as if it's using its own
+  clock."** **Root cause:** `computeDurationsForNewBuild()` quantized Arming
+  to the next bar boundary and set `buildingSamples` to the FULL requested
+  bar-length duration, then let Peak's Vacuum-collapse window run AFTER
+  that — so Impact (the actual "drop") always landed `peakSamples` samples
+  LATE relative to the downbeat the user was building toward (>= the
+  Style's `vacuumFloorSeconds` floor, 25ms for the default Style, more at
+  slow tempi/long vacuum divisions). **Fix:** the Vacuum window is now
+  computed FIRST and carved OUT of the requested bar-length duration
+  (`buildingSamples = barsToSamples(bars) - peakSamples`, floor-clamped to
+  >= 1 sample so Building can never become zero/negative-length), so
+  `armingToBuildingSamples + buildingSamples + peakSamples` sums to EXACTLY
+  the quantized-start-point + the requested bar count — Impact's first
+  sample now lands precisely on the downbeat. See
+  `computeDurationsForNewBuild()`'s doc comment in `Source/PluginProcessor.cpp`.
+- **"There are artifacts then the sound stops."** **Root cause:** nothing in
+  the codebase ever read `AudioPlayHead::PositionInfo::isPlaying` — a host
+  transport STOP mid-transition (e.g. the user hits stop mid-build) left the
+  entire state machine (noise riser still rising, gate still chopping,
+  delay/reverb tails still ringing) running against silence/discontinuous
+  audio, audible as chattering artifacts that only trailed off once
+  Recovery's own tail eventually finished (potentially seconds later).
+  **Fix:** `MusicalClock` now exposes `isHostPlaying()`; `processBlock()`
+  detects "a transition is active AND a valid host playhead reports
+  `isPlaying == false`" and gracefully ABORTS — a short (~5ms), click-free
+  raised-cosine fade of whatever wet/generated content was already playing,
+  converging to the same pre-chain dry capture the final Dry/Wet stage
+  already uses, followed by forcing the state machine to Idle and running
+  the identical module-hygiene `reset()` sweep used at the natural
+  Recovery→Idle transition. Deliberately gated on a VALID host playhead —
+  the Standalone app / bare-`AudioProcessor` fallback transport has no
+  concept of "stopped" and remains fully usable; a new build also cannot be
+  armed while a valid host playhead reports stopped.
+- **"Fix it so the sound cuts clean, or give me a choice to continue the
+  tails."** User chose: TAIL knob at 0% = clean cut. **Fix:** `tail == 0%`
+  (within a small float epsilon) now maps Recovery to a very short (~5ms)
+  duration instead of the previous 150ms floor — the existing raised-cosine
+  tail envelope then produces a fast, click-free fade-to-silence over that
+  short window, audibly an instant clean stop. Every tail value above the
+  epsilon is unchanged (same 0.15s–4.0s exponential ring-out mapping, so
+  there's no discontinuity in feel just above 0%). UI: the TAIL knob's
+  caption reads "TAIL · CUT" at exactly 0% instead of "TAIL · 0%".
+- **New:** a small "SYNC" readout on the Advanced page (dark-LCD family
+  style) shows the detected tempo and whether a valid host playhead is
+  present — "128.0 BPM" when locked to the host, "INT 120" when running on
+  the internal fallback transport — so the user can confirm sync at a
+  glance. Backed by two new additive `VisualizationFrame` fields (`bpm`,
+  `hostPlayheadValid`).
+
+Tests: all 167 pre-existing assertions preserved (not run by this session —
+build/test execution is a separate pipeline stage), plus 6 new test blocks
+covering grid-lock math invariant + clamp edge case, transport-stop abort +
+fallback-transport safety, TAIL=CUT decay/continuity, and BPM publication
+(19 new `check()` assertions total). Two pre-existing tests' precomputed
+sample offsets were updated with documented rationale (they encoded the old
+appended-vacuum timing / the old tail==0%→0.15s mapping, both intentionally
+changed by this session's fixes) — see `Source/Tests/RunTests.cpp`'s
+"DOCUMENTED SUPERSESSION" comments at each site.
+
 ### Fixed — 2026-09-16 (curve progression)
 
 - **Build was inaudible until the final bar** (user DAW report: "I chose 8 bars and the effect

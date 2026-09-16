@@ -302,6 +302,14 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     frozenReverbReturnWeight = 0.0f;
     impactCarryoverElapsedSamples = -1;
 
+    // POST-1.0 TRANSPORT-STOP SAFETY state (see PluginProcessor.h's top doc
+    // comment "POST-1.0 SECOND IMPROVEMENT SESSION", Bug E) - mirrors the
+    // reset block immediately above: a (re)prepare never resumes an
+    // in-flight abort fade either.
+    transportStopAbortActive = false;
+    transportStopFadeElapsedSamples = 0;
+    transportStopFadeTotalSamples = 0;
+
     // Stage 3 DSP Phase 3.2: prepare the six always-process DSP modules.
     // numChannels/maximumBlockSize drive every module's preallocated
     // scratch-buffer sizing (RT-safety: no allocation in processBlock()).
@@ -367,6 +375,26 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     // not expected to be audible at any reasonable block size.
     d.armingToBuildingSamples = (int64_t) std::llround(musicalClock.samplesToNextBarBoundary());
 
+    // Stage 3 DSP Phase 3.4/3.5: Peak's ENTIRE duration IS the Vacuum window
+    // (architecture.md VacuumModule: "1/64-1/16 note... e.g. 1/32 note at
+    // current tempo"; see processSegment()'s ImpactEngine doc comment for
+    // this phase's Peak/Impact handoff design). Clamped to a Style-authored
+    // millisecond floor so extreme tempos never produce a too-short-to-be-
+    // click-free window.
+    //
+    // POST-1.0 GRID-LOCK FIX (2026-09-16, user-reported real-DAW bug: "not
+    // locking to the grid at all - as if it's using its own clock" - see
+    // PluginProcessor.h's top doc comment "POST-1.0 SECOND IMPROVEMENT
+    // SESSION", Bug D): computed HERE, BEFORE `buildingSamples` below (moved
+    // up from its original position after Building), because Building now
+    // needs this value to carve the Vacuum window OUT of the requested
+    // bar-length duration instead of appending it afterward - see
+    // `buildingSamples`'s own comment immediately below for the musical
+    // rationale/exact math.
+    const double vacuumWindowSamples = musicalClock.divisionToSamples(style.vacuumDivision, false);
+    const double vacuumFloorSamples = currentSampleRate * style.vacuumFloorSeconds;
+    d.peakSamples = (int64_t) std::llround(juce::jmax(vacuumWindowSamples, vacuumFloorSamples));
+
     // Building: buildLength (bars, choice index -> bar count) -> samples,
     // tempo/time-signature latched now (architecture.md: "a tempo change
     // mid-build does not shorten/lengthen an in-flight build's
@@ -374,17 +402,35 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     static constexpr int kBuildLengthBars[] = { 1, 2, 4, 8, 16 };
     const int buildLengthChoiceIndex = (int) buildLengthParam->load();
     const int bars = kBuildLengthBars[(size_t) juce::jlimit(0, 4, buildLengthChoiceIndex)];
-    d.buildingSamples = (int64_t) std::llround(musicalClock.barsToSamples(bars));
+    const int64_t barsSamples = (int64_t) std::llround(musicalClock.barsToSamples(bars));
 
-    // Stage 3 DSP Phase 3.4/3.5: Peak's ENTIRE duration IS the Vacuum window
-    // (architecture.md VacuumModule: "1/64-1/16 note... e.g. 1/32 note at
-    // current tempo"; see processSegment()'s ImpactEngine doc comment for
-    // this phase's Peak/Impact handoff design). Clamped to a Style-authored
-    // millisecond floor so extreme tempos never produce a too-short-to-be-
-    // click-free window.
-    const double vacuumWindowSamples = musicalClock.divisionToSamples(style.vacuumDivision, false);
-    const double vacuumFloorSamples = currentSampleRate * style.vacuumFloorSeconds;
-    d.peakSamples = (int64_t) std::llround(juce::jmax(vacuumWindowSamples, vacuumFloorSamples));
+    // POST-1.0 GRID-LOCK FIX (Bug D, continued): the user builds toward a
+    // downbeat that is `bars` bars past the quantized Arming start point -
+    // i.e. Impact's first sample (the actual "drop") must land EXACTLY at
+    // armingToBuildingSamples + barsSamples, measured from the moment
+    // Arming began. Previously `buildingSamples` was set to the FULL
+    // barsSamples, and Peak's Vacuum-collapse window ran AFTERWARD on top of
+    // that - so Impact always arrived `peakSamples` samples LATE relative to
+    // the downbeat (>= the Style's vacuumFloorSeconds floor, i.e. >= 25ms
+    // for the default Style, more at slow tempi/long vacuum divisions).
+    // Fixed: the Vacuum window is carved OUT of the requested bar-length
+    // duration instead of appended after it, so
+    // (armingToBuildingSamples + buildingSamples + peakSamples) ==
+    // (armingToBuildingSamples + barsSamples) EXACTLY, landing Impact's
+    // first sample precisely on the downbeat.
+    //
+    // CLAMP: floor-clamped to >= 1 sample (never <= 0) so Building always
+    // exists as a genuine, nonzero-duration state - matters only in the
+    // pathological edge case where the Style's Vacuum window is LONGER than
+    // the ENTIRE requested build (e.g. a 1-bar build at a very slow tempo
+    // combined with a large vacuumFloorSeconds), which makes perfect
+    // grid-lock mathematically impossible (the vacuum collapse alone
+    // doesn't fit inside the requested bar count) - in that rare case Impact
+    // overruns the downbeat by (peakSamples - barsSamples + 1) samples as
+    // the least-bad fallback, exactly mirroring the ORIGINAL (pre-fix)
+    // behavior's own kind of overrun, just bounded to the unavoidable
+    // minimum instead of always paying the full peakSamples penalty.
+    d.buildingSamples = juce::jmax((int64_t) 1, barsSamples - d.peakSamples);
 
     // Impact: ImpactEngine's own burst/sub/tail window, Style-authored
     // (architecture.md: "typically 50-300ms").
@@ -410,10 +456,38 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     // which are all musical-division-based) - a deliberate choice, since a
     // ring-out/decay-time control is conventionally an absolute-time
     // parameter (like a reverb's decay time), not a musical subdivision.
+    //
+    // POST-1.0 "TAIL = CUT" FIX (2026-09-16, user-directed - see
+    // PluginProcessor.h's top doc comment "POST-1.0 SECOND IMPROVEMENT
+    // SESSION", Bug F): tail == 0% (within kTailCutEpsilon, guarding only
+    // against float-representation slack at the parameter's exact minimum -
+    // not a UI deadzone) is special-cased to a very short kTailCutSeconds
+    // (~5ms) Recovery duration INSTEAD of kTailMinSeconds (150ms) - the
+    // EXISTING raised-cosine tail envelope in processSegment() (completely
+    // unchanged) then produces a fast, click-free fade-to-silence over that
+    // short window, audibly an instant clean stop, followed by the same
+    // guaranteed module-hygiene reset() every Recovery->Idle transition
+    // already performs. Every tail value ABOVE the epsilon is byte-identical
+    // to the pre-fix exponential formula (the `else` branch below is exactly
+    // the original single-line computation) - "no discontinuity in feel"
+    // just above 0% (still ~kTailMinSeconds) is therefore automatic, since
+    // only the single point AT (within epsilon of) 0% is redirected to a
+    // different value, not blended into the curve.
     static constexpr double kTailMinSeconds = 0.15;
     static constexpr double kTailMaxSeconds = 4.0;
-    const float tail01 = juce::jlimit(0.0f, 1.0f, tailParam->load() / 100.0f);
-    const double tailSeconds = kTailMinSeconds * std::pow(kTailMaxSeconds / kTailMinSeconds, (double) tail01);
+    static constexpr double kTailCutSeconds = 0.005; // ~5ms - matches kTransportStopFadeSeconds's own "stop everything cleanly, fast" order of magnitude (PluginProcessor.h)
+    static constexpr float kTailCutEpsilon = 1.0e-4f; // `tail` is a 0-100 percent value here (tailParam->load(), NOT the /100 tail01 below) - this guards only against float slack at the parameter's exact minimum, not a perceptible UI deadzone
+    const float tailRaw = tailParam->load();
+    double tailSeconds;
+    if (tailRaw <= kTailCutEpsilon)
+    {
+        tailSeconds = kTailCutSeconds;
+    }
+    else
+    {
+        const float tail01 = juce::jlimit(0.0f, 1.0f, tailRaw / 100.0f);
+        tailSeconds = kTailMinSeconds * std::pow(kTailMaxSeconds / kTailMinSeconds, (double) tail01);
+    }
     d.recoverySamples = (int64_t) std::llround(currentSampleRate * tailSeconds);
 
     return d;
@@ -426,6 +500,15 @@ void DROPAudioProcessor::fireTriggerIfIdle()
     // computeDurationsForNewBuild() (which reads parameters/MusicalClock) is
     // only ever called when a trigger will actually be accepted.
     if (dropStateMachine.getState() != drop::DropState::Idle)
+        return;
+
+    // POST-1.0 TRANSPORT-STOP SAFETY (see this method's declaration-site doc
+    // comment in PluginProcessor.h and processBlock()'s "transport-stop" doc
+    // comment): refuse to arm a NEW build while a VALID host playhead
+    // reports the transport stopped. The standalone/no-playhead fallback
+    // transport (isUsingFallbackTransport() == true) is NEVER blocked here -
+    // it has no concept of "stopped" and must remain fully usable.
+    if (!musicalClock.isUsingFallbackTransport() && !musicalClock.isHostPlaying())
         return;
 
     // Stage 3 DSP Phase 3.5: the `style` APVTS parameter is latched for the
@@ -527,18 +610,14 @@ void DROPAudioProcessor::advanceStateMachineTicks() noexcept
             // be necessary via source inspection (DropStyle.cpp's authored
             // curve data) since a live rebuild/test cycle wasn't available
             // in this pass.
-            filterModule.reset();
-            widthModule.reset();
-            gateModule.reset();
-            delayModule.reset();
-            saturationModule.reset();
-            reverbModule.reset();
-            pitchModule.reset();
-            stutterModule.reset();
-            digitalModule.reset();
-            vacuumModule.reset();
-            noiseModule.reset();
-            impactEngine.reset();
+            //
+            // POST-1.0 refactor (2026-09-16, TRANSPORT-STOP SAFETY session):
+            // the twelve module .reset() calls that used to live directly
+            // here are now factored into resetAllOwnedDspModules() so the
+            // new transport-stop-abort finalize path (processBlock()) can
+            // share the EXACT same sweep - see that method's declaration-site
+            // doc comment in PluginProcessor.h.
+            resetAllOwnedDspModules();
 
             // Frozen tail-envelope weights are pure per-build snapshots
             // (re-captured fresh every Building segment of the NEXT build
@@ -555,6 +634,27 @@ void DROPAudioProcessor::advanceStateMachineTicks() noexcept
         }
         previousObservedState = newState;
     }
+}
+
+void DROPAudioProcessor::resetAllOwnedDspModules() noexcept
+{
+    // See this method's declaration-site doc comment in PluginProcessor.h.
+    // Identical set/order to the original inline sweep this was factored out
+    // of (advanceStateMachineTicks()'s Recovery->Idle branch) - every owned
+    // DSP module that carries persistent inter-block filter/oscillator/
+    // buffer state.
+    filterModule.reset();
+    widthModule.reset();
+    gateModule.reset();
+    delayModule.reset();
+    saturationModule.reset();
+    reverbModule.reset();
+    pitchModule.reset();
+    stutterModule.reset();
+    digitalModule.reset();
+    vacuumModule.reset();
+    noiseModule.reset();
+    impactEngine.reset();
 }
 
 void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -601,6 +701,59 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // during Building (Stage 3 DSP Phase 3.2).
     transitionEngine.setTension(tensionParam->load() / 100.0f);
 
+    // ------------------------------------------------------------------
+    // POST-1.0 TRANSPORT-STOP SAFETY (2026-09-16, user-directed - see this
+    // class's top doc comment "POST-1.0 SECOND IMPROVEMENT SESSION", Bug E:
+    // "artifacts then the sound stops"). A transition mid-flight (state !=
+    // Idle) left running against a host transport that has STOPPED produces
+    // exactly that symptom (noise riser still rising, GateModule still
+    // chopping, delay/reverb tails still ringing, with no more musically-
+    // continuous host audio arriving) - detected here, once per block,
+    // immediately after musicalClock.update() has refreshed
+    // isUsingFallbackTransport()/isHostPlaying() for this block.
+    //
+    // `wasAlreadyAborting` is captured BEFORE possibly flipping
+    // transportStopAbortActive true this block, and gates whether the
+    // normal trigger-detection/segmentation/processSegment() pipeline below
+    // still runs this block:
+    //   - false (not aborting, or THIS is the detection block): pipeline
+    //     runs completely normally, generating exactly what would have
+    //     played anyway - the abort fade below then converges THAT content
+    //     to dry, so nothing before the fade point is altered/clicked.
+    //   - true (continuing a fade that didn't finish within the detection
+    //     block - only possible at unusually tiny host block sizes given
+    //     kTransportStopFadeSeconds' ~5ms length): the pipeline is skipped
+    //     entirely (the abort already decided "this build is over" - no
+    //     further wet content should be generated); `buffer` therefore
+    //     already holds raw dry input, and the fade loop below is a
+    //     harmless dry->dry no-op that simply continues advancing the
+    //     shared elapsed-sample counter until it completes.
+    //
+    // Gated on a VALID host playhead (!isUsingFallbackTransport()) - the
+    // standalone app / bare-AudioProcessor fallback path has no concept of
+    // "stopped" and must remain fully usable (every existing test that never
+    // calls setPlayHead() uses this fallback and is therefore completely
+    // unaffected by this feature).
+    // ------------------------------------------------------------------
+    const bool wasAlreadyAborting = transportStopAbortActive;
+
+    if (!wasAlreadyAborting
+        && dropStateMachine.getState() != drop::DropState::Idle
+        && !musicalClock.isUsingFallbackTransport()
+        && !musicalClock.isHostPlaying())
+    {
+        transportStopAbortActive = true;
+        transportStopFadeElapsedSamples = 0;
+        transportStopFadeTotalSamples = juce::jmax(
+            (int64_t) 1, (int64_t) std::llround(currentSampleRate * kTransportStopFadeSeconds));
+    }
+
+    // NOTE: intentionally NOT re-indented below (avoids reflowing this
+    // entire pre-existing block just to add one wrapping brace pair) - the
+    // contained statements keep their original indentation despite now
+    // being nested one level deeper inside this `if`.
+    if (!wasAlreadyAborting)
+    {
     // ------------------------------------------------------------------
     // Sample-accurate trigger-event detection (architecture.md
     // "Sample-Accurate Events / Block Segmentation" + "MIDI Routing").
@@ -718,7 +871,77 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         frame.inputRMS = audioAnalyzer.getMetrics().rms;
         for (int i = 0; i < 10; ++i)
             frame.activeModuleWeights[i] = lastComputedWeights.value[(size_t) i];
+        // POST-1.0 additive fields (BPM diagnostic feature - see
+        // VisualizationFrame's doc comment in PluginProcessor.h).
+        frame.bpm = (float) musicalClock.getBpm();
+        frame.hostPlayheadValid = !musicalClock.isUsingFallbackTransport();
         pushVisualizationFrame(frame);
+    }
+    } // if (!wasAlreadyAborting)
+
+    // ------------------------------------------------------------------
+    // POST-1.0 TRANSPORT-STOP SAFETY - abort fade (see this method's
+    // "transport-stop" doc comment above). Runs whenever an abort is in
+    // progress (whether just started this block or continuing from a
+    // previous one), converging `buffer` toward the pre-chain
+    // dryCaptureBuffer (the SAME dry signal the final Dry/Wet Mixer below
+    // already uses) via a raised-cosine gain from 1.0 down to exactly 0.0
+    // across kTransportStopFadeSeconds - a guaranteed click-free, bounded-
+    // duration instant, matching the tail envelope's own raised-cosine
+    // convention elsewhere in this file. Once buffer == dryCaptureBuffer
+    // exactly, this fade is a fixed point of the Dry/Wet Mixer's own
+    // crossfade too (dry + (dry-dry)*mixAmt == dry regardless of mixAmt) -
+    // so the abort's audible result is pure dry pass-through, independent
+    // of the user's Dry/Wet knob setting. Any samples in THIS block beyond
+    // the fade's completion point are forced to gain 0.0 (not left at
+    // whatever processSegment() may have already written for them, if this
+    // is the detection block that ran the full pipeline for the ENTIRE
+    // block above) - the transport-stop condition is only ever observed at
+    // block granularity (musicalClock.update() samples it once per block),
+    // so treating "stopped as of this block's start" as applying for the
+    // block's full duration is the finest resolution actually available,
+    // matching this file's established block-granularity convention for
+    // the trigger parameter's own edge detection.
+    // ------------------------------------------------------------------
+    if (transportStopAbortActive)
+    {
+        const int64_t fadeTotal = transportStopFadeTotalSamples;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float t = (transportStopFadeElapsedSamples < fadeTotal)
+                ? juce::jlimit(0.0f, 1.0f, (float) ((double) transportStopFadeElapsedSamples / (double) fadeTotal))
+                : 1.0f;
+            const float gain = 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * t)); // 1 -> 0 raised cosine
+
+            for (int channel = 0; channel < totalNumOutputChannels; ++channel)
+            {
+                auto* data = buffer.getWritePointer(channel);
+                const float dry = dryCaptureBuffer.getSample(channel, i);
+                data[i] = dry + (data[i] - dry) * gain;
+            }
+
+            if (transportStopFadeElapsedSamples < fadeTotal)
+                ++transportStopFadeElapsedSamples;
+        }
+
+        if (transportStopFadeElapsedSamples >= fadeTotal)
+        {
+            // Click-free instant reached (gain has decayed to exactly 0,
+            // matching the raised-cosine's t==1 limit) - finalize: force the
+            // state machine back to Idle and run the SAME module-hygiene
+            // reset sweep advanceStateMachineTicks() uses at the natural
+            // Recovery->Idle transition, so nothing generated by the aborted
+            // transition rings into whatever comes next.
+            dropStateMachine.reset();
+            resetAllOwnedDspModules();
+            previousObservedState = drop::DropState::Idle;
+            frozenDelayReturnWeight = 0.0f;
+            frozenReverbReturnWeight = 0.0f;
+            impactCarryoverElapsedSamples = -1;
+            transportStopAbortActive = false;
+            transportStopFadeElapsedSamples = 0;
+            transportStopFadeTotalSamples = 0;
+        }
     }
 
     // ------------------------------------------------------------------

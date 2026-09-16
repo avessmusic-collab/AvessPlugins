@@ -396,6 +396,12 @@ juce::var DROPAudioProcessorEditor::buildDropVisUpdateVar()
         weights.add(weight);
     obj->setProperty("activeModuleWeights", weights);
 
+    // POST-1.0 additive fields (2026-09-16, BPM diagnostic feature - see
+    // VisualizationFrame's doc comment in PluginProcessor.h). Drives the
+    // Advanced-page "SYNC" readout (#syncChip in index.html).
+    obj->setProperty("bpm", lastVisualizationFrame.bpm);
+    obj->setProperty("hostPlayheadValid", lastVisualizationFrame.hostPlayheadValid);
+
     return juce::var(obj);
 }
 

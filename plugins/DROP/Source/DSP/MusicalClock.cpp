@@ -31,6 +31,14 @@ void MusicalClock::update(juce::AudioPlayHead* playHead, int numSamplesSinceLast
         hasValidPlayHead = true;
         bpm = *bpmValue;
 
+        // POST-1.0 addition (TRANSPORT-STOP SAFETY): PositionInfo::isPlaying
+        // is a plain bool (not Optional<>, unlike bpm/timeSignature/
+        // ppqPosition above) - always readable once a valid PositionInfo was
+        // obtained. Only latched inside this valid-host-bpm branch, matching
+        // isHostPlaying()'s documented "only meaningful when
+        // isUsingFallbackTransport() == false" contract.
+        hostIsPlaying = position->getIsPlaying();
+
         if (const auto sig = position->getTimeSignature(); sig.hasValue())
         {
             timeSigNumerator = juce::jmax(1, sig->numerator);
@@ -72,6 +80,11 @@ void MusicalClock::update(juce::AudioPlayHead* playHead, int numSamplesSinceLast
         // an internal sample counter, so DROP is still usable and
         // deterministic outside a host").
         hasValidPlayHead = false;
+        // POST-1.0 addition: explicitly re-pinned to its safe default every
+        // fallback call (not just left stale from a possible earlier valid-
+        // host-bpm reading) - isHostPlaying() must never report a spurious
+        // "false" once the fallback path is active.
+        hostIsPlaying = true;
         bpm = kFallbackBpm;
         timeSigNumerator = kFallbackTimeSigNumerator;
         timeSigDenominator = kFallbackTimeSigDenominator;

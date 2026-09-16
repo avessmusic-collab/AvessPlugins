@@ -1612,21 +1612,26 @@ int main()
 
         // Block-budget arithmetic (updated post-Phase-3.4: Peak/Impact/
         // Recovery are now musically-derived, not Phase-3.1-era fixed-
-        // seconds placeholders - see computeDurationsForNewBuild()): no
-        // playhead is set, so MusicalClock uses its 120 BPM/4/4 fallback
-        // transport - samplesPerBeat = 24000, barLength = 96000. buildLength
-        // choice index 0 = 1 bar -> buildingSamples = 96000. Arming
-        // quantizes to the next bar boundary, but MusicalClock's fallback
-        // transport has already been advanced by this SAME block's 256
-        // samples before the trigger is detected (update() runs before
-        // trigger detection in processBlock()), so armingToBuildingSamples
-        // = 96000 - 256 = 95744, not ~0. Plus this phase's musically-derived
-        // windows: peakSamples (Vacuum, 1/32 note @120bpm) = 3000,
-        // impactSamples (fixed 220ms) = 10560, recoverySamples (half a bar)
-        // = 48000. Total = 95744 + 96000 + 3000 + 10560 + 48000 = 253304
-        // samples = ~990 blocks of 256. The existing 1300-block (332800-
-        // sample) budget still comfortably covers this (~31% margin), so it
-        // is intentionally left unchanged this phase.
+        // seconds placeholders - see computeDurationsForNewBuild()); FURTHER
+        // updated for the POST-1.0 grid-lock fix (Bug D - buildingSamples now
+        // has the Vacuum window carved OUT of it, see that method's doc
+        // comment): no playhead is set, so MusicalClock uses its 120 BPM/4/4
+        // fallback transport - samplesPerBeat = 24000, barLength = 96000.
+        // buildLength choice index 0 = 1 bar; peakSamples (Vacuum, 1/32 note
+        // @120bpm) = 3000, computed FIRST as of the fix, so buildingSamples =
+        // 96000 - 3000 = 93000 (was 96000 pre-fix). Arming quantizes to the
+        // next bar boundary, but MusicalClock's fallback transport has
+        // already been advanced by this SAME block's 256 samples before the
+        // trigger is detected (update() runs before trigger detection in
+        // processBlock()), so armingToBuildingSamples = 96000 - 256 = 95744,
+        // not ~0. Plus this phase's musically-derived windows: impactSamples
+        // (fixed 220ms) = 10560, recoverySamples (half a bar) = 48000.
+        // Total = 95744 + 93000 + 3000 + 10560 + 48000 = 250304 samples
+        // (was 253304 pre-fix - exactly 3000 samples less, the peakSamples
+        // now carved out rather than additionally appended) = ~978 blocks of
+        // 256. The existing 1300-block (332800-sample) budget still
+        // comfortably covers this (~33% margin), so it is intentionally left
+        // unchanged this phase.
         for (int block = 0; block < 1300 && ! backToIdle; ++block)
         {
             juce::AudioBuffer<float> buf (2, 256);
@@ -1819,23 +1824,30 @@ int main()
     }
 
     //==========================================================================
-    std::printf ("\n[Phase 3.4] Full processBlock() - transient preservation through the Vacuum->Impact window\n");
+    std::printf ("\n[Phase 3.4][POST-1.0 GRID-LOCK] Full processBlock() - transient preservation through the Vacuum->Impact window\n");
     {
         // Exact deterministic sample-offset arithmetic (same fallback-
-        // transport style as the Phase 3.3 end-to-end test, updated for
-        // this phase's musically-derived durations - see
-        // computeDurationsForNewBuild()): 120 BPM/4/4 @48kHz ->
+        // transport style as the Phase 3.3 end-to-end test), UPDATED for the
+        // POST-1.0 grid-lock fix (see computeDurationsForNewBuild()'s doc
+        // comment / PluginProcessor.h's "DOCUMENTED SUPERSESSION" note at the
+        // Phase 3.5 Style-timing comment): 120 BPM/4/4 @48kHz ->
         // samplesPerBeat=24000, barLength=96000; buildLength choice index 0
         // = 1 bar. armingToBuildingSamples = 96000-256 = 95744 (fallback
         // transport already advanced by the triggering block's own 256
-        // samples before the trigger is detected); buildingSamples =
-        // 96000; peakSamples (Vacuum, 1/32 note @120bpm) = 3000; Impact
-        // begins at global sample 95744+96000+3000 = 194744 -> block index
-        // 194744/256 = 760 (remainder 184, i.e. local sample offset 184
-        // within block 760).
+        // samples before the trigger is detected, UNCHANGED by the grid-lock
+        // fix - Arming's quantization doesn't depend on peakSamples).
+        // peakSamples (Vacuum, 1/32 note @120bpm) = 3000, computed FIRST as
+        // of the fix. buildingSamples is now barsToSamples(1 bar) -
+        // peakSamples = 96000 - 3000 = 93000 (was 96000, the full bar,
+        // pre-fix). Impact begins at global sample
+        // 95744 + 93000 + 3000 = 191744 = EXACTLY armingToBuildingSamples +
+        // barsToSamples(1 bar) (95744 + 96000 = 191744) - i.e. precisely the
+        // downbeat, confirming the grid-lock invariant end-to-end. Block
+        // index 191744/256 = 749 EXACTLY (remainder 0, i.e. local sample
+        // offset 0 within block 749) - was block 760, offset 184 pre-fix.
         constexpr int blockSize = 256;
-        constexpr int impactStartBlock = 760;
-        constexpr int impactStartLocalOffset = 184;
+        constexpr int impactStartBlock = 749;
+        constexpr int impactStartLocalOffset = 0;
 
         DROPAudioProcessor p;
         p.setRateAndBufferSizeDetails (48000.0, blockSize);
@@ -2493,7 +2505,7 @@ int main()
                   "pre-tail compatibility: the OTHER 19 parameters (e.g. intensity) still round-trip correctly through the SAME replaceState() call - proves this is a targeted `tail`-only default fallback, not a broken/no-op restore");
     }
 
-    std::printf ("\n[POST-1.0] PluginProcessor - `tail` parameter scales Recovery's duration (0%% ~0.15s, 100%% ~4.0s)\n");
+    std::printf ("\n[POST-1.0] PluginProcessor - `tail` parameter scales Recovery's duration (~0.15s just above 0%%, 100%% ~4.0s)\n");
     {
         constexpr int blockSize = 256;
 
@@ -2530,23 +2542,33 @@ int main()
             return recoverySampleCount;
         };
 
-        const int64_t recovery0Samples = measureRecoverySamples (0.0f);
+        // DOCUMENTED SUPERSESSION (2026-09-16, POST-1.0 "TAIL=CUT" fix, Bug
+        // F): this test originally measured tail==0% expecting ~0.15s
+        // (kTailMinSeconds). The "TAIL=CUT" fix intentionally redirects
+        // EXACTLY tail==0% to a ~5ms near-instant clean cut instead (see
+        // this file's dedicated "[POST-1.0][Bug F] TAIL=CUT" test block
+        // below for THAT behavior) - 0.15s is now the behavior for a value
+        // just above the epsilon (0.1%), which this test measures instead,
+        // preserving the ORIGINAL intent (verify the exponential ring-out
+        // mapping's short end) against the still-unchanged exponential
+        // formula.
+        const int64_t recoveryJustAboveZeroSamples = measureRecoverySamples (0.1f);
         const int64_t recovery100Samples = measureRecoverySamples (100.0f);
-        const double recovery0Seconds = (double) recovery0Samples / 48000.0;
+        const double recoveryJustAboveZeroSeconds = (double) recoveryJustAboveZeroSamples / 48000.0;
         const double recovery100Seconds = (double) recovery100Samples / 48000.0;
 
-        std::printf ("  tail=0%%: Recovery ~%.4fs (%lld samples, block-granular measurement); tail=100%%: Recovery ~%.4fs (%lld samples)\n",
-                     recovery0Seconds, (long long) recovery0Samples, recovery100Seconds, (long long) recovery100Samples);
+        std::printf ("  tail=0.1%%: Recovery ~%.4fs (%lld samples, block-granular measurement); tail=100%%: Recovery ~%.4fs (%lld samples)\n",
+                     recoveryJustAboveZeroSeconds, (long long) recoveryJustAboveZeroSamples, recovery100Seconds, (long long) recovery100Samples);
 
         // Block-granularity (256 samples = ~5.3ms @48kHz) measurement
         // tolerance, generously widened for the practical fuzz of
         // "count whole blocks the state machine reports Recovery".
-        check (nearlyEqual (recovery0Seconds, 0.15, 0.02),
-              "tail param scales Recovery duration: tail=0% -> ~0.15s (kTailMinSeconds, see computeDurationsForNewBuild())");
+        check (nearlyEqual (recoveryJustAboveZeroSeconds, 0.15, 0.02),
+              "tail param scales Recovery duration: tail=0.1% (just above the CUT epsilon) -> ~0.15s (kTailMinSeconds, see computeDurationsForNewBuild()) - 'no discontinuity in feel' just above 0%, matching the pre-tail=0%-fix behavior exactly");
         check (nearlyEqual (recovery100Seconds, 4.0, 0.15),
               "tail param scales Recovery duration: tail=100% -> ~4.0s (kTailMaxSeconds)");
-        check (recovery100Samples > recovery0Samples * 10,
-              "tail param scales Recovery duration: 100% produces a MUCH longer Recovery than 0% (monotonic exponential mapping, not a flat/ignored parameter)");
+        check (recovery100Samples > recoveryJustAboveZeroSamples * 10,
+              "tail param scales Recovery duration: 100% produces a MUCH longer Recovery than 0.1% (monotonic exponential mapping, not a flat/ignored parameter)");
     }
 
     std::printf ("\n[POST-1.0] PluginProcessor - shared IntensityBudget weights during Recovery never exceed their Peak/Impact ducked baseline (Bug B fix, CORRECTED test)\n");
@@ -2637,28 +2659,50 @@ int main()
     {
         // Exact deterministic sample-offset arithmetic (SAME fallback-
         // transport style as the Phase 3.4 transient-preservation test
-        // above, extended with this bugfix's `tail`-parameter-derived
-        // Recovery duration): 120 BPM/4/4 @48kHz -> samplesPerBeat=24000,
+        // above), UPDATED for the POST-1.0 GRID-LOCK fix (Bug D - see
+        // computeDurationsForNewBuild()'s doc comment) and the POST-1.0
+        // "TAIL=CUT" fix (Bug F): 120 BPM/4/4 @48kHz -> samplesPerBeat=24000,
         // barLength=96000; buildLength choice index 0 = 1 bar.
         // armingToBuildingSamples = 96000-256 = 95744 (fallback transport
         // already advanced by the triggering block's own 256 samples before
-        // the trigger is detected); buildingSamples = 96000; peakSamples
-        // (Vacuum, 1/32 note @120bpm) = 3000; impactSamples (fixed 220ms) =
-        // 10560 -> Impact begins at global sample 95744+96000+3000 = 194744
-        // (matches the Phase 3.4 test's own precomputed value exactly).
-        // tail=0% -> recoverySeconds EXACTLY kTailMinSeconds (0.15s, see
-        // computeDurationsForNewBuild()'s doc comment) -> recoverySamples =
-        // 7200 -> Recovery begins at global sample 194744+10560 = 205304.
+        // the trigger is detected, UNCHANGED by the grid-lock fix);
+        // peakSamples (Vacuum, 1/32 note @120bpm) = 3000, computed FIRST as
+        // of the fix, so buildingSamples = 96000-3000 = 93000 (was 96000
+        // pre-fix). Impact begins at global sample
+        // 95744+93000+3000 = 191744 (was 194744 pre-fix - matches the
+        // updated Phase 3.4 transient-preservation test's own value
+        // exactly). impactSamples (fixed 220ms) = 10560.
+        //
+        // tailPercentForTest is deliberately a small NONZERO value (0.1%),
+        // not 0% - the "TAIL=CUT" fix (Bug F) redirects EXACTLY tail==0% to
+        // a ~5ms near-instant clean cut (kTailCutSeconds), which is FAR too
+        // short for this test's multi-window RMS attack-then-decay shape
+        // analysis (that specific behavior - tail==0% producing a clean,
+        // click-free cut with no ring-out - is verified separately by the
+        // dedicated "[POST-1.0][Bug F] TAIL=CUT" test block below). 0.1% is
+        // just above the epsilon, landing on the SAME exponential formula's
+        // short end (~0.15s, essentially identical to the OLD tail==0%
+        // pre-fix behavior this test was originally calibrated against -
+        // "no discontinuity in feel just above 0%" from the fix's own design
+        // holds here too) - recoverySecondsRef/recoverySamplesForTest below
+        // are computed via that SAME formula (mirrors
+        // computeDurationsForNewBuild() exactly), not a stale hand-typed
+        // constant.
         constexpr int blockSize = 256;
-        constexpr int64_t impactStartSample = 194744;
-        constexpr int64_t recoveryStartSample = 205304;
-        constexpr int64_t recoverySamplesForTest = 7200;
+        constexpr int64_t impactStartSample = 191744;
+        constexpr int64_t recoveryStartSample = impactStartSample + 10560;
+        constexpr float tailPercentForTest = 0.1f;
+        constexpr double kTailMinSecondsRef = 0.15;
+        constexpr double kTailMaxSecondsRef = 4.0;
+        const double recoverySecondsRef = kTailMinSecondsRef
+            * std::pow (kTailMaxSecondsRef / kTailMinSecondsRef, (double) (tailPercentForTest / 100.0f));
+        const int64_t recoverySamplesForTest = (int64_t) std::llround (48000.0 * recoverySecondsRef);
 
         DROPAudioProcessor p;
         p.setRateAndBufferSizeDetails (48000.0, blockSize);
         p.prepareToPlay (48000.0, blockSize);
         if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
-        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (tailPercentForTest / 100.0f);
         if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
 
         const int64_t captureFromBlock = (impactStartSample / blockSize) - 2;
@@ -3211,6 +3255,402 @@ int main()
         check (sawGenuineDivergence, "VisualizationFrame::tensionLevel genuinely diverges from ::progress mid-build - proves tensionLevel is a real curve-shaped transform (what the user 'feels'), not merely a copy of the linear progress");
         std::printf ("  max |tensionLevel - TransitionEngine::evaluate(progress)| across %d Building frames (Clean EDM/SCurve, tension=50%%) = %.5f\n", framesChecked, maxCurveMatchError);
         check (maxCurveMatchError < 0.01f, "VisualizationFrame::tensionLevel matches TransitionEngine::evaluate(progress) to within tight tolerance - the curve dot's Y-height and the audio's own curved module-sweep basis genuinely agree, on top of progress (X) sharing the audio weights' exact linear basis");
+    }
+
+    //==========================================================================
+    // [POST-1.0 SECOND IMPROVEMENT SESSION] (2026-09-16, same day, dsp-agent)
+    // Grid-lock (Bug D), transport-stop safety (Bug E), TAIL=CUT (Bug F), and
+    // BPM publication tests. See PluginProcessor.h's top doc comment "POST-1.0
+    // SECOND IMPROVEMENT SESSION" and plugins/DROP/CHANGELOG.md. Stays at
+    // version 1.0.0.
+    //==========================================================================
+
+    std::printf ("\n[POST-1.0][Bug D] Grid lock - carved-out-Vacuum arithmetic lands Impact exactly on a bar boundary (MusicalClock's own bar math)\n");
+    {
+        // Mirrors computeDurationsForNewBuild()'s POST-1.0 fix EXACTLY
+        // (peakSamples computed FIRST via MusicalClock, then
+        // buildingSamples = barsToSamples(bars) - peakSamples, floor-clamped
+        // to >= 1) - independent of PluginProcessor's private implementation,
+        // proving the INVARIANT the fix guarantees: armingToBuildingSamples +
+        // buildingSamples + peakSamples is an EXACT multiple-of-bar-length
+        // offset from wherever Arming began, for every tempo/build-length
+        // combination, computed purely from MusicalClock's own bar math.
+        struct Case { double bpm; int bars; };
+        const Case cases[] = {
+            { 90.0, 1 }, { 90.0, 4 }, { 90.0, 8 },
+            { 128.0, 1 }, { 128.0, 4 }, { 128.0, 8 },
+            { 174.0, 1 }, { 174.0, 4 }, { 174.0, 8 },
+        };
+
+        bool allOk = true;
+        for (const auto& c : cases)
+        {
+            drop::MusicalClock clock;
+            clock.prepare (48000.0);
+            // Deliberately NOT exactly on a bar boundary (1.3 beats into the
+            // bar) - stress-tests the fix against a genuine mid-bar arming
+            // point, not just the degenerate arming==0 case.
+            TestPlayHead ph;
+            ph.info = makePosition (c.bpm, 4, 4, 1.3, 0.0);
+            clock.update (&ph, 0);
+
+            const double barLength = clock.getBarLengthSamples();
+            const int64_t armingToBuildingSamples = (int64_t) std::llround (clock.samplesToNextBarBoundary());
+
+            const auto& style = drop::getStyle (0); // "Clean EDM" - matches computeDurationsForNewBuild()'s default-Style timing
+            const double vacuumWindowSamples = clock.divisionToSamples (style.vacuumDivision, false);
+            const double vacuumFloorSamples = 48000.0 * style.vacuumFloorSeconds;
+            const int64_t peakSamples = (int64_t) std::llround (juce::jmax (vacuumWindowSamples, vacuumFloorSamples));
+
+            const int64_t barsSamples = (int64_t) std::llround (clock.barsToSamples (c.bars));
+            const int64_t buildingSamples = juce::jmax ((int64_t) 1, barsSamples - peakSamples);
+
+            const int64_t impactOffsetFromArmingStart = armingToBuildingSamples + buildingSamples + peakSamples;
+            const int64_t expectedOffsetIfPerfectLock = armingToBuildingSamples + barsSamples;
+
+            // Perfect lock is only guaranteed when the Vacuum window
+            // genuinely fits inside the requested build (barsSamples >
+            // peakSamples) - true for every case above at these tempi/bar
+            // counts (the pathological clamp edge case is tested separately,
+            // in isolation, below).
+            const bool perfectLockExpected = (barsSamples > peakSamples);
+            const int64_t offsetDelta = impactOffsetFromArmingStart - expectedOffsetIfPerfectLock;
+            const int64_t offsetDeltaAbs = offsetDelta < 0 ? -offsetDelta : offsetDelta; // avoids relying on <cstdlib>'s std::llabs, not otherwise included in this file
+            const bool offsetOk = ! perfectLockExpected || offsetDeltaAbs <= 1;
+
+            // Independently re-derive "lands on a bar boundary" via fmod
+            // against MusicalClock's own barLength, rather than just
+            // reusing barsSamples by construction.
+            const double remainder = std::fmod ((double) (impactOffsetFromArmingStart - armingToBuildingSamples), barLength);
+            const bool onBoundary = ! perfectLockExpected || remainder <= 1.0 || (barLength - remainder) <= 1.0;
+
+            const bool ok = offsetOk && onBoundary;
+            std::printf ("  bpm=%.0f bars=%d: peakSamples=%lld buildingSamples=%lld impactOffset=%lld (expected %lld) -> %s\n",
+                         c.bpm, c.bars, (long long) peakSamples, (long long) buildingSamples,
+                         (long long) impactOffsetFromArmingStart, (long long) expectedOffsetIfPerfectLock,
+                         ok ? "ok" : "MISMATCH");
+            allOk = allOk && ok;
+        }
+        check (allOk, "[Bug D] Grid lock: armingToBuildingSamples + buildingSamples + peakSamples lands EXACTLY on a bar boundary (within 1 sample) across 90/128/174 BPM x 1/4/8 bars, using the SAME Vacuum-carve-out formula computeDurationsForNewBuild() uses");
+    }
+
+    std::printf ("\n[POST-1.0][Bug D] Grid lock - buildingSamples clamp floors to exactly 1 sample (never <= 0) in the pathological vacuum-longer-than-build edge case\n");
+    {
+        // Direct test of computeDurationsForNewBuild()'s documented clamp
+        // formula (`juce::jmax((int64_t)1, barsSamples - peakSamples)`) in
+        // the edge case where the Style's Vacuum window is LONGER than the
+        // entire requested build - perfect grid-lock is mathematically
+        // impossible there (the vacuum collapse alone doesn't fit inside the
+        // bar count), so the clamp's job is only to guarantee Building never
+        // becomes zero/negative-length.
+        const int64_t barsSamplesSynthetic = 100;
+        const int64_t peakSamplesSynthetic = 500; // deliberately far larger than the whole synthetic "build"
+        const int64_t buildingSamplesClamped = juce::jmax ((int64_t) 1, barsSamplesSynthetic - peakSamplesSynthetic);
+        check (buildingSamplesClamped == 1,
+              "[Bug D] Grid lock: buildingSamples clamps to exactly 1 sample (never <= 0) when the Vacuum window is longer than the entire requested build");
+    }
+
+    std::printf ("\n[POST-1.0][Bug E] Transport-stop safety - host isPlaying==false mid-Building aborts PROMPTLY, click-free, no residual energy\n");
+    {
+        constexpr int blockSize = 256;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+
+        TestPlayHead ph;
+        ph.info = makePosition (120.0, 4, 4, 0.0, 0.0);
+        ph.info.setIsPlaying (true);
+        p.setPlayHead (&ph);
+
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.5f); // choice index 2 of 0-4 = 4 bars (comfortably long)
+        if (auto* prm = p.parameters.getParameter ("delay")) prm->setValueNotifyingHost (1.0f); // maximizes residual-energy risk if the abort's module reset() were missing
+        if (auto* prm = p.parameters.getParameter ("reverb")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        bool stoppedTransport = false;
+        bool sawIdleAfterStop = false;
+        int blocksAfterStopUntilIdle = -1;
+        int blockStoppedAt = -1;
+        std::vector<float> captured; // from the block the transport stops onward
+        std::vector<float> capturedInput; // same samples of the HOST INPUT - lets the assertion isolate DROP's own contribution from the test's deliberate hard input edge
+
+        for (int block = 0; block < 600; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < blockSize; ++i)
+                    // Silence once stopped - isolates "does internal state
+                    // (delay/reverb tails, riser) genuinely go quiet", not
+                    // merely "is the input silent". NOTE this is a HARD input
+                    // edge by design (real hosts do exactly this on stop), so
+                    // the continuity assertion below measures DROP's OWN
+                    // contribution (out - in), never the host's input step.
+                    data[i] = stoppedTransport ? 0.0f : 0.6f * std::sin ((float) (block * blockSize + i) * 0.05f);
+            }
+
+            juce::AudioBuffer<float> inputCopy;
+            inputCopy.makeCopyOf (buf);
+
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            if (! stoppedTransport && block == 20 && p.getCurrentDropState() == drop::DropState::Building)
+            {
+                ph.info.setIsPlaying (false);
+                stoppedTransport = true;
+                blockStoppedAt = block;
+            }
+
+            if (stoppedTransport)
+            {
+                const float* out = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    captured.push_back (out[i]);
+                    capturedInput.push_back (inputCopy.getSample (0, i));
+                }
+
+                if (! sawIdleAfterStop && p.getCurrentDropState() == drop::DropState::Idle)
+                {
+                    sawIdleAfterStop = true;
+                    blocksAfterStopUntilIdle = block - blockStoppedAt;
+                }
+            }
+
+            if (sawIdleAfterStop && block > blockStoppedAt + 5)
+                break;
+        }
+        p.releaseResources();
+
+        check (stoppedTransport, "transport-stop test setup: the transport was genuinely stopped while state == Building");
+        check (sawIdleAfterStop, "transport-stop safety: the state machine returns to Idle after the transport stops");
+        check (blocksAfterStopUntilIdle >= 0 && blocksAfterStopUntilIdle <= 3,
+              "transport-stop safety: the state machine returns to Idle PROMPTLY (within a few blocks - kTransportStopFadeSeconds is ~5ms) after the transport stops, not seconds later");
+
+        constexpr float kMaxAllowedStep = 0.35f; // same documented bound as the existing post-impact-continuity test
+        // CORRECTED 2026-09-17: the original version measured the raw OUTPUT,
+        // which necessarily contains the test's own hard input edge (0.6*sin
+        // -> 0.0 at the stop block boundary, measured 0.4502 - a step DROP
+        // faithfully passes through, exactly as it should). What this test
+        // must actually guarantee is that DROP's OWN contribution (the wet /
+        // generated content the abort fades out) contains no click: measure
+        // out - in.
+        const size_t n = std::min (captured.size(), capturedInput.size());
+        float maxStep = 0.0f;
+        size_t maxStepIndex = 0;
+        for (size_t i = 1; i < n; ++i)
+        {
+            const float wetPrev = captured[i - 1] - capturedInput[i - 1];
+            const float wetCurr = captured[i]     - capturedInput[i];
+            const float step = std::abs (wetCurr - wetPrev);
+            if (step > maxStep) { maxStep = step; maxStepIndex = i; }
+        }
+        std::printf ("  post-stop captured %zu samples, max adjacent step of DROP's OWN contribution (out-in) = %.4f (bound %.2f) at index %zu\n",
+                     captured.size(), maxStep, kMaxAllowedStep, maxStepIndex);
+        {
+            const size_t lo = maxStepIndex > 3 ? maxStepIndex - 3 : 0;
+            const size_t hi = std::min (captured.size(), maxStepIndex + 4);
+            std::printf ("    neighborhood:");
+            for (size_t i = lo; i < hi; ++i) std::printf (" [%zu]=%.4f", i, captured[i]);
+            std::printf ("\n");
+        }
+        check (maxStep < kMaxAllowedStep, "transport-stop safety: DROP's own contribution (out - in) fades click-free through the abort and stays silent afterwards - no discontinuity above the documented bound");
+
+        const int tailSamplesToCheck = std::min ((int) captured.size(), blockSize * 3);
+        float peakTail = 0.0f;
+        for (int i = (int) captured.size() - tailSamplesToCheck; i < (int) captured.size(); ++i)
+            peakTail = std::max (peakTail, std::abs (captured[(size_t) i]));
+        std::printf ("  peak |output| in the final %d captured samples (should be ~0) = %.6f\n", tailSamplesToCheck, peakTail);
+        check (peakTail < 1.0e-4f, "transport-stop safety: no residual energy remains once the abort completes and the module-hygiene reset() sweep has run");
+    }
+
+    std::printf ("\n[POST-1.0][Bug E] Transport-stop safety - fallback (no playhead) transport NEVER aborts spuriously; a transition runs to completion normally\n");
+    {
+        constexpr int blockSize = 256;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+        // Deliberately NO setPlayHead() call - getPlayHead() returns
+        // nullptr, MusicalClock's fallback transport is active
+        // (isUsingFallbackTransport() == true), which the transport-stop-
+        // abort gating explicitly excludes (see processBlock()'s doc
+        // comment) - proves the Standalone app / bare-AudioProcessor
+        // fallback path remains fully usable and is never spuriously
+        // aborted mid-build.
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f); // 1 bar - fastest to traverse
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        bool sawBuilding = false, sawImpact = false, backToIdle = false;
+        for (int block = 0; block < 1300 && ! backToIdle; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                auto* data = buf.getWritePointer (ch);
+                for (int i = 0; i < blockSize; ++i)
+                    data[i] = 0.4f * std::sin ((float) (block * blockSize + i) * 0.03f);
+            }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            const auto state = p.getCurrentDropState();
+            if (state == drop::DropState::Building) sawBuilding = true;
+            if (state == drop::DropState::Impact) sawImpact = true;
+            if (sawImpact && state == drop::DropState::Idle) backToIdle = true;
+        }
+        p.releaseResources();
+
+        check (sawBuilding, "fallback-transport safety: build reaches Building normally (no playhead present)");
+        check (sawImpact, "fallback-transport safety: build reaches Impact normally (no spurious abort)");
+        check (backToIdle, "fallback-transport safety: the FULL build (Idle->...->Impact->Recovery->Idle) completes normally with NO host playhead present - the transport-stop-abort gating (!isUsingFallbackTransport()) never fires spuriously in the standalone/no-playhead fallback path");
+    }
+
+    std::printf ("\n[POST-1.0][Bug F] TAIL=CUT - tail==0%% produces near-silence within ~10ms of Impact's end, no discontinuity; tail just above 0%% still rings\n");
+    {
+        constexpr int blockSize = 256;
+        constexpr int64_t impactStartSample = 191744; // see the updated Phase 3.4 transient-preservation test's doc comment for the derivation (grid-lock fix)
+        constexpr int64_t recoveryStartSample = impactStartSample + 10560; // 202304
+        constexpr int64_t recoveryStartBlockFloor = recoveryStartSample / blockSize; // 790 (truncated)
+        constexpr int captureFromBlock = (int) recoveryStartBlockFloor - 2;
+        constexpr int captureUntilBlock = (int) recoveryStartBlockFloor + 20; // ~20 blocks past Recovery's start, comfortably covers the ~10ms(480-sample) window under test plus margin
+        constexpr int64_t actualCaptureFromSample = (int64_t) captureFromBlock * blockSize;
+        constexpr int64_t boundaryIndex = recoveryStartSample - actualCaptureFromSample;
+
+        auto measureTail = [&] (float tailPercent) -> std::vector<float>
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (tailPercent / 100.0f);
+            if (auto* prm = p.parameters.getParameter ("delay")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("reverb")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+            std::vector<float> captured;
+            for (int block = 0; block < captureUntilBlock; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    auto* data = buf.getWritePointer (ch);
+                    for (int i = 0; i < blockSize; ++i)
+                    {
+                        const int64_t globalSample = (int64_t) block * blockSize + i;
+                        // Sustained tone through Building/Peak/Impact,
+                        // silenced exactly at Recovery's first sample - same
+                        // convention as the existing post-impact-continuity
+                        // test, isolating the TAIL's own decay.
+                        data[i] = (globalSample < recoveryStartSample) ? 0.7f * std::sin ((float) globalSample * 0.06f) : 0.0f;
+                    }
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+                if (block >= captureFromBlock)
+                {
+                    const float* out = buf.getReadPointer (0);
+                    for (int i = 0; i < blockSize; ++i)
+                        captured.push_back (out[i]);
+                }
+            }
+            p.releaseResources();
+            return captured;
+        };
+
+        const auto cutCapture = measureTail (0.0f);  // exact CUT
+        const auto ringCapture = measureTail (0.1f);  // just above the epsilon - should still ring
+
+        auto maxStepNear = [&] (const std::vector<float>& v, int64_t center, int64_t halfWindow) -> float
+        {
+            float m = 0.0f;
+            for (int64_t i = std::max<int64_t> (1, center - halfWindow); i < std::min<int64_t> ((int64_t) v.size(), center + halfWindow); ++i)
+                m = std::max (m, std::abs (v[(size_t) i] - v[(size_t) (i - 1)]));
+            return m;
+        };
+        constexpr float kMaxAllowedStep = 0.35f; // same documented bound as the post-impact-continuity/transport-stop tests
+        const float cutMaxStep = maxStepNear (cutCapture, boundaryIndex, 8);
+        check (cutMaxStep < kMaxAllowedStep, "TAIL=CUT: no discontinuity step above the documented bound at the exact Impact->Recovery boundary when tail==0%");
+
+        constexpr int64_t kTenMsSamples = 480; // ~10ms @48kHz
+        auto peakAbsInWindow = [&] (const std::vector<float>& v, int64_t start, int64_t len) -> float
+        {
+            float m = 0.0f;
+            for (int64_t i = std::max<int64_t> (0, start); i < std::min<int64_t> ((int64_t) v.size(), start + len); ++i)
+                m = std::max (m, std::abs (v[(size_t) i]));
+            return m;
+        };
+        const float cutPeakAt10ms = peakAbsInWindow (cutCapture, boundaryIndex + kTenMsSamples, blockSize);
+        const float ringPeakAt10ms = peakAbsInWindow (ringCapture, boundaryIndex + kTenMsSamples, blockSize);
+
+        std::printf ("  tail=0%% (CUT): peak |output| ~10ms after Impact ends = %.6f; tail=0.1%% (ring): peak |output| at the SAME point = %.6f\n", cutPeakAt10ms, ringPeakAt10ms);
+
+        check (cutPeakAt10ms < 1.0e-3f, "TAIL=CUT: tail==0% produces near-silence within ~10ms of Impact's end (clean, click-free cut, no ring-out)");
+        check (ringPeakAt10ms > cutPeakAt10ms * 5.0f,
+              "TAIL=CUT: tail just above 0% (0.1%) still measurably RINGS at the SAME ~10ms-post-Impact point - the CUT behavior is isolated to exactly 0% (continuity of the exponential mapping preserved above the epsilon, not a general 'short tail always silent' regression)");
+    }
+
+    std::printf ("\n[POST-1.0] BPM publication - VisualizationFrame reports the host BPM when a playhead is present, the fallback marker when not\n");
+    {
+        constexpr int blockSize = 256;
+
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            TestPlayHead ph;
+            ph.info = makePosition (128.0, 4, 4, 0.0, 0.0);
+            ph.info.setIsPlaying (true);
+            p.setPlayHead (&ph);
+
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+
+            DROPAudioProcessor::VisualizationFrame frame;
+            bool got = false;
+            while (p.popVisualizationFrame (frame)) got = true;
+            check (got, "BPM publication test setup: a visualization frame was pushed with a valid host playhead present");
+            if (got)
+            {
+                check (frame.hostPlayheadValid, "VisualizationFrame::hostPlayheadValid is true when a valid host playhead/tempo is present");
+                check (nearlyEqual ((double) frame.bpm, 128.0, 1.0e-6), "VisualizationFrame::bpm reports the EXACT host tempo (128.0 BPM) when a valid host playhead is present");
+            }
+            p.releaseResources();
+        }
+
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            // No playhead - fallback transport.
+
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+
+            DROPAudioProcessor::VisualizationFrame frame;
+            bool got = false;
+            while (p.popVisualizationFrame (frame)) got = true;
+            check (got, "BPM publication test setup: a visualization frame was pushed with no host playhead present");
+            if (got)
+            {
+                check (! frame.hostPlayheadValid, "VisualizationFrame::hostPlayheadValid is false when no valid host playhead is present (fallback transport active)");
+                check (nearlyEqual ((double) frame.bpm, 120.0, 1.0e-6), "VisualizationFrame::bpm reports the fallback transport's fixed 120 BPM when no host playhead is present (the 'INT 120' marker basis)");
+            }
+            p.releaseResources();
+        }
     }
 
     std::printf ("\n%d failure(s)\n", failures);

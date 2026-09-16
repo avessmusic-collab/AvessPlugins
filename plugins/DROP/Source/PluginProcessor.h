@@ -186,6 +186,79 @@
  *      persistent internal filter/oscillator state was ALREADY live-
  *      processing real signal throughout the previous build and needs
  *      resetting, not just the four originally-scoped tail-capable ones.
+ *
+ * POST-1.0 SECOND IMPROVEMENT SESSION (2026-09-16, same day, three NEW
+ * real-DAW-testing bug reports plus one approved feature - independent of,
+ * and layered on top of, the tail-envelope session above. Still 1.0.0.):
+ *
+ *   BUG D ("not locking to the grid... as if it's using its own clock"):
+ *   computeDurationsForNewBuild() quantized Arming to the next bar boundary
+ *   and set `buildingSamples` to the FULL requested bar-length duration,
+ *   THEN let Peak's Vacuum-collapse window run AFTER that - so Impact (the
+ *   actual "drop") always landed `peakSamples` samples LATE relative to the
+ *   downbeat the user was building toward (>= 25ms Style-authored floor,
+ *   more at slow tempi/long vacuum divisions). Fixed: the Vacuum window is
+ *   now carved OUT of the requested bar-length duration (computed FIRST,
+ *   then `buildingSamples = barsToSamples(bars) - peakSamples`, floor-
+ *   clamped to >= 1 sample) so `armingToBuildingSamples + buildingSamples +
+ *   peakSamples` sums to EXACTLY the quantized-start-point + the requested
+ *   bar count, landing Impact's first sample precisely on the downbeat. See
+ *   computeDurationsForNewBuild()'s doc comment for the exact math/clamp
+ *   rationale.
+ *
+ *   BUG E ("artifacts then the sound stops"): nothing in the codebase ever
+ *   read AudioPlayHead::PositionInfo::isPlaying - a host transport STOP
+ *   mid-transition (e.g. the user hits stop in their DAW mid-build) left
+ *   the ENTIRE state machine (noise riser still rising, GateModule still
+ *   chopping, delay/reverb tails still ringing) running against silence (no
+ *   more host audio arriving, or audio that's no longer musically
+ *   continuous with what came before) - audible as chattering artifacts
+ *   that eventually trail off once Recovery's own tail envelope finally
+ *   finishes, which could be seconds later. Fixed: MusicalClock now exposes
+ *   isHostPlaying() (see its own doc comment); processBlock() detects
+ *   "transition active (state != Idle) AND a valid host playhead reports
+ *   isPlaying == false" and gracefully ABORTS - a short (~5ms), click-free
+ *   raised-cosine fade of whatever wet/generated content was already
+ *   playing, converging to the SAME pre-chain dry capture the final Dry/Wet
+ *   stage already uses (so the abort is inert to the user's Dry/Wet knob
+ *   setting - post-abort output is pure dry regardless), followed by
+ *   forcing the state machine to Idle and running the identical module-
+ *   hygiene reset() sweep advanceStateMachineTicks() uses at the natural
+ *   Recovery->Idle transition (factored into the new private
+ *   resetAllOwnedDspModules() helper so the two call sites can never drift
+ *   out of sync). Deliberately gated on a VALID host playhead
+ *   (!isUsingFallbackTransport()) - the standalone app / bare-AudioProcessor
+ *   fallback path has no concept of "stopped" and must remain fully usable
+ *   (this is also why every existing test that never calls setPlayHead()/
+ *   uses the fallback transport is completely unaffected by this feature).
+ *   fireTriggerIfIdle() additionally refuses to ARM a brand-new build while
+ *   a valid host playhead reports stopped (see its own doc comment for the
+ *   rationale) - a build immediately aborted again next block would be
+ *   pointless, and bar-quantized Arming is only musically meaningful against
+ *   a moving transport.
+ *
+ *   BUG F ("give me a choice to continue the tails, or... clean cut" - user
+ *   chose: TAIL knob at 0% = clean cut): the existing `tail` parameter's
+ *   0-100% -> 0.15s-4.0s exponential ring-out mapping (see the tail-envelope
+ *   session above) had no way to represent "no tail at all" - even at its
+ *   minimum, Recovery still rang out for 150ms. Fixed: tail == 0% (within a
+ *   small epsilon - see computeDurationsForNewBuild()'s kTailCutEpsilon) now
+ *   maps Recovery to a very short (~5ms) duration instead of the 150ms
+ *   floor - the EXISTING raised-cosine tail-envelope mechanism in
+ *   processSegment() (unchanged) then produces a fast, click-free fade-to-
+ *   silence over that short window, audibly an instant clean stop. No new
+ *   envelope-shape code was needed - only the DURATION mapping changed.
+ *   Every tail value above the epsilon is COMPLETELY UNCHANGED (same
+ *   exponential formula, same 0.15s-4.0s range) - "no discontinuity in
+ *   feel" going from just-above-0% (still ~0.15s) is therefore automatic,
+ *   not something that needed separate blending logic.
+ *
+ *   FEATURE: VisualizationFrame gained two additive fields (`bpm`,
+ *   `hostPlayheadValid` - see that struct's doc comment) so the GUI can show
+ *   a "SYNC" readout confirming lock-to-host at a glance (Source/ui/public/
+ *   index.html's #syncChip, Advanced page).
+ *
+ * See plugins/DROP/CHANGELOG.md for the user-facing changelog entries.
  */
 class DROPAudioProcessor : public juce::AudioProcessor,
                             private juce::AudioProcessorValueTreeState::Listener
@@ -310,6 +383,14 @@ public:
         // v10-integration-checklist.md #5's "Open items" note - now fixed
         // here as the single source of truth.
         float activeModuleWeights[10] = {};
+
+        // POST-1.0 additive fields (2026-09-16, BPM diagnostic feature - see
+        // this class's top doc comment "POST-1.0 SECOND IMPROVEMENT
+        // SESSION"). Additive/appended, not interleaved - matches this
+        // struct's own established convention for growing without breaking
+        // any existing consumer that only reads the original fields.
+        float bpm = 0.0f;              // MusicalClock::getBpm() as of this block - 120.0 while hostPlayheadValid is false (the fixed fallback transport's own BPM), so ALWAYS check hostPlayheadValid before presenting this as "the detected host tempo".
+        bool hostPlayheadValid = false; // MusicalClock::isUsingFallbackTransport() == false as of this block - true only when a genuine host bpm/position was observed; drives the Advanced-page "SYNC" readout's "128.0 BPM" (locked) vs. "INT 120" (internal fallback) wording.
     };
 
     /** Message-thread-only. Returns false when the FIFO is empty. */
@@ -345,6 +426,18 @@ private:
     // (architecture.md "Sample-Accurate Events / Block Segmentation").
     // Fires Idle->Arming (re-trigger safety enforced by DropStateMachine
     // itself) using durations computed fresh for this build.
+    //
+    // POST-1.0 TRANSPORT-STOP SAFETY addition (see this class's top doc
+    // comment "POST-1.0 SECOND IMPROVEMENT SESSION", Bug E): also refuses to
+    // arm a NEW build while a VALID host playhead (musicalClock's
+    // !isUsingFallbackTransport()) reports the transport stopped
+    // (!isHostPlaying()) - arming/quantizing bar positions is only
+    // musically meaningful against a moving transport, and a build armed
+    // against a stopped one would simply be aborted again by processBlock()'s
+    // own transport-stop-abort handling the very next block anyway. The
+    // standalone/no-playhead fallback transport is NEVER blocked here (it
+    // has no concept of "stopped" and must remain fully usable - matches
+    // processBlock()'s own abort gating exactly).
     void fireTriggerIfIdle();
     drop::DropStateMachine::Durations computeDurationsForNewBuild();
 
@@ -355,11 +448,20 @@ private:
     // method instead), additionally detecting the exact Recovery->Idle
     // transition (the tail envelope's click-free, guaranteed-reached-zero
     // instant - see processSegment()'s "tail envelope" doc comment) and
-    // resetting DelayModule/ReverbModule/ImpactEngine/StutterModule at that
-    // moment so no stale tail/capture content replays into the next build
-    // (Bug C "stale tails" fix). Deliberately NOT triggered at Idle->Arming
-    // (audio is still live then).
+    // calling resetAllOwnedDspModules() at that moment so no stale tail/
+    // capture content replays into the next build (Bug C "stale tails"
+    // fix). Deliberately NOT triggered at Idle->Arming (audio is still live
+    // then).
     void advanceStateMachineTicks() noexcept;
+
+    // POST-1.0 addition (see this class's top doc comment, Bug E): the
+    // "nothing must ring into whatever comes next" module-hygiene reset()
+    // sweep, factored out of advanceStateMachineTicks() so it can ALSO be
+    // called from processBlock()'s new transport-stop-abort finalize path -
+    // both are the same kind of instant (a guaranteed-reached, click-free
+    // "this build is genuinely over" moment), and factoring guarantees the
+    // two call sites can never drift out of sync.
+    void resetAllOwnedDspModules() noexcept;
 
     // Stage 3 DSP Phase 3.2: processes one sample-accurate segment
     // [startSample, startSample+numSamplesInSegment) of `buffer` through the
@@ -542,6 +644,38 @@ private:
     // Impact (e.g. a hypothetical zero-length-Impact edge case).
     int64_t impactCarryoverElapsedSamples = -1;
 
+    // POST-1.0 TRANSPORT-STOP SAFETY state (see this class's top doc comment
+    // "POST-1.0 SECOND IMPROVEMENT SESSION", Bug E, and processBlock()'s
+    // "transport-stop" doc comment). Audio-thread-owned; no atomics needed
+    // (same convention as every other audio-thread-only POST-1.0 bugfix
+    // member above - read/written only from processBlock()).
+    //
+    // transportStopAbortActive: true from the block a host transport-stop is
+    // first detected (state != Idle, valid host playhead, isPlaying==false)
+    // until the fade below completes and the state machine/modules have been
+    // force-reset. While true, processBlock() skips the normal trigger-
+    // detection/segmentation/processSegment() pipeline entirely (the abort
+    // has already decided "this build is over" - no further wet content
+    // should be generated) and instead applies only the fade-to-dry loop.
+    bool transportStopAbortActive = false;
+    // transportStopFadeElapsedSamples / transportStopFadeTotalSamples: a
+    // simple elapsed/total sample counter (same raised-cosine convention as
+    // processSegment()'s Recovery tail envelope) driving the fade's per-
+    // sample gain from 1.0 (whatever was already playing) down to exactly
+    // 0.0 (fully converged to the pre-chain dry capture) over
+    // kTransportStopFadeSeconds. Persists across processBlock() calls (not
+    // reset per-block) so an abort that needs more samples than a single
+    // (possibly very small) host block remains click-free and exactly
+    // continuous across the block boundary.
+    int64_t transportStopFadeElapsedSamples = 0;
+    int64_t transportStopFadeTotalSamples = 0;
+    // ~5ms: short enough to read as "instant" (matches the tail=0% "CUT"
+    // fade's own duration, Bug F below - both are "stop everything cleanly,
+    // fast" instants and deliberately share the same order-of-magnitude
+    // fade time for a consistent click-free feel), long enough for a
+    // genuinely smooth raised-cosine ramp at every supported sample rate.
+    static constexpr double kTransportStopFadeSeconds = 0.005;
+
     // Stage 3 DSP Phase 3.5: the `style` APVTS parameter's value, LATCHED at
     // Arming (mirroring buildLength/tempo's own latching - architecture.md
     // DropStyle: "Switching style while a build is in-flight... is deferred
@@ -635,10 +769,21 @@ private:
     // (architecture.md: "Vacuum duration/floor, Impact tail length, Recovery
     // length are all Style-configurable"). The DEFAULT style (index 0,
     // "Clean EDM") deliberately reproduces the exact prior values (0.025s
-    // floor / 0.22s window / ThirtySecond / Half) so the pre-existing Phase
-    // 3.4 transient-preservation unit test's precomputed sample offsets
-    // (block 760, local offset 184) remain correct unmodified - see
-    // Source/Core/DropStyle.cpp style index 0's doc comment.
+    // floor / 0.22s window / ThirtySecond / Half) - see Source/Core/
+    // DropStyle.cpp style index 0's doc comment.
+    //
+    // POST-1.0 DOCUMENTED SUPERSESSION (2026-09-16, GRID-LOCK FIX, Bug D):
+    // the Phase 3.4 transient-preservation unit test's precomputed sample
+    // offsets (originally "block 760, local offset 184") are SUPERSEDED by
+    // the grid-lock fix's re-derivation of `buildingSamples` (see
+    // computeDurationsForNewBuild()'s own doc comment) - the Vacuum window
+    // is now carved OUT of the requested bar length instead of appended
+    // after it, so the same 1-bar-at-120bpm@48kHz/256-sample-block scenario
+    // now lands Impact's first sample at global sample 191744 = EXACTLY
+    // block 749, local offset 0 (was 194744 = block 760, offset 184) - see
+    // RunTests.cpp's "[POST-1.0] Grid lock" test block for the updated,
+    // re-derived arithmetic and the corresponding transient-preservation
+    // test's updated constants.
 
     // Default seed is a fixed constant so a freshly-loaded plugin is still
     // deterministic (architecture.md "State Persistence" restore behavior).
