@@ -31,9 +31,9 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 
 ### buildLength
 - **Type:** Choice
-- **Choices:** 1, 2, 4, 8, 16 (bars)
+- **Choices:** 1, 2, 4, 8, 16, 32 (bars) (**"32" appended 2026-09-17, POST-1.0 user-directed** — original five keep their exact indices, so saved sessions reload identically; only normalized host-automation lanes remap at the top end)
 - **Default:** 4 bars (choice index 2)
-- **UI Control:** 5 recessed circular step wells (Main page); active well gets an orange ring + glow.
+- **UI Control:** 6 recessed circular step wells (Main page); active well gets an orange ring + glow. (Was 5; step-row widened 15.75rem → 19.0625rem, see v10-ui.yaml `build_length_32_bars` amendment.)
 - **DSP Usage:** Total `Building`-state duration, tempo-synced via `MusicalClock` and converted to an exact sample count at the tempo/time-signature latched at `Arming`.
 
 ### style

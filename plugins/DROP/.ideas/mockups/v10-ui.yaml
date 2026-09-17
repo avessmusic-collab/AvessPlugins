@@ -855,3 +855,12 @@ knob_rows_left_shift_and_tail_join:
     - "TAIL knob relocated (3rd move) from below the graph (675,231) INTO the lower macro row as its 6th knob at left:38.75rem top:25.9375rem (620,415) - same column pitch continued, same small-knob treatment. Its below-graph spot is vacated; SYNC chip stays at (790,230)."
     - "TAIL default changed 35 -> 0 (data-default and static label markup, which now reads 'TAIL - CUT' matching the isTail render() logic at value 0). Mirrors the APVTS `tail` parameter default change in PluginProcessor.cpp (same session) - a fresh instance cuts cleanly at the drop; ring-out is opt-in."
   validation: "Geometry hand-verified: row knobs 60px wide at 116px pitch -> 56px gaps; TAIL at x=620 ends x=680, OUTPUT screen starts x=790 (110px clear); rows' bottom (415+72=487) within 560px page with 73px margin; no overlap with left-column chips (bottom edge 206px) or IMPACT hero."
+
+build_length_32_bars:
+  date: 2026-09-17
+  reason: "User: 'ad a 32 bar choice'."
+  changes:
+    - "BUILD LENGTH step circles: 6th circle '32' appended after '16' (Main page). Same 2.5rem circle / 0.8125rem gap system."
+    - ".step-row width 15.75rem -> 19.0625rem (6 x 2.5 + 5 x 0.8125). Right edge now 21.5625rem (345px), clearing the center column (starts x=360px) by 15px (>= 10px min gap); vertically unchanged (top 7rem, well above the hero knobs at top 12.5rem)."
+    - "APVTS `buildLength` choices now {1,2,4,8,16,32}, default still 4 bars (index 2); original indices unchanged for session compatibility."
+  validation: "Geometry hand-verified per the notes above; no other Main-page element occupies y 112-170px between x 40-360px."

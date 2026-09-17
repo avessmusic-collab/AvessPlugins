@@ -115,7 +115,10 @@
   .mode-pill button.active { color: var(--accent); }
 
   /* ---------- Build length: recessed step wells (neumorphic) ---------- */
-  .step-row { position: absolute; left: 2.5rem; top: 7rem; width: 15.75rem; height: 3.625rem; }
+  /* POST-1.0 (2026-09-17, "ad a 32 bar choice"): width 15.75rem -> 19.0625rem
+     for the 6th circle (6 x 2.5rem + 5 x 0.8125rem gaps); right edge 21.5625rem
+     (345px) still clears the center column (starts 360px) by 15px. */
+  .step-row { position: absolute; left: 2.5rem; top: 7rem; width: 19.0625rem; height: 3.625rem; }
   .step-circles { display: flex; gap: 0.8125rem; }
   .step-circle {
     width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--body-bg);
@@ -280,6 +283,7 @@
           <button class="step-circle active" data-value="4">4</button>
           <button class="step-circle" data-value="8">8</button>
           <button class="step-circle" data-value="16">16</button>
+          <button class="step-circle" data-value="32">32</button>
         </div>
         <div class="step-caption">BUILD LENGTH (BARS)</div>
       </div>

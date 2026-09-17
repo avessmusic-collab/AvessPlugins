@@ -26,7 +26,7 @@ Only high-value parameters are exposed (JUCE APVTS). Advanced per-module DSP int
 | Parameter | Range | Default | Description |
 |-----------|-------|---------|-------------|
 | Trigger | Bool/momentary | Off | Fires the transition (manual, MIDI note, or host automation) |
-| Build Length | 1/2/4/8/16 bars | 4 bars | Transition duration, tempo-synced |
+| Build Length | 1/2/4/8/16/32 bars | 4 bars | Transition duration, tempo-synced (32 appended 2026-09-17, POST-1.0) |
 | Style | 16 DropStyles | Clean EDM | Data-driven effect-weight/curve/behavior profile |
 | Intensity | 0–100% | 50% | Overall transition intensity (budget scale) |
 | Tension | 0–100% | 50% | Tension curve emphasis (most tension near the end by default) |

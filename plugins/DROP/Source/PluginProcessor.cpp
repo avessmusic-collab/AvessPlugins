@@ -23,10 +23,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         false));
 
     // buildLength - tempo-synced Building-state duration.
+    // POST-1.0 (2026-09-17, user-directed: "ad a 32 bar choice"): "32"
+    // appended as a 6th choice. APVTS session state stores the actual
+    // choice index, so saved sessions (indices 0-4) reload identically;
+    // only NORMALIZED host automation lanes recorded on this parameter
+    // remap (the old top-of-lane 16 now sits at ~0.8, 1.0 is now 32).
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID { "buildLength", 1 },
         "Build Length",
-        juce::StringArray { "1", "2", "4", "8", "16" },
+        juce::StringArray { "1", "2", "4", "8", "16", "32" },
         2)); // default: 4 bars
 
     // style - selects the data-driven DropStyle (16 factory styles).
@@ -427,9 +432,9 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     // tempo/time-signature latched now (architecture.md: "a tempo change
     // mid-build does not shorten/lengthen an in-flight build's
     // sample-position targets").
-    static constexpr int kBuildLengthBars[] = { 1, 2, 4, 8, 16 };
+    static constexpr int kBuildLengthBars[] = { 1, 2, 4, 8, 16, 32 }; // POST-1.0: "32" appended 2026-09-17 (user-directed)
     const int buildLengthChoiceIndex = (int) buildLengthParam->load();
-    const int bars = kBuildLengthBars[(size_t) juce::jlimit(0, 4, buildLengthChoiceIndex)];
+    const int bars = kBuildLengthBars[(size_t) juce::jlimit(0, 5, buildLengthChoiceIndex)];
     const int64_t barsSamples = (int64_t) std::llround(musicalClock.barsToSamples(bars));
 
     // POST-1.0 GRID-LOCK FIX (Bug D, continued): the user builds toward a

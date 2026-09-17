@@ -1,5 +1,28 @@
 # DROP Changelog
 
+### Added — 2026-09-17 (32-bar Build Length choice)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "ad a 32
+bar choice."
+
+- **Build Length gains a 6th choice, 32 bars** — appended after 16 so the
+  original five keep their exact indices: saved sessions (which store the
+  actual choice index) reload identically. Only normalized host-automation
+  lanes recorded on Build Length remap at the top end (a lane pinned at 1.0
+  now means 32 bars instead of 16 — re-touch those points if you had any).
+- Engine: `kBuildLengthBars` mapping extended `{1,2,4,8,16,32}`; the
+  index clamp raised accordingly. Everything downstream (MusicalClock
+  bar→sample conversion, vacuum carve-out, grid alignment) is
+  length-agnostic and needed no changes.
+- UI (Main page): 6th step circle "32"; step-row widened 15.75rem →
+  19.0625rem (still clears the center column — see v10-ui.yaml
+  `build_length_32_bars`). `index.html`/`v10-ui.html` kept byte-identical.
+- Tests: new `[POST-1.0]` block — choice-list contract (6 entries, original
+  indices unchanged) plus an end-to-end render at index 5 proving Building
+  genuinely lasts ~32 bars (the old clamp to index 4 fails it by
+  construction); one existing test's normalized set-call updated for the
+  6-choice mapping (same intended index).
+
 ### Fixed — 2026-09-17 (per-sample tail cut, TAIL default 0%, knob rows moved left)
 
 Stays at 1.0.0 per this repo's factory convention. User DAW report: "move

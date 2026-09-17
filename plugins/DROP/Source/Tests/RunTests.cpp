@@ -2904,6 +2904,63 @@ int main()
         }
     }
 
+    std::printf ("\n[POST-1.0] Build Length - 32-bar choice (6th entry, appended 2026-09-17 at user direction)\n");
+    {
+        // (a) Choice-list contract: 6 entries, the original five UNCHANGED
+        //     at their original indices (saved sessions store the actual
+        //     index, so 0-4 must keep meaning 1/2/4/8/16 bars), "32" last.
+        DROPAudioProcessor p;
+        auto* choiceParam = dynamic_cast<juce::AudioParameterChoice*> (p.parameters.getParameter ("buildLength"));
+        check (choiceParam != nullptr, "32-bar choice: buildLength is an AudioParameterChoice");
+        if (choiceParam != nullptr)
+        {
+            check (choiceParam->choices.size() == 6, "32-bar choice: buildLength now has exactly 6 choices (SUPERSEDES the original 5)");
+            const char* expected[] = { "1", "2", "4", "8", "16", "32" };
+            bool allMatch = choiceParam->choices.size() == 6;
+            for (int i = 0; i < juce::jmin (6, choiceParam->choices.size()); ++i)
+                if (choiceParam->choices[i] != expected[i]) allMatch = false;
+            check (allMatch, "32-bar choice: the original five choices keep their exact indices (session compatibility) and '32' is appended last");
+        }
+
+        // (b) End-to-end: index 5 genuinely builds for ~32 bars. Fallback
+        //     transport (no playhead): 120 BPM 4/4 @ 48kHz -> bar = 96000
+        //     samples. Proves the kBuildLengthBars mapping (and its jlimit
+        //     bound, previously clamped to index 4) actually reaches 32 -
+        //     a pre-fix build would have clamped to 16 bars and left
+        //     Building early.
+        constexpr int blockSize = 1024;
+        constexpr double sr = 48000.0;
+        constexpr int64_t barSamples = 96000;
+        p.setRateAndBufferSizeDetails (sr, blockSize);
+        p.prepareToPlay (sr, blockSize);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (1.0f); // normalized 1.0 = index 5 = 32 bars
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        int64_t buildingSamples = 0;
+        bool sawBuilding = false, leftBuilding = false;
+        for (int block = 0; block < 3400 && ! leftBuilding; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+            const auto state = p.getCurrentDropState();
+            if (state == drop::DropState::Building) { sawBuilding = true; buildingSamples += blockSize; }
+            else if (sawBuilding) leftBuilding = true;
+        }
+        p.releaseResources();
+
+        std::printf ("  Building lasted ~%.2f bars (block-granular measurement; expected ~32 minus the carved-out Vacuum)\n",
+                     (double) buildingSamples / (double) barSamples);
+        check (sawBuilding && leftBuilding, "32-bar choice: transition entered AND completed Building within the block budget");
+        check (buildingSamples > 16 * barSamples,
+              "[POST-1.0] 32-bar choice: Building genuinely lasts LONGER than the previous 16-bar maximum (the pre-fix jlimit clamp to index 4 would fail this by construction)");
+        check (buildingSamples > 31 * barSamples && buildingSamples < 33 * barSamples,
+              "[POST-1.0] 32-bar choice: Building duration is ~32 bars (within [31,33] bars, block-granular; Vacuum is carved out of the final bar per the grid-alignment design)");
+    }
+
     std::printf ("\n[POST-1.0] PluginProcessor - `tail` parameter scales Recovery's duration (~0.15s just above 0%%, 100%% ~4.0s)\n");
     {
         constexpr int blockSize = 256;
@@ -3761,7 +3818,7 @@ int main()
         ph.info.setIsPlaying (true);
         p.setPlayHead (&ph);
 
-        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.5f); // choice index 2 of 0-4 = 4 bars (comfortably long)
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.4f); // choice index 2 of 0-5 = 4 bars (comfortably long; was 0.5f when the list had 5 choices, updated with the 32-bar addition 2026-09-17)
         if (auto* prm = p.parameters.getParameter ("delay")) prm->setValueNotifyingHost (1.0f); // maximizes residual-energy risk if the abort's module reset() were missing
         if (auto* prm = p.parameters.getParameter ("reverb")) prm->setValueNotifyingHost (1.0f);
         if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
