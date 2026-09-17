@@ -4005,6 +4005,22 @@ int main()
         check (slopeAtEnd < 0.05f, "tail envelope: approaches silence with near-zero slope (click-free by construction)");
     }
 
+    std::printf ("\n[DIAG] Parameters as the HOST sees them (name | automatable | meta | discrete | numSteps)\n");
+    {
+        DROPAudioProcessor p;
+        int nonAutomatable = 0;
+        for (auto* prm : p.getParameters())
+        {
+            const auto name = prm->getName (32);
+            const bool autom = prm->isAutomatable();
+            if (! autom) ++nonAutomatable;
+            std::printf ("    %-16s | %-3s | %-3s | %-3s | %d\n",
+                         name.toRawUTF8(), autom ? "yes" : "NO", prm->isMetaParameter() ? "yes" : "no",
+                         prm->isDiscrete() ? "yes" : "no", prm->getNumSteps());
+        }
+        check (nonAutomatable == 0, "[DIAG] every exposed parameter reports isAutomatable() == true (so every one, incl. Trigger, must appear in a host automation list)");
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
