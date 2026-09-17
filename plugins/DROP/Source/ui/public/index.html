@@ -413,24 +413,6 @@
         </svg>
       </div>
 
-      <!-- Tail - POST-1.0 addition (2026-09-16), RELOCATED POST-1.0 FOURTH
-           IMPROVEMENT SESSION (2026-09-17, user-directed: "move tail knob
-           below the graph"). Same small macro-style knob (60x72px
-           well/dome/caption, identical visual treatment) as before, now
-           placed BELOW curveBox (which occupies left:38.75rem top:5rem
-           width:18.75rem height:8.75rem -> bottom edge 13.75rem), left of
-           the SYNC chip (left:49.375rem top:14.375rem) - see
-           .ideas/mockups/v10-ui.yaml's
-           `noise_tension_chip_and_tail_relocation` amendment note for the
-           gap-verification math. Its old spot (left column, below
-           Tension/Chaos) is now occupied by the new NOISE TENSION chip
-           above. -->
-      <div class="knob-wrap" style="left:42.1875rem; top:14.4375rem; width:3.75rem;"
-           data-param="tail" data-min="0" data-max="100" data-default="35" data-unit="%" data-decimals="0">
-        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
-        <span class="knob-label knob-label-small">TAIL &middot; <span class="kv-num">35</span><span class="unit">%</span></span>
-      </div>
-
       <!-- Impact hero: LED-dot-ring treatment -->
       <div class="knob-wrap" id="impactWrap" style="left:27.1875rem; top:6.25rem; width:8.125rem;"
            data-param="impact" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
@@ -441,55 +423,74 @@
       </div>
 
       <!-- 10 module macros - small neumorphic domes -->
-      <div class="knob-wrap" style="left:10.5rem; top:20rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:2.5rem; top:20rem; width:3.75rem;"
            data-param="filter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">FILTER &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:17.75rem; top:20rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:9.75rem; top:20rem; width:3.75rem;"
            data-param="width" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">WIDTH &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:25rem; top:20rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:17rem; top:20rem; width:3.75rem;"
            data-param="pitch" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">PITCH &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:32.25rem; top:20rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:24.25rem; top:20rem; width:3.75rem;"
            data-param="gate" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">GATE &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:39.5rem; top:20rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:31.5rem; top:20rem; width:3.75rem;"
            data-param="stutter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">STUTTER &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:10.5rem; top:25.9375rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:2.5rem; top:25.9375rem; width:3.75rem;"
            data-param="delay" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">DELAY &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:17.75rem; top:25.9375rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:9.75rem; top:25.9375rem; width:3.75rem;"
            data-param="reverb" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">REVERB &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:25rem; top:25.9375rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:17rem; top:25.9375rem; width:3.75rem;"
            data-param="distortion" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">DIST &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:32.25rem; top:25.9375rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:24.25rem; top:25.9375rem; width:3.75rem;"
            data-param="digital" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">DIGITAL &middot; <span class="kv-num">100</span></span>
       </div>
-      <div class="knob-wrap" style="left:39.5rem; top:25.9375rem; width:3.75rem;"
+      <div class="knob-wrap" style="left:31.5rem; top:25.9375rem; width:3.75rem;"
            data-param="noise" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">NOISE &middot; <span class="kv-num">100</span></span>
+      </div>
+
+      <!-- Tail - POST-1.0 addition (2026-09-16). RELOCATED (3rd move,
+           POST-1.0 SIXTH IMPROVEMENT SESSION 2026-09-17, user-directed:
+           "move all the knobs to the left add the tail knob lower to the
+           knob rows"): now the 6th knob of the LOWER macro row (same
+           7.25rem column pitch, same small-knob treatment), after the 2x5
+           macro grid itself shifted left by 8rem (first column 10.5rem ->
+           2.5rem, aligning with the left column's TENSION/CHAOS chips at
+           left:2.5rem). Its previous below-the-graph spot (left:42.1875rem
+           top:14.4375rem) is vacated. Default 35 -> 0 (same session,
+           user-directed: "make the default tail zero") - a fresh instance
+           cuts cleanly at the drop (0% renders as TAIL-CUT, see the isTail
+           label logic below); ring-out is opt-in. See v10-ui.yaml's
+           `knob_rows_left_shift_and_tail_join` amendment note. -->
+      <div class="knob-wrap" style="left:38.75rem; top:25.9375rem; width:3.75rem;"
+           data-param="tail" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">TAIL &middot; <span class="kv-num">CUT</span><span class="unit"></span></span>
       </div>
 
       <div class="mini-screen" style="left:49.375rem; top:20.3125rem; width:10rem; height:5.625rem;"

@@ -846,3 +846,12 @@ noise_chip_rename_and_layout_polish:
     - "Layout: the chip moved from its own lower row (40,230,128x56 - lone, wider than its siblings) into the SHAPE row as the third sibling at (276,150,108x56), exactly matching TENSION (40,150) and CHAOS (158,150) in size and baseline. Gap to the IMPACT knob (starts x=435) is 51px."
     - "TAIL knob moved from (620,235) - shoved against the graph's left edge - to (675,231), centred in the span between the graph's left edge and the SYNC chip, with its knob centre (258px) now exactly level with SYNC's centre (258px)."
   validation: "Advanced-page geometry re-validated: zero overlaps, all gaps >=10px, all edges >=15px."
+
+knob_rows_left_shift_and_tail_join:
+  date: 2026-09-17
+  reason: "User: 'move all the knobs to the left add the tail knob lower to the knob rows' + 'make the default tail zero'."
+  changes:
+    - "The 2x5 MODULE MACROS grid shifted LEFT by 8rem (128px): columns now at left 2.5/9.75/17/24.25/31.5rem (40/156/272/388/504px, was 168/284/400/516/632px), same 7.25rem column pitch, rows unchanged at top 20rem and 25.9375rem. Column 1 now aligns with the left column's TENSION/CHAOS chips (left:2.5rem)."
+    - "TAIL knob relocated (3rd move) from below the graph (675,231) INTO the lower macro row as its 6th knob at left:38.75rem top:25.9375rem (620,415) - same column pitch continued, same small-knob treatment. Its below-graph spot is vacated; SYNC chip stays at (790,230)."
+    - "TAIL default changed 35 -> 0 (data-default and static label markup, which now reads 'TAIL - CUT' matching the isTail render() logic at value 0). Mirrors the APVTS `tail` parameter default change in PluginProcessor.cpp (same session) - a fresh instance cuts cleanly at the drop; ring-out is opt-in."
+  validation: "Geometry hand-verified: row knobs 60px wide at 116px pitch -> 56px gaps; TAIL at x=620 ends x=680, OUTPUT screen starts x=790 (110px clear); rows' bottom (415+72=487) within 560px page with 73px margin; no overlap with left-column chips (bottom edge 206px) or IMPACT hero."

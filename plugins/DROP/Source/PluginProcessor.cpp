@@ -193,7 +193,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         juce::ParameterID { "tail", 1 },
         "Tail",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
-        35.0f,
+        // POST-1.0 SIXTH IMPROVEMENT SESSION (2026-09-17, user-directed:
+        // "make the default tail zero") - default 35.0f -> 0.0f: a fresh
+        // instance now CUTS cleanly at the drop (tail==0 maps to the
+        // ~5ms kTailCutSeconds fast-fade window, see
+        // computeDurationsForNewBuild()); ring-out is opt-in via the knob.
+        0.0f,
         "%"));
 
     // --- POST-1.0 FOURTH IMPROVEMENT SESSION addition (2026-09-17, user-
@@ -1040,6 +1045,30 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     }
 }
 
+// POST-1.0 SIXTH IMPROVEMENT SESSION (2026-09-17): the Recovery tail
+// envelope as a PURE function of normalized recovery position t in [0,1] -
+// dB-linear over kTailFadeRangeDb (60dB), raised-cosine landing to an EXACT
+// 0.0 over the final (1 - kTailLandingStartT) of the window. Same math as
+// the previous inline computation (RunTests.cpp's "[POST-1.0] Tail
+// envelope" block mirrors it verbatim); factored out so processSegment()
+// can evaluate it PER-SAMPLE (see the blend loop at the end of
+// processSegment() for the root-cause story of why per-segment evaluation
+// was an audible bug).
+static float tailEnvelopeForT(float recoveryT) noexcept
+{
+    constexpr float kTailFadeRangeDb = 60.0f;
+    constexpr float kTailLandingStartT = 0.97f;
+    recoveryT = juce::jlimit(0.0f, 1.0f, recoveryT);
+    if (recoveryT <= kTailLandingStartT)
+        return std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * recoveryT);
+    const float envAtLandingStart = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * kTailLandingStartT);
+    const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
+    // Raised-cosine 1->0 over the landing window, scaled by the (already
+    // -60dB-quiet) level reached at its start - C0-continuous with the
+    // exponential branch at the seam, and EXACTLY 0 at recoveryT == 1.
+    return envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
+}
+
 void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int startSample, int numSamplesInSegment) noexcept
 {
     if (numSamplesInSegment <= 0)
@@ -1168,62 +1197,40 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // continuity" test's doc comment in RunTests.cpp for the expected
     // attack-then-decay shape this produces).
     // ------------------------------------------------------------------
-    float tailEnvelope = 1.0f;
-    if (dropState == drop::DropState::Recovery)
-    {
-        const int64_t recoveryTotal = dropStateMachine.currentStateLengthSamples();
-        if (recoveryTotal > 0)
-        {
-            const int64_t recoveryRemaining = dropStateMachine.samplesUntilNextTransition();
-            const int64_t recoveryElapsed = recoveryTotal - recoveryRemaining;
-            const float recoveryT = juce::jlimit(0.0f, 1.0f, (float) ((double) recoveryElapsed / (double) recoveryTotal));
-            // POST-1.0 FIFTH IMPROVEMENT SESSION bugfix (2026-09-17, user
-            // bug-audit report: "so the tails are natural reverb delay. and
-            // so the sound isnt cut in an instant when the tail is up").
-            // SUPERSEDES the squared decay `(1-t)^2` below (itself a
-            // 2026-09-17-same-day supersession of an earlier raised cosine -
-            // history kept for context): measured in DECIBELS, `(1-t)^2`
-            // ACCELERATES toward the end (-5dB at t=0.25, -12dB at t=0.5,
-            // -24dB at t=0.75, then plunges to -inf) - a long tail therefore
-            // rings audibly and then perceptibly SLAMS shut near the end,
-            // exactly the reported "cut in an instant when the tail is up".
-            // Natural reverb/delay decay is exponential, i.e. CONSTANT dB
-            // slope over time - this is now a genuinely decibel-linear ramp
-            // covering kTailFadeRangeDb from full down to (near-)silence:
-            //   t    0.25    0.5     0.75
-            //   dB   -15.0   -30.0   -45.0     (was -5 / -12 / -24 for (1-t)^2)
-            // -45dB at three-quarters through is comfortably below
-            // audibility for typical program material, so the final ~3% of
-            // the window (kTailLandingStartT..1.0) forces a smooth raised-
-            // cosine landing from that already-quiet point down to an EXACT
-            // 0.0 at t==1 - preserving the click-free/guaranteed-reached-zero
-            // invariant advanceStateMachineTicks() depends on (the Recovery
-            // ->Idle module-hygiene reset() sweep) while never producing an
-            // audible instant cut, since by t==0.97 the level is already
-            // deep in the noise floor.
-            constexpr float kTailFadeRangeDb = 60.0f;
-            constexpr float kTailLandingStartT = 0.97f;
-            if (recoveryT <= kTailLandingStartT)
-            {
-                tailEnvelope = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * recoveryT);
-            }
-            else
-            {
-                const float envAtLandingStart = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * kTailLandingStartT);
-                const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
-                // Raised-cosine 1->0 over the landing window, scaled by the
-                // (already-quiet) level reached at its start - C0-continuous
-                // with the exponential branch above at recoveryT ==
-                // kTailLandingStartT (both evaluate to envAtLandingStart
-                // there), and reaches EXACTLY 0 at recoveryT == 1.
-                tailEnvelope = envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
-            }
-        }
-        else
-        {
-            tailEnvelope = 0.0f; // zero-length Recovery edge case: matches the raised cosine's t==1 limit, immediately click-free-resettable
-        }
-    }
+    // POST-1.0 SIXTH IMPROVEMENT SESSION bugfix (2026-09-17, user DAW
+    // report: "fix the sound. It doesnt cut immedietly. it has artifacts in
+    // the end."). ROOT CAUSE: the previous code computed a SINGLE scalar
+    // `tailEnvelope` here from recoveryT at the SEGMENT'S START and applied
+    // it as a constant across the whole segment. Segments are cut only at
+    // state boundaries, so a short Recovery window sits entirely inside ONE
+    // segment - at tail==0 (the ~5ms kTailCutSeconds window, now also the
+    // DEFAULT) recoveryT evaluated to 0 -> envelope 1.0 for the ENTIRE
+    // window: the fade never actually happened at all, and the
+    // Recovery->Idle transition then hard-muted the still-full-level
+    // delay/reverb/impact tails in a single sample - the reported
+    // "doesn't cut immediately" + end-of-effect click artifact. (Same
+    // segment-granularity bug class as the GateModule note in NOTES.md; at
+    // larger host block sizes even LONG tails staircased audibly, up to
+    // ~-8dB instantaneous steps per 1024-sample block for the 150ms
+    // minimum tail.)
+    //
+    // FIX (single-application rule, per this plugin's recurring
+    // compounded-curves lesson): the envelope math (unchanged - dB-linear
+    // 60dB + raised-cosine landing to exact 0, see tailEnvelopeForT()
+    // above) is no longer multiplied into ANY per-segment weight. Instead
+    // the frozen Delay/Reverb return weights and ImpactEngine's return run
+    // UNSCALED through Recovery, and one PER-SAMPLE blend at the very end
+    // of this method applies the envelope to the segment's entire effect
+    // contribution (out = dry + (wet - dry) * env(t_sample)) - every
+    // wet-return stage it replaces was linear in its return weight, so this
+    // is mathematically the intended per-sample product, now reaching an
+    // EXACT 0.0 on Recovery's final sample regardless of block size (the
+    // click-free Recovery->Idle reset invariant, now actually honored at
+    // audio rate).
+    const int64_t recoveryTotalSamples = (dropState == drop::DropState::Recovery)
+        ? dropStateMachine.currentStateLengthSamples() : 0;
+    const int64_t recoveryElapsedAtSegmentStart = (recoveryTotalSamples > 0)
+        ? (recoveryTotalSamples - dropStateMachine.samplesUntilNextTransition()) : 0;
 
     if (dropState == drop::DropState::Building)
     {
@@ -1263,10 +1270,16 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // legacy path fixes the regression while keeping Recovery's new tail
     // behavior intact.
     const bool inRecovery = (dropState == drop::DropState::Recovery);
+    // POST-1.0 SIXTH IMPROVEMENT SESSION: during Recovery the frozen return
+    // weights are now applied UNSCALED - the tail decay is applied once,
+    // per-sample, at the end-of-segment blend (see the tailEnvelopeForT()
+    // root-cause comment above). Multiplying a segment-start envelope in
+    // here as well would both re-introduce the segment-granularity
+    // staircase AND double-apply the decay.
     const float delaySendWeight = inRecovery ? 0.0f : weights.value[(size_t) drop::BudgetModule::Delay];
-    const float delayReturnWeight = inRecovery ? (frozenDelayReturnWeight * tailEnvelope) : delaySendWeight;
+    const float delayReturnWeight = inRecovery ? frozenDelayReturnWeight : delaySendWeight;
     const float reverbSendWeight = inRecovery ? 0.0f : weights.value[(size_t) drop::BudgetModule::Reverb];
-    const float reverbReturnWeight = inRecovery ? (frozenReverbReturnWeight * tailEnvelope) : reverbSendWeight;
+    const float reverbReturnWeight = inRecovery ? frozenReverbReturnWeight : reverbSendWeight;
 
     // Stage 3 DSP Phase 3.4: ImpactEngine's coordination-drive values
     // (architecture.md: ImpactEngine "drives existing modules into a
@@ -1415,19 +1428,21 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     if ((dropState == drop::DropState::Impact || dropState == drop::DropState::Recovery)
         && impactCarryoverElapsedSamples >= 0)
     {
-        // impactAmount01Effective: scaled by the SAME tail envelope governing
-        // DelayModule/ReverbModule above (tailEnvelope == 1.0 throughout
-        // Impact, so this is a no-op there - only Recovery's raised-cosine
-        // decay actually attenuates it, letting the Tail knob govern
-        // ImpactEngine's continued tail exactly as it governs Delay/Reverb's).
-        const float impactAmount01Effective = impactAmount01 * tailEnvelope;
+        // POST-1.0 SIXTH IMPROVEMENT SESSION: impactAmount01 is now passed
+        // UNSCALED through Recovery too (previously multiplied by the
+        // segment-start tail envelope) - the Tail knob's decay is applied
+        // once, PER-SAMPLE, at the end-of-segment blend below, which covers
+        // ImpactEngine's linear reverb-return contribution exactly as it
+        // covers Delay/Reverb's (see tailEnvelopeForT()'s root-cause
+        // comment).
+        const float impactAmount01Effective = impactAmount01;
         // reverbSendWeightOverride: -1 (sentinel, "no override") during
         // Impact - preserves the EXACT prior single-weight behavior
         // (send==return==impactAmount01). During Recovery, forced to 0.0f so
         // the live pass-through audio arriving at that point (unrelated to
         // the drop by then) never re-excites shortTailReverb - only its
-        // ALREADY-excited internal state keeps ringing out, governed by
-        // impactAmount01Effective's tail-envelope decay.
+        // ALREADY-excited internal state keeps ringing out, decayed by the
+        // per-sample tail blend at the end of this method.
         const float reverbSendWeightOverride = (dropState == drop::DropState::Recovery) ? 0.0f : -1.0f;
         // accentLevel: Style-authored scale on the synthesized sub-hit/burst
         // accents ONLY (POST-1.0 2026-09-17, user DAW report: Dark Techno
@@ -1440,6 +1455,41 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
                               (double) dropStateMachine.currentStateLengthSamples(),
                               impactAmount01Effective, reverbSendWeightOverride, accentLevel);
         impactCarryoverElapsedSamples += numSamplesInSegment;
+    }
+
+    // ------------------------------------------------------------------
+    // POST-1.0 SIXTH IMPROVEMENT SESSION: the SINGLE application point of
+    // the Recovery tail envelope, per-sample (see tailEnvelopeForT()'s
+    // root-cause comment - the previous per-segment scalar meant the fade
+    // never actually happened inside short Recovery windows, ending in a
+    // full-level hard mute at Recovery->Idle: the reported "doesn't cut
+    // immediately" + end artifact). Blends the segment's ENTIRE effect
+    // contribution toward the untouched dry input captured at the top of
+    // processBlock() (dryCaptureBuffer - same absolute sample offsets):
+    //     out[i] = dry[i] + (out[i] - dry[i]) * env(t_i)
+    // Every Recovery wet stage this replaces (Delay/Reverb frozen returns,
+    // ImpactEngine's shortTailReverb return) is linear in its return
+    // weight, so this equals the intended per-sample weight product - and
+    // env(t) reaches an EXACT 0.0 on Recovery's final sample regardless of
+    // host block size, so the Recovery->Idle module-hygiene reset() sweep
+    // lands on a segment already bit-identical to dry: click-free by
+    // construction. RT-safe: dryCaptureBuffer is preallocated in
+    // prepareToPlay() and already written this block.
+    if (dropState == drop::DropState::Recovery)
+    {
+        const int chToBlend = juce::jmin(buffer.getNumChannels(), dryCaptureBuffer.getNumChannels());
+        for (int ch = 0; ch < chToBlend; ++ch)
+        {
+            float* out = buffer.getWritePointer(ch, startSample);
+            const float* dry = dryCaptureBuffer.getReadPointer(ch, startSample);
+            for (int i = 0; i < numSamplesInSegment; ++i)
+            {
+                const float t = (recoveryTotalSamples > 0)
+                    ? (float) ((double) (recoveryElapsedAtSegmentStart + (int64_t) i) / (double) recoveryTotalSamples)
+                    : 1.0f; // zero-length Recovery edge case: immediately fully dry, matches the env's t==1 limit
+                out[i] = dry[i] + (out[i] - dry[i]) * tailEnvelopeForT(t);
+            }
+        }
     }
 }
 

@@ -1,5 +1,49 @@
 # DROP Changelog
 
+### Fixed — 2026-09-17 (per-sample tail cut, TAIL default 0%, knob rows moved left)
+
+Stays at 1.0.0 per this repo's factory convention. User DAW report: "move
+all the knobs to the left add the tail knob lower to the knob rows. fix the
+sound. It doesnt cut immedietly. it has artifacts in the end. make the
+default tail zero."
+
+- **"Doesn't cut immediately / artifacts in the end" — segment-granularity
+  bug in the tail envelope.** **Root cause:** the (correct) dB-linear tail
+  envelope was evaluated ONCE per segment at the segment's start and applied
+  as a constant. Segments are cut only at state boundaries, so at `tail=0%`
+  the entire ~5ms `kTailCutSeconds` Recovery window sat inside ONE segment
+  with envelope `env(0) == 1.0` — the fade literally never ran, and the
+  Recovery→Idle transition then hard-muted the still-full-level
+  delay/reverb/impact tails in a single sample (the audible end click). At
+  larger host block sizes even long tails staircased (up to ~-8dB
+  instantaneous steps per 1024-sample block on the 150ms minimum tail).
+  **Fix (single-application rule):** the envelope math is unchanged
+  (`tailEnvelopeForT()`, dB-linear 60dB + raised-cosine landing to exact 0)
+  but is no longer multiplied into any per-segment weight — the frozen
+  Delay/Reverb returns and ImpactEngine run unscaled through Recovery, and
+  one per-sample blend at the end of `processSegment()`
+  (`out = dry + (wet − dry) × env(t_sample)`, against the existing
+  `dryCaptureBuffer`) applies the decay at audio rate, reaching an EXACT 0
+  on Recovery's final sample regardless of block size. Every wet stage it
+  replaces was linear in its return weight, so this equals the intended
+  per-sample product.
+- **`tail` default 35% → 0% (TAIL=CUT)** at user direction — a fresh
+  instance cuts cleanly at the drop; ring-out is opt-in. Parameter ID,
+  range, and mapping unchanged (strictly a default change; saved sessions
+  are unaffected — they carry their own value).
+- **UI (Advanced page):** the 2×5 module-macro grid moved LEFT by 8rem
+  (first column now aligns with the TENSION/CHAOS chips at left:2.5rem);
+  the TAIL knob joined the LOWER macro row as its 6th knob (same pitch),
+  vacating its below-the-graph spot; its static label now reads
+  "TAIL · CUT" matching the 0% default. `Source/ui/public/index.html` and
+  `.ideas/mockups/v10-ui.html` kept byte-identical; see v10-ui.yaml's
+  `knob_rows_left_shift_and_tail_join` amendment.
+- **Tests:** new end-to-end per-sample-cut block (1024-sample blocks —
+  larger than the whole cut window, reproducing the pre-fix failure by
+  construction: charged tails, silent input, asserts no single-sample step
+  across the cut and true silence after Idle); the two 35%-default
+  assertions superseded to 0%.
+
 ### Fixed — 2026-09-17 (Dark Techno: unwanted synthesized "kick" at the drop)
 
 Stays at 1.0.0 per this repo's factory convention. User DAW report: "on the

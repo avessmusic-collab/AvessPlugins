@@ -2724,8 +2724,12 @@ int main()
         auto* tailP = p.parameters.getParameter ("tail");
         check (tailP != nullptr, "PluginProcessor: `tail` parameter exists and is retrievable by ID");
         if (tailP != nullptr)
-            check (nearlyEqual ((double) tailP->getValue(), 0.35, 1.0e-6),
-                  "PluginProcessor: `tail` parameter defaults to 35% (normalized 0.35, range is 0-100% linear)");
+            // DOCUMENTED SUPERSESSION (2026-09-17, POST-1.0 SIXTH IMPROVEMENT
+            // SESSION, user-directed: "make the default tail zero"): was 35%
+            // (normalized 0.35). Default 0% == the TAIL=CUT behavior - a
+            // fresh instance cuts cleanly at the drop; ring-out is opt-in.
+            check (nearlyEqual ((double) tailP->getValue(), 0.0, 1.0e-6),
+                  "PluginProcessor: `tail` parameter defaults to 0% == TAIL=CUT (normalized 0.0; SUPERSEDES the original 35% default, changed 2026-09-17 at user direction)");
     }
 
     std::printf ("\n[POST-1.0] PluginProcessor - setStateInformation()/replaceState() tolerates a session missing `tail` (pre-1.0.0-tail compatibility)\n");
@@ -2762,11 +2766,142 @@ int main()
         auto* intensityP = target.parameters.getParameter ("intensity");
         check (tailP != nullptr, "pre-tail compatibility: `tail` parameter still exists after loading a state missing its node");
         if (tailP != nullptr)
-            check (nearlyEqual ((double) tailP->getValue(), 0.35, 1.0e-6),
-                  "pre-tail compatibility: `tail` loads at its default (35%) when absent from a restored pre-1.0.0-tail session");
+            // DOCUMENTED SUPERSESSION (2026-09-17): default is now 0% (CUT),
+            // see the default-value test above.
+            check (nearlyEqual ((double) tailP->getValue(), 0.0, 1.0e-6),
+                  "pre-tail compatibility: `tail` loads at its default (0% == CUT) when absent from a restored pre-1.0.0-tail session");
         if (intensityP != nullptr)
             check (nearlyEqual ((double) intensityP->getValue(), 0.9, 1.0e-4),
                   "pre-tail compatibility: the OTHER 19 parameters (e.g. intensity) still round-trip correctly through the SAME replaceState() call - proves this is a targeted `tail`-only default fallback, not a broken/no-op restore");
+    }
+
+    std::printf ("\n[POST-1.0] Per-sample tail cut - TAIL=CUT (0%%) fades to true silence inside its ~5ms window, click-free, no post-effect artifacts\n");
+    {
+        // POST-1.0 SIXTH IMPROVEMENT SESSION (2026-09-17, user DAW report:
+        // "fix the sound. It doesnt cut immedietly. it has artifacts in the
+        // end."). ROOT CAUSE (regression class: segment-granularity): the
+        // tail envelope was evaluated ONCE per segment at the segment's
+        // START. Segments are only cut at state boundaries, so at tail==0%
+        // the whole ~5ms kTailCutSeconds Recovery window sat inside ONE
+        // segment with envelope == env(0) == 1.0 - the fade NEVER actually
+        // ran, and Recovery->Idle then hard-muted the still-full-level
+        // delay/reverb/impact tails in a single sample (the audible end
+        // artifact). The fix applies the (unchanged) envelope math
+        // PER-SAMPLE at the end of processSegment(). This test uses a
+        // 1024-sample block - LARGER than the whole 240-sample cut window @
+        // 48kHz - so the pre-fix failure mode is reproduced by construction.
+        constexpr int blockSize = 1024;
+        constexpr double sr = 48000.0;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (sr, blockSize);
+        p.prepareToPlay (sr, blockSize);
+
+        // tail = 0% EXACTLY (the CUT special case; also the new default,
+        // asserted separately above). Delay+Reverb macros at 100% so the
+        // Building phase charges genuinely audible tails to cut; noise off
+        // (deterministic riser would blur the silence assertions).
+        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("delay")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("reverb")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f); // 1 bar
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        // Sine input while building (charges the delay/reverb sends); HARD
+        // SILENT from the first Peak-state block onward, so everything
+        // captured from Impact on is purely the plugin's own ringing state -
+        // the thing tail==0 must cut.
+        double phase = 0.0;
+        const double phaseInc = 2.0 * juce::MathConstants<double>::pi * 220.0 / sr;
+        bool sawPeak = false, sawImpact = false, sawIdleAfterImpact = false;
+        std::vector<float> captured;             // impact onward, channel 0
+        int idleBlocksCaptured = 0;
+        int firstIdleCaptureIndex = -1;          // index into `captured` where the first fully-Idle block starts
+        int measureStartIndex = -1;              // index into `captured` where Recovery-side measurement starts (first block whose PRE-state was Recovery, or the Impact->Idle straddle block)
+
+        for (int block = 0; block < 400 && idleBlocksCaptured < 3; ++block)
+        {
+            const auto preState = p.getCurrentDropState();
+            juce::AudioBuffer<float> buf (2, blockSize);
+            if (sawPeak)
+                buf.clear();
+            else
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float s = 0.5f * (float) std::sin (phase);
+                    phase += phaseInc;
+                    buf.setSample (0, i, s);
+                    buf.setSample (1, i, s);
+                }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            const auto postState = p.getCurrentDropState();
+            if (postState == drop::DropState::Peak) sawPeak = true;
+            if (preState == drop::DropState::Impact || postState == drop::DropState::Impact) sawImpact = true;
+
+            if (sawImpact)
+            {
+                const bool recoverySide = (preState == drop::DropState::Recovery)
+                    || (preState == drop::DropState::Impact && postState != drop::DropState::Impact);
+                if (recoverySide && measureStartIndex < 0)
+                    measureStartIndex = (int) captured.size();
+                if (sawIdleAfterImpact && firstIdleCaptureIndex < 0 && preState == drop::DropState::Idle)
+                {
+                    firstIdleCaptureIndex = (int) captured.size();
+                }
+                const float* out = buf.getReadPointer (0);
+                captured.insert (captured.end(), out, out + blockSize);
+                if (postState == drop::DropState::Idle) sawIdleAfterImpact = true;
+                if (sawIdleAfterImpact && preState == drop::DropState::Idle) ++idleBlocksCaptured;
+            }
+        }
+        p.releaseResources();
+
+        check (sawImpact && sawIdleAfterImpact, "per-sample tail cut test: transition reached Impact and returned to Idle within the block budget");
+        check (measureStartIndex >= 0 && firstIdleCaptureIndex > measureStartIndex,
+              "per-sample tail cut test: captured a Recovery-side measurement region followed by fully-Idle blocks");
+
+        if (measureStartIndex >= 0 && firstIdleCaptureIndex > measureStartIndex)
+        {
+            // (a) The tails being cut were genuinely audible going INTO the
+            //     cut (sanity - otherwise the criteria below are vacuous).
+            float maxAbs = 0.0f;
+            for (int i = measureStartIndex; i < firstIdleCaptureIndex; ++i)
+                maxAbs = juce::jmax (maxAbs, std::abs (captured[(size_t) i]));
+            std::printf ("  recovery-side peak |sample|: %.4f\n", maxAbs);
+            check (maxAbs > 1.0e-3f, "per-sample tail cut: the charged delay/reverb/impact tails are genuinely nonzero going into the cut window (test sanity)");
+
+            // (b) CLICK-FREE: max one-sample delta across the whole
+            //     Recovery-side region (which contains the entire ~5ms cut,
+            //     wherever it lands inside a block) stays a fraction of the
+            //     region's own peak level. The pre-fix hard mute produced a
+            //     single-sample step of ~the full tail amplitude (delta
+            //     ratio ~1.0); the per-sample -60dB fade plus the tails' own
+            //     smooth waveforms stay well below half that.
+            float maxDelta = 0.0f;
+            for (int i = measureStartIndex + 1; i < firstIdleCaptureIndex; ++i)
+                maxDelta = juce::jmax (maxDelta, std::abs (captured[(size_t) i] - captured[(size_t) (i - 1)]));
+            std::printf ("  recovery-side max one-sample delta: %.4f (ratio to peak: %.3f)\n", maxDelta, maxAbs > 0.0f ? maxDelta / maxAbs : 0.0f);
+            check (maxDelta < 0.5f * maxAbs + 1.0e-3f,
+                  "[POST-1.0] per-sample tail cut: no single-sample step anywhere across the cut window (the pre-fix per-segment envelope hard-muted full-level tails in one sample at Recovery->Idle and fails this bound by construction)");
+
+            // (c) TRUE SILENCE afterwards: with silent input, exact-zero
+            //     landing, and the Recovery->Idle module-hygiene reset, the
+            //     fully-Idle blocks after the cut must be silent - "no
+            //     artifacts after the effect ends".
+            double sumSq = 0.0;
+            int n = 0;
+            for (int i = firstIdleCaptureIndex; i < (int) captured.size(); ++i, ++n)
+                sumSq += (double) captured[(size_t) i] * (double) captured[(size_t) i];
+            const double idleRms = n > 0 ? std::sqrt (sumSq / (double) n) : 0.0;
+            std::printf ("  post-cut Idle RMS over %d samples: %.2e\n", n, idleRms);
+            check (idleRms < 1.0e-4,
+                  "[POST-1.0] per-sample tail cut: fully-Idle output after the cut is silent (< -80dBFS RMS) - no ringing residue, no stale-buffer artifacts after the effect ends");
+        }
     }
 
     std::printf ("\n[POST-1.0] PluginProcessor - `tail` parameter scales Recovery's duration (~0.15s just above 0%%, 100%% ~4.0s)\n");

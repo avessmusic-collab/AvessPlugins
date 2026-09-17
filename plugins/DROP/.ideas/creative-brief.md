@@ -44,7 +44,7 @@ Only high-value parameters are exposed (JUCE APVTS). Advanced per-module DSP int
 | Digital | 0–100% | macro | Advanced: bit/SR crush weight (added as 19th param per architecture.md resolution) |
 | Dry/Wet | 0–100% | 100% | Global mix |
 | Output | -inf–+12 dB | 0 dB | Output gain |
-| Tail | 0–100% | 35% | **POST-1.0 (2026-09-16):** ring-out length of the Recovery state (~0.15s–4.0s, exponential mapping); overrides the Style's recovery timing — see [parameter-spec.md](parameter-spec.md)'s `tail` entry and `plugins/DROP/CHANGELOG.md` |
+| Tail | 0–100% | 0% (CUT) | **POST-1.0 (2026-09-16, default 35%→0% 2026-09-17):** ring-out length of the Recovery state (0% = clean ~5ms cut, else ~0.15s–4.0s exponential mapping); overrides the Style's recovery timing — see [parameter-spec.md](parameter-spec.md)'s `tail` entry and `plugins/DROP/CHANGELOG.md` |
 | Noise Tension | 0–100% | 50% | **POST-1.0 (2026-09-17):** shapes HOW the white-noise riser builds (higher = later bloom, same directional sense as Tension); does not change noise level — see [parameter-spec.md](parameter-spec.md)'s `noiseTension` entry and `plugins/DROP/CHANGELOG.md` |
 
 ## UI Concept

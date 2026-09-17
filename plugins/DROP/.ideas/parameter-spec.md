@@ -174,10 +174,10 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 ### tail
 - **Type:** Float
 - **Range:** 0 to 100 %
-- **Default:** 35
+- **Default:** 0 (**changed 35 → 0, POST-1.0 sixth amendment 2026-09-17, user-directed "make the default tail zero"** — a fresh instance cuts cleanly at the drop; ring-out is opt-in)
 - **Skew Factor:** linear (the 0-100% UI range itself is linear; it is then mapped EXPONENTIALLY to seconds internally — see DSP Usage)
-- **UI Control:** Small neumorphic macro knob (same visual family as the 10 module macros), "TAIL · NN%" caption (Advanced page, below the tension-curve graph, left of the SYNC chip — relocated 2026-09-17, POST-1.0 fourth amendment; originally placed in the left column below Tension/Chaos, now occupied by `noiseTension`).
-- **DSP Usage:** **POST-1.0 addition — 2026-09-16 (user-directed improvement).** Latched at Arming (like `buildLength`). SETS the `Recovery` state's duration (Recovery IS the ring-out window during which DelayModule/ReverbModule/ImpactEngine's already-excited tails decay to silence) — OVERRIDES the active DropStyle's own `recoveryDivision` timing preference. Exact exponential mapping (see `PluginProcessor::computeDurationsForNewBuild()`): `tailSeconds = 0.15 * (4.0 / 0.15) ^ (tail/100)`. `tail=0%` → ~0.15s; `tail=100%` → ~4.0s; `tail=35%` (default) → ~0.47s.
+- **UI Control:** Small neumorphic macro knob (same visual family as the 10 module macros), "TAIL · NN%" caption ("TAIL · CUT" at 0%). Advanced page, 6th knob of the LOWER macro row (relocated 2026-09-17, POST-1.0 sixth amendment — see v10-ui.yaml `knob_rows_left_shift_and_tail_join`; previously below the tension-curve graph, originally in the left column below Tension/Chaos).
+- **DSP Usage:** **POST-1.0 addition — 2026-09-16 (user-directed improvement).** Latched at Arming (like `buildLength`). SETS the `Recovery` state's duration (Recovery IS the ring-out window during which DelayModule/ReverbModule/ImpactEngine's already-excited tails decay to silence) — OVERRIDES the active DropStyle's own `recoveryDivision` timing preference. Exact exponential mapping (see `PluginProcessor::computeDurationsForNewBuild()`): `tailSeconds = 0.15 * (4.0 / 0.15) ^ (tail/100)`, EXCEPT `tail≈0%` which is special-cased to the ~5ms `kTailCutSeconds` fast-fade window (the "TAIL = CUT" behavior — clean, click-free immediate cut). `tail=100%` → ~4.0s; `tail=35%` → ~0.47s.
 
 ### noiseTension
 - **Type:** Float
