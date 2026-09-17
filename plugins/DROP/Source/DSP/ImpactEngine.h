@@ -124,9 +124,19 @@ public:
      * tail envelope (so the ALREADY-excited reverb's output rings out
      * smoothly to 0 by Recovery's end, governed by the `tail` parameter).
      */
+    /*
+     * POST-1.0 (2026-09-17, user-directed - Dark Techno "adds a drum kick"):
+     * `accentLevel01` (Style-authored, DropStyleData::impactAccentLevel,
+     * default 1.0 == exact prior behavior for every existing call site)
+     * scales ONLY the synthesized sub-hit + burst accents. The low-end
+     * soft-clip safety and shortTailReverb still run unconditionally on the
+     * bus content, so an accent-free Style keeps the identical impact
+     * reverb/safety character.
+     */
     void process(juce::dsp::AudioBlock<float> block, double elapsedSamplesAtSegmentStart,
                  double totalWindowSamples, float impactAmount01,
-                 float reverbSendWeightOverride = -1.0f) noexcept;
+                 float reverbSendWeightOverride = -1.0f,
+                 float accentLevel01 = 1.0f) noexcept;
 
     /**
      * Isolated sub-hit-ONLY renderer (sine + AR envelope + bandpass; no

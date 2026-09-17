@@ -256,6 +256,13 @@ namespace
             t[3].vacuumDivision = MusicalDivision::ThirtySecond;
             t[3].vacuumFloorSeconds = 0.03;
             t[3].impactWindowSeconds = 0.24;
+            // POST-1.0 (2026-09-17, user DAW report: "on the dark techno
+            // preset somehow it adds a drum kick or a hit"): the synthesized
+            // sub-hit/burst accents read as an unwanted extra kick against
+            // techno material (which already carries its own kick on the
+            // downbeat the drop lands on). Accents fully disabled for this
+            // Style; the impact stays the source's own clean return.
+            t[3].impactAccentLevel = 0.0f;
             t[3].recoveryDivision = MusicalDivision::Half;
             t[3].sourceAwareScalar = makeSourceAwareTable(1.1f);
             t[3].lowFreqProtected = makeLowFreqFlags(true, true);

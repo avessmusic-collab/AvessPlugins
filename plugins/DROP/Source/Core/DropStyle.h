@@ -101,6 +101,15 @@ struct DropStyleData
     MusicalDivision vacuumDivision = MusicalDivision::ThirtySecond;
     double vacuumFloorSeconds = 0.025;
     double impactWindowSeconds = 0.22;
+
+    // POST-1.0 (2026-09-17, user-directed): scales ImpactEngine's
+    // SYNTHESIZED accents only - the 60Hz sub-hit ("kick") and 2.2kHz noise
+    // burst ("snap") that are additively layered on the drop. 0.0 = the
+    // impact stays purely the source's own clean return (creative-brief.md:
+    // the sub/noise accents are explicitly "optional"). Does NOT affect the
+    // source-transient emphasis, width expansion, short-tail reverb on the
+    // bus, or the Vacuum - those remain governed by the `impact` parameter.
+    float impactAccentLevel = 1.0f;
     // POST-1.0 OVERRIDE NOTE (2026-09-16, user-directed improvement, see
     // plugins/DROP/CHANGELOG.md): this field is now VESTIGIAL for Recovery's
     // actual duration - PluginProcessor::computeDurationsForNewBuild() no

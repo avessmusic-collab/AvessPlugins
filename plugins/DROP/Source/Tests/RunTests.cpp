@@ -1958,6 +1958,58 @@ int main()
     }
 
     //==========================================================================
+    std::printf ("\n[POST-1.0] Style-authored impact accents - Dark Techno adds NO synthesized kick/burst\n");
+    {
+        // User DAW report (2026-09-17): "on the dark techno preset somehow it
+        // adds a drum kick or a hit". Root cause: ImpactEngine's synthesized
+        // 60Hz sub-hit + 2.2kHz burst accents were unconditional for every
+        // Style. Fix: DropStyleData::impactAccentLevel (default 1.0) scales
+        // the accents only; Dark Techno authors it to 0.0.
+
+        // (a) Authoring data: Dark Techno (and only where intended) opts out.
+        int darkTechnoIndex = -1;
+        for (int i = 0; i < drop::kNumStyles; ++i)
+            if (std::strcmp (drop::getStyle (i).name, "Dark Techno") == 0)
+                darkTechnoIndex = i;
+        check (darkTechnoIndex >= 0, "accent opt-out: 'Dark Techno' Style exists in the table");
+        if (darkTechnoIndex >= 0)
+            check (drop::getStyle (darkTechnoIndex).impactAccentLevel == 0.0f,
+                  "accent opt-out: Dark Techno authors impactAccentLevel == 0.0 (no synthesized kick/snap on top of the drop)");
+        check (drop::getStyle (0).impactAccentLevel == 1.0f,
+              "accent opt-out: Clean EDM (Style 0) keeps the default impactAccentLevel == 1.0 (prior behavior preserved everywhere else)");
+
+        // (b) Engine behavior: with accentLevel01 == 0 and a SILENT bus, the
+        // impact window renders exactly silence - nothing synthesized is
+        // added (the shortTailReverb of silence is silence, and the low-end
+        // safety gain of 0 is 0). With accentLevel01 == 1 the same call
+        // renders clearly nonzero content (sanity: the gate is the accent
+        // level, not some other coincidence).
+        constexpr double testSampleRate = 48000.0;
+        constexpr int windowSamples = 12000; // 250ms - spans sub (~121.5ms) + burst (20ms) fully
+
+        auto renderPeak = [&] (float accentLevel) -> float
+        {
+            juce::dsp::ProcessSpec spec { testSampleRate, (juce::uint32) windowSamples, 2 };
+            drop::ImpactEngine engine;
+            engine.prepare (spec);
+            engine.setSeed (12345u);
+            juce::AudioBuffer<float> buf (2, windowSamples);
+            buf.clear();
+            juce::dsp::AudioBlock<float> blk (buf);
+            engine.process (blk, 0.0, (double) windowSamples, 1.0f, -1.0f, accentLevel);
+            return buf.getMagnitude (0, windowSamples);
+        };
+
+        const float peakAccentsOff = renderPeak (0.0f);
+        const float peakAccentsOn  = renderPeak (1.0f);
+        std::printf ("  silent-bus impact peak: accents OFF %.6f, accents ON %.6f\n", peakAccentsOff, peakAccentsOn);
+        check (peakAccentsOff == 0.0f,
+              "accent opt-out: accentLevel01==0 + silent bus -> ImpactEngine adds EXACTLY nothing (no kick, no snap, no reverb excitation)");
+        check (peakAccentsOn > 0.05f,
+              "accent opt-out sanity: accentLevel01==1 on the identical silent bus DOES render the synthesized accents (the gate is the accent level)");
+    }
+
+    //==========================================================================
     std::printf ("\n[Phase 3.4] Vacuum->Impact handoff - no double-envelope bump\n");
     {
         // Isolated from the other 10 always-process modules (which are

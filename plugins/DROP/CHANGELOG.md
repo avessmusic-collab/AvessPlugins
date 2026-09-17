@@ -1,5 +1,34 @@
 # DROP Changelog
 
+### Fixed — 2026-09-17 (Dark Techno: unwanted synthesized "kick" at the drop)
+
+Stays at 1.0.0 per this repo's factory convention. User DAW report: "on the
+dark techno preset somehow it adds a drum kick or a hit, why? explain and
+remove it."
+
+- **Root cause:** `ImpactEngine` intentionally layers two synthesized
+  accents on top of the source's return at the drop — a 60Hz sine "sub-hit"
+  with a ~1.5ms attack / ~120ms decay (i.e. exactly the envelope of a kick
+  drum) and a 20ms band-passed 2.2kHz noise "snap" — scaled only by the
+  Impact knob and applied unconditionally for EVERY Style. The Dark Techno
+  preset ships with Impact 65%, and techno source material already carries
+  its own kick on the very downbeat the drop lands on, so the accent reads
+  as a foreign added drum hit rather than reinforcement. (The
+  implementation-spec's impact philosophy calls these accents *optional*:
+  "clean return + optional short sub/noise accents".)
+- **Fix (data-driven, per the no-special-cases rule):** new
+  `DropStyleData::impactAccentLevel` (default 1.0 — behavior of every other
+  Style is bit-identical) scales ONLY the synthesized sub-hit + burst;
+  Dark Techno authors it to 0.0. The source-transient emphasis, width
+  expansion, short-tail impact reverb, Vacuum depth, and low-end safety
+  remain fully governed by the `impact` parameter and are unchanged.
+  `ImpactEngine::process()` gained a trailing `accentLevel01 = 1.0f`
+  parameter (existing call sites unaffected).
+- **Tests:** new `[POST-1.0]` block — asserts Dark Techno authors 0.0 and
+  Clean EDM keeps 1.0, and renders the impact window on a silent bus
+  proving accentLevel 0 adds EXACTLY nothing while accentLevel 1 on the
+  identical input does render the accents.
+
 ### Fixed — 2026-09-17 (bug-audit round: noise curve honesty/level, natural tail decay)
 
 Stays at 1.0.0 per this repo's factory convention. User-directed bug-audit

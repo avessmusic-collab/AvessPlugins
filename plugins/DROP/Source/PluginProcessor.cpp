@@ -1429,9 +1429,16 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
         // ALREADY-excited internal state keeps ringing out, governed by
         // impactAmount01Effective's tail-envelope decay.
         const float reverbSendWeightOverride = (dropState == drop::DropState::Recovery) ? 0.0f : -1.0f;
+        // accentLevel: Style-authored scale on the synthesized sub-hit/burst
+        // accents ONLY (POST-1.0 2026-09-17, user DAW report: Dark Techno
+        // "adds a drum kick" - that Style authors this to 0.0; see
+        // DropStyleData::impactAccentLevel). Uses the SAME
+        // activeStyleIndexForBuild latched at Arming as every other
+        // Style-driven decision in this build.
+        const float accentLevel = drop::getStyle(activeStyleIndexForBuild).impactAccentLevel;
         impactEngine.process(segmentBlock, (double) impactCarryoverElapsedSamples,
                               (double) dropStateMachine.currentStateLengthSamples(),
-                              impactAmount01Effective, reverbSendWeightOverride);
+                              impactAmount01Effective, reverbSendWeightOverride, accentLevel);
         impactCarryoverElapsedSamples += numSamplesInSegment;
     }
 }

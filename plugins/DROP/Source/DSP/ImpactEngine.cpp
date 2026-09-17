@@ -117,7 +117,7 @@ void ImpactEngine::renderSubHitOnly(float* monoOut, int numSamples, double elaps
 
 void ImpactEngine::process(juce::dsp::AudioBlock<float> block, double elapsedSamplesAtSegmentStart,
                             double totalWindowSamples, float impactAmount01,
-                            float reverbSendWeightOverride) noexcept
+                            float reverbSendWeightOverride, float accentLevel01) noexcept
 {
     juce::ignoreUnused(totalWindowSamples); // see header doc comment - every envelope here self-terminates from its own (much shorter) duration
 
@@ -127,6 +127,7 @@ void ImpactEngine::process(juce::dsp::AudioBlock<float> block, double elapsedSam
         return;
 
     impactAmount01 = juce::jlimit(0.0f, 1.0f, impactAmount01);
+    accentLevel01 = juce::jlimit(0.0f, 1.0f, accentLevel01);
     const int chCount = juce::jmin(numChannels, 2);
 
     for (int i = 0; i < numSamples; ++i)
@@ -140,7 +141,11 @@ void ImpactEngine::process(juce::dsp::AudioBlock<float> block, double elapsedSam
 
         // Mono-summed additive content (LOW-FREQUENCY PROTECTION - added
         // identically to every channel to avoid any phase risk at 40-80Hz).
-        const float additive = subSample + burstSample;
+        // accentLevel01 scales the accents AFTER the bandpass filters (both
+        // linear, so pre/post is equivalent) - the filters keep running so
+        // their internal state stays continuous if a Style change mid-tail
+        // ever re-enables accents.
+        const float additive = (subSample + burstSample) * accentLevel01;
 
         for (int ch = 0; ch < chCount; ++ch)
         {
