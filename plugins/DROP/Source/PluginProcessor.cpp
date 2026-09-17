@@ -254,6 +254,7 @@ DROPAudioProcessor::DROPAudioProcessor()
     // PluginProcessor.h's parameterChanged()/triggerEventPendingFlag doc
     // comments) - registered on "trigger" only, not all 19 parameters.
     parameters.addParameterListener("trigger", this);
+    triggerParamObject = parameters.getParameter("trigger");
 }
 
 DROPAudioProcessor::~DROPAudioProcessor()
@@ -828,6 +829,35 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // finest granularity APVTS exposes for this parameter either way) -
     // exchange() atomically consumes the flag so it can only fire once per
     // rising edge, matching the old polling logic's semantics exactly.
+    // POST-1.0 (2026-09-17, user DAW report: "the drop button isn't mapped
+    // correctly" - host automation). ROOT CAUSE: juce::AudioProcessorValueTreeState
+    // notifies its Listeners for HOST-driven parameter changes via a coalescing
+    // message-thread timer, not synchronously per change. A drawn automation step
+    // can therefore have its rising edge collapsed (the listener sees only the
+    // settled value) and parameterChanged() never observes false->true, so the
+    // drop never fires. A UI click still works because its setValueNotifyingHost()
+    // call notifies immediately - which is exactly why this only showed up under
+    // host automation.
+    //
+    // FIX: in addition to the listener, poll the cached raw parameter value once
+    // per block here and run the SAME rising-edge test against the SAME shared
+    // edge state. Whichever path observes the edge first wins; the atomic exchange
+    // guarantees exactly one fire per genuine false->true transition, so the two
+    // paths can never double-trigger. RT-safe (atomics only).
+    // NOTE the poll reads the PARAMETER OBJECT (getValue()), not APVTS's cached
+    // raw atomic: that cached atomic is itself only refreshed through the same
+    // notification path this backstop exists to survive, so polling it would
+    // inherit the very failure mode being guarded against. getValue() is an
+    // atomic read of the parameter's own current value - RT-safe and always
+    // current no matter how the host wrote it.
+    if (triggerParamObject != nullptr)
+    {
+        const bool rawHigh = triggerParamObject->getValue() > 0.5f;
+        const bool rawWasHigh = triggerEventEdgeSeenHigh.exchange(rawHigh, std::memory_order_acq_rel);
+        if (rawHigh && !rawWasHigh)
+            triggerEventPendingFlag.store(true, std::memory_order_release);
+    }
+
     if (triggerEventPendingFlag.exchange(false, std::memory_order_acq_rel))
         triggerEventOffset = 0;
 
@@ -1124,7 +1154,18 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
             const int64_t recoveryRemaining = dropStateMachine.samplesUntilNextTransition();
             const int64_t recoveryElapsed = recoveryTotal - recoveryRemaining;
             const float recoveryT = juce::jlimit(0.0f, 1.0f, (float) ((double) recoveryElapsed / (double) recoveryTotal));
-            tailEnvelope = 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * recoveryT));
+            // POST-1.0 (2026-09-17, user DAW report: "when the curve ends,
+            // lower the volume. dont cut the sound"). SUPERSEDES the raised
+            // cosine 0.5*(1+cos(pi*t)), which stays near full for the first
+            // part of the window and then falls away quickly - audibly a
+            // hold-then-chop rather than a fade. A squared decay lowers the
+            // level from the very first sample and trails off gently
+            // (t=0.25 -> 0.56, t=0.5 -> 0.25, t=0.75 -> 0.06, vs the cosine's
+            // 0.85 / 0.50 / 0.15), which reads as the tail being turned down.
+            // Still exactly 0 at t==1 WITH zero slope there, so it remains
+            // click-free by construction, and still monotonic.
+            const float oneMinusT = 1.0f - recoveryT;
+            tailEnvelope = oneMinusT * oneMinusT;
         }
         else
         {

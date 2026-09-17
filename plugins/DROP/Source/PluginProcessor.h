@@ -878,6 +878,12 @@ private:
     // cached for consistency with "all 19 parameters cached once" and in
     // case any future debug/UI readout wants the raw current value.
     std::atomic<float>* triggerParam = nullptr;
+    // The trigger PARAMETER OBJECT itself (not APVTS's cached raw atomic).
+    // getValue() always reflects the parameter's true current value, even when
+    // a host writes it without going through the notification path that updates
+    // APVTS's cached atomic - which is exactly the case the per-block rising-edge
+    // poll in processBlock() exists to cover. See that poll's comment.
+    juce::RangedAudioParameter* triggerParamObject = nullptr;
     std::atomic<float>* buildLengthParam = nullptr;
     std::atomic<float>* styleParam = nullptr;
     std::atomic<float>* intensityParam = nullptr;

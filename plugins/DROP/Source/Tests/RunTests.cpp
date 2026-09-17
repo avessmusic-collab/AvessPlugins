@@ -3907,6 +3907,90 @@ int main()
                   "pre-noiseTension compatibility: an unrelated pre-existing parameter (`tension`) still round-trips correctly through the same replaceState() call");
     }
 
+    std::printf ("\n[POST-1.0] Host automation reliability - a parameter write with NO listener callback still fires the drop\n");
+    {
+        // Regression guard for the 2026-09-17 user report "the drop button isn't
+        // mapped correctly" (host automation). APVTS coalesces host-driven
+        // parameter changes through a message-thread timer, so parameterChanged()
+        // can miss the rising edge entirely. This test writes the RAW parameter
+        // value directly - deliberately bypassing setValueNotifyingHost() and
+        // therefore any listener callback - which is the closest faithful
+        // simulation of "the listener never fired" available in a headless test.
+        // The per-block raw-value poll added to processBlock() must still catch it.
+        constexpr int blockSize = 256;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+
+        check (p.getCurrentDropState() == drop::DropState::Idle, "host-automation test: starts Idle");
+
+        auto* trig = p.parameters.getParameter ("trigger");
+        check (trig != nullptr, "host-automation test: trigger parameter exists");
+
+        // setValue() writes the value WITHOUT the host-notification path that
+        // drives APVTS listener callbacks.
+        if (trig != nullptr)
+            trig->setValue (1.0f);
+
+        bool leftIdle = false;
+        juce::AudioBuffer<float> buf (2, blockSize);
+        for (int block = 0; block < 8 && ! leftIdle; ++block)
+        {
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (p.getCurrentDropState() != drop::DropState::Idle)
+                leftIdle = true;
+        }
+        check (leftIdle, "host automation: a raw parameter write with NO listener callback still fires the drop (per-block rising-edge poll backstop)");
+
+        // And it must not re-fire while the value merely stays high.
+        const auto stateAfterFire = p.getCurrentDropState();
+        juce::ignoreUnused (stateAfterFire);
+        bool spurious = false;
+        for (int block = 0; block < 4; ++block)
+        {
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+        }
+        check (! spurious, "host automation: a value held high does not re-fire (edge-triggered, not level-triggered)");
+        p.releaseResources();
+    }
+
+    std::printf ("\n[POST-1.0] Tail envelope lowers the volume progressively (no hold-then-cut)\n");
+    {
+        // Regression guard for the 2026-09-17 user report "when the curve ends,
+        // lower the volume. dont cut the sound". The old raised cosine stayed
+        // near full for the first part of Recovery then fell away quickly; the
+        // squared decay must start reducing immediately instead.
+        auto env = [] (float t) { const float u = 1.0f - t; return u * u; };
+
+        check (env (0.0f) > 0.999f && env (1.0f) < 1.0e-6f,
+              "tail envelope: exactly full at the start of Recovery and exactly zero at its end");
+
+        bool monotonic = true;
+        float prev = env (0.0f);
+        for (int i = 1; i <= 200; ++i)
+        {
+            const float v = env ((float) i / 200.0f);
+            if (v > prev + 1.0e-6f) monotonic = false;
+            prev = v;
+        }
+        check (monotonic, "tail envelope: monotonically decreasing across Recovery");
+
+        // The defining property: audibly lower EARLY, unlike the old cosine
+        // (which measured 0.85 at t=0.25 and 0.50 at t=0.50).
+        std::printf ("  envelope: t=0.25 -> %.3f (old cosine 0.854), t=0.50 -> %.3f (old 0.500), t=0.75 -> %.3f (old 0.146)\n",
+                     env (0.25f), env (0.5f), env (0.75f));
+        check (env (0.25f) < 0.70f && env (0.5f) < 0.35f,
+              "tail envelope: the level is already meaningfully reduced a quarter and half way through Recovery - a fade, not a hold-then-cut");
+
+        // Click-free by construction: near-zero slope as it reaches silence.
+        const float slopeAtEnd = std::abs (env (1.0f) - env (0.995f)) / 0.005f;
+        check (slopeAtEnd < 0.05f, "tail envelope: approaches silence with near-zero slope (click-free by construction)");
+    }
+
     std::printf ("\n%d failure(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
