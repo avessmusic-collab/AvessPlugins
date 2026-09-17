@@ -106,7 +106,10 @@ void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
         const float outL = mono + (brightnessStateL - mono) * stereoWidth01;
         const float outR = mono + (brightnessStateR - mono) * stereoWidth01;
 
-        const float w = weightSmoothed.getNextValue() * riseAmount;
+        // kBaseLevel: POST-1.0 FIFTH IMPROVEMENT SESSION flat ~6dB level
+        // reduction (user bug-audit report: "too strong") - see this class's
+        // header doc comment on kBaseLevel.
+        const float w = weightSmoothed.getNextValue() * riseAmount * kBaseLevel;
 
         if (numChannels >= 2)
         {

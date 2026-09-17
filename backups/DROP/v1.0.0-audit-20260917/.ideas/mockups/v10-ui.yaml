@@ -1,0 +1,848 @@
+# DROP — UI Mockup v10 (design specification)
+# ============================================================
+# "Light Neumorphic" — Finalist B, presented alongside v9's
+# "Dark Iridescent" (Finalist A) so the user can choose between
+# the two before the design is locked for implementation.
+#
+# v9 is explicitly PROTECTED and untouched by this iteration.
+# This is a brand-new visual system built on TOP OF v9's already
+# validated geometry (reused verbatim, both pages) so the two
+# finalists are a fair, apples-to-apples comparison: same control
+# layout, same sizes, same interaction model — only the visual
+# language differs.
+#
+# References read for this iteration:
+#   - v10-reference-neumorphic-pedal.png (soft-UI guitar-pedal style
+#     panel: light warm-gray body, dual-shadow raised/recessed
+#     elements, large 3D domed knobs with a tiny position dot,
+#     no printed numerals on knob faces, dark inset LCD readouts)
+#   - v10-reference-neumorphic-suite.png (a fuller neumorphic
+#     plugin-suite reference: dark neon module-selector cards,
+#     dot-matrix-style orange readouts inside dark screens,
+#     LED-ring progress indicator around a hero knob, small
+#     macro-knob grid with "LABEL · NN%" caption pattern)
+#
+# User's verbatim requirement carried through every decision below:
+#   "i want the knobs to have 3d apearence, and the surfaces to
+#    have textures."
+# ============================================================
+
+meta:
+  plugin: DROP
+  version: 10
+  iteration_of: v9 (kept untouched — protected finalist A)
+  design_name: "Light Neumorphic"
+  companion_finalist: v9 ("Dark Iridescent")
+  status: "FINALIZED — selected by user 2026-09-14 as DROP's design (over v9 Dark Iridescent); locked for implementation"
+  finalized: true
+  finalized_date: 2026-09-14
+  amended: "2026-09-14 (post-finalization, user direction): soap-bubble centerpiece REMOVED entirely; Main page center column rebalanced; marble asset whitened 30% toward white (original kept as v10-marble2-texture-hd-orig.jpg). See bubble_removal below."
+  active_background_asset: v10-marble2-texture-hd.jpg
+  reused_from_v9:
+    - "Both pages' full control geometry (Main + Advanced), verbatim, unchanged."
+    - "The 28-point soft-body bubble physics simulation and its HD densified
+       render pipeline (catmullRomPos / densifyClosed / polylinePath),
+       ported wholesale — byte-identical simulation and render math."
+    - "The simulated-audio-input driver (simulatedInputLevel, kick+wiggle
+       envelope, beat-synced pokes) and its debug-monitor sim toggle."
+    - "The DROP trigger state machine (building -> peak -> vacuum -> impact
+       -> recovery -> idle) and all phase-timing logic."
+    - "Root-em ResizeObserver scaling model (BASE_W 1000 / BASE_H 560,
+       clamp 0.75-1.5x, font-size-driven rem scaling, no viewport units)."
+  changed_from_v9:
+    - "Entire visual language: dark iridescent glass -> light neumorphic
+       soft-UI with a warm off-white body."
+    - "All knobs rebuilt as neumorphic dome-in-well controls: a recessed
+       circular well (inset dual-shadow) containing a raised dome
+       (outset dual-shadow + radial highlight), with NO printed numeral
+       on the knob face — matches both references exactly, where knob
+       value is legible only via a thin orange arc + a small rotating
+       position dot on the dome rim."
+    - "Knob value now displayed as 'LABEL · NN%' caption text beneath
+       each knob (reference 2's pattern) instead of v9's on-glass overlay."
+    - "Impact hero knob gains a 28-dot LED progress ring around its well,
+       replacing v9's plain arc-only treatment."
+    - "The dark bubble chamber is now framed as an inset dark LCD screen
+       (rounded-rect, glass-bezel styling) rather than a circular chamber;
+       the phase-label chip and progress strip are restyled as dot-matrix-
+       style orange-on-black mini screens, matching the reference's
+       LCD read-out language."
+    - "Tension / Chaos / Output bare-number readouts become small dark
+       inset mini-screens with orange monospace digits (previously plain
+       text readouts)."
+    - "Style selector becomes a dark neon card (purple glow accent),
+       inspired by reference 2's module-selector chips."
+    - "DROP trigger becomes a raised neumorphic pill with a physical
+       press-in shadow-swap and an orange glow ring when armed."
+    - "Accent color system: iridescent cyan/violet/magenta (v9) ->
+       single warm orange accent (#E8823C / #FF9A4D) for all light-panel
+       UI chrome. The bubble itself keeps its native iridescent palette
+       unchanged, since it lives inside a dark screen exactly as it did
+       in v9 and already reads well there."
+    - "Added surface texture (pass 1, superseded by pass 2 below): a very
+       low-opacity SVG feTurbulence noise layer across the whole body
+       (plaster/crack read) plus small embossed dot-grid decorative
+       clusters (pure background decoration, non-interactive, added with
+       zero layout-validator risk since they are not registered controls)."
+    - "PASS 2 (in-place refinement, same v10, per user feedback): body
+       texture replaced with a convincing WHITE MARBLE surface — bright
+       white base with soft branching gray veining (anisotropic
+       feTurbulence, large-scale so it reads as slab veining rather than
+       noise) plus a faint secondary fine-grain layer. Replaces the
+       plaster/crack read entirely."
+    - "PASS 2: the dark inset LCD bubble chamber was REMOVED — the
+       iridescent soap bubble now floats directly on the white marble
+       body. Bubble rendering retuned for the light background: stronger
+       rim saturation/visibility, a translucent-but-legible interior fill
+       (marble still shows through), white speculars kept, and a soft
+       neutral gray contact shadow beneath it (was pure black, tuned for
+       the old dark chamber). ALL physics/reactivity/pop behavior
+       unchanged. The phase chip + progress strip that lived inside that
+       screen moved onto the marble as light-theme neumorphic recessed
+       wells (dark text, orange accents) instead of dark LCD elements."
+    - "PASS 2: style/preset selector restyled from a dark neon purple-glow
+       card to solid black/near-black, matching the same dark family used
+       by the mini-LCD readout screens (tension/chaos/output/curve) —
+       orange dot-matrix-style text, no purple neon remaining anywhere in
+       the file."
+    - "PASS 2: Impact knob centering bug found and fixed. Root cause: the
+       rendered HTML used left:29.375rem (470px) for the impact knob-wrap
+       while the YAML/validator table always specified x=435px — a stray
+       35px rightward offset that was never actually in the rendered
+       markup despite being documented as centered. Corrected to
+       left:27.1875rem (435px), giving a true box-center of
+       435 + 130/2 = 500px, matching the shared page-center axis (verified
+       via pageNav 400..600 center=500, and wordmark/makerMark symmetry:
+       (79+921)/2=500). Also fixed a related concentricity risk in the
+       Impact LED dot-ring: it was appended to the knob-wrap (whose total
+       height includes the caption text below the knob), so its 50%/50%
+       anchor was NOT the well's true vertical center. Fixed by appending
+       the ring directly to the well element itself (explicit square
+       size, position:relative), making it provably concentric with the
+       dome at every scale — same zero-ambiguity centering technique used
+       for the knob value-arc and proven in v7's knob-arc fix."
+
+window:
+  width: 1000
+  height: 560
+  min_width: 800
+  min_height: 450
+  max_width: 1400
+  max_height: 790
+  resizable: true
+  scaling_model: "root-em ResizeObserver (BASE_REM 16px, clamp 0.75x-1.5x on min(w/1000,h/560)); no viewport units used anywhere"
+
+assets:
+  - file: "v10-marble2-texture-hd.jpg"
+    purpose: "ACTIVE body surface texture (PASS 7) -- referenced via CSS background-image: url(\"v10-marble2-texture-hd.jpg\") on #marbleImage, same folder as the test HTML. Bright white polished marble with delicate blue-gray veining, denser graceful veins across the upper band and calmer white below; replaces the rough stone photo, which the user found overwhelmed the UI. User pre-cropped this landscape slice, lightly sharpened."
+    dimensions: "4201x2352 (source); rendered via background-size:cover so it scales proportionally with the panel, no fixed pixel dependency; no CSS filter/opacity/blend-mode applied to #marbleImage, so it renders at full clarity"
+    production_note: >
+      This is a real binary image asset, not something the WebView can inline
+      as CSS/SVG. In the production JUCE build it must be bundled as a
+      WebView resource (added to the plugin's resource-provider mapping
+      alongside index.html/styles/scripts) and served at the same relative
+      path the CSS references, so the background-image URL resolves
+      identically to how it resolves here as a plain relative file reference
+      in the browser mockup. Flag for the implementation stage: register
+      v10-marble2-texture-hd.jpg (or a production-renamed equivalent) in the
+      plugin's WebView resource bundle/manifest before wiring this design to
+      real JUCE code.
+  - file: "v10-stone-texture-hd.jpg"
+    purpose: "ALTERNATE body surface texture (PASS 6, kept for A/B) -- the rougher natural-stone look (cream/beige, gray speckled zones, ochre tints). NOT currently referenced by any CSS (superseded by marble2 in pass 7 after the user found it overwhelmed the UI), but left on disk for comparison. If restored, its own pass-6 --text-halo (2px/.97, 6px/.85, 11px/.65) and warm blobShadow (#332E28, opacity 0.36-0.48) tuning should be restored too, since pass 7's values were relaxed specifically for the much-brighter marble2 image."
+    dimensions: "4000x2240; same cover/no-repeat/center rules apply"
+  - file: "v10-marble-texture-hd.jpg"
+    purpose: "ALTERNATE body surface texture (PASS 5, kept for A/B) -- the polished Calacatta marble look. NOT currently referenced by any CSS. Its pass-5 --text-halo (2px/.95, 5px/.8, 9px/.55) and blobShadow (#2E3138, opacity 0.34-0.46) tuning happen to match pass 7's current (marble2) values exactly, since both images have similarly bright/gentle histograms -- so no retuning would be needed if this file is restored instead."
+    dimensions: "3052x2196; same cover/no-repeat/center rules apply"
+  - file: "v10-marble-texture.png"
+    purpose: "REFERENCE ONLY (superseded, PASS 5) -- the original lower-resolution Calacatta source (1526x1098). No longer referenced by any CSS; retained purely as the original reference file, not bundled in production."
+
+pages:
+  - id: main
+    label: "Main"
+    description: >
+      Minimal control surface: build-length step wells, phase/progress
+      readout (light neumorphic recessed wells), a bubble that floats
+      directly on the white marble body (no chamber), style/preset
+      selector (solid black LCD-style card), DROP trigger (neumorphic
+      pill), and two large hero neumorphic knobs (Intensity, Dry/Wet).
+  - id: advanced
+    label: "Advanced"
+    description: >
+      Trigger-mode pill, Tension/Chaos mini-LCD readouts, tension-curve
+      dark screen, Impact hero knob with LED progress ring, 10-knob
+      module macro grid (2 rows x 5), Output mini-LCD readout.
+
+styling:
+  design_language: "light neumorphic soft-UI, warm off-white body, dual-shadow raised/recessed elements, dark inset LCD screens for all numeric readouts"
+  colors:
+    body_bg: "#ECEDF1"
+    body_bg_secondary: "#E3E5EB"
+    page_backdrop_harness_only: "#9A9DA8"
+    text_dark: "#5B5E6B"
+    text_dark_dim: "#9296A3"
+    text_strong: "#3C3F49"
+    screen_bg_top: "#202226"
+    screen_bg_bottom: "#17181B"
+    accent: "#E8823C"
+    accent_bright: "#FF9A4D"
+    accent_glow: "rgba(232,130,60,0.55)"
+    bubble_palette: "iridescent cyan/violet/magenta/gold gradient system retained (rim/pop colors slightly more saturated in pass 2 for legibility against the light marble body); interior fill gradient retuned from v9's glass-on-dark values to a translucent gray-blue-tinted fill so the bubble reads clearly while the marble still shows through; contact shadow retuned to soft neutral gray (was pure black, tuned for the removed dark chamber)"
+    marble_veins: "PASS 4: real HD Calacatta marble photograph (v10-marble-texture.png, user-supplied reference) — hand-authored SVG strokes (pass 3) could not reach photographic fidelity; the actual photo is now the body surface, lightened by a white veil where needed for legibility; see texture.body_marble_veins below for the full implementation + sampled-pixel honesty check"
+  neumorphic_shadow_tokens:
+    raised_shadow_dark: "8px 8px 16px rgba(160,163,175,0.55)"
+    raised_shadow_light: "-8px -8px 16px rgba(255,255,255,0.95)"
+    raised_shadow_dark_sm: "4px 4px 8px rgba(160,163,175,0.5)"
+    raised_shadow_light_sm: "-4px -4px 8px rgba(255,255,255,0.9)"
+    recessed_inset_dark: "inset 4px 4px 8px rgba(160,163,175,0.55)"
+    recessed_inset_light: "inset -4px -4px 8px rgba(255,255,255,0.9)"
+    recessed_inset_dark_sm: "inset 2px 2px 4px rgba(160,163,175,0.5)"
+    recessed_inset_light_sm: "inset -2px -2px 4px rgba(255,255,255,0.85)"
+    single_light_source_convention: "top-left warm light, bottom-right shadow — applied consistently to every raised/recessed element"
+  fonts:
+    primary: "Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
+    mono_lcd: "'IBM Plex Mono', 'SF Mono', monospace"
+  texture:
+    body_marble_veins: >
+      History: PASS 5 (Calacatta, p2 lum ~164) used --text-halo 2px/.95,
+      5px/.8, 9px/.55 and blobShadow #2E3138/opacity 0.34-0.46. PASS 6
+      (rough stone, p2 lum ~98, much darker/busier) strengthened the halo to
+      2px/.97, 6px/.85, 11px/.65 and warmed the blobShadow to #332E28/opacity
+      0.36-0.48 -- but the user found the rough stone photo overwhelmed the
+      UI and replaced it.
+      PASS 7 (current, active): new reference -- a bright white polished
+      marble with delicate blue-gray veining (v10-marble2-texture-hd.jpg,
+      4201x2352, denser graceful veins across the upper band, calmer white
+      below, user-cropped and lightly sharpened). #marbleImage now points at
+      this file; architecture unchanged: NO CSS filter/opacity/blend-mode on
+      #marbleImage (full clarity), background-size:cover + no-repeat scales
+      proportionally on resize with no viewport units, no global veil, every
+      opaque neumorphic surface still fully occludes the marble beneath it.
+      Because this image is much brighter than the rough stone (closer to
+      the original Calacatta, in fact gentler still), the pass-6 halo
+      strength read as visibly heavy/opaque against its near-white zones, so
+      it was RELAXED back to the pass-5 values -- verified comfortable
+      clearance first (see visibility check below). The blobShadow was
+      reverted to the cooler #2E3138/pass-5 opacity family, since the warm
+      tint tuned for the ochre stone no longer suits a cool blue-gray-veined
+      white marble (a color-harmony judgment, not a contrast necessity --
+      see shadow-specific note below).
+    body_marble_veins_visibility_check: >
+      Honesty check re-run against the ACTUAL new marble2 image (not reused
+      stone/Calacatta numbers): sampled v10-marble2-texture-hd.jpg
+      (4201x2352, downsampled 4x for speed) via PIL, computed perceptual
+      luminance per pixel. Results: min 52.3, p1 179.1, p2 196.6, p5 211.9,
+      p10 219.9, median 229.0, mean 226.5 -- substantially brighter/gentler
+      than both the rough stone (p2 98.4) and even the original Calacatta HD
+      image (p2 163.9); this photo has the mildest, most delicate veining of
+      the three tried so far.
+      UI text-color luminances (unchanged): text_strong #3C3F49 = 63.1,
+      text_dark #5B5E6B = 94.3, accent #E8823C (kv-num) = 146.6,
+      text_dark_dim #9296A3 = 150.1.
+      WITHOUT any halo at all: text_dark (94.3) vs this image's p2 typical
+      zone (196.6) = 102.3-level delta; text_dark_dim (150.1) vs p2 = 46.5;
+      even against the absolute darkest outlier pixel (52.3), text_dark_dim
+      still clears by 97.8. In other words, this specific image poses no
+      real legibility risk even unprotected -- a sharp contrast with pass 6's
+      near-total collision on the stone photo.
+      Relaxed --text-halo back to pass-5 strength: 0 0 2px rgba(255,255,255,.95),
+      0 0 5px rgba(255,255,255,.8), 0 0 9px rgba(255,255,255,.55). Verified
+      BEFORE reverting: innermost layer (2px, .95 alpha) composited over the
+      absolute darkest outlier pixel in this image (52.3) = (1-.95)*52.3 +
+      .95*255 = 244.9. Resulting deltas against every UI text color at that
+      worst-case composited value: text_strong 181.8, text_dark 150.6,
+      accent 98.3, text_dark_dim 94.8 -- all comfortably clear (94+ level
+      margins on the actual darkest pixel in the whole image, not just a
+      typical zone), confirming the relaxation is safe, not merely
+      convenient. Because the halo is lighter now, the marble's delicate
+      veining reads with full clarity everywhere except the handful of px
+      immediately behind label glyphs.
+      Orange arcs re-confirmed structurally protected without any treatment:
+      every knob-arc SVG lives inside a knob-well with a solid opaque
+      var(--body-bg) fill -- arcs never touch raw marble pixels on either
+      page; accent color (#E8823C) unchanged across all three background
+      passes.
+      Bubble grounding shadow: reverted fill to #2E3138 (lum ~48.9, below
+      this image's own darkest sampled pixel of 52.3) and opacity ramp to
+      0.34-0.46 (the pass-5 values). A plain dark ellipse silhouettes clearly
+      against any zone of this bright image regardless of exact color
+      choice, so this revert is a color-harmony judgment (cool tint matches
+      the marble's blue-gray veins better than the warm tint tuned for the
+      ochre stone), not a response to a measured contrast failure.
+    body_fine_grain: "remains removed (pass 4 decision unchanged) -- the synthetic feTurbulence grain layer stays unnecessary now that the real HD photograph supplies authentic grain/detail at higher fidelity than the original PNG"
+    dot_grid_accents: "small 4-column embossed-dot clusters (3px dots, subtle inset+highlight shadow) placed as pure background decoration near unused panel corners; non-interactive, not registered as layout-validated controls; unchanged since pass 2"
+  dot_matrix_readouts:
+    approximation_note: >
+      True bitmap dot-matrix glyphs were not used; approximated via
+      IBM Plex Mono, uppercase, wide letter-spacing, orange color with
+      a soft text-shadow glow to read as an LCD/VFD-style digital
+      readout at typical viewing size. Documented here as a deliberate
+      stylistic approximation, not a literal dot-matrix font asset.
+
+controls:
+  # ---- Header / navigation (shared both pages) ----
+  - id: pageNav
+    type: page_nav
+    page: [main, advanced]
+    position: { x: 400, y: 16 }
+    size: { width: 200, height: 28 }
+    style: "neumorphic recessed pill track, raised sliding indicator, 420ms spring-eased slide"
+
+  # ---- MAIN PAGE ----
+  - id: buildLength
+    type: combo
+    page: main
+    position: { x: 40, y: 112 }
+    size: { width: 252, height: 58 }
+    values: [1, 2, 4, 8, 16]
+    default: 4
+    label: "BUILD LENGTH (BARS)"
+    style: "5 recessed circular wells; active well gets an orange ring + glow"
+
+  - id: phaseChip
+    type: readout
+    page: main
+    position: { x: 420, y: 70 }
+    size: { width: 160, height: 18 }
+    style: "light neumorphic recessed pill — dark dim text + neutral LED dot at rest, switching to orange text + glowing LED dot while a drop is in progress; anchors the top of the center column"
+
+  # (orbWrap / soap-bubble visualizer REMOVED 2026-09-14 — see bubble_removal below)
+
+  - id: style
+    type: combo
+    page: main
+    position: { x: 390, y: 180 }
+    size: { width: 220, height: 36 }
+    values: ["Clean EDM","Big Room","Techno Pressure","Dark Techno","Trap Pull","DnB Rush","Hyper","Cinematic","Minimal","Vocal Build","Drum Build","Synth Build","Full Mix","Destroy","Vacuum","Reverse Energy"]
+    default: "Clean EDM"
+    label: "Style"
+    style: "PASS 2: restyled to solid black/near-black, matching the same dark family used by the mini-LCD readout screens (was a purple-glow neon card) — orange dot-matrix-style text, chevron nav either side, reads as '‹ CLEAN EDM ›' on a small dark inset screen"
+
+  - id: trigger
+    type: toggle
+    page: main
+    position: { x: 360, y: 260 }
+    size: { width: 280, height: 64 }
+    label: "DROP"
+    style: "raised neumorphic pill, enlarged to hero scale after the bubble's removal (now the Main page's centerpiece interaction); press-in inset shadow-swap on click; orange glow ring while armed"
+
+  - id: progressStrip
+    type: readout
+    page: main
+    position: { x: 380, y: 360 }
+    size: { width: 240, height: 12 }
+    style: "light neumorphic recessed track, widened after the bubble's removal — orange fill bar + drop-marker tick; fill brightness/glow now scales with tension x input level (see progress_strip_visualization_contract)"
+
+  - id: intensity
+    type: slider
+    page: main
+    position: { x: 66, y: 200 }
+    size: { width: 220, height: 300 }
+    range: [0.0, 100.0]
+    default: 50.0
+    label: "Intensity"
+    control_style: "hero neumorphic knob (11rem well / 7.5rem dome), thin orange value arc, rotating position dot, 'INTENSITY · NN%' caption below"
+
+  - id: dryWet
+    type: slider
+    page: main
+    position: { x: 714, y: 200 }
+    size: { width: 220, height: 300 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Dry/Wet"
+    control_style: "hero neumorphic knob (identical treatment to Intensity)"
+
+  # ---- ADVANCED PAGE ----
+  - id: triggerMode
+    type: combo
+    page: advanced
+    position: { x: 40, y: 80 }
+    size: { width: 248, height: 32 }
+    values: [manual, midi, auto]
+    default: manual
+    label: "Trigger Mode"
+    style: "neumorphic 3-way pill, same mechanic as pageNav"
+
+  - id: tension
+    type: slider
+    page: advanced
+    position: { x: 40, y: 150 }
+    size: { width: 108, height: 56 }
+    range: [0.0, 100.0]
+    default: 50.0
+    label: "Tension"
+    control_style: "dark inset mini-LCD, orange monospace digits, chevron step buttons, drag-to-adjust"
+
+  - id: chaos
+    type: slider
+    page: advanced
+    position: { x: 158, y: 150 }
+    size: { width: 108, height: 56 }
+    range: [0.0, 100.0]
+    default: 0.0
+    label: "Chaos"
+    control_style: "identical mini-LCD treatment to Tension"
+
+  # POST-FINALIZATION AMENDMENT (2026-09-15, Stage 3 GUI Phase 4.2) - see
+  # midi_trigger_note_chip note below for full rationale/geometry-derivation.
+  # REMOVED 2026-09-17 (user-directed: "remove midi note selection") - see
+  # midi_trigger_note_chip_removal amendment note below. Entry kept here
+  # (not deleted) purely as a historical record, matching this file's own
+  # established convention of amending-forward rather than rewriting history.
+  - id: midiNoteChip
+    type: readout_stepped
+    page: advanced
+    position: { x: 276, y: 150 }
+    size: { width: 108, height: 56 }
+    non_apvts: true
+    default: 60 # C3 - matches PluginProcessor.h's kDefaultMidiTriggerNote
+    label: "MIDI Note"
+    status: "REMOVED 2026-09-17 - see midi_trigger_note_chip_removal amendment note"
+    control_style: "identical mini-LCD treatment to Tension/Chaos (dark inset screen, orange monospace note-name readout, up/down chevron step - no drag, discrete note picker) - dimmed/inert (0.4 opacity, pointer-events:none) except while Trigger Mode == MIDI; bridged via 'setMidiTriggerNote'/'getInitialUIState' native functions, NOT a WebSliderRelay (same non-parameter-state treatment as triggerMode)"
+
+  - id: curveBox
+    type: visualizer
+    page: advanced
+    position: { x: 620, y: 80 }
+    size: { width: 300, height: 140 }
+    style: "dark inset LCD screen, orange curve line + dot playhead, glass gloss sweep"
+
+  - id: impact
+    type: slider
+    page: advanced
+    position: { x: 435, y: 100 }
+    size: { width: 130, height: 150 }
+    range: [0.0, 100.0]
+    default: 50.0
+    label: "Impact"
+    control_style: "hero neumorphic knob with a 28-dot LED progress ring around the well; box-centered on x=500, the shared page-center axis (verified via pageNav center and wordmark/makerMark symmetry)"
+    centering_fix_pass2:
+      bug_found: "the RENDERED HTML used left:29.375rem (470px) for the knob-wrap, NOT the documented x=435px — a 35px rightward offset never present in the YAML/validator table but present in the actual markup, so Impact visibly sat right-of-center despite the file 'saying' it was centered"
+      fix_applied: "left corrected to 27.1875rem (435px); wrap width unchanged at 8.125rem (130px)"
+      verified_center_x: "435 + 130/2 = 500px, exactly on the page-center axis"
+      led_ring_concentricity_bug_found: "the 28-dot LED ring svg was appended to the knob-wrap element (whose total box height includes the caption text below the knob), so its top:50% anchor was pulled toward the midpoint of (well + label) rather than the well's true vertical center -- a latent vertical-offset risk"
+      led_ring_fix_applied: "svg now appended directly to the well element itself (explicit 6.5rem square, position:relative), so its 50%/50% + translate(-50%,-50%) anchor is provably concentric with the dome at every scale, independent of caption height -- same zero-ambiguity technique used for the value-arc and proven in v7's knob-arc fix"
+
+  - id: filter
+    type: slider
+    page: advanced
+    position: { x: 168, y: 320 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Filter"
+    control_style: "small neumorphic macro knob (3.4rem well / 2.1rem dome), 'FILTER · NN' caption"
+
+  - id: width
+    type: slider
+    page: advanced
+    position: { x: 284, y: 320 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Width"
+    control_style: "small neumorphic macro knob"
+
+  - id: pitch
+    type: slider
+    page: advanced
+    position: { x: 400, y: 320 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Pitch"
+    control_style: "small neumorphic macro knob"
+
+  - id: gate
+    type: slider
+    page: advanced
+    position: { x: 516, y: 320 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Gate"
+    control_style: "small neumorphic macro knob"
+
+  - id: stutter
+    type: slider
+    page: advanced
+    position: { x: 632, y: 320 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Stutter"
+    control_style: "small neumorphic macro knob"
+
+  - id: delay
+    type: slider
+    page: advanced
+    position: { x: 168, y: 415 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Delay"
+    control_style: "small neumorphic macro knob"
+
+  - id: reverb
+    type: slider
+    page: advanced
+    position: { x: 284, y: 415 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Reverb"
+    control_style: "small neumorphic macro knob"
+
+  - id: distortion
+    type: slider
+    page: advanced
+    position: { x: 400, y: 415 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Distortion"
+    control_style: "small neumorphic macro knob"
+
+  - id: digital
+    type: slider
+    page: advanced
+    position: { x: 516, y: 415 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Digital"
+    control_style: "small neumorphic macro knob"
+
+  - id: noise
+    type: slider
+    page: advanced
+    position: { x: 632, y: 415 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 100.0
+    label: "Noise"
+    control_style: "small neumorphic macro knob"
+
+  - id: output
+    type: slider
+    page: advanced
+    position: { x: 790, y: 325 }
+    size: { width: 160, height: 90 }
+    range: [-60.0, 12.0]
+    default: 0.0
+    label: "Output"
+    control_style: "dark inset mini-LCD, orange monospace dB readout, chevron step buttons"
+
+  # POST-1.0 addition (2026-09-16, user-directed improvement) - see the
+  # `tail_parameter` amendment note below for full rationale/geometry
+  # derivation. RELOCATED 2026-09-17 (POST-1.0 FOURTH IMPROVEMENT SESSION,
+  # user-directed: "move tail knob below the graph") - see the
+  # `noise_tension_chip_and_tail_relocation` amendment note below for the
+  # new geometry derivation.
+  - id: tail
+    type: slider
+    page: advanced
+    position: { x: 620, y: 235 }
+    size: { width: 60, height: 72 }
+    range: [0.0, 100.0]
+    default: 35.0
+    label: "Tail"
+    control_style: "small neumorphic macro knob (identical treatment to the 10 module macros, e.g. Filter), 'TAIL · NN%' caption"
+
+  # POST-1.0 FOURTH IMPROVEMENT SESSION addition (2026-09-17, user-directed) -
+  # see the `noise_tension_chip_and_tail_relocation` amendment note below for
+  # full rationale/geometry derivation.
+  - id: noiseTension
+    type: slider
+    page: advanced
+    position: { x: 40, y: 230 }
+    size: { width: 128, height: 56 }
+    range: [0.0, 100.0]
+    default: 50.0
+    label: "Noise Tension"
+    control_style: "dark inset mini-LCD, identical treatment to Tension/Chaos (chevron step buttons, drag-to-adjust), 'NOISE TENSION' label wider than Tension/Chaos's own 108px width to comfortably fit the longer label text"
+
+parameter_id_reference:
+  # All 21 APVTS parameters (exact IDs from architecture.md / PluginProcessor.h,
+  # confirmed present) - 19 original (locked 2026-09-14) + `tail` (POST-1.0,
+  # appended 2026-09-16) + `noiseTension` (POST-1.0 FOURTH IMPROVEMENT
+  # SESSION, appended 2026-09-17), NOT interleaved - preserves the original
+  # 19 IDs byte-for-byte:
+  all: [trigger, buildLength, style, intensity, tension, chaos, impact, filter,
+        width, pitch, gate, stutter, delay, reverb, distortion, digital, noise,
+        dryWet, output, tail, noiseTension]
+  binding_pattern: "trigger -> Juce.getToggleState('trigger'); buildLength/style -> Juce.getComboBoxState(id); all 18 remaining knobs/sliders (incl. tail/noiseTension) -> Juce.getSliderState(id) with normalised [0,1] value — identical pattern to v1-v9"
+
+tail_parameter:
+  date: 2026-09-16
+  phase: "POST-1.0 improvement (dsp-agent), user-directed - fixes 3 real-DAW-testing bugs (instant cut at Impact->Recovery, a post-impact effect-blast artifact, stale delay/reverb tails with no reset before the next build) plus this approved feature. Plugin stays at version 1.0.0 per this repo's factory convention until public release."
+  reason: "The fix design requires a user-controllable ring-out length for the Recovery state (previously a fixed/Style-derived musical division with no user control and no way to let tails audibly ring out) - see plugins/DROP/CHANGELOG.md and PluginProcessor.h's 'POST-1.0 IMPROVEMENT' doc comment for full root-cause detail."
+  design: "A small macro-style knob (id `tail`), IDENTICAL visual treatment to the 10 existing module-macro knobs (Filter/Width/.../Noise - same 60x72px knob-wrap, 3.4rem well, 2.1rem dome, knob-label-small caption class), placed in the Advanced page's left column below the Tension/Chaos/MIDI-Note mini-screens (which occupy top:150px, height:56px -> bottom edge 206px) and above the module-macro grid (top:320px) - the x=40-160/y=230-320 zone was verified free of every other Advanced-page control via the same bounds/overlap/min-gap validator this file's other amendments use. Vertical gaps: 206px (mini-screens bottom) -> 230px (tail top) = 24px clearance; 230+72=302px (tail bottom) -> 320px (macro row top) = 18px clearance - both comfortably clear the documented control_gap_min of 10px."
+  caption_format: "'TAIL · NN%' - includes the '%' unit span (unlike the other 10 small macro knobs, which omit it since their underlying macro-multiplier semantics don't read naturally as a percentage of anything visible) because `tail` IS meaningfully a percentage of its own 0-100% UI range, exactly like the hero knobs' caption convention (e.g. 'INTENSITY · NN%')."
+  binding: "Standard WebSliderRelay/WebSliderParameterAttachment pair (APVTS parameter, NOT non-parameter state) - Source/PluginEditor.h/.cpp gained the 20th relay+attachment (tailRelay/tailAttachment), appended after outputRelay/outputAttachment, matching createParameterLayout()'s own append-only parameter ordering."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup only (#knob-wrap[data-param='tail'], auto-discovered by the existing generic `document.querySelectorAll('.knob-wrap')` initKnob() loop - NO JS changes needed, gesture-bracketing/drag/wheel/dblclick/glow behavior is already fully generic); Source/PluginEditor.h/.cpp (20th relay+attachment); this YAML (control entry + this note + parameter_id_reference update); plugins/DROP/.ideas/parameter-spec.md (new `tail` entry + amendment note); plugins/DROP/.ideas/creative-brief.md (parameter table row + UI concept note)."
+
+tail_cut_label:
+  date: 2026-09-16
+  phase: "POST-1.0 second improvement session (dsp-agent), user-directed - user chose 'TAIL knob at 0% = clean cut' when offered a choice between clean-cut and continue-tails behavior for a reported 'sound stops with artifacts' bug."
+  reason: "The tail_parameter amendment above mapped tail 0-100% to a 0.15s-4.0s exponential ring-out, with no way to represent 'no tail at all' - even at its minimum the Recovery state still rang out for 150ms. computeDurationsForNewBuild() (PluginProcessor.cpp) now special-cases tail<=kTailCutEpsilon (~0%) to a ~5ms Recovery duration instead of the 150ms floor, and the UI needed a caption change so the knob's 0% position reads as an intentional 'clean cut' setting rather than an unlabeled '0%' that looks like a rounding artifact."
+  design: "No new markup/geometry - the EXISTING #knob-wrap[data-param='tail'] knob's caption logic gained a special case: when the live value is <= 1.0e-4 (mirrors the DSP's own kTailCutEpsilon exactly, both compare the same 0-100 raw parameter value), the numeric span reads 'CUT' and the '%' unit span is cleared, so the full caption reads 'TAIL · CUT' instead of 'TAIL · 0%'. Every other value (however close to 0%, e.g. 0.1%) renders normally as 'TAIL · N%' - no discontinuity in the caption's own feel beyond the single epsilon-guarded point, matching the DSP's own 'no discontinuity in feel' design for the underlying duration mapping."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - JS only (initKnob()'s render() gained the isTail/unitEl special case); this YAML (this note)."
+
+sync_bpm_chip:
+  date: 2026-09-16
+  phase: "POST-1.0 second improvement session (dsp-agent), user-directed feature - helps the user confirm at a glance that DROP is genuinely locked to their host's tempo/grid, addressing the same real-DAW report ('not locking to the grid... as if it's using its own clock') that also motivated the Bug D grid-lock timing fix."
+  design: "A fourth read-only mini-screen, id syncChip, reusing the EXACT .mini-screen dark-LCD family styling (same as Tension/Chaos/MIDI-Note/Output) but with NO chevrons/drag (purely a live dropVis-feed consumer, not a control). Placed at left:49.375rem top:14.375rem width:10rem height:3.5rem (height/font matches Tension/Chaos/MIDI-Note; width matches Output) - in the large free zone between curveBox's bottom edge (top:5rem + height:8.75rem = 13.75rem) and the OUTPUT screen's top edge (20.3125rem). Gap verification: 14.375 - 13.75 = 0.625rem = 10px clearance above curveBox (exactly the documented control_gap_min); 20.3125 - (14.375+3.5=17.875) = 2.4375rem = 39px clearance above OUTPUT; right edge 49.375+10=59.375rem matches OUTPUT's own right edge exactly (visual alignment), comfortably clear of the 60.875rem FILTERS/OUTPUT vlabel column; left edge 49.375rem comfortably clear of impactWrap's right edge (27.1875+8.125=35.3125rem)."
+  label_and_value: "Label 'SYNC' (same .mini-screen-label treatment); value reads '128.0 BPM' (one decimal, matches the DSP's own float precision) when VisualizationFrame.hostPlayheadValid is true, or 'INT 120' (rounded to the nearest integer - the fixed fallback transport's own BPM) when false - same orange monospace .mini-screen-value styling as every other mini-screen."
+  binding: "Additive VisualizationFrame fields (bpm, hostPlayheadValid - PluginProcessor.h), piped through the EXISTING 'dropVisUpdate' event / 'getInitialUIState' visualization payload (no new native function/event needed) - parsed in both the dropVisUpdate listener and the getInitialUIState .then() handler, rendered once per rAF frame via updateSyncChip() (folded into the existing frame_() loop alongside redrawCurve()/updatePhaseChip()/updateProgressStrip())."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup (#syncChip), JS (dropVis.bpm/hostPlayheadValid fields + both parsing sites, updateSyncChip()); Source/PluginProcessor.h (VisualizationFrame additive fields); Source/PluginProcessor.cpp (populated at the visualization-frame push site); Source/PluginEditor.cpp (buildDropVisUpdateVar() additive properties); this YAML (this note + the layout_validation control-count update below)."
+
+midi_trigger_note_chip_removal:
+  date: 2026-09-17
+  phase: "POST-1.0 third improvement session (dsp-agent), user-directed verbatim request: 'remove midi note selection'."
+  reason: "User explicitly asked to remove the MIDI NOTE picker UI (midi_trigger_note_chip, added 2026-09-15 to resolve a previously-flagged gap). With no UI element left to choose a specific note, MIDI trigger mode needed a new default behavior."
+  design_decision: "MIDI trigger mode now responds to ANY note-on message, not a specific configured note - the most useful behavior for the realistic remaining use case (triggering from a MIDI clip or a controller pad, where the exact note number is incidental). Implemented in PluginProcessor.cpp's processBlock() MIDI-trigger scan (DOCUMENTED SUPERSESSION of the prior note-number-matching check)."
+  removed: "The #midiNoteChip markup + its .mini-screen.disabled CSS rule (index.html + .ideas/mockups/v10-ui.html, kept byte-identical); the 'setMidiTriggerNote' native function and its call site inside 'getInitialUIState' (PluginEditor.cpp); the chip's JS (element refs, note-name formatting, chevron handlers, enabled-state wiring) from both HTML files."
+  kept_for_compatibility: "PluginProcessor.h/.cpp's midiTriggerNote atomic + getMidiTriggerNote()/setMidiTriggerNote() accessors + the persisted <DropCustomState midiNote=\"...\"> ValueTree field are UNCHANGED - kept purely so a session saved before this change (which may have stored a non-default note) still loads without error. They are simply no longer consulted by MIDI-trigger detection."
+  layout_validation_update: "Advanced-page control count: 25 -> 24 (midiNoteChip removed)."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup/CSS/JS removal; Source/PluginEditor.h/.cpp (native function + doc comments); Source/PluginProcessor.h/.cpp (MIDI-trigger-detection logic + doc comments); Source/Tests/RunTests.cpp (MIDI-note test block updated for ANY-note-on behavior + new saved-session-compatibility test); this YAML (midiNoteChip control entry status + this note)."
+
+noise_tension_chip_and_tail_relocation:
+  date: 2026-09-17
+  phase: "POST-1.0 fourth improvement session (dsp-agent), user-directed verbatim request: 'move tail knob below the graph and add a box near curve, white noise curve' - clarified as 'box near the tension box for white noise tension to control the white noise graph'."
+  reason: "The user asked for two related layout changes in one request: (1) a new control near TENSION/CHAOS to shape the white-noise curve's build shape, (2) the existing TAIL knob relocated to sit below the tension-curve graph."
+  new_parameter: "`noiseTension` (21st APVTS parameter, Float 0-100%, default 50%) - shapes HOW the NoiseModule riser builds (same directional semantics as `tension`: higher = later bloom), does NOT change the noise LEVEL (still the `noise` macro). See PluginProcessor.h's top doc comment and Source/DSP/NoiseModule.h's riseAmountForProgress() doc comment for the exact DSP shape."
+  design: "Two placement decisions, resolved together: the new NOISE TENSION mini-screen (id `noiseTension`) takes the LEFT-COLUMN SLOT the TAIL knob vacates (x=40,y=230, previously TAIL's own tail_parameter-amendment geometry) rather than the alternate 'immediately right of CHAOS' option - this reads naturally as 'near the tension box' (directly beneath TENSION/CHAOS) AND avoids leaving that freed slot as an orphaned gap, solving both problems with one placement. Widened to 128x56px (vs. Tension/Chaos's own 108x56px) to comfortably fit the longer 'NOISE TENSION' label on one line without wrapping/clipping inside the mini-screen's overflow:hidden container. TAIL itself moves to a NEW slot below curveBox (x=620,y=235 - curveBox occupies x=620-920,y=80-220, so this sits 15px below its bottom edge, matching the sync_bpm_chip amendment's own established gap-verification convention of an exact 10-15px clearance) and to the left of syncChip (x=790,y=230,box ends x=850, so 620-680 for TAIL's 60px width leaves a large 110px+ clearance to syncChip's left edge). Gap verification: NOISE TENSION bottom (y=230+56=286) to the module-macro grid top (y=320) = 34px clearance (>= control_gap_min 10px); TAIL bottom (y=235+72=307, well+label) to the grid top (320) = 13px clearance; TAIL right edge (680) to syncChip left edge (790) = 110px clearance; TAIL left edge (620) aligns exactly with curveBox's own left edge (620) for visual column alignment."
+  binding: "Standard WebSliderRelay/WebSliderParameterAttachment pair (APVTS parameter, NOT non-parameter state) - Source/PluginEditor.h/.cpp gained the 21st relay+attachment (noiseTensionRelay/noiseTensionAttachment), appended after tailRelay/tailAttachment, matching createParameterLayout()'s own append-only parameter ordering."
+  graph_live_redraw: "The Advanced page's TENSION CURVE display's gray NOISE curve (#curvePathNoise, added in the tension_noise_dual_curve amendment below) now redraws live from `noiseTension` - dragging the new chip visibly reshapes the curve every animation frame (redrawCurve() is already called every rAF frame via frame_(), so no new redraw trigger was needed), using the EXACT SAME `pow(smoothstep(p), k)` math Source/DSP/NoiseModule.h's riseAmountForProgress() runs in the DSP (JS mirror in Source/ui/public/index.html, single-source-of-truth comment + RunTests.cpp cross-check preserved)."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup (#knob-wrap[data-param='tail'] relocated, new .mini-screen[data-param='noiseTension']), JS (riseAmountForProgress() gained a second noiseTension01 argument + default, redrawCurve()'s ptsNoise computation reads bareRefs.noiseTension.get()); Source/DSP/NoiseModule.h/.cpp (riseAmountForProgress() second argument + process() new parameter); Source/PluginProcessor.h/.cpp (`noiseTension` 21st parameter, cached pointer, noiseModule.process() call site); Source/PluginEditor.h/.cpp (21st relay + attachment); this YAML (control entries + this note + parameter_id_reference/layout_validation updates); plugins/DROP/.ideas/parameter-spec.md (new `noiseTension` entry); plugins/DROP/.ideas/creative-brief.md (parameter table row); Source/Tests/RunTests.cpp (5 new `[POST-1.0]` test blocks)."
+
+tension_noise_dual_curve:
+  date: 2026-09-17
+  phase: "POST-1.0 third improvement session (dsp-agent), user-directed verbatim request: 'add a second curve to the graph make the main purple and make the second gray the second curve will be the noise, how it gradualy adds'."
+  reason: "The Advanced page's TENSION CURVE display (curveBox) previously drew only one curve (the transition/tension shape) plus the traveling progress dot. The user asked for a second curve showing the noise riser's own gradual rise, plus a color scheme distinguishing the two (purple main / gray second)."
+  design: "A new #curvePathNoise SVG <path> (stroke-width 1.2, drawn BEHIND #curvePath in z-order so the main tension curve stays fully visible on top) plots drop::NoiseModule::riseAmountForProgress() - the exact same pure function the DSP uses (Source/DSP/NoiseModule.h) - evaluated at the tension curve's own curved-progress value (Math.pow(x, exponent)) for each linear-x sample, matching how PluginProcessor.cpp's processSegment() actually feeds NoiseModule.process()'s `progress` argument. Two small inline SVG <text> legend labels ('— TENSION' / '— NOISE', font-size 6, same LCD-readout letter-spacing convention as the existing BUILD/DROP labels) were added at y=118, colored to match each curve, distinguishing them without a separate legend box."
+  colors:
+    tension_purple: "#A78BFA"
+    noise_gray: "#8A8F98"
+    rationale: "#A78BFA (a soft violet) was chosen for the main curve because it sits clearly on the dark #202226->#17181B LCD gradient panel and reads as visually distinct from the UI's single existing accent color (#E8823C orange, used everywhere else - knob arcs, progress strip, style-nav text) - purple was otherwise entirely absent from this design, so no other element competes with it. #8A8F98 for the noise curve is the SAME gray #curvePath itself used before this change (a legible mid-gray already proven to read clearly against the dark screen background in production) - reusing it for the now-secondary curve is a deliberate 'demote, don't invent' choice: the curve that used to be the only one keeps its old understated color, and the newly-primary tension curve gets the new, more prominent purple."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup (#curvePathNoise path + legend <text> elements, #curvePath stroke color change), JS (riseAmountForProgress() mirror function, redrawCurve()'s ptsNoise computation + curvePathNoise.setAttribute); Source/DSP/NoiseModule.h (new static riseAmountForProgress(), the C++ source of truth); this YAML (this note)."
+
+midi_trigger_note_chip:
+  date: 2026-09-15
+  phase: "Stage 3 GUI Phase 4.2 (Parameter Binding and Interaction), gui-agent"
+  reason: "v10-integration-checklist.md Section 5 flagged a known gap: architecture.md lists a configurable MIDI trigger note as non-parameter state, and plan.md's Phase 4.2 test criteria name a MIDI-note-picker UI as a goal, but the finalized v10 mockup shipped with NO UI element for it (option 1 of the checklist's two resolution choices was taken provisionally through Phase 4.1). This amendment implements the checklist's option 2 (small design-consistent addition) instead of leaving the gap unresolved, since plan.md Phase 4.2 explicitly requires it."
+  design: "A third mini-screen chip, id midiNoteChip, added to the SAME row as Tension/Chaos (top:150px/9.375rem, height:56px/3.5rem - identical to both), positioned immediately after Chaos with the SAME 10px/0.625rem gap Tension->Chaos already uses: chaos ends at x=158+108=266px, +10px gap = 276px start (matches Tension->Chaos's own 40+108=148, +10=158 pattern exactly, so the row reads as one consistent family of 3 equal-width screens, not a mismatched addition). Verified clear of every other Advanced-page control: Impact knob-wrap starts at x=435px (35+px clearance), well past midiNoteChip's right edge at 276+108=384px."
+  label_and_value: "Label 'MIDI NOTE' (same .mini-screen-label treatment); value is the note name (e.g. 'C3'), not a raw number, in the same orange monospace .mini-screen-value styling as Tension/Chaos/Output's numeric readouts - octave numbering is an internal JS<->C++ convention (note 60 -> 'C3'), not tied to any specific DAW/plugin-format standard, since none is authoritative across hosts."
+  interaction: "Up/down chevrons only (no drag-to-adjust, unlike Tension/Chaos/Output) - a discrete 1-127 note picker is better served by single-step increments than a continuous drag gesture; matches the control's non-parameter, non-continuous nature."
+  enabled_state: "Dimmed (0.4 opacity) and pointer-events:none except while the Trigger Mode pill (triggerMode, also non-APVTS) is set to MIDI - ships in the default-disabled visual state in the static markup (mode-pill defaults to MANUAL), toggled live by the same JS that drives the mode-pill's own active-state indicator."
+  binding: "NON-APVTS, matching triggerMode's own treatment (architecture.md: MIDI trigger note is non-parameter ValueTree/atomic state, not host-automatable) - bridged via a new 'setMidiTriggerNote' native function (JS->C++) plus an added `midiTriggerNote` field folded into the EXISTING 'getInitialUIState' one-shot native-function read (no new fetch call needed at load), NOT a WebSliderRelay/WebSliderParameterAttachment pair."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - markup (#midiNoteChip), CSS (.mini-screen.disabled), JS (note-name formatting, chevron handlers, enabled-state toggle wired into setTriggerModeUI, initial-state fetch); Source/PluginEditor.cpp ('setMidiTriggerNote' native function, 'getInitialUIState' extended); this YAML (control entry + this note)."
+
+bubble_removal:
+  date: 2026-09-14
+  reason: "User direction after finalization ('remove the bubble'). The 28-point soft-body soap-bubble centerpiece (physics, HD densified render, iridescent rim, satellite-droplet pop system, grounding shadow) was deleted from all three files: v10-ui-test.html, v10-ui.html (production), and this YAML's controls list (#orbWrap entry removed)."
+  rebalanced_main_center_column: "All centered on x=500 in the freed space — phaseChip (420,70,160x18), style selector (390,180,220x36), DROP trigger enlarged to hero scale (360,260,280x64), progress strip widened (380,360,240x12). Vertical gaps 92/44/36px, all bounds/overlap checks pass (12 Main controls now, was 13); generous marble breathing room is intentional — the stone is the beauty."
+  physics_code_status: "hexToRgb/mixColor kept (used by strip glow); all other bubble-only code removed from both HTML files with explanatory comments left in place."
+
+progress_strip_visualization_contract:
+  note: "With the bubble gone, the progress strip carries the spec's 'input level + tension visible' requirement: its orange fill color mixes toward a brighter orange and gains a drop-shadow glow scaled by tension x input level during an active drop."
+  test_harness: "simulatedInputLevel(nowSec) (kick envelope + mid-freq wiggle) retained in v10-ui-test.html solely to drive the strip glow; SIMULATED INPUT toggle + level readout remain in the debug monitor. Test-HTML-only."
+  production_binding: "v10-ui.html consumes the dropVis WebView event per architecture.md's lock-free ring buffer { progress, tensionLevel, currentState, inputRMS, activeModuleWeights[10] }: progress/currentState drive the strip fill + phase chip; tensionLevel x inputRMS drives the strip glow. activeModuleWeights's bubble-era consumer was removed with the bubble; Stage 3 GUI Phase 4.3 gave it a new design-consistent consumer (Advanced-page module-macro knob arc glow) - see module_weight_arc_glow below."
+
+module_weight_arc_glow:
+  date: 2026-09-16
+  phase: "Stage 3 GUI Phase 4.3 (Visualization), gui-agent"
+  reason: "plan.md Phase 4.3 test criterion: 'Active-effects indication reflects actual IntensityBudget weights, not static UI state.' The finalized v10 design has no per-module weight display on the Main page (the bubble, which was the originally-planned consumer of activeModuleWeights[10], was removed 2026-09-14 - see bubble_removal above), and adding a brand-new dedicated meter/graph component would depart from the finalized design. Resolved minimally and design-consistently instead: each of the 10 Advanced-page module-macro knobs' existing orange arc glow (`.arc-fill`'s CSS `filter: drop-shadow(...)`, already present on every knob at a static 2px radius) subtly intensifies with that module's own live weight during an active drop."
+  design: "No new markup/CSS/SVG - reuses the exact drop-shadow-blur-radius technique the progress strip's STRIP GLOW (progress_strip_visualization_contract, above) already established for the same visualization contract. `initKnob()`'s returned object gained a `setWeightGlow(w)` method (w in 0..1, already-smoothed) that sets `arc.fill.style.filter` to a wider-radius drop-shadow when w > 0.02, or clears the inline style (reverting to the CSS default 2px glow) when idle/near-zero - 'idle = no glow change' holds by construction, not by a separate idle-state branch."
+  data_mapping: "MODULE_MACRO_ORDER = [filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise] - identical to both the PINNED activeModuleWeights[10] index order (PluginProcessor.h's VisualizationFrame doc comment / drop::BudgetModule's enum order) and the 10 module-macro knobs' own existing data-param authoring order in this file's markup, so index i of activeModuleWeights maps directly to MODULE_MACRO_ORDER[i]'s knob with no separate lookup table. computeWeights()'s result is already juce::jlimit(0,1,...)-clamped per module (IntensityBudget.cpp), so no client-side rescaling is needed."
+  smoothing: "Per-knob exponential lerp (moduleGlowCurrent[i] += (target - current) * 0.18) toward the live target every rAF frame, batched inside the SAME single frame_() loop that already drives the strip glow / phase chip / progress strip / curve dot - juce8-critical-patterns.md #20 (separate current/target, no instant jumps). A single shared lerp speed (vs. STRIP GLOW's asymmetric attack/decay Spring) was chosen deliberately: this is a subtle multi-element ambient indicator, not a peak-reading meter, so symmetric smoothing reads calmer with 10 simultaneous glow elements."
+  cpu_note: "10 extra `element.style.filter` writes per rAF frame (~60Hz), each a paint-only property change (no layout reflow) - negligible, well within Phase 4.3's 'no CPU spikes from visualization' criterion; folded into the existing rAF loop rather than adding a new timer/loop."
+  files_touched: "Source/ui/public/index.html AND .ideas/mockups/v10-ui.html (kept byte-identical, both files edited in lockstep) - JS only (initKnob()'s setWeightGlow, MODULE_MACRO_ORDER/moduleGlowCurrent state, frame_()'s new glow-update block, updated activeModuleWeights doc comment on the dropVisUpdate listener); this YAML (this note + the progress_strip_visualization_contract production_binding update above)."
+
+layout_validation:
+  method: "Custom Python bounds/overlap/edge-padding/min-gap validator, coordinates converted from the HTML's rem values at base 16px/rem (matches BASE_W/BASE_H 1000x560)."
+  result: "PASS — 0 errors across 12 Main controls (was 13; orbWrap removed 2026-09-14) and 25 Advanced controls (was 24; `noiseTension` ADDED 2026-09-17, `tail` RELOCATED (not removed) - see noise_tension_chip_and_tail_relocation amendment note, manually verified clear of every neighbor with >= 10px gaps/>= 15px edge padding, not re-run through the Python validator this pass - was 24 with `midiNoteChip` REMOVED 2026-09-17, see midi_trigger_note_chip_removal amendment note; was 25 with `syncChip` added 2026-09-16, see sync_bpm_chip amendment note; was 23 before `tail` added 2026-09-16, see tail_parameter amendment note). Post-removal Main center column re-verified: all four center elements share center x=500, vertical gaps 92/44/36px (all >= 10px min), no overlaps with the flanking knobs (center column x 360-640 vs Intensity ending x=286 / DryWet starting x=714), max content bottom y=372 leaves 188px bottom margin."
+  edge_padding_min: 15
+  control_gap_min: 10
+  impact_center_x_verified: 500
+
+webview_constraints_validation:
+  no_viewport_units: "PASS — grep for 100vh/100vw/100dvh/100svh returns no matches"
+  html_body_height_100pct: "PASS — present in :root-level CSS reset"
+  user_select_none: "PASS — present with vendor prefixes"
+  context_menu_disabled: "PASS — contextmenu listener with preventDefault()"
+
+notes:
+  - "v10 pass 7 (this update, IN PLACE — no v11): user supplied a third
+     background — a bright white polished marble with delicate blue-gray
+     veining (v10-marble2-texture-hd.jpg, 4201x2352, denser veins in the
+     upper band, calmer white below, suits the layout since the knob row
+     sits lower) — replacing the rough stone photo, which the user found
+     overwhelmed the UI. Swapped #marbleImage to the new file, kept the
+     established architecture (no filter/opacity/blend-mode, cover/
+     no-repeat/center, no global veil, local text-halo only). Re-sampled
+     the ACTUAL new image's histogram (min 52.3, p1 179.1, p2 196.6,
+     p5 211.9, median 229.0, mean 226.5 — much brighter/gentler than both
+     the rough stone and even the original Calacatta) and found it poses no
+     real legibility risk even unprotected (worst-case delta ~46.5 without
+     any halo). Relaxed --text-halo back to the pass-5 values (2px/.95,
+     5px/.8, 9px/.55), verifying BEFORE reverting that the relaxed halo
+     still clears this image's absolute darkest outlier pixel by 94-182
+     luminance levels across every UI text color — a safety-checked
+     relaxation, not a convenience shortcut. Reverted the bubble's
+     grounding contact shadow to the cooler #2E3138 family + pass-5 opacity
+     ramp (0.34-0.46) for color harmony with the cool blue-gray veining
+     (documented as a stylistic judgment, not a contrast fix, since a plain
+     dark ellipse silhouettes clearly against this bright image regardless
+     of exact hue). Re-confirmed orange arcs remain structurally isolated
+     inside opaque knob-wells on both passes' images, unchanged. Updated
+     `assets:` so v10-marble2-texture-hd.jpg is the ACTIVE/production file,
+     with v10-stone-texture-hd.jpg and v10-marble-texture-hd.jpg both kept
+     on disk as documented A/B alternates (each annotated with which
+     halo/shadow tuning it needs if restored). Both validators re-run and
+     pass with 0 errors; v9 confirmed untouched via unchanged file
+     mtime/md5. Per explicit instruction, did NOT open a browser window
+     (user actively viewing in Safari)."
+  - "v10 pass 6 (this update, IN PLACE — no v11): user wants to try a new
+     background — a rougher natural-stone photo (v10-stone-texture-hd.jpg,
+     4000x2240, cream/beige, gray speckled zones, organic cracks, ochre
+     tints, pre-cropped by the user from a Pexels source) as an alternate to
+     the polished Calacatta marble. Swapped #marbleImage to the new file,
+     kept the pass-5 architecture (no filter/opacity/blend-mode on the
+     image, cover/no-repeat/center scaling, no global veil, local text-halo
+     only). Re-sampled the ACTUAL new image's luminance histogram (min 24.0,
+     p1 81.3, p2 98.4, p5 127.8, median 206.6, mean 194.9 — notably
+     darker/busier than the Calacatta's) and found a sharper legibility risk
+     than pass 5's: text_dark (lum 94.3) sits almost exactly on this image's
+     p2 typical-dark-zone luminance (98.4), a ~4-level delta — a real
+     contrast collision, not hypothetical. Strengthened --text-halo
+     accordingly (inner alpha .95->.97, middle blur 5px->6px/alpha .8->.85,
+     outer blur 9px->11px/alpha .55->.65); recomputed composited contrast
+     confirms all UI text colors now clear the darkest zones by 100-187
+     luminance levels. Warm-neutralized and slightly strengthened the
+     bubble's grounding contact shadow (#332E28 was #2E3138, opacity ramp
+     0.36-0.48 was 0.34-0.46) for stylistic consistency with the warm stone
+     — documented as a proactive aesthetic choice, not a contrast fix, since
+     the orb's centered position falls within the photo's lighter cream zone
+     at base panel size. Re-confirmed orange arcs are structurally isolated
+     inside opaque knob-wells and can never touch/clash with the stone's
+     ochre tints, so the accent color was left unchanged. v10-marble-texture-hd.jpg
+     (Calacatta) kept on disk as an explicit A/B alternate, documented in
+     `assets:` alongside the new active stone file. Both validators re-run
+     and pass with 0 errors; v9 confirmed untouched via unchanged file
+     mtime/md5. Per explicit instruction, did NOT open a browser window
+     (user actively viewing in Safari)."
+  - "v10 pass 5 (this update, IN PLACE — no v11): user reported the marble
+     read soft/washed-out and supplied a diagnosis (PNG upscaling on Retina +
+     flat veil muting detail) plus the fix materials. Swapped #marbleImage to
+     v10-marble-texture-hd.jpg (3052x2196, Lanczos-upscaled + unsharp mask +
+     contrast boost, Retina-sharp at cover size); confirmed no CSS filter/
+     opacity/blend-mode is applied to #marbleImage anywhere. Removed the
+     global #marbleVeil layer entirely (was the dominant softness cause) and
+     replaced it with a local `--text-halo` text-shadow treatment applied
+     only to the handful of text elements that sit directly on the marble
+     (wordmark, maker-mark, vlabel, step-caption, knob-label + kv-num/unit
+     spans) — every opaque neumorphic surface (wells/pills/dark screens)
+     already fully occludes the marble and needed no treatment. Re-ran the
+     honesty contrast check against the ACTUAL new HD image's sampled pixel
+     data (not reused old numbers): without the halo, dim label text vs a
+     typical busy vein zone is a marginal ~14-level delta (confirming the
+     halo is functionally necessary, not decorative); with the halo, the
+     immediate backdrop behind any glyph composites to ~244 luminance
+     regardless of the vein beneath it, giving 93-181-level deltas across
+     every UI text color used. Original v10-marble-texture.png kept in the
+     folder as reference only, no longer referenced by any CSS. Both
+     validators re-run and pass with 0 errors; v9 confirmed untouched via
+     unchanged file mtime/md5. Per explicit instruction, did NOT open a
+     browser window (user actively viewing in Safari)."
+  - "v10 pass 4 (this update, IN PLACE — no v11): user supplied a real HD
+     Calacatta marble photograph (v10-marble-texture.png) and asked for that
+     exact look, noting hand-drawn strokes cannot reach photographic
+     fidelity. Replaced the pass-3 hand-authored SVG vein network entirely
+     with the photo as the body surface (#marbleImage, background-size:cover,
+     no-repeat, center — scales proportionally on resize, no tiling/swimming,
+     no viewport units), layered under a flat white veil (#marbleVeil,
+     rgba(255,255,255,0.30)) tuned for legibility using ACTUAL sampled pixel
+     data from the supplied image (PIL luminance histogram: min 54, p1 156,
+     p5 188, median 242, mean 234 — confirming a genuinely white-dominant
+     photo with sparse thin dark veins, not broad dark zones) rather than
+     invented numbers — see texture.body_marble_veins_visibility_check for
+     the full composited-contrast math against real UI text color. Removed
+     the old SVG vein paths, both their feTurbulence+feDisplacementMap
+     filters (veinGlowFX/veinCoreFX), and the now-redundant synthetic
+     fine-grain noise layer (#marbleGrain) cleanly — grepped the file after
+     the edit and confirmed zero orphan references to
+     marbleVeinsSvg/veinGlowFX/veinCoreFX/marbleGrain remain anywhere.
+     Strengthened the bubble's grounding contact shadow (darker fill, higher
+     opacity, wider blur) so it still reads against the photo's cloudy
+     mid-gray zones, not just flat white; bubble rim/interior/specular
+     treatment otherwise unchanged from pass 2. Documented the new binary
+     image asset's production WebView-resource-bundling requirement under
+     the new top-level `assets:` key. Both validators re-run and pass with 0
+     errors; v9 confirmed untouched via unchanged file mtime/md5. Per
+     explicit instruction, did NOT open a browser window this pass (user
+     actively viewing in Safari)."
+  - "v10 pass 3 (this update, IN PLACE — no v11): user reported the marble
+     veining from pass 2 was imperceptible in real screenshots (plain white
+     read). Replaced the feTurbulence-generated vein IMAGE entirely with
+     hand-authored, deterministic SVG vein paths (#marbleVeinsSvg): 6 dominant
+     diagonal Bezier veins + 5 thinner branching tributaries, each double-
+     stroked (blurred glow pass + crisp core pass) and displaced by a shared
+     SVG feTurbulence+feDisplacementMap filter for organic waviness only (not
+     for vein placement/existence, which is now authored, not random). Ran an
+     honest multiply-blend contrast calculation confirming a ~20% per-channel
+     delta for dominant veins against the white body (comparable to a visible
+     pencil line on paper) and a smaller, intentionally subtler delta for
+     tributaries — see texture.body_marble_veins_visibility_check for the
+     full math. Fine background grain layer (#marbleGrain) kept unchanged
+     underneath. Both validators re-run and pass with 0 errors; v9 confirmed
+     untouched via unchanged file mtime/md5."
+  - "v10 pass 1: complete new light-neumorphic visual system built as a
+     from-scratch HTML file, reusing v9's exact validated geometry tables for
+     both pages (zero geometry drift by construction) and porting v9's bubble
+     physics/render/audio-sim/interaction JS wholesale (byte-identical simulation
+     code), while replacing 100% of the CSS and all knob/screen/selector/trigger
+     markup with the new neumorphic soft-UI language. Knobs are genuinely 3D
+     (recessed well + raised radial-gradient dome + dual offset shadows), carry
+     no printed numerals on the dome face (value legible via thin orange arc +
+     rotating position dot + 'LABEL · NN%' caption beneath, matching both
+     reference images exactly), and the Impact hero knob additionally gets a
+     28-dot LED progress ring. Added a subtle SVG feTurbulence surface texture
+     and small non-interactive embossed dot-grid accents per the user's explicit
+     '...surfaces to have textures' requirement."
+  - "v10 pass 2 (this update, IN PLACE — no v11): four refinements per user
+     feedback. (1) Body texture replaced with a convincing white marble look
+     (branching gray veins + faint fine grain), superseding the pass-1
+     plaster/crack read. (2) Dark inset LCD bubble chamber removed entirely —
+     the bubble now floats directly on the marble body; its rendering was
+     retuned for the light background (stronger rim saturation, translucent
+     interior fill so marble shows through, white speculars, soft neutral gray
+     contact shadow); phase chip + progress strip moved onto the marble as
+     light neumorphic recessed wells; ALL bubble physics/reactivity/pop
+     behavior is unchanged. (3) Style/preset selector restyled from a purple
+     neon card to solid black/near-black, matching the mini-LCD readout
+     family, orange dot-matrix-style text. (4) Impact knob centering bug
+     found and fixed: rendered markup used x=470px despite the table/YAML
+     always documenting x=435px; corrected so the true box-center is now
+     exactly 500px (435 + 130/2), matching the shared page-center axis; also
+     fixed a related LED-ring concentricity bug (ring was anchored to the
+     knob-wrap's full box, which includes caption text, instead of the well
+     itself) so the ring is now provably concentric with the dome at every
+     scale. Both validators re-run and pass with 0 errors. v9 (Finalist A)
+     confirmed untouched via unchanged file mtime/md5 before and after this
+     pass."
+  - "v1-v9 confirmed untouched: file timestamps/md5 checked before writing
+     v10 pass-1 files, again after pass 1, and again after this pass-2 update;
+     v9-ui-test.html and v9-ui.yaml retain identical mtimes and md5 checksums
+     throughout."
+  - "No git commit made for this iteration (per explicit instruction); .continue-here.md not touched."
+
+noise_chip_rename_and_layout_polish:
+  date: 2026-09-17
+  reason: "User: 'rename tension noize to noize' + 'make the knob placing of the new knobs better'."
+  changes:
+    - "NOISE TENSION chip renamed to 'NOISE' (UI label only). The DAW-visible parameter name became 'Noise Curve' so automation lists stay unambiguous against the NOISE macro knob in the MODULES row; the APVTS ID `noiseTension` is UNCHANGED, so sessions and existing automation are unaffected."
+    - "Layout: the chip moved from its own lower row (40,230,128x56 - lone, wider than its siblings) into the SHAPE row as the third sibling at (276,150,108x56), exactly matching TENSION (40,150) and CHAOS (158,150) in size and baseline. Gap to the IMPACT knob (starts x=435) is 51px."
+    - "TAIL knob moved from (620,235) - shoved against the graph's left edge - to (675,231), centred in the span between the graph's left edge and the SYNC chip, with its knob centre (258px) now exactly level with SYNC's centre (258px)."
+  validation: "Advanced-page geometry re-validated: zero overlaps, all gaps >=10px, all edges >=15px."

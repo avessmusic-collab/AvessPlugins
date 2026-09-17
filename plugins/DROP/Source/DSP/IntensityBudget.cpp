@@ -84,4 +84,38 @@ IntensityBudget::Weights IntensityBudget::computeWeights(const DropStyleData& st
     return result;
 }
 
+float IntensityBudget::computeNoiseWeight(const DropStyleData& style, float noiseMacro01, float intensity01,
+                                           SourceProfile sourceProfile, float noiseChaosJitter01) noexcept
+{
+    // See this method's doc comment in IntensityBudget.h for the full
+    // root-cause/fix rationale (POST-1.0 FIFTH IMPROVEMENT SESSION,
+    // 2026-09-17). Deliberately does NOT take a `progress` parameter -
+    // that is the entire point: progression lives solely in
+    // NoiseModule::riseAmountForProgress() from here on.
+    constexpr size_t noiseIdx = (size_t) BudgetModule::Noise;
+
+    const float macro = juce::jlimit(0.0f, 1.0f, noiseMacro01);
+    const float intensity = juce::jlimit(0.0f, 1.0f, intensity01);
+
+    // Style's own Noise ModuleCurve sampled ONCE at its END (progress==1.0)
+    // - every Style's Noise curve shape (EaseOutCubic/Linear/EaseInCubic -
+    // see DropStyle.cpp, none use Flat for Noise) evaluates to exactly its
+    // authored `endWeight` at t==1.0, so this is simply "this Style's
+    // ceiling for the noise riser", with no live progress-dependence.
+    const float styleNoiseEnd = juce::jlimit(0.0f, 1.0f, style.moduleCurves[noiseIdx].evaluate(1.0f));
+
+    const size_t sourceIndex = (size_t) juce::jlimit(0, (int) SourceProfile::Count - 1, (int) sourceProfile);
+    const float sourceScalar = juce::jmax(0.0f, style.sourceAwareScalar[sourceIndex][noiseIdx]);
+
+    float w = macro * intensity * styleNoiseEnd * sourceScalar;
+
+    // Chaos jitter - same additive convention as computeWeights() above,
+    // scaled by this Style's own chaosJitterScale and by styleNoiseEnd (a
+    // Style with a near-zero Noise ceiling isn't jittered into unmusical
+    // prominence). No progress term anywhere in this function.
+    w += noiseChaosJitter01 * style.chaosJitterScale * styleNoiseEnd;
+
+    return juce::jlimit(0.0f, 1.0f, w);
+}
+
 } // namespace drop

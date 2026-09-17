@@ -1114,6 +1114,25 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     lastComputedProgress = linearProgress; // same basis as the weights above (requirement: visual dot / progress strip must agree with the audio)
     lastComputedTensionLevel = progress;   // curved - "what the user feels"
 
+    // POST-1.0 FIFTH IMPROVEMENT SESSION bugfix (2026-09-17, user bug-audit
+    // report: "the white noise rises too fast and too strong, the curve
+    // shows one thing the white noise does more than it shows"). See
+    // drop::IntensityBudget::computeNoiseWeight()'s doc comment for the full
+    // root-cause/fix rationale: `weights.value[Noise]` above is a SECOND,
+    // independently progress-shaped curve that used to be multiplied
+    // straight into NoiseModule's own `riseAmountForProgress(progress)`,
+    // compounding two live progressions. `noiseWeight` below is now the SOLE
+    // source of the audible noise level (used at the noiseModule.process()
+    // call site instead of `weights.value[Noise]`) - overwriting
+    // lastComputedWeights's Noise slot here (AFTER the line above, BEFORE
+    // the visualization-frame push at the end of processBlock() reads it)
+    // keeps the Advanced-page glow truthful too, matching what is actually
+    // audible.
+    const float noiseWeight = drop::IntensityBudget::computeNoiseWeight(
+        style, macroPercent[(size_t) drop::BudgetModule::Noise], intensity01,
+        audioAnalyzer.getSourceProfile(), chaosJitter[(size_t) drop::BudgetModule::Noise]);
+    lastComputedWeights.value[(size_t) drop::BudgetModule::Noise] = noiseWeight;
+
     const float impactAmount01 = juce::jlimit(0.0f, 1.0f, impactParam->load() / 100.0f);
 
     // ------------------------------------------------------------------
@@ -1122,10 +1141,14 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // coordinator-reported regression): this envelope now governs
     // DelayModule/ReverbModule's WET-RETURN and ImpactEngine's effective
     // strength during RECOVERY ONLY - value 1.0 exactly at Recovery's first
-    // sample, raised-cosine decay 1->0 across EXACTLY Recovery's
-    // (tail-parameter-derived) duration, reaching precisely 0 at Recovery's
-    // last sample (the click-free instant advanceStateMachineTicks() uses to
-    // reset every owned DSP module - Bug C "stale tails" fix). Peak and
+    // sample, decaying 1->0 across EXACTLY Recovery's (tail-parameter-
+    // derived) duration, reaching precisely 0 at Recovery's last sample (the
+    // click-free instant advanceStateMachineTicks() uses to reset every
+    // owned DSP module - Bug C "stale tails" fix). POST-1.0 FIFTH
+    // IMPROVEMENT SESSION (2026-09-17): the exact SHAPE of this decay is
+    // decibel-linear (natural exponential-decay character), not a raised
+    // cosine or a squared curve - see the shape's own doc comment at its
+    // computation below for the full history/rationale. Peak and
     // Impact are UNCHANGED/untouched by this envelope - they use the LIVE
     // IntensityBudget weight directly for both send and return, exactly like
     // the pre-existing (already-verified-correct) legacy behavior; holding
@@ -1154,18 +1177,47 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
             const int64_t recoveryRemaining = dropStateMachine.samplesUntilNextTransition();
             const int64_t recoveryElapsed = recoveryTotal - recoveryRemaining;
             const float recoveryT = juce::jlimit(0.0f, 1.0f, (float) ((double) recoveryElapsed / (double) recoveryTotal));
-            // POST-1.0 (2026-09-17, user DAW report: "when the curve ends,
-            // lower the volume. dont cut the sound"). SUPERSEDES the raised
-            // cosine 0.5*(1+cos(pi*t)), which stays near full for the first
-            // part of the window and then falls away quickly - audibly a
-            // hold-then-chop rather than a fade. A squared decay lowers the
-            // level from the very first sample and trails off gently
-            // (t=0.25 -> 0.56, t=0.5 -> 0.25, t=0.75 -> 0.06, vs the cosine's
-            // 0.85 / 0.50 / 0.15), which reads as the tail being turned down.
-            // Still exactly 0 at t==1 WITH zero slope there, so it remains
-            // click-free by construction, and still monotonic.
-            const float oneMinusT = 1.0f - recoveryT;
-            tailEnvelope = oneMinusT * oneMinusT;
+            // POST-1.0 FIFTH IMPROVEMENT SESSION bugfix (2026-09-17, user
+            // bug-audit report: "so the tails are natural reverb delay. and
+            // so the sound isnt cut in an instant when the tail is up").
+            // SUPERSEDES the squared decay `(1-t)^2` below (itself a
+            // 2026-09-17-same-day supersession of an earlier raised cosine -
+            // history kept for context): measured in DECIBELS, `(1-t)^2`
+            // ACCELERATES toward the end (-5dB at t=0.25, -12dB at t=0.5,
+            // -24dB at t=0.75, then plunges to -inf) - a long tail therefore
+            // rings audibly and then perceptibly SLAMS shut near the end,
+            // exactly the reported "cut in an instant when the tail is up".
+            // Natural reverb/delay decay is exponential, i.e. CONSTANT dB
+            // slope over time - this is now a genuinely decibel-linear ramp
+            // covering kTailFadeRangeDb from full down to (near-)silence:
+            //   t    0.25    0.5     0.75
+            //   dB   -15.0   -30.0   -45.0     (was -5 / -12 / -24 for (1-t)^2)
+            // -45dB at three-quarters through is comfortably below
+            // audibility for typical program material, so the final ~3% of
+            // the window (kTailLandingStartT..1.0) forces a smooth raised-
+            // cosine landing from that already-quiet point down to an EXACT
+            // 0.0 at t==1 - preserving the click-free/guaranteed-reached-zero
+            // invariant advanceStateMachineTicks() depends on (the Recovery
+            // ->Idle module-hygiene reset() sweep) while never producing an
+            // audible instant cut, since by t==0.97 the level is already
+            // deep in the noise floor.
+            constexpr float kTailFadeRangeDb = 60.0f;
+            constexpr float kTailLandingStartT = 0.97f;
+            if (recoveryT <= kTailLandingStartT)
+            {
+                tailEnvelope = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * recoveryT);
+            }
+            else
+            {
+                const float envAtLandingStart = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * kTailLandingStartT);
+                const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
+                // Raised-cosine 1->0 over the landing window, scaled by the
+                // (already-quiet) level reached at its start - C0-continuous
+                // with the exponential branch above at recoveryT ==
+                // kTailLandingStartT (both evaluate to envAtLandingStart
+                // there), and reaches EXACTLY 0 at recoveryT == 1.
+                tailEnvelope = envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
+            }
         }
         else
         {
@@ -1235,10 +1287,16 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
 
     // Fixed series order per architecture.md Processing Order step 4:
     // Filter -> Width -> Gate -> Pitch -> Stutter -> Delay -> Saturation ->
-    // Digital, then Noise as a PARALLEL ADD (step 5, not a series insert),
-    // then Reverb (Phase 3.2's placeholder Building/Recovery-ambience
-    // position - Impact's own SEPARATE short-tail reverb instance lives
-    // inside ImpactEngine, not here). Every IntensityBudget-managed module
+    // Digital, then Reverb (Phase 3.2's placeholder Building/Recovery-
+    // ambience position - Impact's own SEPARATE short-tail reverb instance
+    // lives inside ImpactEngine, not here). Noise is a PARALLEL ADD (step 5,
+    // not a series insert) - DOCUMENTED SUPERSESSION: architecture.md step 5
+    // originally placed this add AFTER Digital/BEFORE Reverb; the "NOISE
+    // FIRST" change below (POST-1.0, 2026-09-17) moved the injection point to
+    // the HEAD of the series chain instead, so it is no longer positioned
+    // per step 5's original ordering - see that change's own comment
+    // immediately below for the current, authoritative position (HEAD, not
+    // "after Digital, before Reverb"). Every IntensityBudget-managed module
     // always processes (architecture.md "Always-Process, Weight-Mix") -
     // weight blends its contribution, never bypasses it.
     // NOISE FIRST (POST-1.0, 2026-09-17, user DAW report: "put the noise in the
@@ -1258,7 +1316,13 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // `noiseTension` (21st parameter) shapes the rise-amount curve only - see
     // NoiseModule.h's riseAmountForProgress() doc comment. Read fresh every
     // segment (cheap atomic load, matching every other macro above).
-    noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f,
+    //
+    // POST-1.0 FIFTH IMPROVEMENT SESSION bugfix (2026-09-17): `noiseWeight`
+    // (computed above, NOT `weights.value[Noise]`) - see
+    // drop::IntensityBudget::computeNoiseWeight()'s doc comment for why
+    // passing the budget's own Noise slot here was the "curve dishonesty"
+    // bug (two compounded progress-shaped gains).
+    noiseModule.process(segmentBlock, noiseWeight, progress, 0.6f,
                          noiseTensionParam->load() / 100.0f);
 
     filterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Filter], progress);

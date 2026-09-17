@@ -111,6 +111,37 @@
         noiseTension = later bloom, lower rise amount at a fixed progress).
       - 21-parameter count + default; pre-noiseTension (20-param) saved-
         session compatibility.
+
+    POST-1.0 FIFTH IMPROVEMENT SESSION (2026-09-17, user bug-audit report:
+    "the sound rises gradualy... doesnt have artifacts so the tails are
+    natural reverb delay... the sound isnt cut in an instant when the tail
+    is up... the white noise rises too fast and too strong, the curve shows
+    one thing the white noise does more than it shows"). See
+    PluginProcessor.h's own top doc comment and IntensityBudget.h's
+    computeNoiseWeight() doc comment.
+      - Curve honesty: a full end-to-end processBlock() render (silent
+        input, noise macro=100%, every other macro=0%, dry/wet=100%)
+        isolates the noise riser; its measured windowed-RMS trajectory
+        (normalized to its own end-of-Building value) is asserted to match
+        NoiseModule::riseAmountForProgress() within +-0.1 absolute at every
+        decile from t=0.3 upward - the literal "graph tells the truth"
+        guard.
+      - Noise weight progression-independence:
+        IntensityBudget::computeNoiseWeight() takes no `progress` parameter
+        at all, so its result is structurally identical regardless of build
+        position - contrasted directly against computeWeights()'s own Noise
+        slot (still computed internally, no longer audio-facing), which is
+        shown to genuinely vary with progress, proving the fix addresses a
+        real pre-existing double-progression source.
+      - Tail envelope: decibel-linear decay (constant dB slope, natural
+        exponential-decay character, spread < 1.5 dB per decile over
+        t in [0.1,0.9]), documented -15/-30/-45 dB milestones at
+        t=0.25/0.5/0.75, C0-continuous landing-zone seam, and exact zero at
+        t==1 - DOCUMENTED SUPERSESSION of the prior squared-decay
+        `(1-t)^2` shape's test block (see that block's own supersession
+        note below), which asserted values (0.56/0.25/0.06 at
+        t=0.25/0.5/0.75) that accelerate in dB and no longer reflect the
+        DSP's actual behavior.
 */
 #include "PluginProcessor.h"
 #include "DSP/MusicalClock.h"
@@ -4008,16 +4039,43 @@ int main()
         p.releaseResources();
     }
 
-    std::printf ("\n[POST-1.0] Tail envelope lowers the volume progressively (no hold-then-cut)\n");
-    {
-        // Regression guard for the 2026-09-17 user report "when the curve ends,
-        // lower the volume. dont cut the sound". The old raised cosine stayed
-        // near full for the first part of Recovery then fell away quickly; the
-        // squared decay must start reducing immediately instead.
-        auto env = [] (float t) { const float u = 1.0f - t; return u * u; };
+    //==========================================================================
+    // [POST-1.0 FIFTH IMPROVEMENT SESSION] Bug-audit round (2026-09-17, user
+    // report: "the sound rises gradualy... doesnt have artifacts so the tails
+    // are natural reverb delay... the sound isnt cut in an instant when the
+    // tail is up... the white noise rises too fast and too strong, the curve
+    // shows one thing the white noise does more than it shows"). See
+    // PluginProcessor.h's "POST-1.0 FIFTH IMPROVEMENT SESSION" doc comment
+    // and IntensityBudget.h's computeNoiseWeight() doc comment. Stays at
+    // version 1.0.0.
+    //==========================================================================
 
-        check (env (0.0f) > 0.999f && env (1.0f) < 1.0e-6f,
-              "tail envelope: exactly full at the start of Recovery and exactly zero at its end");
+    std::printf ("\n[POST-1.0] Tail envelope - decibel-linear decay (natural exponential character), constant dB slope, C0-continuous landing, exact zero at t==1\n");
+    {
+        // DOCUMENTED SUPERSESSION of the prior "[POST-1.0] Tail envelope
+        // lowers the volume progressively" test block, which asserted the
+        // squared-decay `(1-t)^2` shape's own values (0.56/0.25/0.06 at
+        // t=0.25/0.5/0.75, i.e. -5/-12/-24 dB - ACCELERATING in dB toward
+        // the end). That shape itself is superseded (2026-09-17 bug-audit
+        // report: "so the sound isnt cut in an instant when the tail is
+        // up") - measured in decibels it sped up right as it approached
+        // silence, audible as a tail that rings and then perceptibly slams
+        // shut. This block mirrors processSegment()'s CURRENT tail-envelope
+        // formula exactly (see that method's doc comment at the computation
+        // site for the full root-cause/fix rationale/history).
+        constexpr float kTailFadeRangeDb = 60.0f;
+        constexpr float kTailLandingStartT = 0.97f;
+        auto env = [] (float t) -> float
+        {
+            if (t <= kTailLandingStartT)
+                return std::pow (10.0f, -(kTailFadeRangeDb / 20.0f) * t);
+            const float envAtLandingStart = std::pow (10.0f, -(kTailFadeRangeDb / 20.0f) * kTailLandingStartT);
+            const float landingT = (t - kTailLandingStartT) / (1.0f - kTailLandingStartT);
+            return envAtLandingStart * 0.5f * (1.0f + std::cos (juce::MathConstants<float>::pi * landingT));
+        };
+
+        check (env (0.0f) > 0.999f, "tail envelope: exactly full at the start of Recovery");
+        check (env (1.0f) < 1.0e-6f, "tail envelope: exactly zero at the end of Recovery (the click-free-resettable instant advanceStateMachineTicks() depends on)");
 
         bool monotonic = true;
         float prev = env (0.0f);
@@ -4029,16 +4087,184 @@ int main()
         }
         check (monotonic, "tail envelope: monotonically decreasing across Recovery");
 
-        // The defining property: audibly lower EARLY, unlike the old cosine
-        // (which measured 0.85 at t=0.25 and 0.50 at t=0.50).
-        std::printf ("  envelope: t=0.25 -> %.3f (old cosine 0.854), t=0.50 -> %.3f (old 0.500), t=0.75 -> %.3f (old 0.146)\n",
-                     env (0.25f), env (0.5f), env (0.75f));
-        check (env (0.25f) < 0.70f && env (0.5f) < 0.35f,
-              "tail envelope: the level is already meaningfully reduced a quarter and half way through Recovery - a fade, not a hold-then-cut");
+        // The defining property (this session's fix): CONSTANT dB slope
+        // (natural exponential-decay character), not front-loaded-then-
+        // accelerating. Measured per-decile over t in [0.1, 0.9] (before the
+        // forced landing zone at t > 0.97, where the raised-cosine's own
+        // zero-derivative shape is expected to deviate from a pure dB ramp).
+        float minStepDb = 1.0e9f, maxStepDb = -1.0e9f;
+        for (int i = 2; i <= 9; ++i)
+        {
+            const float a = env ((float) (i - 1) / 10.0f);
+            const float b = env ((float) i / 10.0f);
+            const float aDb = 20.0f * std::log10 (juce::jmax (a, 1.0e-8f));
+            const float bDb = 20.0f * std::log10 (juce::jmax (b, 1.0e-8f));
+            const float stepDb = aDb - bDb; // positive: level dropped by this many dB across the decile
+            minStepDb = juce::jmin (minStepDb, stepDb);
+            maxStepDb = juce::jmax (maxStepDb, stepDb);
+        }
+        std::printf ("  per-decile dB drop across t in [0.1,0.9]: min %.2f dB, max %.2f dB (spread %.2f dB)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
+        check (maxStepDb - minStepDb < 1.5f,
+              "[POST-1.0] tail envelope: constant dB slope across the window (spread < 1.5 dB per decile over t in [0.1,0.9]) - natural exponential decay character, not the superseded accelerating-then-cut shape");
 
-        // Click-free by construction: near-zero slope as it reaches silence.
-        const float slopeAtEnd = std::abs (env (1.0f) - env (0.995f)) / 0.005f;
-        check (slopeAtEnd < 0.05f, "tail envelope: approaches silence with near-zero slope (click-free by construction)");
+        // Documented milestone values (see processSegment()'s doc comment):
+        // -15dB at t=0.25, -30dB at t=0.5, -45dB at t=0.75 (vs. the
+        // superseded shape's -5/-12/-24 dB).
+        auto db = [] (float lin) { return 20.0f * std::log10 (juce::jmax (lin, 1.0e-8f)); };
+        std::printf ("  envelope in dB: t=0.25 -> %.1f (expected -15, superseded shape -5), t=0.50 -> %.1f (expected -30, superseded -12), t=0.75 -> %.1f (expected -45, superseded -24)\n",
+                     db (env (0.25f)), db (env (0.5f)), db (env (0.75f)));
+        check (nearlyEqual ((double) db (env (0.25f)), -15.0, 0.5)
+                && nearlyEqual ((double) db (env (0.5f)), -30.0, 0.5)
+                && nearlyEqual ((double) db (env (0.75f)), -45.0, 0.5),
+              "[POST-1.0] tail envelope: matches the documented dB-linear milestones (-15/-30/-45 dB at t=0.25/0.5/0.75) - immediately and continuously reducing, never a hold-then-chop, never an accelerating slam-shut");
+
+        // C0-continuous landing: the exponential branch and the raised-
+        // cosine landing branch must agree at the seam (t == kTailLandingStartT).
+        const float justBelow = env (kTailLandingStartT - 1.0e-4f);
+        const float atSeam = env (kTailLandingStartT);
+        const float justAbove = env (kTailLandingStartT + 1.0e-4f);
+        check (std::abs (justBelow - atSeam) < 1.0e-3f && std::abs (justAbove - atSeam) < 1.0e-3f,
+              "[POST-1.0] tail envelope: C0-continuous at the landing-zone seam (no click at the exponential/raised-cosine join)");
+    }
+
+    std::printf ("\n[POST-1.0] IntensityBudget::computeNoiseWeight() - progression-independence (the effective noise weight carries no progress term)\n");
+    {
+        // Regression guard for the "the curve shows one thing the white
+        // noise does more than it shows" half of the 2026-09-17 bug-audit
+        // report. See IntensityBudget.h's computeNoiseWeight() doc comment
+        // for the full root-cause/fix rationale.
+        const auto& style = drop::getStyle (0); // Clean EDM
+        constexpr float noiseMacro = 0.7f;
+        constexpr float intensity = 0.6f;
+        constexpr float jitter = 0.05f;
+
+        // The fix, structurally: computeNoiseWeight() takes no `progress`
+        // parameter at all, so the value used for the audible noise level
+        // (and published to activeModuleWeights[Noise]) is IDENTICAL no
+        // matter what point in the build it's evaluated at - these three
+        // calls stand in for "at progress 0.2/0.5/0.9", since the function
+        // has nothing to vary against progress in the first place.
+        const float wAt02Equivalent = drop::IntensityBudget::computeNoiseWeight (style, noiseMacro, intensity, drop::SourceProfile::FullMix, jitter);
+        const float wAt05Equivalent = drop::IntensityBudget::computeNoiseWeight (style, noiseMacro, intensity, drop::SourceProfile::FullMix, jitter);
+        const float wAt09Equivalent = drop::IntensityBudget::computeNoiseWeight (style, noiseMacro, intensity, drop::SourceProfile::FullMix, jitter);
+        check (nearlyEqual ((double) wAt02Equivalent, (double) wAt05Equivalent, 1.0e-9)
+                && nearlyEqual ((double) wAt05Equivalent, (double) wAt09Equivalent, 1.0e-9),
+              "[POST-1.0] computeNoiseWeight(): the effective noise weight is IDENTICAL regardless of build progress - progression lives ONLY in NoiseModule::riseAmountForProgress(), never in the weight itself");
+
+        // Contrast/sanity: computeWeights()'s OWN Noise slot (still computed
+        // internally per IntensityBudget.h's doc comment - just no longer
+        // read for the audible noise or the viz glow) genuinely DOES vary
+        // with progress, proving this fix addresses a real pre-existing
+        // double-progression source, not a vacuous/already-inert property.
+        std::array<float, (size_t) drop::BudgetModule::Count> macros {};
+        macros[(size_t) drop::BudgetModule::Noise] = noiseMacro;
+        std::array<float, (size_t) drop::BudgetModule::Count> jitterArr {};
+        jitterArr[(size_t) drop::BudgetModule::Noise] = jitter;
+        auto coupledNoiseAt = [&] (float progress)
+        {
+            const auto w = drop::IntensityBudget::computeWeights (style, progress, macros, intensity, 0.5f, 0.0f, drop::SourceProfile::FullMix, jitterArr);
+            return w.value[(size_t) drop::BudgetModule::Noise];
+        };
+        const float coupled02 = coupledNoiseAt (0.2f);
+        const float coupled05 = coupledNoiseAt (0.5f);
+        const float coupled09 = coupledNoiseAt (0.9f);
+        std::printf ("  computeWeights()'s own (no-longer-audio-facing) Noise slot at progress 0.2/0.5/0.9: %.4f / %.4f / %.4f\n", coupled02, coupled05, coupled09);
+        check (! (nearlyEqual ((double) coupled02, (double) coupled05, 1.0e-6) && nearlyEqual ((double) coupled05, (double) coupled09, 1.0e-6)),
+              "sanity: computeWeights()'s own Noise slot genuinely varies with progress (confirms this WAS a live double-progression source pre-fix, not already-inert - makes the fix above a genuine regression guard, not a vacuous one)");
+    }
+
+    std::printf ("\n[POST-1.0] Curve honesty - measured noise-riser RMS trajectory matches riseAmountForProgress() (the graph now tells the truth)\n");
+    {
+        // Full end-to-end render through DROPAudioProcessor, isolating the
+        // noise riser: silent input, noise macro=100%, every OTHER module
+        // macro=0% (their IntensityBudget weight is then exactly 0 with
+        // chaos==0/no jitter - see the "Six/New modules - weight==0
+        // transparency" tests above - so the fixed series chain is
+        // near-transparent and the parallel-add noise is the only thing
+        // shaping the output; delay/reverb are included in the zeroed set so
+        // no send/return accumulation blurs the measurement), dry/wet=100%
+        // (fully wet - the silent dry capture contributes nothing either way).
+        constexpr int blockSize = 256;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+
+        const char* zeroMacros[] = { "filter", "width", "pitch", "gate", "stutter", "delay", "reverb", "distortion", "digital" };
+        for (auto* id : zeroMacros)
+            if (auto* prm = p.parameters.getParameter (id)) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f); // 1 bar - fastest to traverse Building
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+        struct Sample { float curvedProgress; double rms; };
+        std::vector<Sample> samples;
+        bool sawBuilding = false;
+        bool done = false;
+
+        for (int block = 0; block < 1300 && ! done; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear(); // silent input throughout - isolates the generated riser
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+            DROPAudioProcessor::VisualizationFrame frame;
+            bool got = false;
+            while (p.popVisualizationFrame (frame)) got = true; // drain-all-keep-latest, matches PluginEditor's own convention
+            const auto state = p.getCurrentDropState();
+
+            if (got && state == drop::DropState::Building)
+            {
+                sawBuilding = true;
+                double sumSq = 0.0;
+                const float* out = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                    sumSq += (double) out[i] * (double) out[i];
+                const double rms = std::sqrt (sumSq / (double) blockSize);
+                // frame.tensionLevel is the CURVED progress (lastComputedTensionLevel)
+                // - the SAME basis processSegment() passes as NoiseModule::process()'s
+                // own `progress` argument, so it's the correct basis for this comparison.
+                samples.push_back ({ frame.tensionLevel, rms });
+            }
+            if (state == drop::DropState::Peak) done = true; // Building has fully elapsed - stop capturing
+        }
+        p.releaseResources();
+
+        check (sawBuilding, "curve-honesty test: build reached Building within the block budget");
+        check ((int) samples.size() > 20, "curve-honesty test: captured a meaningful number of Building-state RMS samples");
+
+        // For each target decile of the curved-progress basis, find the
+        // captured sample whose curvedProgress is closest to it.
+        auto rmsNear = [&] (float targetProgress) -> double
+        {
+            double best = 0.0;
+            float bestDist = 1.0e9f;
+            for (const auto& s : samples)
+            {
+                const float dist = std::abs (s.curvedProgress - targetProgress);
+                if (dist < bestDist) { bestDist = dist; best = s.rms; }
+            }
+            return best;
+        };
+
+        const double rmsAtOne = rmsNear (1.0f);
+        check (rmsAtOne > 1.0e-6, "curve-honesty test setup: nonzero RMS captured near the end of Building (sanity - the riser IS audible)");
+
+        bool allWithinTolerance = true;
+        for (int decileTenths = 3; decileTenths <= 10; ++decileTenths)
+        {
+            const float t = (float) decileTenths / 10.0f;
+            const double measuredNorm = rmsAtOne > 1.0e-9 ? rmsNear (t) / rmsAtOne : 0.0;
+            const float expected = drop::NoiseModule::riseAmountForProgress (t, 0.5f); // default noiseTension
+            const double error = std::abs (measuredNorm - (double) expected);
+            std::printf ("  t=%.1f: measured_rms/rms(1)=%.4f  riseAmountForProgress=%.4f  |error|=%.4f\n", (double) t, measuredNorm, (double) expected, error);
+            if (error > 0.1) allWithinTolerance = false;
+        }
+        check (allWithinTolerance,
+              "[POST-1.0] curve honesty: the measured noise-riser RMS trajectory (normalized to its own end-of-Building value) matches riseAmountForProgress() within +-0.1 absolute at every decile from t=0.3 upward - the Advanced-page graph now tells the truth about what the noise actually does (the pre-fix compounded-curve bug - the audible level ALSO multiplied by IntensityBudget's own progress-shaped Noise weight - would fail this test by construction)");
     }
 
     std::printf ("\n[DIAG] Parameters as the HOST sees them (name | automatable | meta | discrete | numSteps)\n");

@@ -108,6 +108,54 @@ public:
      * without duplicating this arithmetic in the test harness.
      */
     static float totalBudgetFor(const DropStyleData& style, float progress, float intensity01) noexcept;
+
+    /**
+     * POST-1.0 FIFTH IMPROVEMENT SESSION addition (2026-09-17, user bug-audit
+     * report: "the white noise rises too fast and too strong, the curve
+     * shows one thing the white noise does more than it shows"). ROOT CAUSE:
+     * computeWeights()'s Noise slot (BudgetModule::Noise) returns
+     * `style.moduleCurves[Noise].evaluate(progress) * macro * sourceScalar
+     * (+jitter)` - a SECOND, independently progress-shaped curve - and
+     * PluginProcessor::processSegment() then passed that weight straight
+     * into `NoiseModule::process(..., weight, progress, ...)`, which
+     * INTERNALLY multiplies it by `riseAmountForProgress(progress)` (see
+     * NoiseModule.cpp) - two independently progress-dependent gains
+     * compounding. The Advanced-page graph only ever plots
+     * riseAmountForProgress() alone, so the audible noise rose faster/
+     * louder than the curve promised - literally "the curve shows one thing,
+     * the white noise does more than it shows."
+     *
+     * FIX: this function is now the SOLE weight computation feeding the
+     * AUDIBLE noise level (and the truthful viz glow) - PluginProcessor
+     * calls this INSTEAD of reading `weights.value[(size_t)
+     * BudgetModule::Noise]` for the noise call site. The Style's own Noise
+     * ModuleCurve is sampled exactly ONCE, at its END (progress == 1.0), so
+     * each Style still contributes its own authored flavour/ceiling without
+     * supplying a second LIVE progression - progression lives ONLY in
+     * `NoiseModule::riseAmountForProgress()` from here on (verified by
+     * RunTests.cpp's "noise weight progression-independence" test: this
+     * function's return value is identical regardless of what progress the
+     * REST of the build chain is at, since it doesn't take a progress
+     * argument at all).
+     *
+     * Deliberately excluded from the shared IntensityBudget pool's sum/cap
+     * arithmetic (mirrors how `impact` is deliberately outside the pool -
+     * implementation-spec.md: noise is "supplementary energy, not a
+     * replacement for musical content"). NOTE: `computeWeights()`'s own
+     * Noise slot (Weights::value[(size_t) BudgetModule::Noise]) is STILL
+     * computed exactly as before - the BudgetModule enum/array stays a
+     * fixed 10 slots (UI contract, VisualizationFrame::activeModuleWeights
+     * layout) - it is simply no longer read for the audible noise level or
+     * the visualization glow (PluginProcessor overwrites
+     * lastComputedWeights.value[Noise] with THIS function's result before
+     * publishing the viz frame - see processSegment()'s doc comment at that
+     * call site).
+     */
+    static float computeNoiseWeight(const DropStyleData& style,
+                                     float noiseMacro01,
+                                     float intensity01,
+                                     SourceProfile sourceProfile,
+                                     float noiseChaosJitter01) noexcept;
 };
 
 } // namespace drop

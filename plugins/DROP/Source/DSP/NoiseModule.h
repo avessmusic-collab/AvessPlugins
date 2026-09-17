@@ -102,6 +102,17 @@ public:
     // Decibel range the riser climbs across a build (see riseAmountForProgress).
     static constexpr float kRiseRangeDb = 48.0f;
 
+    // POST-1.0 FIFTH IMPROVEMENT SESSION addition (2026-09-17, user bug-audit
+    // report: "the white noise rises too fast and too strong"). Flat ~6dB
+    // (x0.5) reduction of the riser's overall base output level, applied on
+    // top of riseAmountForProgress()/weight in process()'s sample loop below
+    // - independent of (and in addition to) the curve-honesty fix in
+    // IntensityBudget::computeNoiseWeight() (which addresses the "rises too
+    // fast"/"the curve shows one thing... does more" half of the report;
+    // this constant addresses the separate "too strong" half - the riser was
+    // simply too loud even where the curve WAS being followed correctly).
+    static constexpr float kBaseLevel = 0.5f;
+
     static float riseAmountForProgress(float progress01, float noiseTension01 = 0.5f) noexcept
     {
         const float p = juce::jlimit(0.0f, 1.0f, progress01);
@@ -147,12 +158,20 @@ public:
 
     /**
      * Adds noise into `block` (parallel add, never replaces existing
-     * content). `weight` = IntensityBudget weight (0-1). `progress` drives
-     * the rise envelope + brightness sweep. `stereoWidth01` blends
-     * correlated (0) vs independent (1) L/R streams. `noiseTension01`
-     * (POST-1.0 FOURTH IMPROVEMENT SESSION addition, default 0.5) is passed
-     * straight through to riseAmountForProgress() above - see that method's
-     * doc comment for the full shape/directionality rationale.
+     * content). `weight` = the audible noise weight (0-1) - POST-1.0 FIFTH
+     * IMPROVEMENT SESSION (2026-09-17): the caller must pass
+     * `IntensityBudget::computeNoiseWeight(...)`'s result here, NOT
+     * `IntensityBudget::computeWeights(...).value[Noise]` (see
+     * IntensityBudget.h's computeNoiseWeight() doc comment for the full
+     * root-cause/fix rationale - passing the budget's own Noise slot here
+     * double-applies a progress-shaped curve on top of riseAmount below).
+     * `progress` drives the rise envelope (via riseAmountForProgress(),
+     * multiplied by `weight` and the fixed `kBaseLevel` reduction below) +
+     * brightness sweep. `stereoWidth01` blends correlated (0) vs independent
+     * (1) L/R streams. `noiseTension01` (POST-1.0 FOURTH IMPROVEMENT SESSION
+     * addition, default 0.5) is passed straight through to
+     * riseAmountForProgress() above - see that method's doc comment for the
+     * full shape/directionality rationale.
      */
     void process(juce::dsp::AudioBlock<float> block, float weight, float progress, float stereoWidth01,
                  float noiseTension01 = 0.5f) noexcept;

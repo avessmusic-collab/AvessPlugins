@@ -319,6 +319,41 @@
  *      .ideas/mockups/v10-ui.yaml's `noise_tension_chip_and_tail_relocation`
  *      amendment note for the full geometry derivation.
  *
+ * POST-1.0 FIFTH IMPROVEMENT SESSION (2026-09-17, same day, user bug-audit
+ * report: "the sound rises gradualy... doesnt have artifacts so the tails
+ * are natural reverb delay... the sound isnt cut in an instant when the
+ * tail is up... the white noise rises too fast and too strong, the curve
+ * shows one thing the white noise does more than it shows"). Two related
+ * DSP fixes, no UI/parameter/enum changes:
+ *
+ *   1. NOISE CURVE HONESTY + LEVEL: IntensityBudget::computeWeights()'s
+ *      Noise slot is itself a progress-shaped curve
+ *      (style.moduleCurves[Noise].evaluate(progress) * macro * ...), and
+ *      processSegment() used to feed that weight straight into
+ *      NoiseModule::process(), which INTERNALLY multiplies by its own
+ *      riseAmountForProgress(progress) - two compounded progress-dependent
+ *      gains, while the Advanced-page graph only ever plotted
+ *      riseAmountForProgress() alone. New drop::IntensityBudget::
+ *      computeNoiseWeight() (see its own doc comment in IntensityBudget.h)
+ *      is now the SOLE source of the audible noise weight AND the published
+ *      viz glow (lastComputedWeights.value[Noise] is overwritten with it in
+ *      processSegment(), after the `lastComputedWeights = weights;` line) -
+ *      it samples the Style's Noise curve once at progress==1.0 (a ceiling,
+ *      not a live progression), so progression lives ONLY in
+ *      riseAmountForProgress() and the graph is now provably truthful.
+ *      Separately, NoiseModule::kBaseLevel (0.5, ~6dB) flatly reduces the
+ *      riser's overall output level (the "too strong" half of the report,
+ *      independent of the curve-honesty fix).
+ *   2. NATURAL TAIL DECAY: the Recovery tail envelope (processSegment()'s
+ *      "tail envelope" doc comment) was `(1-t)^2`, which - measured in
+ *      decibels - ACCELERATES toward the end and then plunges to -inf,
+ *      audible as a tail that rings and then perceptibly slams shut. Now a
+ *      genuinely decibel-LINEAR ramp (constant dB/sample, matching natural
+ *      exponential reverb/delay decay) covering kTailFadeRangeDb (60dB),
+ *      with a smooth raised-cosine landing to an exact 0.0 over only the
+ *      final ~3% of the window (kTailLandingStartT) so the click-free
+ *      Recovery->Idle module-hygiene reset() invariant still holds exactly.
+ *
  * See plugins/DROP/CHANGELOG.md for the user-facing changelog entries.
  */
 class DROPAudioProcessor : public juce::AudioProcessor,

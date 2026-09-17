@@ -1,5 +1,80 @@
 # DROP Changelog
 
+### Fixed — 2026-09-17 (bug-audit round: noise curve honesty/level, natural tail decay)
+
+Stays at 1.0.0 per this repo's factory convention. User-directed bug-audit
+session, same day as the sessions below: "check the app for buggs and so
+everything works smooth. so the sound rises gradualy. and doesnt have
+artifacts so the tails are natural reverb delay. and so the sound isnt cut
+in an instant when the tail is up. the white noise rises too fast and too
+strong, the curve shows one thing the white noise does more than it shows."
+
+- **"The curve shows one thing, the white noise does more than it shows"
+  (compounded-progress-curves bug, 4th instance of this bug class).**
+  **Root cause:** `IntensityBudget::computeWeights()`'s Noise slot is itself
+  a Style-authored, progress-shaped curve
+  (`style.moduleCurves[Noise].evaluate(progress) * macro * sourceScalar`),
+  and `processSegment()` fed that weight straight into
+  `NoiseModule::process()`, which INTERNALLY multiplies it by its own
+  `riseAmountForProgress(progress)` — two independently progress-dependent
+  gains compounding, while the Advanced-page graph only ever plots
+  `riseAmountForProgress()` alone. **Fix:** new
+  `drop::IntensityBudget::computeNoiseWeight()` (no `progress` parameter at
+  all) is now the SOLE source of the audible noise weight and the published
+  viz glow (`activeModuleWeights[Noise]`) — it samples the Style's Noise
+  curve once at its END (progress==1.0, a per-style ceiling, not a live
+  progression), keeping each Style's authored flavour while ensuring
+  progression lives ONLY in `riseAmountForProgress()`. `computeWeights()`'s
+  own Noise slot is unchanged/still computed internally (10-slot
+  array/UI-contract preserved — mirrors how `impact` is deliberately outside
+  the shared budget pool) — it's simply no longer read for the audible noise
+  or the viz glow. **No UI change is required** — the graph already plots
+  `riseAmountForProgress()`, so it is now provably truthful about what's
+  audible, rather than needing to change to match a different reality.
+- **"The white noise rises too fast and too strong" (level).** New
+  `NoiseModule::kBaseLevel` (0.5, ~6dB) flatly reduces the riser's overall
+  output level, independent of the curve-honesty fix above (which fixes the
+  SHAPE; this fixes the raw LOUDNESS).
+- **"So the sound isnt cut in an instant when the tail is up" (natural tail
+  decay).** **Root cause:** the Recovery tail envelope was `(1-t)^2` — a
+  shape that, measured in decibels, ACCELERATES toward the end (-5dB at
+  t=0.25, -12dB at t=0.5, -24dB at t=0.75, then plunges to -inf), so a long
+  tail rang audibly and then perceptibly SLAMMED shut near Recovery's end.
+  Natural reverb/delay decay is exponential — i.e. CONSTANT dB slope over
+  time. **Fix:** the tail envelope is now genuinely decibel-linear
+  (`kTailFadeRangeDb` = 60dB total range: -15dB at t=0.25, -30dB at t=0.5,
+  -45dB at t=0.75 — a steady, natural fade instead of an accelerating one),
+  with a smooth raised-cosine landing to an exact 0.0 over only the final
+  ~3% of the window (`kTailLandingStartT` = 0.97) so the click-free
+  Recovery→Idle module-hygiene `reset()` invariant still holds exactly (by
+  t=0.97 the level is already ~-58dB, deep in the noise floor, so the forced
+  landing is inaudible).
+- **Audit findings (no code change):** confirmed the frozen
+  `DelayModule`/`ReverbModule` Recovery-tail return weights are (by design,
+  unchanged) captured at Building's OWN final value — the loudest point of
+  the build — which is correct/intentional (the tail should start exactly
+  where the source content left off); with the noise fix above taming the
+  overall energy feeding those sends during Building, no additional return
+  scaling was found to be warranted. Also found and fixed one stale doc
+  comment in `processSegment()` (Processing Order step 4/5 description)
+  that still described Noise as inserted "after Digital, before Reverb" —
+  a leftover from before the 2026-09-17 "NOISE FIRST" head-of-chain change;
+  corrected to reference the current (head-of-chain) position.
+
+Tests: 216 pre-existing assertions preserved, with ONE documented
+supersession (the "[POST-1.0] Tail envelope lowers the volume progressively"
+block, which asserted the now-superseded `(1-t)^2` shape's own values —
+replaced with dB-linear expectations and full rationale). 3 new
+`[POST-1.0]` test blocks added: tail-envelope dB-linearity/milestones/
+C0-continuous-landing, noise-weight progression-independence (contrasted
+directly against `computeWeights()`'s own still-progress-coupled Noise slot,
+proving the fix addresses a real bug, not a vacuous property), and an
+end-to-end "curve honesty" test that renders a full silent-input/noise-only
+build and asserts the measured RMS trajectory matches
+`riseAmountForProgress()` within ±0.1 absolute at every decile from t=0.3
+upward — the literal "graph tells the truth" guard the user asked for. See
+`Source/Tests/RunTests.cpp`.
+
 ### Added / Changed — 2026-09-17 (noiseTension parameter + TAIL knob relocation)
 
 Stays at 1.0.0 per this repo's factory convention. User-directed session, same
