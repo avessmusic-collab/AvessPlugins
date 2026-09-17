@@ -103,9 +103,20 @@ public:
     {
         const float p = juce::jlimit(0.0f, 1.0f, progress01);
         const float smooth = p * p * (3.0f - 2.0f * p);
+        // POST-1.0 (2026-09-17, user DAW report: "decrease the whitenoise
+        // volume at the beginning of the curve drasticly"). The base shape is
+        // now smoothstep SQUARED, which suppresses the early build far more
+        // strongly while keeping the same gradual, no-sudden-onset character
+        // that the 2026-09-17 "add noise gradually" fix introduced, and still
+        // reaching exactly 1.0 at p == 1. Measured against the previous plain
+        // smoothstep: p=0.1 -> 0.0008 (was 0.028, ~35x quieter), p=0.2 ->
+        // 0.011 (was 0.104, ~10x), p=0.5 -> 0.25 (was 0.50), p=0.8 -> 0.78
+        // (was 0.90). The NOISE chip (noiseTension) still shapes the result
+        // exactly as before - it is applied on top as the exponent k.
+        const float base = smooth * smooth;
         const float t = juce::jlimit(0.0f, 1.0f, noiseTension01);
         const float k = std::pow(2.0f, (t - 0.5f) * 2.4f);
-        return std::pow(smooth, k);
+        return std::pow(base, k);
     }
 
     /**

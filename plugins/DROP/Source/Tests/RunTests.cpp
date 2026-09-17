@@ -1649,9 +1649,23 @@ int main()
         // riseAmountForProgress()'s own doc comment for the exact numbers).
         const float at02 = drop::NoiseModule::riseAmountForProgress (0.2f);
         const float at05 = drop::NoiseModule::riseAmountForProgress (0.5f);
-        std::printf ("  riseAmountForProgress(0.2)=%.4f (floor 0.08, OLD progress^2 gave 0.04)  riseAmountForProgress(0.5)=%.4f (floor 0.4, OLD progress^2 gave 0.25)\n", at02, at05);
-        check (at02 >= 0.08f, "[POST-1.0] riseAmountForProgress(0.2) clears the 0.08 audible-early-rise floor (the OLD progress^2 shape's 0.04 would FAIL this)");
-        check (at05 >= 0.40f, "[POST-1.0] riseAmountForProgress(0.5) clears the 0.40 audible-mid-rise floor (the OLD progress^2 shape's 0.25 would FAIL this)");
+        std::printf ("  riseAmountForProgress(0.2)=%.4f (ceiling 0.03 - early-quiet)  riseAmountForProgress(0.5)=%.4f (floor 0.15 - mid-build presence)\n", at02, at05);
+        // SUPERSEDED 2026-09-17 (second noise report: "decrease the whitenoise
+        // volume at the beginning of the curve drasticly"). The earlier pair of
+        // FLOORS here encoded the FIRST report ("make so the noise adds
+        // gradualy"), which was about the riser arriving abruptly and late. The
+        // two requirements are not contradictory but they pull in opposite
+        // directions at opposite ends of the build, so the assertions now encode
+        // BOTH: a CEILING early (must be drastically quiet at the start) and
+        // floors kept at mid/late (must never regress to the old "inaudible
+        // until the final moment" behaviour that started this whole thread).
+        check (at02 <= 0.03f, "[POST-1.0] riseAmountForProgress(0.2) stays BELOW the 0.03 early-quiet ceiling - the riser is drastically quiet at the start of the build");
+        check (at05 >= 0.15f, "[POST-1.0] riseAmountForProgress(0.5) still clears the 0.15 mid-build floor - quiet early must not mean inaudible until the end");
+        {
+            const float at075 = drop::NoiseModule::riseAmountForProgress (0.75f);
+            std::printf ("  riseAmountForProgress(0.75)=%.4f (floor 0.45)\n", at075);
+            check (at075 >= 0.45f, "[POST-1.0] riseAmountForProgress(0.75) clears the 0.45 late-build floor - the riser is genuinely present before the drop");
+        }
 
         // Continuity (C0 proxy): no jump greater than a documented bound
         // between adjacent finely-sampled progress values - smoothstep is a

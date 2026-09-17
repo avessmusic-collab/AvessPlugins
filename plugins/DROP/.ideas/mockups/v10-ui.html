@@ -975,9 +975,13 @@
   function riseAmountForProgress(p, noiseTension01) {
     const c = Math.min(1, Math.max(0, p));
     const smooth = c * c * (3 - 2 * c);
+    // Mirrors NoiseModule::riseAmountForProgress()'s POST-1.0 (2026-09-17)
+    // squared base - see that function's comment. Keep these two in lockstep;
+    // a test asserts the graph and the DSP agree.
+    const base = smooth * smooth;
     const t = Math.min(1, Math.max(0, noiseTension01 === undefined ? 0.5 : noiseTension01));
     const k = Math.pow(2, (t - 0.5) * 2.4);
-    return Math.pow(smooth, k);
+    return Math.pow(base, k);
   }
   function buildCurveGrid() {
     const svgNS = 'http://www.w3.org/2000/svg';
