@@ -1241,6 +1241,26 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // inside ImpactEngine, not here). Every IntensityBudget-managed module
     // always processes (architecture.md "Always-Process, Weight-Mix") -
     // weight blends its contribution, never bypasses it.
+    // NOISE FIRST (POST-1.0, 2026-09-17, user DAW report: "put the noise in the
+    // chain before the effects, so it gets delay reverb and everything else").
+    // The riser is now injected at the HEAD of the fixed series chain, so every
+    // module downstream treats it as part of the material: the filter sweep
+    // shapes it, the gate chops it in tempo, delay and reverb carry it, and
+    // saturation/digital colour it. Previously it was added near the END (after
+    // Digital, before Reverb), so it sat on top of the transition as a separate
+    // layer that only ever reached the reverb.
+    //
+    // Feedback safety is unaffected: DelayModule's loop is bounded by its own
+    // tanh soft-clip plus a hard <=0.92 loop-gain clamp (Phase 3.2), so feeding
+    // it a rising noise source cannot run away. VacuumModule still attenuates
+    // the whole bus during Peak, so the riser still collapses into the vacuum.
+    //
+    // `noiseTension` (21st parameter) shapes the rise-amount curve only - see
+    // NoiseModule.h's riseAmountForProgress() doc comment. Read fresh every
+    // segment (cheap atomic load, matching every other macro above).
+    noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f,
+                         noiseTensionParam->load() / 100.0f);
+
     filterModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Filter], progress);
     widthModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Width], progress, impactDrive.widthExpansionAmount);
     gateModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Gate], progress, musicalClock);
@@ -1266,13 +1286,9 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
 
     digitalModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Digital], progress,
                            tension01, chaos01);
-    // POST-1.0 FOURTH IMPROVEMENT SESSION addition: `noiseTension` (21st
-    // parameter) shapes the rise-amount curve only - see NoiseModule.h's
-    // riseAmountForProgress() doc comment and PluginProcessor.h's top doc
-    // comment. Read fresh every segment (cheap atomic load, matches every
-    // other macro parameter's own per-segment read pattern above).
-    noiseModule.process(segmentBlock, weights.value[(size_t) drop::BudgetModule::Noise], progress, 0.6f,
-                         noiseTensionParam->load() / 100.0f);
+    // (NoiseModule used to be injected HERE, after Digital and before Reverb.
+    //  POST-1.0 2026-09-17: moved to the FRONT of the chain - see the
+    //  injection site above filterModule.process().)
     // POST-1.0 bugfix (Bug C "stale tails"): send/return split, same
     // rationale as DelayModule above.
     reverbModule.processWithSendReturn(segmentBlock, reverbSendWeight, reverbReturnWeight, progress);

@@ -99,10 +99,12 @@ public:
      * mid-build progress, which is exactly "later bloom" (verified by
      * RunTests.cpp's directionality test).
      */
+    // Decibel range the riser climbs across a build (see riseAmountForProgress).
+    static constexpr float kRiseRangeDb = 48.0f;
+
     static float riseAmountForProgress(float progress01, float noiseTension01 = 0.5f) noexcept
     {
         const float p = juce::jlimit(0.0f, 1.0f, progress01);
-        const float smooth = p * p * (3.0f - 2.0f * p);
         // POST-1.0 (2026-09-17, user DAW report: "decrease the whitenoise
         // volume at the beginning of the curve drasticly"). The base shape is
         // now smoothstep SQUARED, which suppresses the early build far more
@@ -113,7 +115,31 @@ public:
         // 0.011 (was 0.104, ~10x), p=0.5 -> 0.25 (was 0.50), p=0.8 -> 0.78
         // (was 0.90). The NOISE chip (noiseTension) still shapes the result
         // exactly as before - it is applied on top as the exponent k.
-        const float base = smooth * smooth;
+        // POST-1.0 (2026-09-17, user DAW report: "make it rise more gradualy.
+        // cause it rises way too fast"). The previous squared-smoothstep shape
+        // was gradual in AMPLITUDE but not to the EAR: measured in decibels it
+        // leapt ~27 dB between 20% and 50% of the build and then flattened out,
+        // which is heard as a fast surge followed by a plateau.
+        //
+        // This is now a decibel-LINEAR ramp - the standard way a riser is made
+        // to feel even - covering kRiseRangeDb from silence to full, so every
+        // tenth of the build adds the same ~4.8 dB:
+        //   p    0.2     0.4     0.6     0.8     1.0
+        //   amp  0.008   0.033   0.106   0.329   1.000
+        //   dB   -41.9   -29.8   -19.5   -9.7    0.0
+        // The start stays drastically quiet (the previous report's requirement)
+        // while the climb is perceptually constant instead of front-loaded.
+        // Normalised so p==0 is exactly 0 (no step at the start of the build)
+        // and p==1 is exactly 1.
+        if (p <= 0.0f)
+            return 0.0f; // pinned exactly: a fractional noiseTension exponent would
+                         // otherwise magnify any float residue here into an audible floor
+        const float raw   = std::pow(10.0f, -(kRiseRangeDb / 20.0f) * (1.0f - p));
+        // Derived with the SAME expression as `raw` so the subtraction cancels
+        // exactly at p == 0 (a truncated literal left ~1e-9 behind, which a
+        // fractional exponent then lifted to ~1e-4).
+        const float floorAmp = std::pow(10.0f, -(kRiseRangeDb / 20.0f));
+        const float base  = juce::jlimit(0.0f, 1.0f, (raw - floorAmp) / (1.0f - floorAmp));
         const float t = juce::jlimit(0.0f, 1.0f, noiseTension01);
         const float k = std::pow(2.0f, (t - 0.5f) * 2.4f);
         return std::pow(base, k);

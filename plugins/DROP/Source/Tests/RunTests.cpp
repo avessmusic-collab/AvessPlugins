@@ -1660,11 +1660,42 @@ int main()
         // floors kept at mid/late (must never regress to the old "inaudible
         // until the final moment" behaviour that started this whole thread).
         check (at02 <= 0.03f, "[POST-1.0] riseAmountForProgress(0.2) stays BELOW the 0.03 early-quiet ceiling - the riser is drastically quiet at the start of the build");
-        check (at05 >= 0.15f, "[POST-1.0] riseAmountForProgress(0.5) still clears the 0.15 mid-build floor - quiet early must not mean inaudible until the end");
+        juce::ignoreUnused (at05);
         {
-            const float at075 = drop::NoiseModule::riseAmountForProgress (0.75f);
-            std::printf ("  riseAmountForProgress(0.75)=%.4f (floor 0.45)\n", at075);
-            check (at075 >= 0.45f, "[POST-1.0] riseAmountForProgress(0.75) clears the 0.45 late-build floor - the riser is genuinely present before the drop");
+            // SUPERSEDED 2026-09-17 (third noise report: "make it rise more
+            // gradualy. cause it rises way too fast"). The mid-build AMPLITUDE
+            // floors that previously lived here are incompatible with a
+            // deliberately slower climb, and amplitude was the wrong yardstick
+            // anyway - the complaint was perceptual. The guards below assert the
+            // property that actually matters: the riser climbs at a CONSTANT
+            // rate in decibels (so it never surges), while still being clearly
+            // present before the drop.
+            const float at08 = drop::NoiseModule::riseAmountForProgress (0.8f);
+            const float at095 = drop::NoiseModule::riseAmountForProgress (0.95f);
+            std::printf ("  riseAmountForProgress(0.8)=%.4f (floor 0.25)  (0.95)=%.4f (floor 0.55)\n", at08, at095);
+            check (at08 >= 0.25f, "[POST-1.0] riseAmountForProgress(0.8) clears the 0.25 late-build floor - quiet early must never mean inaudible before the drop");
+            check (at095 >= 0.55f, "[POST-1.0] riseAmountForProgress(0.95) clears the 0.55 pre-drop floor");
+
+            // The defining property of "gradual": equal decibel steps per decile.
+            // Measured from p=0.3 upward. Below roughly -35 dB the normalisation
+            // that pins p==0 to exact silence (subtracting the range floor)
+            // compresses the dB spacing; that region is inaudible under music,
+            // and the surge the user reported lives in the audible range, which
+            // is what this asserts.
+            float minStep = 1.0e9f, maxStep = -1.0e9f;
+            for (int i = 4; i <= 10; ++i)
+            {
+                const float a = drop::NoiseModule::riseAmountForProgress ((float) (i - 1) / 10.0f);
+                const float b = drop::NoiseModule::riseAmountForProgress ((float) i / 10.0f);
+                const float aDb = 20.0f * std::log10 (juce::jmax (a, 1.0e-6f));
+                const float bDb = 20.0f * std::log10 (juce::jmax (b, 1.0e-6f));
+                const float step = bDb - aDb;
+                minStep = juce::jmin (minStep, step);
+                maxStep = juce::jmax (maxStep, step);
+            }
+            std::printf ("  per-decile rise: min %.2f dB, max %.2f dB (spread %.2f dB)\n", minStep, maxStep, maxStep - minStep);
+            check (maxStep - minStep < 1.0f,
+                  "[POST-1.0] the riser climbs at a near-constant decibel rate across the audible part of the build (spread < 1 dB per decile) - perceptually gradual, no surge");
         }
 
         // Continuity (C0 proxy): no jump greater than a documented bound
@@ -1673,7 +1704,12 @@ int main()
         // indicate an implementation bug (e.g. an accidental branch/clamp
         // seam), not merely floating-point noise.
         constexpr int kContinuitySamples = 500;
-        constexpr float kMaxAllowedStep = 0.01f; // generous vs. smoothstep's max slope (1.5 at p=0.5) * (1/500) step ~= 0.003
+        // Raised 0.01 -> 0.02 on 2026-09-17 with the dB-linear ramp. This guard
+        // exists to catch DISCONTINUITIES, not to cap slope. The ramp is analytic
+        // and steepest as it reaches full: |d/dp| = ln(10) * 48/20 = 5.53, i.e.
+        // 0.0111 across one 1/500 step. A genuine discontinuity would be orders of
+        // magnitude larger than this bound.
+        constexpr float kMaxAllowedStep = 0.02f;
         float maxStep = 0.0f;
         float prevContinuity = drop::NoiseModule::riseAmountForProgress (0.0f);
         for (int i = 1; i <= kContinuitySamples; ++i)
