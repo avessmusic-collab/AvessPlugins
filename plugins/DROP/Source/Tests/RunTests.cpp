@@ -1958,25 +1958,29 @@ int main()
     }
 
     //==========================================================================
-    std::printf ("\n[POST-1.0] Style-authored impact accents - Dark Techno adds NO synthesized kick/burst\n");
+    std::printf ("\n[POST-1.0] Style-authored impact accents - REMOVED factory-wide (no synthesized kick/burst on any Style)\n");
     {
         // User DAW report (2026-09-17): "on the dark techno preset somehow it
         // adds a drum kick or a hit". Root cause: ImpactEngine's synthesized
         // 60Hz sub-hit + 2.2kHz burst accents were unconditional for every
-        // Style. Fix: DropStyleData::impactAccentLevel (default 1.0) scales
-        // the accents only; Dark Techno authors it to 0.0.
+        // Style. First fix: DropStyleData::impactAccentLevel scaled the
+        // accents, Dark Techno authored 0.0. Follow-up the same day
+        // ("remove impacts"): the DEFAULT is now 0.0, disabling accents
+        // factory-wide; the engine mechanism itself is kept (and verified
+        // below) so accents remain per-Style re-enableable.
 
-        // (a) Authoring data: Dark Techno (and only where intended) opts out.
-        int darkTechnoIndex = -1;
+        // (a) Authoring data. DOCUMENTED SUPERSESSION (2026-09-17, same
+        //     day): the first fix disabled accents for Dark Techno ONLY
+        //     (this block then asserted Clean EDM kept 1.0); the user's
+        //     follow-up "remove impacts" disabled them FACTORY-WIDE via the
+        //     DropStyleData default. Every Style must now author 0.0 - no
+        //     synthesized kick/snap anywhere; every drop is the source's
+        //     own clean return.
+        bool allZero = true;
         for (int i = 0; i < drop::kNumStyles; ++i)
-            if (std::strcmp (drop::getStyle (i).name, "Dark Techno") == 0)
-                darkTechnoIndex = i;
-        check (darkTechnoIndex >= 0, "accent opt-out: 'Dark Techno' Style exists in the table");
-        if (darkTechnoIndex >= 0)
-            check (drop::getStyle (darkTechnoIndex).impactAccentLevel == 0.0f,
-                  "accent opt-out: Dark Techno authors impactAccentLevel == 0.0 (no synthesized kick/snap on top of the drop)");
-        check (drop::getStyle (0).impactAccentLevel == 1.0f,
-              "accent opt-out: Clean EDM (Style 0) keeps the default impactAccentLevel == 1.0 (prior behavior preserved everywhere else)");
+            if (drop::getStyle (i).impactAccentLevel != 0.0f) allZero = false;
+        check (allZero,
+              "accent removal: ALL 16 Styles author impactAccentLevel == 0.0 (factory-wide, per the user's 'remove impacts' - SUPERSEDES the Dark-Techno-only opt-out from earlier the same day)");
 
         // (b) Engine behavior: with accentLevel01 == 0 and a SILENT bus, the
         // impact window renders exactly silence - nothing synthesized is

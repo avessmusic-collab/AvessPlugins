@@ -1,5 +1,28 @@
 # DROP Changelog
 
+### Changed — 2026-09-17 (synthesized impact hits removed factory-wide)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "remove
+impacts" — the follow-up to the same-day Dark Techno report ("it adds a
+drum kick or a hit"), which had disabled the synthesized accents for that
+one Style.
+
+- **`DropStyleData::impactAccentLevel` now DEFAULTS to 0.0** — no factory
+  Style layers ImpactEngine's synthesized 60Hz sub-hit ("kick") or 2.2kHz
+  noise burst ("snap") on the drop any more. Every drop is the source's
+  own clean return, per the spec's impact philosophy (the accents were
+  always "optional").
+- The `impact` parameter/knob is UNCHANGED and still fully functional: it
+  continues to govern the Vacuum depth, width expansion, saturation
+  overlay, and the short-tail impact reverb. Only the additively
+  synthesized hits are gone.
+- The mechanism (and ImpactEngine's generators) are kept intact and
+  per-Style overridable, should accents ever be wanted back as an option.
+- Tests: the accent block now asserts ALL 16 Styles author 0.0
+  (supersedes the Dark-Techno-only assertions from earlier the same day);
+  the engine-level checks (accentLevel 0 adds exactly nothing / 1 renders)
+  stay as the gate's behavioral contract.
+
 ### Added — 2026-09-17 (32-bar Build Length choice)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "ad a 32

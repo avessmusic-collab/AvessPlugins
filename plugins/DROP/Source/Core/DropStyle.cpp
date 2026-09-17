@@ -262,6 +262,10 @@ namespace
             // techno material (which already carries its own kick on the
             // downbeat the drop lands on). Accents fully disabled for this
             // Style; the impact stays the source's own clean return.
+            // SUPERSEDED same day by the user's follow-up "remove impacts":
+            // impactAccentLevel now DEFAULTS to 0.0 for every Style (see
+            // DropStyle.h), so this explicit assignment is redundant - kept
+            // as the historical record of the Style that surfaced the issue.
             t[3].impactAccentLevel = 0.0f;
             t[3].recoveryDivision = MusicalDivision::Half;
             t[3].sourceAwareScalar = makeSourceAwareTable(1.1f);

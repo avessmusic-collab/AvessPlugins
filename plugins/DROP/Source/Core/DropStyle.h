@@ -109,7 +109,14 @@ struct DropStyleData
     // the sub/noise accents are explicitly "optional"). Does NOT affect the
     // source-transient emphasis, width expansion, short-tail reverb on the
     // bus, or the Vacuum - those remain governed by the `impact` parameter.
-    float impactAccentLevel = 1.0f;
+    //
+    // FACTORY-WIDE DEFAULT 0.0 (same day, second user report: "remove
+    // impacts" - the first report disabled them for Dark Techno only, this
+    // one removes them everywhere): NO factory Style layers synthesized
+    // hits any more; every drop is the source's own clean return. The
+    // mechanism (and ImpactEngine's generators) are kept intact and
+    // per-Style overridable should accents ever be wanted back.
+    float impactAccentLevel = 0.0f;
     // POST-1.0 OVERRIDE NOTE (2026-09-16, user-directed improvement, see
     // plugins/DROP/CHANGELOG.md): this field is now VESTIGIAL for Recovery's
     // actual duration - PluginProcessor::computeDurationsForNewBuild() no
