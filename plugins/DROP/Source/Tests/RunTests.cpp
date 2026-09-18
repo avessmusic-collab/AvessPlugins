@@ -2721,10 +2721,10 @@ int main()
     // version 1.0.0 per this repo's factory convention.
     //==========================================================================
 
-    std::printf ("\n[POST-1.0] PluginProcessor - 21 APVTS parameters (tail 20th, noiseTension 21st - both additive)\n");
+    std::printf ("\n[POST-1.0] PluginProcessor - 22 APVTS parameters (tail 20th, noiseTension 21st, noiseType 22nd - all additive)\n");
     {
         DROPAudioProcessor p;
-        check (p.getParameters().size() == 21, "PluginProcessor: exactly 21 APVTS parameters (19 original parameter-spec.md-locked + `tail` + `noiseTension`; SUPERSEDES the earlier 20-param count, both additions are strictly additive)");
+        check (p.getParameters().size() == 22, "PluginProcessor: exactly 22 APVTS parameters (19 original parameter-spec.md-locked + `tail` + `noiseTension` + `noiseType`; SUPERSEDES the earlier 21-param count, all additions strictly additive)");
         auto* tailP = p.parameters.getParameter ("tail");
         check (tailP != nullptr, "PluginProcessor: `tail` parameter exists and is retrievable by ID");
         if (tailP != nullptr)
@@ -3992,6 +3992,15 @@ int main()
             if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (tailPercent / 100.0f);
             if (auto* prm = p.parameters.getParameter ("delay")) prm->setValueNotifyingHost (1.0f);
             if (auto* prm = p.parameters.getParameter ("reverb")) prm->setValueNotifyingHost (1.0f);
+            // Pinned fully wet (2026-09-18): this test's input deliberately
+            // hard-silences at Recovery's first sample and then measures RAW
+            // output steps - at the new 50% dryWet DEFAULT the untouched dry
+            // half passes that synthetic input edge straight through and the
+            // measurement stops isolating the TAIL's own decay (the same
+            // reason the curve-honesty and per-sample-cut tests always
+            // pinned dryWet explicitly). Engine behavior is unchanged; this
+            // restores the test's original measurement conditions.
+            if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
             if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
 
             std::vector<float> captured;
@@ -4186,10 +4195,10 @@ int main()
         check (orderingHoldsEverywhere, "[POST-1.0] riseAmountForProgress(): noiseTension01=0.1 never produces a LOWER rise amount than noiseTension01=0.9 at any of several sampled mid-build progress points");
     }
 
-    std::printf ("\n[POST-1.0] PluginProcessor - 21 APVTS parameters (noiseTension added additively as the 21st)\n");
+    std::printf ("\n[POST-1.0] PluginProcessor - 22 APVTS parameters (noiseType added additively as the 22nd, 2026-09-18)\n");
     {
         DROPAudioProcessor p;
-        check (p.getParameters().size() == 21, "PluginProcessor: exactly 21 APVTS parameters after the POST-1.0 `noiseTension` addition (20 prior, + 1)");
+        check (p.getParameters().size() == 22, "PluginProcessor: exactly 22 APVTS parameters after the POST-1.0 `noiseType` addition (21 prior, + 1; SUPERSEDES the 21-count wording)");
         auto* noiseTensionP = p.parameters.getParameter ("noiseTension");
         check (noiseTensionP != nullptr, "PluginProcessor: `noiseTension` parameter exists and is retrievable by ID");
         if (noiseTensionP != nullptr)
@@ -4513,6 +4522,100 @@ int main()
         }
         check (allWithinTolerance,
               "[POST-1.0] curve honesty: the measured noise-riser RMS trajectory (normalized to its own end-of-Building value) matches riseAmountForProgress() within +-0.1 absolute at every decile from t=0.3 upward - the Advanced-page graph now tells the truth about what the noise actually does (the pre-fix compounded-curve bug - the audible level ALSO multiplied by IntensityBudget's own progress-shaped Noise weight - would fail this test by construction)");
+    }
+
+    std::printf ("\n[POST-1.0] noiseType (22nd parameter) + dryWet 50%% default - riser-source choices (2026-09-18)\n");
+    {
+        // User request: "make default dry wet 50%, add choices for
+        // different kinds of noise, search what noises and sounds are used
+        // to make risers". Choices grounded in the researched riser
+        // palette: white/pink/brown noise, resonant sweep, tonal saw,
+        // Shepard tone (see NoiseModule.h's NoiseType enum doc).
+        DROPAudioProcessor p;
+
+        // (a) Parameter contract.
+        auto* typeParam = dynamic_cast<juce::AudioParameterChoice*> (p.parameters.getParameter ("noiseType"));
+        check (typeParam != nullptr, "noiseType: exists and is an AudioParameterChoice");
+        if (typeParam != nullptr)
+        {
+            const char* expected[] = { "STYLE", "WHITE", "PINK", "BROWN", "SWEEP", "SAW", "SHEPARD" };
+            bool ok = typeParam->choices.size() == 7;
+            for (int i = 0; ok && i < 7; ++i)
+                if (typeParam->choices[i] != expected[i]) ok = false;
+            check (ok, "noiseType: exactly the 7 researched riser-source choices, in order");
+            check (typeParam->getIndex() == 0, "noiseType: defaults to STYLE (index 0 - defers to the DropStyle's authored color, so old sessions load bit-identical)");
+        }
+
+        // (b) dryWet default 50% (and factory presets re-authored to match).
+        auto* dryWetP = p.parameters.getParameter ("dryWet");
+        check (dryWetP != nullptr && nearlyEqual ((double) dryWetP->getValue(), 0.5, 1.0e-6),
+              "dryWet: defaults to 50% (normalized 0.5; SUPERSEDES the original 100% default, changed 2026-09-18 at user direction)");
+        bool presetsAt50 = true;
+        for (int i = 0; i < drop::kNumPresets; ++i)
+            if (! nearlyEqual ((double) drop::getPreset (i).dryWet, 50.0, 1.0e-6)) presetsAt50 = false;
+        check (presetsAt50, "dryWet: all 16 factory presets re-authored to 50% in lockstep (selecting a preset never snaps the mix back to full-wet)");
+    }
+
+    std::printf ("\n[POST-1.0] NoiseModule riser sources - every type is silent at progress 0, audible late, deterministic; STYLE == legacy\n");
+    {
+        constexpr double sr = 48000.0;
+        constexpr int blockSize = 4096;
+
+        auto renderType = [&] (drop::NoiseType t, float progress, uint32_t seed) -> juce::AudioBuffer<float>
+        {
+            juce::dsp::ProcessSpec spec { sr, (juce::uint32) blockSize, 2 };
+            drop::NoiseModule m;
+            m.prepare (spec);
+            m.setSeed (seed);
+            m.setColor (drop::NoiseColor::White);
+            m.setType (t);
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::dsp::AudioBlock<float> blk (buf);
+            // Two passes so the 20ms weight smoother has fully settled at 1.0
+            // (the first block ramps 0 -> 1; only the second is measured).
+            m.process (blk, 1.0f, progress, 0.6f, 0.5f);
+            buf.clear();
+            m.process (blk, 1.0f, progress, 0.6f, 0.5f);
+            return buf;
+        };
+        auto rmsOf = [&] (const juce::AudioBuffer<float>& buf) -> double
+        {
+            double sumSq = 0.0;
+            for (int i = 0; i < blockSize; ++i)
+                sumSq += (double) buf.getSample (0, i) * (double) buf.getSample (0, i);
+            return std::sqrt (sumSq / (double) blockSize);
+        };
+
+        const drop::NoiseType types[] = { drop::NoiseType::White, drop::NoiseType::Pink, drop::NoiseType::Brown,
+                                          drop::NoiseType::Sweep, drop::NoiseType::Saw, drop::NoiseType::Shepard };
+        const char* names[] = { "WHITE", "PINK", "BROWN", "SWEEP", "SAW", "SHEPARD" };
+        bool allSilentAtZero = true, allAudibleLate = true, allDeterministic = true;
+        for (int ti = 0; ti < 6; ++ti)
+        {
+            const double rmsAt0 = rmsOf (renderType (types[ti], 0.0f, 1234u));
+            const auto lateA = renderType (types[ti], 0.85f, 1234u);
+            const auto lateB = renderType (types[ti], 0.85f, 1234u);
+            const double rmsLate = rmsOf (lateA);
+            std::printf ("  %-8s rms@p=0: %.2e  rms@p=0.85: %.4f\n", names[ti], rmsAt0, rmsLate);
+            if (rmsAt0 != 0.0) allSilentAtZero = false; // riseAmountForProgress(0) == 0 exactly, for every source
+            if (rmsLate < 1.0e-3) allAudibleLate = false;
+            for (int i = 0; i < blockSize && allDeterministic; ++i)
+                if (lateA.getSample (0, i) != lateB.getSample (0, i)) allDeterministic = false;
+        }
+        check (allSilentAtZero, "[POST-1.0] noise types: every riser source is EXACTLY silent at progress 0 (the shared rise envelope gates all of them - no idle bleed from tonal sources)");
+        check (allAudibleLate, "[POST-1.0] noise types: every riser source is genuinely audible late in the build (no dead choices)");
+        check (allDeterministic, "[POST-1.0] noise types: bit-identical output for identical seed/progress (std::mt19937 determinism holds for every source, offline renders stay reproducible)");
+
+        // STYLE (the default) must be bit-identical to the legacy path: with
+        // the Style-authored color White, StyleDefault and explicit WHITE
+        // render the same samples from the same seed.
+        const auto styleDeferred = renderType (drop::NoiseType::StyleDefault, 0.7f, 777u);
+        const auto explicitWhite = renderType (drop::NoiseType::White, 0.7f, 777u);
+        bool identical = true;
+        for (int i = 0; i < blockSize && identical; ++i)
+            if (styleDeferred.getSample (0, i) != explicitWhite.getSample (0, i)) identical = false;
+        check (identical, "[POST-1.0] noise types: STYLE (default) defers to the Style-authored color bit-for-bit (old sessions and the pre-noiseType build are unchanged)");
     }
 
     std::printf ("\n[DIAG] Parameters as the HOST sees them (name | automatable | meta | discrete | numSteps)\n");

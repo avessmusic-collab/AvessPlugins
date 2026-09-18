@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DROP</title>
+
+<style>
+  /* ============================================================
+     WebView constraints (webview_constraints_validation in v10-ui.yaml)
+     ============================================================ */
+  html, body { height: 100%; margin: 0; padding: 0; }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;
+    -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+    cursor: default; overflow: hidden;
+    background: #ECEDF1; /* var(--body-bg) fallback paint while the WebView is sizing */
+    font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  }
+
+  :root {
+    --body-bg: #ECEDF1;
+    --body-bg-2: #E3E5EB;
+    --text-dark: #5B5E6B;
+    --text-dark-dim: #9296A3;
+    --text-strong: #3C3F49;
+    --screen-bg-top: #202226;
+    --screen-bg-bottom: #17181B;
+    --accent: #E8823C;
+    --accent-bright: #FF9A4D;
+    --accent-glow: rgba(232,130,60,0.55);
+    --neu-shadow-dark: 8px 8px 16px rgba(160,163,175,0.55);
+    --neu-shadow-dark-sm: 4px 4px 8px rgba(160,163,175,0.5);
+    --neu-shadow-light: -8px -8px 16px rgba(255,255,255,0.95);
+    --neu-shadow-light-sm: -4px -4px 8px rgba(255,255,255,0.9);
+    --neu-inset-dark: inset 4px 4px 8px rgba(160,163,175,0.55);
+    --neu-inset-light: inset -4px -4px 8px rgba(255,255,255,0.9);
+    --neu-inset-dark-sm: inset 2px 2px 4px rgba(160,163,175,0.5);
+    --neu-inset-light-sm: inset -2px -2px 4px rgba(255,255,255,0.85);
+    /* Local legibility halo for the few text elements sitting directly on
+       the marble photo (no opaque backing) - ported verbatim from v10-ui-test.html
+       PASS 7 tuning (relaxed toward pass-5 strength; see v10-ui.yaml
+       texture.body_marble_veins_visibility_check for the full composited
+       contrast math against v10-marble2-texture-hd.jpg's sampled histogram). */
+    --text-halo: 0 0 2px rgba(255,255,255,0.95), 0 0 5px rgba(255,255,255,0.8), 0 0 9px rgba(255,255,255,0.55);
+    font-size: 16px;
+  }
+
+  /* #container fills whatever bounds the JUCE editor gives the WebView
+     (the editor itself is native-resizable, clamped 800x450..1400x790 via
+     AudioProcessorEditor::setResizeLimits() in PluginEditor.cpp - see
+     v10-PluginEditor.cpp). No fixed width/height/border-radius/box-shadow
+     here (those were v10-ui-test.html's harness-only ".plugin-frame" desk
+     presentation, not part of the production UI). */
+  #container { position: relative; width: 100%; height: 100%; color: var(--text-dark); overflow: hidden; background: var(--body-bg); }
+
+  /* White marble body texture (PASS 7, active/production asset). Bundled as
+     a WebView resource (see v10-integration-checklist.md "Bundle the marble
+     asset") and served by the resource provider at this exact relative
+     path, so this url() resolves identically to how it resolved as a plain
+     file reference in the browser mockup. NO CSS filter/opacity/blend-mode
+     on #marbleImage (full clarity, per v10-ui.yaml assets note); cover +
+     no-repeat scales proportionally on resize, no viewport units. */
+  #marbleImage {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background-image: url("v10-marble2-texture-hd.jpg");
+    background-size: cover; background-position: center center; background-repeat: no-repeat;
+  }
+  #vignette {
+    position: absolute; inset: 0; z-index: 5; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(60,63,73,0.10) 100%);
+  }
+  .content-layer { position: relative; z-index: 2; width: 100%; height: 100%; }
+
+  /* small embossed dot-grid accents (decorative only, purely background) */
+  .dot-grid { position: absolute; z-index: 1; display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; pointer-events: none; }
+  .dot-grid span { width: 3px; height: 3px; border-radius: 50%; background: rgba(160,163,175,0.45); box-shadow: 0.5px 0.5px 1px rgba(255,255,255,0.8); }
+
+  /* ---------- Header ---------- */
+  .header { position: absolute; left: 0; top: 0; right: 0; height: 3.5rem; border-bottom: 1px solid rgba(160,163,175,0.35); }
+  .wordmark { position: absolute; left: 1.5rem; top: 1rem; font-size: 1.05rem; font-weight: 300; letter-spacing: 0.5em; text-transform: uppercase; color: var(--text-strong); text-shadow: var(--text-halo); }
+  .maker-mark { position: absolute; right: 1.5rem; top: 1rem; font-size: 1.05rem; font-weight: 300; letter-spacing: 0.5em; color: var(--text-strong); text-shadow: var(--text-halo); }
+
+  .page-nav {
+    position: absolute; left: 25rem; top: 1rem; width: 12.5rem; height: 1.75rem; border-radius: 999px;
+    background: var(--body-bg); box-shadow: var(--neu-inset-dark-sm), var(--neu-inset-light-sm);
+    display: flex; overflow: hidden;
+  }
+  .page-nav-indicator {
+    position: absolute; inset: 0.1875rem; width: calc(50% - 0.25rem); border-radius: 999px;
+    background: var(--body-bg); box-shadow: var(--neu-shadow-dark-sm), var(--neu-shadow-light-sm);
+    transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1); z-index: 1;
+  }
+  .page-nav button { position: relative; z-index: 2; flex: 1; background: transparent; border: none; font-family: inherit;
+    font-size: 0.58rem; font-weight: 700; letter-spacing: 0.14em; color: var(--text-dark-dim); cursor: default; transition: color 200ms ease; }
+  .page-nav button.active { color: var(--accent); }
+
+  .vlabel { position: absolute; width: 0.625rem; writing-mode: vertical-rl; transform: rotate(180deg);
+    text-align: center; font-size: 0.62rem; font-weight: 600; letter-spacing: 0.22em; color: var(--text-dark-dim); z-index: 2; text-shadow: var(--text-halo); }
+
+  .page { position: absolute; left: 0; top: 3.5rem; right: 0; bottom: 0; opacity: 0; transform: translateY(5px); pointer-events: none;
+    transition: opacity 320ms ease-out, transform 480ms cubic-bezier(0.22, 1.32, 0.4, 1); }
+  .page.active { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
+  /* ---------- Trigger-mode pill (neumorphic) - non-APVTS ValueTree state,
+     see v10-PluginEditor.cpp's "setTriggerMode" native-function bridge ---------- */
+  .mode-pill { position: absolute; left: 2.5rem; top: 4.375rem; width: 15.5rem; height: 2rem; border-radius: 999px;
+    background: var(--body-bg); box-shadow: var(--neu-inset-dark-sm), var(--neu-inset-light-sm); display: flex; overflow: hidden; }
+  .mode-indicator { position: absolute; inset: 0.1875rem; width: calc(33.333% - 0.25rem); border-radius: 999px;
+    background: var(--body-bg); box-shadow: var(--neu-shadow-dark-sm), var(--neu-shadow-light-sm);
+    transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1); z-index: 1; }
+  .mode-pill button { position: relative; z-index: 2; flex: 1; background: transparent; border: none; font-family: inherit;
+    font-size: 0.56rem; font-weight: 600; letter-spacing: 0.1em; color: var(--text-dark-dim); cursor: default; transition: color 200ms ease; }
+  .mode-pill button.active { color: var(--accent); }
+
+  /* ---------- Build length: recessed step wells (neumorphic) ---------- */
+  /* POST-1.0 (2026-09-17, "ad a 32 bar choice"): width 15.75rem -> 19.0625rem
+     for the 6th circle (6 x 2.5rem + 5 x 0.8125rem gaps); right edge 21.5625rem
+     (345px) still clears the center column (starts 360px) by 15px. */
+  .step-row { position: absolute; left: 2.5rem; top: 7rem; width: 19.0625rem; height: 3.625rem; }
+  .step-circles { display: flex; gap: 0.8125rem; }
+  .step-circle {
+    width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--body-bg);
+    box-shadow: var(--neu-inset-dark-sm), var(--neu-inset-light-sm); border: none;
+    color: var(--text-dark-dim); font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums;
+    cursor: default; transition: box-shadow 320ms cubic-bezier(0.34, 1.56, 0.64, 1), color 320ms ease;
+  }
+  .step-circle.active { color: var(--accent);
+    box-shadow: var(--neu-inset-dark-sm), var(--neu-inset-light-sm), 0 0 0 1.5px var(--accent), 0 0 8px 1px var(--accent-glow); }
+  .step-caption { margin-top: 0.5rem; font-size: 0.56rem; letter-spacing: 0.14em; color: var(--text-dark-dim); text-shadow: var(--text-halo); }
+
+  /* ---------- Mini LCD screens (Tension / Chaos / Output) ---------- */
+  .mini-screen {
+    position: absolute; text-align: left; padding: 0.4rem 0.55rem; border-radius: 0.55rem;
+    background: linear-gradient(160deg, var(--screen-bg-top) 0%, var(--screen-bg-bottom) 100%);
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.5);
+    cursor: default; overflow: hidden;
+  }
+  .mini-screen::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.05) 50%, transparent 62%); }
+  .mini-screen-label { font-size: 0.46rem; letter-spacing: 0.1em; color: #7A828C; text-transform: uppercase; }
+  .mini-screen-value { font-family: 'IBM Plex Mono', 'SF Mono', monospace; font-weight: 600; color: var(--accent);
+    text-shadow: 0 0 6px var(--accent-glow); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; line-height: 1.15; }
+  .mini-chevrons { position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 0.15rem; }
+  .mchev { width: 0; height: 0; cursor: default; opacity: 0.55; }
+  .mchev:hover { opacity: 0.9; }
+  .mchev.up { border-left: 0.22rem solid transparent; border-right: 0.22rem solid transparent; border-bottom: 0.28rem solid var(--accent); }
+  .mchev.down { border-left: 0.22rem solid transparent; border-right: 0.22rem solid transparent; border-top: 0.28rem solid var(--accent); }
+
+  /* POST-1.0 (2026-09-17, user-directed: "remove midi note selection"): the
+     MIDI trigger note chip (#midiNoteChip, added Stage 3 GUI Phase 4.2) and
+     its .mini-screen.disabled rule are REMOVED - see v10-ui.yaml's
+     midi_trigger_note_chip_removal amendment note. MIDI trigger mode now
+     responds to ANY note-on message, so no note picker is needed. */
+
+  /* ---------- Phase chip + progress track - light neumorphic recessed wells,
+     driven by the live "dropVisUpdate" feed (see script below), dark text
+     normally, orange accents while a drop is in progress ---------- */
+  #phaseChip {
+    position: absolute; left: 26.25rem; top: 4.375rem; width: 10rem; height: 1.125rem;
+    display: flex; align-items: center; justify-content: center; gap: 0.35rem; border-radius: 999px;
+    background: var(--body-bg);
+    box-shadow: var(--neu-inset-dark-sm), var(--neu-inset-light-sm);
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.52rem; font-weight: 600; letter-spacing: 0.18em; color: var(--text-dark-dim);
+    transition: color 300ms ease;
+  }
+  .phase-led { width: 0.375rem; height: 0.375rem; border-radius: 50%; background: #C7CAD1; transition: background 300ms ease, box-shadow 300ms ease; }
+  #phaseChip.live { color: var(--accent); }
+  #phaseChip.live .phase-led { background: var(--accent-bright); box-shadow: 0 0 6px 1px var(--accent-glow); }
+
+  #progressStrip {
+    position: absolute; left: 23.75rem; top: 22.5rem; width: 15rem; height: 0.75rem; border-radius: 999px;
+    background: var(--body-bg);
+    box-shadow: var(--neu-inset-dark-sm), var(--neu-inset-light-sm);
+  }
+
+  /* ---------- Style / preset selector - dark inset screen ---------- */
+  .style-nav { position: absolute; left: 24.375rem; top: 11.25rem; width: 13.75rem; height: 2.25rem;
+    display: flex; align-items: center; justify-content: center; gap: 0.6rem; border-radius: 0.6rem;
+    background: linear-gradient(160deg, var(--screen-bg-top) 0%, var(--screen-bg-bottom) 100%);
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.6), var(--neu-shadow-dark-sm), var(--neu-shadow-light-sm);
+    overflow: hidden; }
+  .style-nav::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.05) 50%, transparent 62%); }
+  .style-nav .chev-btn { position: relative; z-index: 1; background: transparent; border: none; color: var(--accent); font-size: 0.95rem; line-height: 1; cursor: default;
+    font-family: 'IBM Plex Mono', monospace; transition: color 160ms ease, transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .style-nav .chev-btn:active { transform: scale(0.85); }
+  .style-label { position: relative; z-index: 1; font-family: 'IBM Plex Mono', monospace; font-size: 0.62rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent);
+    min-width: 8.5rem; text-align: center; text-shadow: 0 0 6px var(--accent-glow); }
+
+  /* ---------- DROP trigger - raised neumorphic pill w/ press-in physics ---------- */
+  .trigger-btn {
+    position: absolute; left: 22.5rem; top: 16.25rem; width: 17.5rem; height: 4rem; border-radius: 999px;
+    background: var(--body-bg); border: none;
+    box-shadow: var(--neu-shadow-dark), var(--neu-shadow-light);
+    color: var(--text-strong); font-family: inherit; font-size: 1rem; font-weight: 700; letter-spacing: 0.32em; text-transform: uppercase;
+    cursor: default; display: flex; align-items: center; justify-content: center;
+    transition: box-shadow 220ms ease, color 220ms ease;
+  }
+  .trigger-btn.armed { color: var(--accent);
+    box-shadow: var(--neu-shadow-dark), var(--neu-shadow-light), 0 0 0 2px var(--accent), 0 0 22px 4px var(--accent-glow); }
+  .trigger-btn.pressed { box-shadow: var(--neu-inset-dark), var(--neu-inset-light); }
+
+  /* ---------- Tension curve display - dark screen ---------- */
+  #curveBox {
+    position: absolute; left: 43.75rem; top: 4.375rem; width: 12.5rem; height: 6.875rem; border-radius: 0.6rem;
+    background: linear-gradient(160deg, var(--screen-bg-top) 0%, var(--screen-bg-bottom) 100%);
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.6), var(--neu-shadow-dark-sm), var(--neu-shadow-light-sm);
+    overflow: hidden;
+  }
+  #curveBox::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.05) 50%, transparent 62%); }
+  #curveBox .curve-label { position: absolute; left: 0.5rem; top: 0.3rem; font-size: 0.46rem; letter-spacing: 0.14em; color: #7A828C; text-transform: uppercase; }
+  #curveBox .curve-type-label { position: absolute; right: 0.5rem; top: 0.3rem; font-size: 0.46rem; letter-spacing: 0.1em; color: var(--accent); opacity: 0.9; }
+
+  /* ---------- Neumorphic knob: recessed well + raised dome + rotating pointer + thin orange arc ---------- */
+  .knob-wrap { position: absolute; text-align: center; }
+  .knob-well {
+    position: relative; margin: 0 auto; border-radius: 50%;
+    background: var(--body-bg);
+    box-shadow: var(--neu-inset-dark), var(--neu-inset-light);
+  }
+  .knob-dome {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%;
+    background: radial-gradient(circle at 35% 28%, #FFFFFF 0%, #F3F4F7 55%, #E6E8EE 100%);
+    box-shadow: var(--neu-shadow-dark), var(--neu-shadow-light), inset 0 1px 1px rgba(255,255,255,0.9);
+  }
+  .knob-dome-inner { position: absolute; inset: 0; transform-origin: center center; }
+  .knob-pointer { position: absolute; top: 12%; left: 50%; width: 0.16rem; height: 0.16rem; border-radius: 50%;
+    background: #A8ABB6; box-shadow: inset 0 0.5px 1px rgba(0,0,0,0.3); transform: translateX(-50%); }
+  .knob-arc { position: absolute; top: 50%; left: 50%; width: 122%; height: 122%; transform: translate(-50%, -50%); overflow: visible; pointer-events: none; }
+  .knob-arc .arc-track { stroke: rgba(160,163,175,0.4); stroke-width: 2.4; fill: none; }
+  .knob-arc .arc-fill { stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; fill: none;
+    filter: drop-shadow(0 0 2px var(--accent-glow));
+    transition: stroke-dasharray 320ms cubic-bezier(0.22, 0.9, 0.3, 1); }
+  .knob-label { display: block; margin-top: 0.45rem; font-size: 0.56rem; font-weight: 600; letter-spacing: 0.08em; color: var(--text-dark); text-transform: uppercase; text-shadow: var(--text-halo); }
+  .knob-label .kv-num { color: var(--accent); font-variant-numeric: tabular-nums; text-shadow: var(--text-halo); }
+  .knob-label .unit { color: var(--text-dark-dim); font-weight: 400; text-shadow: var(--text-halo); }
+  .knob-label-small { font-size: 0.46rem; margin-top: 0.3rem; }
+  .knob-label-hero { font-size: 0.64rem; margin-top: 0.6rem; }
+
+  /* Impact hero: LED dot-ring around the well */
+  .led-ring circle { fill: #D6D8DE; transition: fill 200ms ease, opacity 200ms ease; }
+  .led-ring circle.lit { fill: var(--accent); filter: drop-shadow(0 0 2px var(--accent-glow)); }
+</style>
+</head>
+<body>
+
+<div id="container">
+  <!-- Bundled WebView resource asset (see v10-integration-checklist.md);
+       served by the resource provider at "/v10-marble2-texture-hd.jpg". -->
+  <div id="marbleImage"></div>
+  <div id="vignette"></div>
+  <div class="dot-grid" style="left:1.2rem; top:19.5rem; grid-template-rows:repeat(3,1fr);">
+    <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+  <div class="dot-grid" style="left:60.3rem; top:19.5rem; grid-template-rows:repeat(3,1fr);">
+    <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+
+  <div class="content-layer">
+
+    <div class="header">
+      <div class="wordmark">drop</div>
+      <div class="maker-mark">AVESS</div>
+      <div class="page-nav" id="pageNav">
+        <div class="page-nav-indicator" id="pageNavIndicator"></div>
+        <button data-page="main" class="active">MAIN</button>
+        <button data-page="advanced">ADVANCED</button>
+      </div>
+    </div>
+
+    <!-- ================= MAIN PAGE ================= -->
+    <div class="page active" id="pageMain">
+      <div class="vlabel" style="left:1rem; top:5.625rem; height:10rem;">BUILD</div>
+      <div class="vlabel" style="left:60.875rem; top:5.625rem; height:10rem;">MIX</div>
+
+      <div class="step-row">
+        <div class="step-circles" id="buildLengthSteps" data-param="buildLength">
+          <button class="step-circle" data-value="1">1</button>
+          <button class="step-circle" data-value="2">2</button>
+          <button class="step-circle active" data-value="4">4</button>
+          <button class="step-circle" data-value="8">8</button>
+          <button class="step-circle" data-value="16">16</button>
+          <button class="step-circle" data-value="32">32</button>
+        </div>
+        <div class="step-caption">BUILD LENGTH (BARS)</div>
+      </div>
+
+      <div id="phaseChip"><span class="phase-led"></span><span class="phase-text">IDLE</span></div>
+
+      <div class="style-nav" data-param="style">
+        <button class="chev-btn" id="styleLeft">&lsaquo;</button>
+        <span class="style-label" id="styleLabel">Clean EDM</span>
+        <button class="chev-btn" id="styleRight">&rsaquo;</button>
+      </div>
+
+      <button class="trigger-btn" id="triggerBtn" data-param="trigger">Drop</button>
+
+      <div id="progressStrip">
+        <!-- widened 200x10 -> 240x12 (1.2x uniform scale) as it inherits part of
+             the former bubble's centerpiece role; fill color/glow now carries
+             tension x input level during a drop - see script "STRIP GLOW". -->
+        <svg width="100%" height="100%" viewBox="0 0 240 12" preserveAspectRatio="none">
+                    <rect id="progressFill" x="0" y="0" width="0" height="12" rx="6" fill="#E8823C"></rect>
+                  </svg>
+      </div>
+
+      <!-- Intensity / Dry-Wet - large neumorphic hero domes -->
+      <div class="knob-wrap" style="left:4.125rem; top:12.5rem; width:13.75rem;"
+           data-param="intensity" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:11rem;height:11rem;">
+          <div class="knob-dome" style="width:7.5rem;height:7.5rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div>
+        </div>
+        <span class="knob-label knob-label-hero">INTENSITY &middot; <span class="kv-num">50</span><span class="unit">%</span></span>
+      </div>
+
+      <div class="knob-wrap" style="left:44.625rem; top:12.5rem; width:13.75rem;"
+           data-param="dryWet" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:11rem;height:11rem;">
+          <div class="knob-dome" style="width:7.5rem;height:7.5rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div>
+        </div>
+        <span class="knob-label knob-label-hero">DRY/WET &middot; <span class="kv-num">100</span><span class="unit">%</span></span>
+      </div>
+    </div>
+
+    <!-- ================= ADVANCED PAGE ================= -->
+    <div class="page" id="pageAdvanced">
+      <div class="vlabel" style="left:1rem; top:4.375rem; height:11.25rem;">SHAPE</div>
+      <div class="vlabel" style="left:60.875rem; top:4.375rem; height:13.75rem;">FILTERS</div>
+      <div class="vlabel" style="left:1rem; top:19.375rem; height:13.125rem;">MODULES</div>
+      <div class="vlabel" style="left:60.875rem; top:19.375rem; height:13.125rem;">OUTPUT</div>
+
+      <!-- triggerMode is NON-APVTS ValueTree state (architecture.md), bound
+           via the "setTriggerMode"/"getInitialUIState" native-function
+           bridge in v10-PluginEditor.cpp - NOT a WebComboBoxRelay. -->
+      <div class="mode-pill" id="modePill" data-param="triggerMode" style="top:5rem;">
+        <div class="mode-indicator" id="modeIndicator"></div>
+        <button data-value="manual" class="active">MANUAL</button>
+        <button data-value="midi">MIDI</button>
+        <button data-value="auto">AUTO</button>
+      </div>
+
+      <div class="mini-screen" style="left:2.5rem; top:9.375rem; width:6.75rem; height:3.5rem;"
+           data-param="tension" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-step="1">
+        <div class="mini-screen-label">TENSION</div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">50</span><span style="font-size:0.6rem;">%</span></div>
+        <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
+      </div>
+
+      <div class="mini-screen" style="left:9.875rem; top:9.375rem; width:6.75rem; height:3.5rem;"
+           data-param="chaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1">
+        <div class="mini-screen-label">CHAOS</div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">0</span><span style="font-size:0.6rem;">%</span></div>
+        <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
+      </div>
+
+      <!-- POST-1.0 (2026-09-17, user-directed: "remove midi note
+           selection"): the MIDI NOTE chip (added Stage 3 GUI Phase 4.2) is
+           REMOVED - MIDI trigger mode now responds to ANY note-on message
+           (see PluginProcessor.cpp's processBlock() doc comment), so no
+           note-picker UI is needed. See v10-ui.yaml's
+           midi_trigger_note_chip_removal amendment note. -->
+
+      <!-- NOISE TENSION - POST-1.0 FOURTH IMPROVEMENT SESSION addition
+           (2026-09-17, user-directed: "add a box near the tension box for
+           white noise tension to control the white noise graph"). Same
+           dark-LCD mini-screen family/interaction as TENSION/CHAOS directly
+           above (drag + chevrons + gesture bracketing, all generic via
+           initMiniScreen() below - no new JS needed), placed in the space
+           the TAIL knob vacated when it moved below the tension-curve graph
+           (see that knob-wrap's own comment) - fills the freed gap rather
+           than leaving it orphaned, AND reads as "near the tension box" per
+           the user's request. See .ideas/mockups/v10-ui.yaml's
+           `noise_tension_chip_and_tail_relocation` amendment note. -->
+      <div class="mini-screen" style="left:17.25rem; top:9.375rem; width:6.75rem; height:3.5rem;"
+           data-param="noiseTension" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-step="1">
+        <div class="mini-screen-label">NOISE</div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">50</span><span style="font-size:0.6rem;">%</span></div>
+        <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
+      </div>
+
+      <!-- BPM SYNC diagnostic - POST-1.0 addition (2026-09-16 improvement
+           pass). Read-only (no data-param/chevrons - purely a live dropVis-
+           feed consumer), same .mini-screen dark-LCD family treatment as
+           Tension/Chaos/MIDI-Note/Output. Placed in the free zone between
+           curveBox's bottom edge (13.75rem) and the OUTPUT screen's top
+           edge (20.3125rem) - see .ideas/mockups/v10-ui.yaml's
+           `sync_bpm_chip` amendment for the exact gap-verification math. -->
+      <div class="mini-screen" id="syncChip" style="left:49.375rem; top:14.375rem; width:10rem; height:3.5rem;">
+        <div class="mini-screen-label">SYNC</div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span id="syncValue">INT 120</span></div>
+      </div>
+
+      <!-- POST-1.0 (2026-09-17, user-directed: "add a second curve to the
+           graph... make the main purple and make the second gray the
+           second curve will be the noise, how it gradualy adds"). Second
+           curve (#curvePathNoise, GRAY #8A8F98 - reused from the tension
+           curve's own prior color) plots drop::NoiseModule::
+           riseAmountForProgress() (mirrored in JS below, see redrawCurve())
+           against the SAME x-axis as the tension curve. Main tension curve
+           (#curvePath) recolored PURPLE (#A78BFA). See v10-ui.yaml's
+           tension_noise_dual_curve amendment note for the color rationale. -->
+      <div id="curveBox" style="left:38.75rem; top:5rem; width:18.75rem; height:8.75rem;">
+        <div class="curve-label">TENSION CURVE</div>
+        <div class="curve-type-label" id="curveTypeLabel">S-CURVE</div>
+        <svg width="100%" height="100%" viewBox="0 0 300 140" preserveAspectRatio="none">
+          <g id="curveGrid"></g>
+          <path id="curvePathNoise" fill="none" stroke="#8A8F98" stroke-width="1.2"></path>
+          <path id="curvePath" fill="none" stroke="#A78BFA" stroke-width="1.4"></path>
+          <circle id="curveDot" cx="8" cy="84" r="2.6" fill="#E8823C" style="filter:drop-shadow(0 0 4px rgba(232,130,60,0.75));"></circle>
+          <text x="8" y="130" font-size="8" fill="#5A5F68" letter-spacing="1">BUILD</text>
+          <text x="292" y="130" font-size="8" fill="#5A5F68" letter-spacing="1" text-anchor="end">DROP</text>
+          <text x="8" y="118" font-size="6" fill="#A78BFA" letter-spacing="0.6">— TENSION</text>
+          <text x="292" y="118" font-size="6" fill="#8A8F98" letter-spacing="0.6" text-anchor="end">— NOISE</text>
+        </svg>
+      </div>
+
+      <!-- Impact hero: LED-dot-ring treatment -->
+      <div class="knob-wrap" id="impactWrap" style="left:27.1875rem; top:6.25rem; width:8.125rem;"
+           data-param="impact" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+        <div class="knob-well" id="impactWell" style="width:6.5rem;height:6.5rem;">
+          <div class="knob-dome" style="width:4.2rem;height:4.2rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div>
+        </div>
+        <span class="knob-label knob-label-hero">IMPACT &middot; <span class="kv-num">50</span><span class="unit">%</span></span>
+      </div>
+
+      <!-- 10 module macros - small neumorphic domes -->
+      <div class="knob-wrap" style="left:2.5rem; top:20rem; width:3.75rem;"
+           data-param="filter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">FILTER &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:9.75rem; top:20rem; width:3.75rem;"
+           data-param="width" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">WIDTH &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:17rem; top:20rem; width:3.75rem;"
+           data-param="pitch" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">PITCH &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:24.25rem; top:20rem; width:3.75rem;"
+           data-param="gate" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">GATE &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:31.5rem; top:20rem; width:3.75rem;"
+           data-param="stutter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">STUTTER &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:2.5rem; top:25.9375rem; width:3.75rem;"
+           data-param="delay" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">DELAY &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:9.75rem; top:25.9375rem; width:3.75rem;"
+           data-param="reverb" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">REVERB &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:17rem; top:25.9375rem; width:3.75rem;"
+           data-param="distortion" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">DIST &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:24.25rem; top:25.9375rem; width:3.75rem;"
+           data-param="digital" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">DIGITAL &middot; <span class="kv-num">100</span></span>
+      </div>
+      <div class="knob-wrap" style="left:31.5rem; top:25.9375rem; width:3.75rem;"
+           data-param="noise" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">NOISE &middot; <span class="kv-num">100</span></span>
+      </div>
+
+      <!-- Tail - POST-1.0 addition (2026-09-16). RELOCATED (3rd move,
+           POST-1.0 SIXTH IMPROVEMENT SESSION 2026-09-17, user-directed:
+           "move all the knobs to the left add the tail knob lower to the
+           knob rows"): now the 6th knob of the LOWER macro row (same
+           7.25rem column pitch, same small-knob treatment), after the 2x5
+           macro grid itself shifted left by 8rem (first column 10.5rem ->
+           2.5rem, aligning with the left column's TENSION/CHAOS chips at
+           left:2.5rem). Its previous below-the-graph spot (left:42.1875rem
+           top:14.4375rem) is vacated. Default 35 -> 0 (same session,
+           user-directed: "make the default tail zero") - a fresh instance
+           cuts cleanly at the drop (0% renders as TAIL-CUT, see the isTail
+           label logic below); ring-out is opt-in. See v10-ui.yaml's
+           `knob_rows_left_shift_and_tail_join` amendment note. -->
+      <div class="knob-wrap" style="left:38.75rem; top:25.9375rem; width:3.75rem;"
+           data-param="tail" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0">
+        <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
+        <span class="knob-label knob-label-small">TAIL &middot; <span class="kv-num">CUT</span><span class="unit"></span></span>
+      </div>
+
+      <div class="mini-screen" style="left:49.375rem; top:20.3125rem; width:10rem; height:5.625rem;"
+           data-param="output" data-min="-60" data-max="12" data-default="0" data-unit="dB" data-decimals="1" data-step="0.5">
+        <div class="mini-screen-label">OUTPUT</div>
+        <div class="mini-screen-value" style="font-size:1.6rem;"><span class="bv-num">0.0</span><span style="font-size:0.7rem;">dB</span></div>
+        <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module">
+  // =========================================================================
+  // JUCE FRONTEND LIBRARY - conditional import (juce8-critical-patterns.md
+  // Pattern #21: ES6 module import required; Pattern #8/#12/#19/#23/#24
+  // also apply throughout this file).
+  //
+  // GRACEFUL BROWSER FALLBACK: window.__JUCE__ is only defined when this
+  // page is actually hosted inside a JUCE WebBrowserComponent. Importing
+  // js/juce/index.js unconditionally would throw immediately in a plain
+  // browser (its PromiseHandler constructor touches window.__JUCE__.backend
+  // at module-load time) - so the import is gated behind this check, and a
+  // minimal LOCAL fallback (below) stands in for parameter state so the UI
+  // remains fully previewable/draggable in a browser, with the progress
+  // strip/phase chip idling (no live DSP feed) rather than throwing or
+  // going blank. This is the "graceful idle fallback when no data arrives"
+  // the finalization spec calls for.
+  // =========================================================================
+  let Juce = null;
+  const backendAvailable = !!window.__JUCE__;
+  if (backendAvailable) {
+    Juce = await import("./js/juce/index.js");
+    console.log("JUCE backend connected:", window.__JUCE__.backend);
+  } else {
+    console.warn("[DROP] JUCE backend not detected - running in browser preview mode. " +
+      "Parameter controls use local-only state; the phase chip/progress strip stay idle " +
+      "(no simulated audio input, no live DSP visualization feed).");
+  }
+
+  // Local (browser-preview-only) parameter state - same minimal shape as the
+  // real bridge's slider/toggle/combo state objects, enough for every
+  // bindXxx() helper below to work identically in both modes.
+  const localState = {};
+  function localGetSliderState(id) {
+    if (!(id in localState)) localState[id] = { n: 0.5, listeners: [] };
+    const s = localState[id];
+    return {
+      getNormalisedValue: () => s.n,
+      setNormalisedValue: (v) => { s.n = v; },
+      sliderDragStarted: () => {},
+      sliderDragEnded: () => {},
+      properties: { skew: 1 },
+      valueChangedEvent: { addListener: () => {} }
+    };
+  }
+  function localGetToggleState(id) {
+    if (!(id in localState)) localState[id] = { v: false };
+    const s = localState[id];
+    return { getValue: () => s.v, setValue: (v) => { s.v = v; }, valueChangedEvent: { addListener: () => {} } };
+  }
+  function localGetComboBoxState(id) {
+    if (!(id in localState)) localState[id] = { i: 0 };
+    const s = localState[id];
+    return { getChoiceIndex: () => s.i, setChoiceIndex: (i) => { s.i = i; }, valueChangedEvent: { addListener: () => {} } };
+  }
+  function getSliderState(id)   { return backendAvailable ? Juce.getSliderState(id)   : localGetSliderState(id); }
+  function getToggleState(id)   { return backendAvailable ? Juce.getToggleState(id)   : localGetToggleState(id); }
+  function getComboBoxState(id) { return backendAvailable ? Juce.getComboBoxState(id) : localGetComboBoxState(id); }
+
+  /* Native app feel */
+  document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+  document.addEventListener("dragstart", (e) => { e.preventDefault(); });
+
+  window.addEventListener("error", (e) => console.error("JavaScript error:", e.message, e.filename, e.lineno));
+  window.addEventListener("unhandledrejection", (e) => console.error("Unhandled promise rejection:", e.reason));
+
+  /* Root-em scaling (no viewport units) - observes the WebView's own filled
+     body instead of v10-ui-test.html's ".plugin-frame" harness div. The
+     native editor is independently clamped 800x450..1400x790 via
+     setResizeLimits() (v10-PluginEditor.cpp); this CSS clamp (0.75x-1.5x)
+     is a superset safety margin, per v10-ui.yaml's documented scaling_model. */
+  const BASE_W = 1000, BASE_H = 560, BASE_REM = 16;
+  function applyScale(w, h) {
+    let scale = Math.min(w / BASE_W, h / BASE_H);
+    scale = Math.max(0.75, Math.min(1.5, scale));
+    document.documentElement.style.fontSize = (BASE_REM * scale) + 'px';
+  }
+  const ro = new ResizeObserver((entries) => {
+    for (const entry of entries) { const { width, height } = entry.contentRect; applyScale(width, height); }
+  });
+  ro.observe(document.body);
+  applyScale(document.body.clientWidth, document.body.clientHeight);
+
+  /* Page navigation (pure UI paging - not an APVTS parameter) */
+  const pageNavButtons = Array.from(document.querySelectorAll('.page-nav button'));
+  const pageNavIndicator = document.getElementById('pageNavIndicator');
+  const pageMain = document.getElementById('pageMain');
+  const pageAdvanced = document.getElementById('pageAdvanced');
+  function showPage(which) {
+    const isMain = which === 'main';
+    pageMain.classList.toggle('active', isMain);
+    pageAdvanced.classList.toggle('active', !isMain);
+    pageNavButtons.forEach(b => b.classList.toggle('active', b.dataset.page === which));
+    pageNavIndicator.style.transform = isMain ? 'translateX(0)' : 'translateX(100%)';
+  }
+  pageNavButtons.forEach((btn) => btn.addEventListener('click', () => showPage(btn.dataset.page)));
+
+  /* Critically-damped spring integrator - identical to v1-v10 */
+  class Spring {
+    constructor(stiffness, damping, value = 0) { this.k = stiffness; this.d = damping; this.value = value; this.target = value; this.vel = 0; }
+    update(dt) {
+      const force = (this.target - this.value) * this.k - this.vel * this.d;
+      this.vel += force * dt; this.value += this.vel * dt; return this.value;
+    }
+  }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  // =========================================================================
+  // LIVE VISUALIZATION FEED - replaces v10-ui-test.html's local demo
+  // `drop` state machine + simulatedInputLevel(). Populated from the
+  // "dropVisUpdate" event emitted by v10-PluginEditor.cpp's ~30-60Hz Timer,
+  // which itself drains the lock-free audio->GUI ring buffer documented in
+  // architecture.md ({ progress, tensionLevel, currentState, inputRMS,
+  // activeModuleWeights[10] }). See this file's own top-of-script comment
+  // for the browser-preview idle fallback when no backend is present.
+  //
+  // DSP STATE NAMING: DropStateMachine's real states (architecture.md) are
+  // Idle/Arming/Building/Peak/Impact/Recovery (6 states) - sent here as
+  // lowercase strings. (The former IMPACT_VACUUM_FRACTION/impactSubPhase()
+  // sub-split of the Impact state existed only to drive the now-removed
+  // bubble's vacuum-collapse vs. burst visuals and has been deleted along
+  // with it - phaseChip/progressStrip/curveDot all consume currentState/
+  // progress directly and never needed the sub-phase split.)
+  // =========================================================================
+  // POST-1.0 additive fields (2026-09-16, BPM diagnostic feature): bpm/
+  // hostPlayheadValid - see PluginProcessor.h's VisualizationFrame doc
+  // comment. bpm defaults to 120 (matches the fallback transport's own
+  // fixed BPM) so #syncChip reads sensibly even before the first frame.
+  const dropVis = { currentState: 'idle', progress: 0, tensionLevel: 0, inputRMS: 0, activeModuleWeights: new Array(10).fill(0), bpm: 120, hostPlayheadValid: false };
+  if (backendAvailable) {
+    window.__JUCE__.backend.addEventListener('dropVisUpdate', (payload) => {
+      if (!payload) return;
+      if (typeof payload.currentState === 'string') dropVis.currentState = payload.currentState;
+      if (typeof payload.progress === 'number') dropVis.progress = payload.progress;
+      if (typeof payload.tensionLevel === 'number') dropVis.tensionLevel = payload.tensionLevel;
+      if (typeof payload.inputRMS === 'number') dropVis.inputRMS = payload.inputRMS;
+      if (Array.isArray(payload.activeModuleWeights)) dropVis.activeModuleWeights = payload.activeModuleWeights;
+      if (typeof payload.bpm === 'number') dropVis.bpm = payload.bpm;
+      if (typeof payload.hostPlayheadValid === 'boolean') dropVis.hostPlayheadValid = payload.hostPlayheadValid;
+      // activeModuleWeights[10]'s original planned consumer (the bubble's
+      // per-region agitation modulation) was removed along with the bubble
+      // (see v10-ui.yaml's bubble_removal note). Stage 3 GUI Phase 4.3 gave
+      // it a design-consistent replacement consumer instead (plan.md:
+      // "active-effects indication reflects actual IntensityBudget
+      // weights") - see MODULE_MACRO_ORDER / the per-knob setWeightGlow()
+      // calls in frame_() below, and v10-ui.yaml's
+      // `module_weight_arc_glow` amendment note.
+    });
+  }
+
+  /* Trigger-mode 3-way pill - NON-APVTS ValueTree state (architecture.md),
+     bridged via native functions (see v10-PluginEditor.cpp). */
+  const modePill = document.getElementById('modePill');
+  const modeIndicator = document.getElementById('modeIndicator');
+  const modeButtons = Array.from(modePill.querySelectorAll('button'));
+  const MODE_VALUES = ['manual', 'midi', 'auto'];
+
+  // POST-1.0 (2026-09-17, user-directed: "remove midi note selection"): the
+  // MIDI trigger note chip's JS (element refs, note-name formatting,
+  // chevron handlers, setMidiTriggerNote native-function bridge) is
+  // REMOVED - MIDI trigger mode now responds to ANY note-on message (see
+  // PluginProcessor.cpp's processBlock() doc comment), so there is no
+  // per-note UI value to track or push. DOCUMENTED SUPERSESSION.
+
+  function setTriggerModeUI(index) {
+    modeButtons.forEach((b, i) => b.classList.toggle('active', i === index));
+    modeIndicator.style.transform = `translateX(${index * 100}%)`;
+  }
+  let cachedSetTriggerModeFn = null;
+  function callSetTriggerMode(index) {
+    if (!backendAvailable) return;
+    // getNativeFunction is an ES6 export of js/juce/index.js (Pattern #21) -
+    // cached once, called on every trigger-mode click thereafter.
+    if (!cachedSetTriggerModeFn) cachedSetTriggerModeFn = Juce.getNativeFunction('setTriggerMode');
+    cachedSetTriggerModeFn(index);
+  }
+  modeButtons.forEach((btn, i) => {
+    btn.addEventListener('click', () => {
+      setTriggerModeUI(i);
+      callSetTriggerMode(i);
+    });
+  });
+  // Fetch the persisted trigger mode once at load (non-parameter state does
+  // not round-trip through a relay's own sendInitialUpdate() the way APVTS
+  // parameters do) - see v10-PluginEditor.cpp's "getInitialUIState" native
+  // function. (POST-1.0, 2026-09-17: no longer also fetches a MIDI trigger
+  // note - see this file's MIDI-note-removal doc comment above.)
+  if (backendAvailable) {
+    const getInitialUIState = Juce.getNativeFunction('getInitialUIState');
+    getInitialUIState().then((state) => {
+      if (state && typeof state.triggerMode === 'number') setTriggerModeUI(state.triggerMode);
+      // POST-1.0 (2026-09-17): `midiTriggerNote` field parsing REMOVED - see
+      // this file's own MIDI-note-removal doc comment above.
+      // Phase 4.3 (plan.md criterion): seed the live-visualization state
+      // immediately from this one-shot load-time fetch, using the EXACT
+      // SAME field parsing as the "dropVisUpdate" event listener above, so
+      // an editor reopened mid-transition reflects the CURRENT DSP state on
+      // its very first rendered frame instead of waiting up to ~33ms for
+      // the first Timer-driven "dropVisUpdate" event (during which it would
+      // otherwise show stale/idle - see v10-PluginEditor.cpp's
+      // "getInitialUIState" native function doc comment).
+      if (state && state.visualization) {
+        const v = state.visualization;
+        if (typeof v.currentState === 'string') dropVis.currentState = v.currentState;
+        if (typeof v.progress === 'number') dropVis.progress = v.progress;
+        if (typeof v.tensionLevel === 'number') dropVis.tensionLevel = v.tensionLevel;
+        if (typeof v.inputRMS === 'number') dropVis.inputRMS = v.inputRMS;
+        if (Array.isArray(v.activeModuleWeights)) dropVis.activeModuleWeights = v.activeModuleWeights;
+        if (typeof v.bpm === 'number') dropVis.bpm = v.bpm;
+        if (typeof v.hostPlayheadValid === 'boolean') dropVis.hostPlayheadValid = v.hostPlayheadValid;
+      }
+    }).catch((e) => console.warn('[DROP] getInitialUIState failed:', e));
+  }
+
+  /* Build length - step wells (APVTS Choice, 5 values) */
+  const buildLengthSteps = document.getElementById('buildLengthSteps');
+  const buildLengthState = getComboBoxState('buildLength');
+  const BUILD_LENGTH_BARS = [1, 2, 4, 8, 16];
+  let currentBuildLengthBars = 4;
+  function renderBuildLength(index) {
+    currentBuildLengthBars = BUILD_LENGTH_BARS[index];
+    buildLengthSteps.querySelectorAll('.step-circle').forEach((b, i) => b.classList.toggle('active', i === index));
+  }
+  buildLengthSteps.querySelectorAll('.step-circle').forEach((btn, index) => {
+    btn.addEventListener('click', () => {
+      renderBuildLength(index);
+      buildLengthState.setChoiceIndex(index);
+    });
+  });
+  buildLengthState.valueChangedEvent.addListener(() => renderBuildLength(buildLengthState.getChoiceIndex()));
+
+  /* Style chevron selector (APVTS Choice, 16 DropStyles) */
+  const STYLES = ["Clean EDM","Big Room","Techno Pressure","Dark Techno","Trap Pull","DnB Rush","Hyper","Cinematic",
+                   "Minimal","Vocal Build","Drum Build","Synth Build","Full Mix","Destroy","Vacuum","Reverse Energy"];
+  const styleLabel = document.getElementById('styleLabel');
+  const styleState = getComboBoxState('style');
+  function renderStyle(index) { styleLabel.textContent = STYLES[index] || STYLES[0]; }
+  function setStyle(i) {
+    const index = ((i % STYLES.length) + STYLES.length) % STYLES.length;
+    renderStyle(index);
+    styleState.setChoiceIndex(index);
+  }
+  document.getElementById('styleLeft').addEventListener('click', () => setStyle(styleState.getChoiceIndex() - 1));
+  document.getElementById('styleRight').addEventListener('click', () => setStyle(styleState.getChoiceIndex() + 1));
+  styleState.valueChangedEvent.addListener(() => renderStyle(styleState.getChoiceIndex()));
+  renderStyle(0);
+
+  /* =========================================================
+     Neumorphic knob: recessed well + raised dome + rotating
+     pointer dot + thin orange value arc (arc centers on the WELL
+     using the zero-ambiguity transform-centering technique from
+     v6-v10's knob-arc/LED-ring fixes).
+     ========================================================= */
+  function buildKnobArc(wellEl) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'knob-arc');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+    const R = 47, C = 2 * Math.PI * R, VIS = 0.75 * C;
+    function mkCircle(cls) {
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', '50'); c.setAttribute('cy', '50'); c.setAttribute('r', String(R));
+      c.setAttribute('class', cls); c.setAttribute('transform', 'rotate(135 50 50)');
+      return c;
+    }
+    const track = mkCircle('arc-track');
+    track.setAttribute('stroke-dasharray', `${VIS.toFixed(2)} ${C.toFixed(2)}`);
+    const fillC = mkCircle('arc-fill');
+    fillC.setAttribute('stroke-dasharray', `0 ${C.toFixed(2)}`);
+    svg.appendChild(track); svg.appendChild(fillC);
+    wellEl.appendChild(svg);
+    return { fill: fillC, C, VIS };
+  }
+
+  function buildLedRing(wellEl, count) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'led-ring');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+    svg.style.position = 'absolute'; svg.style.top = '50%'; svg.style.left = '50%';
+    svg.style.width = '134%'; svg.style.height = '134%';
+    svg.style.transform = 'translate(-50%, -50%)'; svg.style.overflow = 'visible'; svg.style.pointerEvents = 'none';
+    const dots = [];
+    for (let i = 0; i < count; i++) {
+      const angle = -135 + (i / (count - 1)) * 270;
+      const rad = angle * Math.PI / 180;
+      const cx = 50 + Math.sin(rad) * 47, cy = 50 - Math.cos(rad) * 47;
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', cx.toFixed(2)); c.setAttribute('cy', cy.toFixed(2)); c.setAttribute('r', '2.1');
+      svg.appendChild(c);
+      dots.push(c);
+    }
+    wellEl.appendChild(svg);
+    return dots;
+  }
+
+  function initKnob(root) {
+    const min = parseFloat(root.dataset.min), max = parseFloat(root.dataset.max), def = parseFloat(root.dataset.default);
+    const decimals = parseInt(root.dataset.decimals || '0', 10);
+    const paramId = root.dataset.param;
+    const wellDiv = root.querySelector('.knob-well');
+    const domeInner = root.querySelector('.knob-dome-inner');
+    const numEl = root.querySelector('.kv-num');
+    const unitEl = root.querySelector('.unit');
+    const state = getSliderState(paramId);
+    const arc = buildKnobArc(wellDiv);
+    const isHero = paramId === 'impact';
+    const ledDots = isHero ? buildLedRing(wellDiv, 28) : null;
+    // POST-1.0 addition (2026-09-16, "TAIL = CUT" feature - user chose:
+    // TAIL knob at 0% reads as an explicit clean-cut indicator rather than
+    // "0%", matching PluginProcessor.h's computeDurationsForNewBuild()
+    // kTailCutEpsilon exactly (both compare the SAME 0-100 raw parameter
+    // value against 1.0e-4). See .ideas/mockups/v10-ui.yaml's
+    // `tail_cut_label` amendment note.
+    const isTail = paramId === 'tail';
+
+    function skewOf() { try { return (state.properties && state.properties.skew) || 1; } catch (e) { return 1; } }
+    function normFromValue(v) { const p = (v - min) / (max - min); const sk = skewOf(); return (!sk || sk === 1) ? p : Math.pow(Math.max(0, p), sk); }
+    function valueFromNorm(n) { const sk = skewOf(); const p = (!sk || sk === 1) ? n : Math.pow(Math.max(0, n), 1 / sk); return min + p * (max - min); }
+
+    function render(norm) {
+      const value = valueFromNorm(norm);
+      if (isTail && value <= 1.0e-4) {
+        numEl.textContent = 'CUT';
+        if (unitEl) unitEl.textContent = '';
+      } else {
+        numEl.textContent = value.toFixed(decimals);
+        if (unitEl && isTail) unitEl.textContent = '%';
+      }
+      arc.fill.setAttribute('stroke-dasharray', `${(norm * arc.VIS).toFixed(2)} ${arc.C.toFixed(2)}`);
+      domeInner.style.transform = `rotate(${(-135 + norm * 270).toFixed(1)}deg)`;
+      if (ledDots) {
+        const litCount = Math.round(norm * ledDots.length);
+        ledDots.forEach((d, i) => d.classList.toggle('lit', i < litCount));
+      }
+      return value;
+    }
+    let normalized = normFromValue(def);
+    render(normalized);
+
+    let dragging = false, startY = 0, startNorm = 0;
+    root.addEventListener('mousedown', (e) => {
+      dragging = true; startY = e.clientY; startNorm = normalized; e.preventDefault();
+      state.sliderDragStarted();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      normalized = Math.min(1, Math.max(0, startNorm + (startY - e.clientY) / 150));
+      render(normalized);
+      state.setNormalisedValue(normalized);
+    });
+    window.addEventListener('mouseup', () => { if (dragging) state.sliderDragEnded(); dragging = false; });
+    root.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      normalized = Math.min(1, Math.max(0, normalized + (e.deltaY < 0 ? 0.01 : -0.01)));
+      render(normalized);
+      state.sliderDragStarted(); state.setNormalisedValue(normalized); state.sliderDragEnded();
+    }, { passive: false });
+    root.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      normalized = normFromValue(def);
+      render(normalized);
+      state.sliderDragStarted(); state.setNormalisedValue(normalized); state.sliderDragEnded();
+    });
+    state.valueChangedEvent.addListener(() => { normalized = state.getNormalisedValue(); render(normalized); });
+
+    // Stage 3 GUI Phase 4.3 (plan.md: "active-effects indication reflects
+    // actual IntensityBudget weights, not static UI state") - REUSES the
+    // existing arc-glow treatment (the same drop-shadow-blur-radius
+    // technique the progress strip's STRIP GLOW already established, and
+    // the same base 2px glow `.arc-fill` already has via CSS) rather than
+    // adding any new visual element. Only called for the 10 module-macro
+    // knobs, from frame_()'s single rAF loop below (see MODULE_MACRO_ORDER)
+    // - harmless no-op capability on every other knob (hero macros, Impact)
+    // that simply never gets called for them. `w` is an already-smoothed
+    // 0..1 value (ballistic interpolation lives in frame_(), not here -
+    // juce8-critical-patterns.md #20) - an idle w<=0.02 reverts to the CSS
+    // default glow exactly (empty inline style), so "idle = no glow change"
+    // holds by construction.
+    function setWeightGlow(w) {
+      arc.fill.style.filter = w > 0.02
+        ? `drop-shadow(0 0 ${(2 + w * 6).toFixed(1)}px var(--accent-glow))`
+        : '';
+    }
+
+    return { get: () => normalized, setWeightGlow };
+  }
+
+  const knobRefs = {};
+  document.querySelectorAll('.knob-wrap').forEach((el) => { knobRefs[el.dataset.param] = initKnob(el); });
+
+  /* Mini-screen readouts (Tension / Chaos / Output) - drag + chevron step */
+  function initMiniScreen(root) {
+    const min = parseFloat(root.dataset.min), max = parseFloat(root.dataset.max), def = parseFloat(root.dataset.default);
+    const decimals = parseInt(root.dataset.decimals || '0', 10);
+    const step = parseFloat(root.dataset.step || '1');
+    const paramId = root.dataset.param;
+    const numEl = root.querySelector('.bv-num');
+    const state = getSliderState(paramId);
+
+    function render(norm) {
+      const value = min + norm * (max - min);
+      numEl.textContent = value.toFixed(decimals);
+      return value;
+    }
+    let normalized = (def - min) / (max - min);
+    render(normalized);
+
+    function commit(norm) {
+      normalized = Math.min(1, Math.max(0, norm));
+      render(normalized);
+      state.setNormalisedValue(normalized);
+    }
+
+    let dragging = false, startY = 0, startNorm = 0;
+    root.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('mchev')) return;
+      dragging = true; startY = e.clientY; startNorm = normalized; e.preventDefault();
+      state.sliderDragStarted();
+    });
+    window.addEventListener('mousemove', (e) => { if (!dragging) return; commit(startNorm + (startY - e.clientY) / 150); });
+    window.addEventListener('mouseup', () => { if (dragging) state.sliderDragEnded(); dragging = false; });
+
+    root.querySelectorAll('.mchev').forEach((chev) => {
+      chev.addEventListener('click', () => {
+        const dir = parseFloat(chev.dataset.dir);
+        state.sliderDragStarted();
+        commit(normalized + (step * dir) / (max - min));
+        state.sliderDragEnded();
+      });
+    });
+    state.valueChangedEvent.addListener(() => { normalized = state.getNormalisedValue(); render(normalized); });
+
+    return { get: () => normalized };
+  }
+
+  const bareRefs = {};
+  document.querySelectorAll('.mini-screen[data-param]').forEach((el) => { bareRefs[el.dataset.param] = initMiniScreen(el); });
+
+  /* Tension curve display - curve SHAPE still derives from the `tension`
+     parameter's own normalized value (unchanged from the mockup); the
+     moving dot now derives from the live dropVis feed instead of the local
+     demo state machine. `dropVis.tensionLevel` (the DSP's actual live
+     curve-evaluation output) is available but not yet cross-checked against
+     this JS approximation - flagged as a possible future refinement, not
+     required for a faithful port of the finalized mockup's visual design. */
+  const curvePath = document.getElementById('curvePath');
+  const curvePathNoise = document.getElementById('curvePathNoise');
+  const curveDot = document.getElementById('curveDot');
+  const curveTypeLabel = document.getElementById('curveTypeLabel');
+  const CURVE_X0 = 8, CURVE_X1 = 188, CURVE_Y0 = 84, CURVE_H = 68;
+
+  // POST-1.0 (2026-09-17, user-directed: "the second curve will be the
+  // noise, how it gradualy adds"). Mirrors drop::NoiseModule::
+  // riseAmountForProgress() (Source/DSP/NoiseModule.h - the C++ source of
+  // truth) EXACTLY: smoothstep, p*p*(3-2p). Verified to agree with the C++
+  // implementation via RunTests.cpp's "[POST-1.0] noise rise gradual" test
+  // block (both are simple enough - 2 multiplies, no transcendental calls -
+  // that a byte-for-byte port is unambiguous; any future change to either
+  // side should update both plus that test).
+  //
+  // POST-1.0 FOURTH IMPROVEMENT SESSION addition (2026-09-17, same day,
+  // user-directed: "noise tension to control the white noise graph"):
+  // second argument `noiseTension01` (default 0.5, matching the new
+  // `noiseTension` APVTS parameter's own default) mirrors NoiseModule.h's
+  // `pow(smoothstep(p), k)` shape family EXACTLY - k==1 at 0.5 (byte-
+  // identical to the pre-noiseTension smoothstep above), k>1 for higher
+  // noiseTension (later bloom), k<1 for lower (earlier bloom).
+  function riseAmountForProgress(p, noiseTension01) {
+    const c = Math.min(1, Math.max(0, p));
+    // Mirrors NoiseModule::riseAmountForProgress()'s POST-1.0 (2026-09-17)
+    // decibel-linear ramp - see that function's comment. Keep these two in
+    // lockstep; a test asserts the graph and the DSP agree.
+    if (c <= 0) return 0;
+    const RANGE_DB = 48, FLOOR_AMP = Math.pow(10, -RANGE_DB / 20);
+    const raw = Math.pow(10, -(RANGE_DB / 20) * (1 - c));
+    const base = Math.min(1, Math.max(0, (raw - FLOOR_AMP) / (1 - FLOOR_AMP)));
+    const t = Math.min(1, Math.max(0, noiseTension01 === undefined ? 0.5 : noiseTension01));
+    const k = Math.pow(2, (t - 0.5) * 2.4);
+    return Math.pow(base, k);
+  }
+  function buildCurveGrid() {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const g = document.getElementById('curveGrid');
+    const baseline = document.createElementNS(svgNS, 'line');
+    baseline.setAttribute('x1', CURVE_X0); baseline.setAttribute('x2', CURVE_X1);
+    baseline.setAttribute('y1', CURVE_Y0); baseline.setAttribute('y2', CURVE_Y0);
+    baseline.setAttribute('stroke', 'rgba(255,255,255,0.09)'); baseline.setAttribute('stroke-width', '1');
+    g.appendChild(baseline);
+    [0, 0.25, 0.5, 0.75, 1].forEach((f) => {
+      const x = CURVE_X0 + f * (CURVE_X1 - CURVE_X0);
+      const tick = document.createElementNS(svgNS, 'line');
+      tick.setAttribute('x1', x.toFixed(1)); tick.setAttribute('x2', x.toFixed(1));
+      tick.setAttribute('y1', (CURVE_Y0 - 6).toFixed(1)); tick.setAttribute('y2', CURVE_Y0);
+      tick.setAttribute('stroke', 'rgba(255,255,255,0.15)'); tick.setAttribute('stroke-width', '1');
+      g.appendChild(tick);
+    });
+  }
+  buildCurveGrid();
+  function curveY(x, exponent) { return CURVE_Y0 - Math.pow(x, exponent) * CURVE_H; }
+  function redrawCurve() {
+    const tNorm = bareRefs.tension.get();
+    const exponent = 1 + tNorm * 3.2;
+    const pts = [];
+    const ptsNoise = [];
+    const N = 24;
+    for (let i = 0; i <= N; i++) {
+      const x = i / N;
+      const px = CURVE_X0 + x * (CURVE_X1 - CURVE_X0);
+      pts.push([px, curveY(x, exponent)]);
+      // NOISE curve (POST-1.0, 2026-09-17): NoiseModule::process() receives
+      // this SAME curved-progress value (Math.pow(x, exponent), the tension
+      // curve's own normalized 0..1 shape) as its `progress` argument - see
+      // PluginProcessor.cpp processSegment()'s noiseModule.process() call -
+      // so plotting riseAmountForProgress(curvedProgress) at each linear-x
+      // sample shows exactly what the user hears the riser do across the
+      // build, not merely riseAmountForProgress(x) in isolation.
+      // POST-1.0 FOURTH IMPROVEMENT SESSION: the NOISE TENSION chip's own
+      // live normalized value is now the second argument, so dragging that
+      // chip visibly reshapes this curve in real time - see the NOISE
+      // TENSION mini-screen markup above (bareRefs.noiseTension, generically
+      // wired by initMiniScreen(), same as bareRefs.tension/chaos).
+      const curvedProgress = Math.pow(x, exponent);
+      ptsNoise.push([px, CURVE_Y0 - riseAmountForProgress(curvedProgress, bareRefs.noiseTension.get()) * CURVE_H]);
+    }
+    let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)} `;
+    for (let i = 1; i < pts.length; i++) d += `L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)} `;
+    curvePath.setAttribute('d', d);
+
+    let dNoise = `M ${ptsNoise[0][0].toFixed(1)} ${ptsNoise[0][1].toFixed(1)} `;
+    for (let i = 1; i < ptsNoise.length; i++) dNoise += `L ${ptsNoise[i][0].toFixed(1)} ${ptsNoise[i][1].toFixed(1)} `;
+    curvePathNoise.setAttribute('d', dNoise);
+
+    curveTypeLabel.textContent = tNorm < 0.33 ? 'GENTLE' : (tNorm < 0.66 ? 'S-CURVE' : 'LATE ACCEL');
+    let dotT = 0;
+    const st = dropVis.currentState;
+    if (st === 'building') dotT = dropVis.progress;
+    else if (st === 'peak' || st === 'impact' || st === 'recovery') dotT = 1;
+    curveDot.setAttribute('cx', (CURVE_X0 + dotT * (CURVE_X1 - CURVE_X0)).toFixed(1));
+    curveDot.setAttribute('cy', curveY(dotT, exponent).toFixed(1));
+  }
+  redrawCurve();
+
+  /* DROP trigger - momentary/edge-fired APVTS Bool (architecture.md:
+     "Fires the transition... re-trigger safety: ignored unless Idle").
+     A single click pulses the toggle true->false so the host sees a clean
+     rising edge without the parameter staying stuck "on"; DropStateMachine
+     owns everything after that via the real currentState feed below - this
+     button never runs its own local phase timeline (v10-ui-test.html's
+     startDemo()/advancePhase() demo state machine is removed entirely). */
+  const triggerBtn = document.getElementById('triggerBtn');
+  const triggerState = getToggleState('trigger');
+  const phaseChip = document.getElementById('phaseChip');
+  const phaseText = phaseChip.querySelector('.phase-text');
+  const progressFill = document.getElementById('progressFill');
+
+  triggerBtn.addEventListener('mousedown', () => triggerBtn.classList.add('pressed'));
+  window.addEventListener('mouseup', () => triggerBtn.classList.remove('pressed'));
+  triggerBtn.addEventListener('click', () => {
+    triggerState.setValue(true);
+    // Pulse back to false on the next tick - see doc comment above.
+    setTimeout(() => triggerState.setValue(false), 30);
+  });
+
+  function updatePhaseChip() {
+    const st = dropVis.currentState;
+    phaseText.textContent = st.toUpperCase();
+    const isLive = st !== 'idle';
+    phaseChip.classList.toggle('live', isLive);
+    triggerBtn.classList.toggle('armed', isLive);
+  }
+  function updateProgressStrip() {
+    const st = dropVis.currentState;
+    let fillPct = 0;
+    if (st === 'building') fillPct = dropVis.progress * 100;
+    else if (st === 'arming' || st === 'peak' || st === 'impact' || st === 'recovery') fillPct = 100;
+    progressFill.setAttribute('width', (fillPct / 100 * 240).toFixed(1));
+    // STRIP GLOW - visualization contract carrier for tension x input level
+    // now that the bubble is gone (see stripGlowLevel/stripGlowSpring below
+    // and v10-ui.yaml's progress_strip_visualization_contract note).
+    progressFill.setAttribute('fill', mixColor('#E8823C', '#FF9A4D', stripGlowLevel));
+    progressFill.style.filter = stripGlowLevel > 0.02
+      ? `drop-shadow(0 0 ${(2 + stripGlowLevel * 5).toFixed(1)}px var(--accent-glow))`
+      : 'none';
+  }
+
+  /* SYNC readout (BPM diagnostic, POST-1.0 addition, 2026-09-16) - shows
+     "128.0 BPM" when locked to a real host transport (hostPlayheadValid),
+     or "INT 120" (the fixed fallback transport's own BPM, rounded) when no
+     host transport is present - lets the user confirm at a glance whether
+     DROP is genuinely locked to their track. */
+  const syncValueEl = document.getElementById('syncValue');
+  function updateSyncChip() {
+    if (!syncValueEl) return;
+    syncValueEl.textContent = dropVis.hostPlayheadValid
+      ? `${dropVis.bpm.toFixed(1)} BPM`
+      : `INT ${Math.round(dropVis.bpm)}`;
+  }
+
+  /* =========================================================
+     REMOVED (user direction, 2026-09-14): the liquid soap-bubble
+     centerpiece (28-point soft-body physics, HD densified render,
+     iridescent rim, satellite-droplet pop system, and its grounding
+     shadow) previously lived here, ported wholesale from v9. It has been
+     deleted entirely along with its dedicated SVG markup (#orbWrap and
+     children) and CSS (#orbWrap rule) - see v10-ui.yaml's
+     "bubble_removal" note for the full removal record and the Main
+     page's rebalanced center-column geometry that replaced it.
+     hexToRgb/mixColor below are kept/added as a small color-lerp utility,
+     now used only by the progress-strip glow (STRIP GLOW, below), which
+     carries the "input level/tension visible somewhere" visualization
+     contract that the (now-removed) bubble used to carry.
+     ========================================================= */
+  function hexToRgb(hex) { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function mixColor(hexA, hexB, t) {
+    const a = hexToRgb(hexA), b = hexToRgb(hexB);
+    const r = Math.round(a[0] + (b[0] - a[0]) * t);
+    const g = Math.round(a[1] + (b[1] - a[1]) * t);
+    const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+    return `rgb(${r},${g},${bl})`;
+  }
+  const stripGlowSpring = new Spring(90, 14, 0.0);
+  let stripGlowLevel = 0;
+
+  /* Stage 3 GUI Phase 4.3 - module-macro knob arc-glow, driven by the live
+     activeModuleWeights[10] feed (see setWeightGlow() in initKnob() above
+     and v10-ui.yaml's `module_weight_arc_glow` amendment note). PINNED
+     index order matches PluginProcessor.h's VisualizationFrame doc comment
+     / drop::BudgetModule's enum declaration order exactly - identical to
+     the "10 module macros" data-param order already authored in this
+     file's markup (Filter/Width/Pitch/Gate/Stutter/Delay/Reverb/
+     Distortion/Digital/Noise), so no separate index-mapping table is
+     needed beyond this array. */
+  const MODULE_MACRO_ORDER = ['filter', 'width', 'pitch', 'gate', 'stutter', 'delay', 'reverb', 'distortion', 'digital', 'noise'];
+  const moduleGlowCurrent = new Array(MODULE_MACRO_ORDER.length).fill(0);
+  const MODULE_GLOW_LERP = 0.18; // smoothing speed (juce8-critical-patterns.md #20) - subtle, not peak-responsive like a VU meter
+
+  let lastFrameTime = null;
+  function frame_(now) {
+    if (lastFrameTime === null) lastFrameTime = now;
+    const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+
+    const state = dropVis.currentState;
+
+    // STRIP GLOW - minimal visualization-contract carrier that replaced the
+    // bubble: the progress strip's fill brightness/glow scales with
+    // tension x input level while a drop is active (see
+    // v10-ui.yaml's progress_strip_visualization_contract note). Production
+    // uses the live DSP's dropVis.tensionLevel (the real curve-evaluation
+    // output), distinct from the tension KNOB's own UI-bound value used
+    // elsewhere for the curve SHAPE in redrawCurve().
+    const isDropActive = state !== 'idle';
+    const glowTarget = isDropActive
+      ? Math.min(1, dropVis.tensionLevel * dropVis.inputRMS * 2.5)
+      : 0;
+    stripGlowSpring.target = glowTarget;
+    stripGlowSpring.update(dt);
+    stripGlowLevel = Math.max(0, Math.min(1, stripGlowSpring.value));
+
+    // MODULE MACRO ARC GLOW - same isDropActive gate as the strip glow
+    // above ("idle = no glow change"); each knob's own smoothed
+    // current-value (moduleGlowCurrent[i]) chases its live weight target
+    // via simple exponential lerp, batched here in the SAME single rAF loop
+    // as everything else (no extra timers/loops - CPU-negligible, filter-
+    // only paint updates, no layout thrash).
+    for (let i = 0; i < MODULE_MACRO_ORDER.length; i++) {
+      const ref = knobRefs[MODULE_MACRO_ORDER[i]];
+      if (!ref || !ref.setWeightGlow) continue;
+      const target = isDropActive ? Math.max(0, Math.min(1, dropVis.activeModuleWeights[i] || 0)) : 0;
+      moduleGlowCurrent[i] += (target - moduleGlowCurrent[i]) * MODULE_GLOW_LERP;
+      ref.setWeightGlow(moduleGlowCurrent[i]);
+    }
+
+    redrawCurve(); updatePhaseChip(); updateProgressStrip(); updateSyncChip();
+    requestAnimationFrame(frame_);
+  }
+  requestAnimationFrame(frame_);
+</script>
+
+</body>
+</html>

@@ -47,6 +47,7 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
     // POST-1.0 FOURTH IMPROVEMENT SESSION addition - appended after `tail`,
     // same append-only convention.
     noiseTensionRelay = std::make_unique<juce::WebSliderRelay>("noiseTension");
+    noiseTypeRelay = std::make_unique<juce::WebComboBoxRelay>("noiseType"); // POST-1.0 SEVENTH IMPROVEMENT SESSION (2026-09-18), 22nd parameter
 
     // ------------------------------------------------------------------------
     // STEP 2: CREATE WEBVIEW (with relay options + the non-APVTS
@@ -80,6 +81,7 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
             .withOptionsFrom(*outputRelay)
             .withOptionsFrom(*tailRelay)
             .withOptionsFrom(*noiseTensionRelay)
+            .withOptionsFrom(*noiseTypeRelay)
 
             // --- Non-APVTS "trigger mode" bridge (architecture.md: manual/
             // MIDI/auto-sync is non-parameter state, not an APVTS parameter -
@@ -192,6 +194,10 @@ DROPAudioProcessorEditor::DROPAudioProcessorEditor(DROPAudioProcessor& p)
     // POST-1.0 FOURTH IMPROVEMENT SESSION addition.
     noiseTensionAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.parameters.getParameter("noiseTension"), *noiseTensionRelay, nullptr);
+
+    // POST-1.0 SEVENTH IMPROVEMENT SESSION addition (2026-09-18).
+    noiseTypeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
+        *processorRef.parameters.getParameter("noiseType"), *noiseTypeRelay, nullptr);
 
     // ------------------------------------------------------------------------
     // WEBVIEW SETUP

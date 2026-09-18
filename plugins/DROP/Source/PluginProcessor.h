@@ -952,6 +952,7 @@ private:
     // parameter existed loads cleanly with the default (same APVTS guarantee
     // `tailParam` above already relies on).
     std::atomic<float>* noiseTensionParam = nullptr;
+    std::atomic<float>* noiseTypeParam = nullptr; // POST-1.0 SEVENTH IMPROVEMENT SESSION, 22nd parameter (choice index)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DROPAudioProcessor)
 };

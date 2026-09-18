@@ -27,12 +27,12 @@ struct PresetDefaults
 {
     const char* name = "";
     int styleIndex = 0;              // 0..15, matches DropStyle's table 1:1
-    int buildLengthChoiceIndex = 2;  // 0..4 -> 1/2/4/8/16 bars
+    int buildLengthChoiceIndex = 2;  // 0..5 -> 1/2/4/8/16/32 bars (32 appended 2026-09-17)
     float intensity = 50.0f;         // 0-100%
     float tension = 50.0f;           // 0-100%
     float chaos = 0.0f;              // 0-100%
     float impact = 50.0f;            // 0-100%
-    float dryWet = 100.0f;           // 0-100%
+    float dryWet = 50.0f;            // 0-100% (struct default 100 -> 50, POST-1.0 2026-09-18, in lockstep with the APVTS default and the re-authored preset table)
     float outputDb = 0.0f;           // -60..12 dB
 };
 

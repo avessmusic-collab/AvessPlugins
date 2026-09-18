@@ -191,6 +191,7 @@ private:
     // --- Noise Tension (Advanced page, POST-1.0 FOURTH IMPROVEMENT SESSION
     // addition - see this header's top doc comment / PluginProcessor.h) ---
     std::unique_ptr<juce::WebSliderRelay> noiseTensionRelay;
+    std::unique_ptr<juce::WebComboBoxRelay> noiseTypeRelay; // POST-1.0 SEVENTH IMPROVEMENT SESSION (2026-09-18)
 
     // ------------------------------------------------------------------------
     // 2) WEBVIEW SECOND
@@ -230,6 +231,7 @@ private:
 
     // POST-1.0 FOURTH IMPROVEMENT SESSION addition (see this header's top doc comment).
     std::unique_ptr<juce::WebSliderParameterAttachment> noiseTensionAttachment;
+    std::unique_ptr<juce::WebComboBoxParameterAttachment> noiseTypeAttachment; // POST-1.0 SEVENTH IMPROVEMENT SESSION (2026-09-18)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DROPAudioProcessorEditor)
 };

@@ -158,7 +158,7 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 ### dryWet
 - **Type:** Float
 - **Range:** 0 to 100 %
-- **Default:** 100
+- **Default:** 50 (**changed 100 → 50, POST-1.0 2026-09-18, user-directed "make default dry wet 50%"** — the 16 factory presets were re-authored to 50% in lockstep so preset selection never snaps back to full-wet; saved sessions carry their own value)
 - **Skew Factor:** linear
 - **UI Control:** Hero neumorphic knob, right (Main page). "DRY/WET · NN%" caption.
 - **DSP Usage:** Global dry/wet mix (`juce::dsp::DryWetMixer`), smoothed.
@@ -178,6 +178,13 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 - **Skew Factor:** linear (the 0-100% UI range itself is linear; it is then mapped EXPONENTIALLY to seconds internally — see DSP Usage)
 - **UI Control:** Small neumorphic macro knob (same visual family as the 10 module macros), "TAIL · NN%" caption ("TAIL · CUT" at 0%). Advanced page, 6th knob of the LOWER macro row (relocated 2026-09-17, POST-1.0 sixth amendment — see v10-ui.yaml `knob_rows_left_shift_and_tail_join`; previously below the tension-curve graph, originally in the left column below Tension/Chaos).
 - **DSP Usage:** **POST-1.0 addition — 2026-09-16 (user-directed improvement).** Latched at Arming (like `buildLength`). SETS the `Recovery` state's duration (Recovery IS the ring-out window during which DelayModule/ReverbModule/ImpactEngine's already-excited tails decay to silence) — OVERRIDES the active DropStyle's own `recoveryDivision` timing preference. Exact exponential mapping (see `PluginProcessor::computeDurationsForNewBuild()`): `tailSeconds = 0.15 * (4.0 / 0.15) ^ (tail/100)`, EXCEPT `tail≈0%` which is special-cased to the ~5ms `kTailCutSeconds` fast-fade window (the "TAIL = CUT" behavior — clean, click-free immediate cut). `tail=100%` → ~4.0s; `tail=35%` → ~0.47s.
+
+### noiseType
+- **Type:** Choice
+- **Choices:** STYLE, WHITE, PINK, BROWN, SWEEP, SAW, SHEPARD
+- **Default:** STYLE (index 0 — defers to the active DropStyle's authored NoiseColor, the exact pre-noiseType behavior; old sessions load bit-identical)
+- **UI Control:** Dark mini-LCD chip with chevrons, "NOISE TYPE" (Advanced page, below the tension-curve graph, left of SYNC).
+- **DSP Usage:** **POST-1.0 addition — 2026-09-18 (user-directed: "add choices for different kinds of noise"), 22nd parameter, strictly additive.** Selects `NoiseModule`'s riser source, grounded in the standard riser sound-design palette (researched 2026-09-18): WHITE = classic white-noise riser; PINK = darker 1/f; BROWN = deepest 1/f² rumble; SWEEP = white noise through a resonant low-pass swept 200Hz→12kHz with progress; SAW = tonal polyBLEP saw climbing 4 octaves (55→880Hz, R detuned +0.6%); SHEPARD = 6 octave-spaced windowed sines (endless-rise illusion). Live (not latched); the rise envelope (`riseAmountForProgress`, the gray graph curve) applies identically to every type, and RNG consumption is type-independent (determinism preserved under `noiseType` automation).
 
 ### noiseTension
 - **Type:** Float

@@ -36,6 +36,31 @@ enum class NoiseColor
     Filtered
 };
 
+/**
+ * POST-1.0 (2026-09-18, user-directed: "add choices for different kinds of
+ * noise, search what noises and sounds are used to make risers"). The
+ * user-facing riser SOURCE selection (the new `noiseType` APVTS choice
+ * parameter), grounded in the standard riser sound-design palette
+ * (researched 2026-09-18: white noise sweeps are the classic EDM riser;
+ * pink/brown colors give darker, warmer builds; resonant filter sweeps;
+ * tonal/pitched saw risers climbing an octave-plus give melodic direction;
+ * Shepard tones give the "endless rise" illusion).
+ *
+ * StyleDefault (index 0, the parameter's DEFAULT) defers to the active
+ * DropStyle's authored NoiseColor exactly as before this parameter existed
+ * - a fresh instance is bit-identical to the pre-noiseType build.
+ */
+enum class NoiseType
+{
+    StyleDefault = 0, // follow the DropStyle's authored NoiseColor (legacy behavior)
+    White,            // classic white-noise riser
+    Pink,             // darker 1/f noise
+    Brown,            // deepest 1/f^2 noise ("rumble" build)
+    Sweep,            // white noise through a resonant low-pass swept up with progress
+    Saw,              // tonal saw riser, pitch climbs 4 octaves (A1 55Hz -> A5 880Hz) across the build
+    Shepard           // 6 octave-spaced windowed sines, endless-rise illusion
+};
+
 class NoiseModule
 {
 public:
@@ -47,6 +72,10 @@ public:
 
     void setColor(NoiseColor newColor) noexcept { color = newColor; }
     NoiseColor getColor() const noexcept { return color; }
+
+    /** POST-1.0 (2026-09-18): the user-facing source selection - NoiseType::StyleDefault defers to setColor()'s Style-authored color. Live (not latched); safe to set per segment. */
+    void setType(NoiseType newType) noexcept { type = newType; }
+    NoiseType getType() const noexcept { return type; }
 
     /**
      * POST-1.0 addition (2026-09-17, user-directed: "make so the noise adds
@@ -185,15 +214,24 @@ private:
     };
 
     float nextWhite(std::mt19937& rng) noexcept;
-    float nextPink(std::mt19937& rng, PinkFilterState& state) noexcept;
+    float nextPink(float white, PinkFilterState& state) noexcept; // POST-1.0 2026-09-18: consumes the caller's white draw (see .cpp comment)
 
     std::mt19937 rngL, rngR;
     PinkFilterState pinkStateL, pinkStateR;
     float brightnessStateL = 0.0f, brightnessStateR = 0.0f; // one-pole LP state (brightness sweep)
 
+    // POST-1.0 (2026-09-18) per-type generator state - all fixed-size
+    // members, reset() in reset(), no allocation anywhere (RT-safe).
+    float brownStateL = 0.0f, brownStateR = 0.0f;            // Brown: leaky integrator
+    float svfS1L = 0.0f, svfS2L = 0.0f, svfS1R = 0.0f, svfS2R = 0.0f; // Sweep: TPT SVF state (Zavalishin), per channel
+    double sawPhaseL = 0.0, sawPhaseR = 0.0;                 // Saw: phase accumulators (R slightly detuned for width)
+    static constexpr int kShepardPartials = 6;
+    double shepardPhase[kShepardPartials] = {};              // Shepard: one phase per octave-spaced partial (mono, shared L/R)
+
     juce::SmoothedValue<float> weightSmoothed;
     double sampleRate = 44100.0;
     NoiseColor color = NoiseColor::White;
+    NoiseType type = NoiseType::StyleDefault;
 };
 
 } // namespace drop

@@ -1,5 +1,43 @@
 # DROP Changelog
 
+### Added — 2026-09-18 (riser source choices + Dry/Wet default 50%)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "make
+default dry wet 50%, add choices for different kinds of noise, search what
+noises and sounds are used to make risers."
+
+- **New `noiseType` parameter (22nd, strictly additive)** — selects the
+  riser's sound source, grounded in the standard riser sound-design
+  palette (researched 2026-09-18: white-noise sweeps are the classic EDM
+  riser; pink/brown colors read darker/warmer; resonant filter sweeps;
+  tonal saw risers climbing an octave-plus add melodic direction; Shepard
+  tones give the endless-rise illusion):
+  - **STYLE** (default) — the active Style's authored color, exact legacy
+    behavior; old sessions load bit-identical.
+  - **WHITE / PINK** — classic noise colors.
+  - **BROWN** — deepest 1/f² "rumble" build (leaky-integrated white).
+  - **SWEEP** — white noise through a resonant low-pass (TPT SVF, Q 2.5)
+    swept exponentially 200Hz→12kHz with build progress.
+  - **SAW** — tonal polyBLEP saw climbing 4 octaves (A1 55Hz → A5 880Hz)
+    across the build, right channel +0.6% detuned for width.
+  - **SHEPARD** — 6 octave-spaced sin²-windowed sines over 55Hz–3.5kHz,
+    each rising one octave per build with wrap (endless-rise illusion).
+  Every source runs through the SAME rise envelope (the gray graph curve
+  stays honest for all of them), and RNG consumption is type-independent
+  (`nextPink` refactored to consume the caller's white draw), so chaos
+  reproducibility and offline-render determinism hold under `noiseType`
+  automation. UI: new NOISE TYPE mini-LCD chevron chip (Advanced page,
+  below the graph, left of SYNC).
+- **Dry/Wet default 100% → 50%**, and all 16 factory presets re-authored
+  to 50% in lockstep (selecting a preset never snaps the mix back to
+  full-wet). Saved sessions keep their own value.
+- Fixed in passing: the UI's `BUILD_LENGTH_BARS` JS array was missing the
+  32 added 2026-09-17 (currently write-only, so no visible bug).
+- Tests: noiseType contract + per-type render block (each source exactly
+  silent at progress 0, audible late, bit-deterministic; STYLE default
+  bit-identical to legacy), dryWet/preset 50% assertions; the two
+  21-parameter count assertions superseded to 22.
+
 ### Changed — 2026-09-17 (synthesized impact hits removed factory-wide)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "remove

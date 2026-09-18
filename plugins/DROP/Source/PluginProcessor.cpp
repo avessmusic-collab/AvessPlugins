@@ -168,7 +168,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         juce::ParameterID { "dryWet", 1 },
         "Dry/Wet",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
-        100.0f,
+        // POST-1.0 SEVENTH IMPROVEMENT SESSION (2026-09-18, user-directed:
+        // "make default dry wet 50%") - default 100.0f -> 50.0f (factory
+        // presets updated to author 50% too, see DropPreset.cpp). Saved
+        // sessions carry their own value and are unaffected.
+        50.0f,
         "%"));
 
     // --- Output (Advanced page) -----------------------------------------
@@ -227,6 +231,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         50.0f,
         "%"));
 
+    // --- POST-1.0 SEVENTH IMPROVEMENT SESSION addition (2026-09-18, user-
+    // directed: "add choices for different kinds of noise, search what
+    // noises and sounds are used to make risers") ------------------------
+    // noiseType - the 22nd parameter, added STRICTLY additively at the END
+    // of the layout (IDs 1-21 untouched). Selects NoiseModule's riser
+    // SOURCE, grounded in the standard riser sound-design palette (see
+    // NoiseModule.h's NoiseType enum doc). Index 0 "STYLE" (the DEFAULT)
+    // defers to the active DropStyle's authored NoiseColor - the exact
+    // pre-noiseType behavior, so old sessions (missing node -> constructor
+    // default, same guarantee as `tail`/`noiseTension`) load bit-identical.
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID { "noiseType", 1 },
+        "Noise Type",
+        juce::StringArray { "STYLE", "WHITE", "PINK", "BROWN", "SWEEP", "SAW", "SHEPARD" },
+        0));
+
     return layout;
 }
 
@@ -259,6 +279,7 @@ DROPAudioProcessor::DROPAudioProcessor()
     outputParam = parameters.getRawParameterValue("output");
     tailParam = parameters.getRawParameterValue("tail"); // POST-1.0 addition, 20th parameter
     noiseTensionParam = parameters.getRawParameterValue("noiseTension"); // POST-1.0 FOURTH IMPROVEMENT SESSION addition, 21st parameter
+    noiseTypeParam = parameters.getRawParameterValue("noiseType"); // POST-1.0 SEVENTH IMPROVEMENT SESSION addition, 22nd parameter
 
     // Stage 3 GUI Phase 4.2: event-latched trigger edge-detection (see
     // PluginProcessor.h's parameterChanged()/triggerEventPendingFlag doc
@@ -1340,6 +1361,12 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // drop::IntensityBudget::computeNoiseWeight()'s doc comment for why
     // passing the budget's own Noise slot here was the "curve dishonesty"
     // bug (two compounded progress-shaped gains).
+    // POST-1.0 SEVENTH IMPROVEMENT SESSION (2026-09-18): live user-facing
+    // riser-source selection (choice index -> NoiseType; 0 == STYLE defers
+    // to the Style-authored color set at Arming). Set per segment so
+    // automation takes effect immediately; the module's generators keep
+    // their own continuous state across type switches.
+    noiseModule.setType((drop::NoiseType) juce::jlimit(0, 6, (int) noiseTypeParam->load()));
     noiseModule.process(segmentBlock, noiseWeight, progress, 0.6f,
                          noiseTensionParam->load() / 100.0f);
 

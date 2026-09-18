@@ -864,3 +864,12 @@ build_length_32_bars:
     - ".step-row width 15.75rem -> 19.0625rem (6 x 2.5 + 5 x 0.8125). Right edge now 21.5625rem (345px), clearing the center column (starts x=360px) by 15px (>= 10px min gap); vertically unchanged (top 7rem, well above the hero knobs at top 12.5rem)."
     - "APVTS `buildLength` choices now {1,2,4,8,16,32}, default still 4 bars (index 2); original indices unchanged for session compatibility."
   validation: "Geometry hand-verified per the notes above; no other Main-page element occupies y 112-170px between x 40-360px."
+
+noise_type_chip_and_drywet_default:
+  date: 2026-09-18
+  reason: "User: 'make default dry wet 50%, add choices for different kinds of noise, search what noises and sounds are used to make risers'."
+  changes:
+    - "New NOISE TYPE chip (Advanced page): mini-LCD family, chevron-cycled APVTS Choice (22nd parameter `noiseType`), at (620,230,160x56) - the spot the TAIL knob vacated below the graph, left of SYNC (790,230) with a 10px gap. Choices STYLE/WHITE/PINK/BROWN/SWEEP/SAW/SHEPARD, default STYLE (= the Style's authored color, legacy behavior). Grounded in riser sound-design research (white/pink/brown noise, resonant sweeps, tonal saw risers, Shepard tones)."
+    - "DRY/WET hero knob data-default and static label 100 -> 50 (Main page), mirroring the APVTS default change; the 16 factory presets re-authored to 50% in lockstep."
+    - "JS BUILD_LENGTH_BARS array fixed to include 32 (had been left at [1,2,4,8,16] when the 6th step circle was added 2026-09-17; the variable is currently write-only so no visible bug, corrected for lockstep)."
+  validation: "NOISE TYPE chip at x 620-780 vs SYNC at x 790: 10px gap (>= 10px min); same top/height as SYNC (230,56); curveBox above ends y 220."

@@ -317,11 +317,13 @@
       </div>
 
       <div class="knob-wrap" style="left:44.625rem; top:12.5rem; width:13.75rem;"
-           data-param="dryWet" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="dryWet" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+        <!-- data-default 100 -> 50, POST-1.0 2026-09-18 (user-directed "make
+             default dry wet 50%") - mirrors the APVTS default change. -->
         <div class="knob-well" style="width:11rem;height:11rem;">
           <div class="knob-dome" style="width:7.5rem;height:7.5rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div>
         </div>
-        <span class="knob-label knob-label-hero">DRY/WET &middot; <span class="kv-num">100</span><span class="unit">%</span></span>
+        <span class="knob-label knob-label-hero">DRY/WET &middot; <span class="kv-num">50</span><span class="unit">%</span></span>
       </div>
     </div>
 
@@ -391,6 +393,21 @@
       <div class="mini-screen" id="syncChip" style="left:49.375rem; top:14.375rem; width:10rem; height:3.5rem;">
         <div class="mini-screen-label">SYNC</div>
         <div class="mini-screen-value" style="font-size:1.05rem;"><span id="syncValue">INT 120</span></div>
+      </div>
+
+      <!-- NOISE TYPE - POST-1.0 SEVENTH IMPROVEMENT SESSION addition
+           (2026-09-18, user-directed: "add choices for different kinds of
+           noise"). APVTS Choice (22nd parameter, ComboBox-bound - dedicated
+           JS below, NOT the generic float initMiniScreen()). Chevrons cycle
+           STYLE/WHITE/PINK/BROWN/SWEEP/SAW/SHEPARD (see NoiseModule.h's
+           NoiseType enum for the riser-palette research rationale). Placed
+           in the spot the TAIL knob vacated when it joined the lower macro
+           row (below the graph, left of SYNC - same mini-LCD family/row as
+           SYNC). See v10-ui.yaml's `noise_type_chip` amendment note. -->
+      <div class="mini-screen" id="noiseTypeChip" style="left:38.75rem; top:14.375rem; width:10rem; height:3.5rem;">
+        <div class="mini-screen-label">NOISE TYPE</div>
+        <div class="mini-screen-value" style="font-size:0.95rem;"><span id="noiseTypeValue">STYLE</span></div>
+        <div class="mini-chevrons"><div class="mchev up" id="noiseTypeUp"></div><div class="mchev down" id="noiseTypeDown"></div></div>
       </div>
 
       <!-- POST-1.0 (2026-09-17, user-directed: "add a second curve to the
@@ -724,7 +741,7 @@
   /* Build length - step wells (APVTS Choice, 5 values) */
   const buildLengthSteps = document.getElementById('buildLengthSteps');
   const buildLengthState = getComboBoxState('buildLength');
-  const BUILD_LENGTH_BARS = [1, 2, 4, 8, 16];
+  const BUILD_LENGTH_BARS = [1, 2, 4, 8, 16, 32]; // 32 appended 2026-09-17 with the 6th step circle (kept in lockstep with the APVTS choice list)
   let currentBuildLengthBars = 4;
   function renderBuildLength(index) {
     currentBuildLengthBars = BUILD_LENGTH_BARS[index];
@@ -753,6 +770,23 @@
   document.getElementById('styleRight').addEventListener('click', () => setStyle(styleState.getChoiceIndex() + 1));
   styleState.valueChangedEvent.addListener(() => renderStyle(styleState.getChoiceIndex()));
   renderStyle(0);
+
+  /* NOISE TYPE chevron selector (APVTS Choice, 22nd parameter, POST-1.0
+     2026-09-18) - same ComboBox pattern as the Style selector above; the
+     display names mirror the AudioParameterChoice list exactly. */
+  const NOISE_TYPES = ["STYLE","WHITE","PINK","BROWN","SWEEP","SAW","SHEPARD"];
+  const noiseTypeValue = document.getElementById('noiseTypeValue');
+  const noiseTypeState = getComboBoxState('noiseType');
+  function renderNoiseType(index) { noiseTypeValue.textContent = NOISE_TYPES[index] || NOISE_TYPES[0]; }
+  function setNoiseType(i) {
+    const index = ((i % NOISE_TYPES.length) + NOISE_TYPES.length) % NOISE_TYPES.length;
+    renderNoiseType(index);
+    noiseTypeState.setChoiceIndex(index);
+  }
+  document.getElementById('noiseTypeUp').addEventListener('click', () => setNoiseType(noiseTypeState.getChoiceIndex() + 1));
+  document.getElementById('noiseTypeDown').addEventListener('click', () => setNoiseType(noiseTypeState.getChoiceIndex() - 1));
+  noiseTypeState.valueChangedEvent.addListener(() => renderNoiseType(noiseTypeState.getChoiceIndex()));
+  renderNoiseType(0);
 
   /* =========================================================
      Neumorphic knob: recessed well + raised dome + rotating
