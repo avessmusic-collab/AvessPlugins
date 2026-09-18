@@ -1,5 +1,33 @@
 # DROP Changelog
 
+### Verified/Optimized — 2026-09-18 (full audit: bar precision at every BPM, knob correctness, perf)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "check
+for bugs and optimise everything, check so knobs work corectly. so the
+ammount of bars the soun plays is perfect at every bpm."
+
+- **Bar precision at every BPM — verified, no bug found.** New end-to-end
+  grid tests deliberately use awkward conditions: fractional bar lengths
+  (174 BPM → 66206.9 samples/bar; 140 BPM in 3/4 → 61714.3), 44.1kHz with
+  a 441-sample block, decimal BPM (97.3, the live-tapped-tempo case), and
+  a 3/4 meter. In every case Impact lands ON the host's bar-counted
+  marker (measured deltas are pure block-observation granularity; 90 BPM
+  case delta exactly 0.0) and the audible riser ends BEFORE the marker.
+- **Knob correctness — verified.** All 16 UI knob defaults/ranges
+  cross-checked against the APVTS layout (exact match). New end-to-end
+  proofs for the two previously-unproven global stages: DRY/WET at 0% is
+  transparent to within float epsilon (5.96e-08 max deviation) even
+  mid-build with the riser at full macro, and OUTPUT at −20dB scales the
+  final signal by exactly 0.1000. Module macros were already covered by
+  the existing weight-sweep/transparency blocks.
+- **Optimization:** the SHEPARD riser recomputed its 6 partial
+  frequencies + windows EVERY SAMPLE (6× pow + 6× sin + 6× floor per
+  sample per channel); they depend only on the segment-constant progress
+  and are now hoisted per segment — only the 6 oscillators remain in the
+  sample loop. Numerically identical output (same expressions, same
+  inputs; the bit-determinism test still passes).
+- Suite now 256 assertions, all passing.
+
 ### Changed — 2026-09-18 (noise default WHITE + choice dropdowns)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "make the

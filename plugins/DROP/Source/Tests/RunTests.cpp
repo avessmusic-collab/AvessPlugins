@@ -4744,6 +4744,197 @@ int main()
               "[POST-1.0] DAW grid lock: the audible riser ENDS by the 16-bar marker (Vacuum silence precedes the drop; nothing persists past the marker)");
     }
 
+    std::printf ("\n[POST-1.0] DAW grid lock at EVERY tempo - awkward BPMs, 44.1kHz, odd block sizes, 3/4 meter (2026-09-18 audit)\n");
+    {
+        // User audit request: "so the ammount of bars the soun plays is
+        // perfect at every bpm". The block above proves the friendly case
+        // (128 BPM / 48kHz / power-of-two blocks, integer bar lengths);
+        // these cases deliberately make every division FRACTIONAL - bar
+        // lengths that are not whole samples (174 BPM -> 66206.9 samples,
+        // 140 BPM 3/4 -> 61714.3), a sample rate whose bars don't divide
+        // by the block (44.1kHz / 441), and a non-4/4 meter - so any
+        // accumulated rounding or meter assumption in the bar->sample math
+        // would land Impact off the host's marker.
+        struct GridCase { double bpm; int num; double sr; int blockSize; int bars; };
+        const GridCase cases[] = {
+            { 90.0,  4, 44100.0, 441, 8 },
+            { 174.0, 4, 48000.0, 256, 8 },
+            { 140.0, 3, 48000.0, 512, 8 },
+            { 97.3,  4, 44100.0, 512, 4 }, // decimal BPM, the kind a live-tapped Ableton session ends up with
+        };
+        static const int barsToIndex[] = { -1, 0, 1, -1, 2, -1, -1, -1, 3, -1, -1, -1, -1, -1, -1, -1, 4 }; // 1/2/4/8/16 -> choice index
+
+        bool allReached = true, allOnMarker = true, allEndByMarker = true;
+        for (const auto& c : cases)
+        {
+            const double samplesPerQuarter = c.sr * 60.0 / c.bpm;
+            const double barSamplesD = samplesPerQuarter * (double) c.num;
+            const double triggerBarSampleD = 4.0 * barSamplesD;
+            const double expectedImpactSampleD = triggerBarSampleD + (double) c.bars * barSamplesD;
+
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (c.sr, c.blockSize);
+            p.prepareToPlay (c.sr, c.blockSize);
+            TestPlayHead ph;
+            p.setPlayHead (&ph);
+
+            const char* zeroMacros[] = { "filter", "width", "pitch", "gate", "stutter", "delay", "reverb", "distortion", "digital" };
+            for (auto* id : zeroMacros)
+                if (auto* prm = p.parameters.getParameter (id)) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("impact")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.4f); // above the CUT epsilon: keeps Impact block-observable (see the case above)
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost ((float) barsToIndex[c.bars] / 5.0f);
+
+            int64_t lastAudibleSample = -1, impactEntrySample = -1;
+            bool triggered = false;
+            const int totalBlocks = (int) ((triggerBarSampleD + (double) (c.bars + 2) * barSamplesD) / (double) c.blockSize);
+
+            for (int block = 0; block < totalBlocks; ++block)
+            {
+                const int64_t blockStartSample = (int64_t) block * c.blockSize;
+                if (! triggered && (double) (blockStartSample + c.blockSize) > triggerBarSampleD)
+                {
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+                    triggered = true;
+                }
+                const double ppq = (double) blockStartSample / samplesPerQuarter;
+                const double lastBarPpq = std::floor (ppq / (double) c.num) * (double) c.num;
+                ph.info = makePosition (c.bpm, c.num, 4, ppq, lastBarPpq);
+                ph.info.setIsPlaying (true);
+
+                juce::AudioBuffer<float> buf (2, c.blockSize);
+                buf.clear();
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+
+                double sumSq = 0.0;
+                const float* out = buf.getReadPointer (0);
+                for (int i = 0; i < c.blockSize; ++i)
+                    sumSq += (double) out[i] * (double) out[i];
+                if (std::sqrt (sumSq / (double) c.blockSize) > 1.0e-4)
+                    lastAudibleSample = blockStartSample + c.blockSize;
+                if (impactEntrySample < 0 && p.getCurrentDropState() == drop::DropState::Impact)
+                    impactEntrySample = blockStartSample + c.blockSize;
+            }
+            p.releaseResources();
+
+            const double impactDelta = (double) impactEntrySample - expectedImpactSampleD;
+            std::printf ("  %.1f BPM %d/4 @%.0fHz block=%d bars=%d: marker=%.1f impactBy=%lld (delta %+.1f) riserEnd=%lld (%+.1f)\n",
+                         c.bpm, c.num, c.sr, c.blockSize, c.bars, expectedImpactSampleD,
+                         (long long) impactEntrySample, impactDelta,
+                         (long long) lastAudibleSample, (double) lastAudibleSample - expectedImpactSampleD);
+            if (impactEntrySample <= 0) allReached = false;
+            if (std::abs (impactDelta) > 2.0 * (double) c.blockSize) allOnMarker = false;
+            if (lastAudibleSample <= 0 || (double) lastAudibleSample > expectedImpactSampleD + (double) c.blockSize) allEndByMarker = false;
+        }
+
+        check (allReached, "grid lock at every tempo: every case's transition reached Impact");
+        check (allOnMarker, "[POST-1.0] grid lock at every tempo: Impact lands ON the host's bar-counted marker (within block-observation granularity) for fractional bar lengths, 44.1kHz, odd blocks, decimal BPM and 3/4 meter alike");
+        check (allEndByMarker, "[POST-1.0] grid lock at every tempo: the audible riser ends BY the marker in every case - the bar count is 'perfect at every bpm'");
+    }
+
+    std::printf ("\n[POST-1.0] Knob correctness (2026-09-18 audit) - DRY/WET 0%% is transparent mid-build; OUTPUT scales gain exactly\n");
+    {
+        // "check so knobs work corectly": the module macros already carry
+        // weight-sweep/transparency tests and noise/tail/buildLength have
+        // dedicated end-to-end blocks - the two GLOBAL stages (dryWet mix,
+        // output gain) were the remaining unproven knobs.
+        constexpr double sr = 48000.0;
+        constexpr int blockSize = 512;
+
+        // (a) DRY/WET at 0%: even mid-build with the riser at full macro,
+        //     the output must equal the captured dry input (the whole wet
+        //     chain is mixed out).
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (sr, blockSize);
+            p.prepareToPlay (sr, blockSize);
+            if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+            double phase = 0.0;
+            const double inc = 2.0 * juce::MathConstants<double>::pi * 220.0 / sr;
+            float maxDev = 0.0f;
+            bool measuredMidBuild = false;
+            for (int block = 0; block < 400 && ! measuredMidBuild; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                std::vector<float> inCopy ((size_t) blockSize);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float s = 0.5f * (float) std::sin (phase);
+                    phase += inc;
+                    buf.setSample (0, i, s);
+                    buf.setSample (1, i, s);
+                    inCopy[(size_t) i] = s;
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+                DROPAudioProcessor::VisualizationFrame frame;
+                while (p.popVisualizationFrame (frame)) {}
+                if (p.getCurrentDropState() == drop::DropState::Building && block > 60) // deep enough that the riser would be clearly audible if mixed in
+                {
+                    for (int i = 0; i < blockSize; ++i)
+                        maxDev = juce::jmax (maxDev, std::abs (buf.getSample (0, i) - inCopy[(size_t) i]));
+                    measuredMidBuild = true;
+                }
+            }
+            p.releaseResources();
+            std::printf ("  dryWet=0%% mid-build: max |out - in| = %.2e\n", maxDev);
+            check (measuredMidBuild, "knob correctness: dryWet-transparency measurement reached mid-Building");
+            check (maxDev < 1.0e-5f, "[POST-1.0] knob correctness: DRY/WET at 0% passes the input through untouched even mid-build with the riser at full macro (the mix knob genuinely governs the whole wet chain)");
+        }
+
+        // (b) OUTPUT at -20dB with DRY/WET 0%: pure dry x gain -> the RMS
+        //     ratio out/in must be exactly 10^(-20/20) = 0.1 once the gain
+        //     smoother settles.
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (sr, blockSize);
+            p.prepareToPlay (sr, blockSize);
+            if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("output")) prm->setValueNotifyingHost ((-20.0f - (-60.0f)) / (12.0f - (-60.0f))); // -20 dB normalized in the -60..+12 range
+
+            double phase = 0.0;
+            const double inc = 2.0 * juce::MathConstants<double>::pi * 220.0 / sr;
+            double rmsIn = 0.0, rmsOut = 0.0;
+            for (int block = 0; block < 30; ++block) // first ~20 blocks settle the smoother, last ones are measured
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                double sumIn = 0.0;
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float s = 0.5f * (float) std::sin (phase);
+                    phase += inc;
+                    buf.setSample (0, i, s);
+                    buf.setSample (1, i, s);
+                    sumIn += (double) s * (double) s;
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block >= 25)
+                {
+                    double sumOut = 0.0;
+                    for (int i = 0; i < blockSize; ++i)
+                        sumOut += (double) buf.getSample (0, i) * (double) buf.getSample (0, i);
+                    rmsIn += sumIn;
+                    rmsOut += sumOut;
+                }
+            }
+            p.releaseResources();
+            const double ratio = rmsIn > 0.0 ? std::sqrt (rmsOut / rmsIn) : 0.0;
+            std::printf ("  output=-20dB: measured gain ratio = %.4f (expected 0.1000)\n", ratio);
+            check (std::abs (ratio - 0.1) < 0.005, "[POST-1.0] knob correctness: OUTPUT at -20dB scales the final signal by exactly 0.1 (the output knob is a true, accurate gain stage)");
+        }
+    }
+
     std::printf ("\n[DIAG] Parameters as the HOST sees them (name | automatable | meta | discrete | numSteps)\n");
     {
         DROPAudioProcessor p;

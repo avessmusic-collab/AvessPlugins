@@ -136,9 +136,29 @@ void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
     // each partial's log-position advancing ONE full octave over the build
     // (wrapping), amplitude = sin^2 window in log space (silent at both
     // spectral edges) - the standard endless-rise construction.
+    // OPTIMIZED (2026-09-18 audit): partial frequencies and windows depend
+    // only on `progress`, which is SEGMENT-constant - they were previously
+    // recomputed per SAMPLE (6x pow + 6x window sin + 6x floor every
+    // sample); now hoisted here, leaving only the phase advance + one sin
+    // per partial in the loop. Numerically identical (same expressions,
+    // same segment-constant inputs).
     constexpr double kShepardBaseHz = 55.0;
     const double shepardShift = (double) juce::jlimit(0.0f, 1.0f, progress); // octaves of upward shift, wraps per partial
     constexpr float kShepardLevel = 0.55f;
+    double shepardInc[kShepardPartials];
+    float shepardWin2[kShepardPartials];
+    if (effectiveType == NoiseType::Shepard)
+    {
+        for (int k2 = 0; k2 < kShepardPartials; ++k2)
+        {
+            double pos = ((double) k2 + shepardShift) / (double) kShepardPartials;
+            pos -= std::floor(pos);
+            const double freq = kShepardBaseHz * std::pow(2.0, pos * (double) kShepardPartials);
+            const float win = (float) std::sin(juce::MathConstants<double>::pi * pos);
+            shepardInc[k2] = freq / sampleRate;
+            shepardWin2[k2] = win * win;
+        }
+    }
 
     weightSmoothed.setTargetValue(weight);
 
@@ -199,14 +219,11 @@ void NoiseModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
                 float s = 0.0f;
                 for (int k2 = 0; k2 < kShepardPartials; ++k2)
                 {
-                    // Partial's wrapped position in [0,1) across the log span.
-                    double pos = ((double) k2 + shepardShift) / (double) kShepardPartials;
-                    pos -= std::floor(pos);
-                    const double freq = kShepardBaseHz * std::pow(2.0, pos * (double) kShepardPartials);
-                    const float win = (float) std::sin(juce::MathConstants<double>::pi * pos);
-                    shepardPhase[k2] += freq / sampleRate;
+                    // Per-segment increments/windows hoisted above (audit
+                    // optimization) - only the oscillator itself runs here.
+                    shepardPhase[k2] += shepardInc[k2];
                     if (shepardPhase[k2] >= 1.0) shepardPhase[k2] -= 1.0;
-                    s += (float) std::sin(juce::MathConstants<double>::twoPi * shepardPhase[k2]) * win * win;
+                    s += (float) std::sin(juce::MathConstants<double>::twoPi * shepardPhase[k2]) * shepardWin2[k2];
                 }
                 rawL = rawR = s * kShepardLevel; // mono by construction (shared partial bank)
                 break;
