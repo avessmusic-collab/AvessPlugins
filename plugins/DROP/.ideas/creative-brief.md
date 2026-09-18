@@ -43,7 +43,7 @@ Only high-value parameters are exposed (JUCE APVTS). Advanced per-module DSP int
 | Noise | 0–100% | macro | Advanced: noise riser weight |
 | Digital | 0–100% | macro | Advanced: bit/SR crush weight (added as 19th param per architecture.md resolution) |
 | Dry/Wet | 0–100% | 50% | Global mix (default 100%→50% 2026-09-18, POST-1.0; factory presets re-authored to 50% in lockstep) |
-| Noise Type | STYLE/WHITE/PINK/BROWN/SWEEP/SAW/SHEPARD | STYLE | **POST-1.0 (2026-09-18):** riser source selection, grounded in riser sound-design research — see [parameter-spec.md](parameter-spec.md)'s `noiseType` entry |
+| Noise Type | STYLE/WHITE/PINK/BROWN/SWEEP/SAW/SHEPARD | WHITE | **POST-1.0 (2026-09-18):** riser source selection, grounded in riser sound-design research (default STYLE→WHITE same day) — see [parameter-spec.md](parameter-spec.md)'s `noiseType` entry |
 | Output | -inf–+12 dB | 0 dB | Output gain |
 | Tail | 0–100% | 0% (CUT) | **POST-1.0 (2026-09-16, default 35%→0% 2026-09-17):** ring-out length of the Recovery state (0% = clean ~5ms cut, else ~0.15s–4.0s exponential mapping); overrides the Style's recovery timing — see [parameter-spec.md](parameter-spec.md)'s `tail` entry and `plugins/DROP/CHANGELOG.md` |
 | Noise Tension | 0–100% | 50% | **POST-1.0 (2026-09-17):** shapes HOW the white-noise riser builds (higher = later bloom, same directional sense as Tension); does not change noise level — see [parameter-spec.md](parameter-spec.md)'s `noiseTension` entry and `plugins/DROP/CHANGELOG.md` |

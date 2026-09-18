@@ -189,6 +189,23 @@
   .style-label { position: relative; z-index: 1; font-family: 'IBM Plex Mono', monospace; font-size: 0.62rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent);
     min-width: 8.5rem; text-align: center; text-shadow: 0 0 6px var(--accent-glow); }
 
+  /* ---------- Choice dropdown menu - POST-1.0 (2026-09-18, user-directed:
+     "everywhere were are multiple choises make a dropdown menu to choose,
+     keep the arrows too"). Shared popup for the Style selector and the
+     NOISE TYPE chip (the two chevron-cycled Choice params; Build Length
+     circles and the trigger-mode pill already show every choice at once).
+     Fixed-position (client coords from getBoundingClientRect are
+     scale-agnostic), rem-sized (follows the root font-size proportional
+     scaling), same dark-LCD family as the mini screens. ---------- */
+  .choice-menu { position: fixed; z-index: 999; background: linear-gradient(180deg, #14161B, #0C0E12);
+    border: 1px solid #2A2E36; border-radius: 0.4rem; box-shadow: 0 10px 26px rgba(10,12,16,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+    padding: 0.3rem 0; max-height: 15rem; overflow-y: auto; min-width: 8rem; }
+  .choice-item { padding: 0.32rem 0.9rem; font-family: 'IBM Plex Mono', monospace; font-size: 0.62rem; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase; color: #8A8F98; cursor: default; white-space: nowrap;
+    transition: color 120ms ease, background 120ms ease; }
+  .choice-item:hover { color: var(--accent); background: rgba(232,130,60,0.10); }
+  .choice-item.sel { color: var(--accent); text-shadow: 0 0 6px var(--accent-glow); }
+
   /* ---------- DROP trigger - raised neumorphic pill w/ press-in physics ---------- */
   .trigger-btn {
     position: absolute; left: 22.5rem; top: 16.25rem; width: 17.5rem; height: 4rem; border-radius: 999px;
@@ -406,7 +423,7 @@
            SYNC). See v10-ui.yaml's `noise_type_chip` amendment note. -->
       <div class="mini-screen" id="noiseTypeChip" style="left:38.75rem; top:14.375rem; width:10rem; height:3.5rem;">
         <div class="mini-screen-label">NOISE TYPE</div>
-        <div class="mini-screen-value" style="font-size:0.95rem;"><span id="noiseTypeValue">STYLE</span></div>
+        <div class="mini-screen-value" style="font-size:0.95rem;"><span id="noiseTypeValue">WHITE</span></div>
         <div class="mini-chevrons"><div class="mchev up" id="noiseTypeUp"></div><div class="mchev down" id="noiseTypeDown"></div></div>
       </div>
 
@@ -771,6 +788,51 @@
   styleState.valueChangedEvent.addListener(() => renderStyle(styleState.getChoiceIndex()));
   renderStyle(0);
 
+  /* Shared choice-dropdown helper - POST-1.0 (2026-09-18, user-directed:
+     "everywhere were are multiple choises make a dropdown menu to choose,
+     keep the arrows too"). Clicking the value label pops a full list of
+     choices; picking one routes through the SAME setter the chevrons use
+     (so relay/gesture behavior is identical); the chevrons stay untouched.
+     One menu at a time; closes on outside click or a second label click. */
+  let openChoiceMenu = null;
+  let suppressReopen = false; // the outside-click mousedown below closes BEFORE the anchor's own click event fires - without this flag, clicking the anchor while its menu is open would close-then-instantly-reopen instead of toggling
+  function closeChoiceMenu() { if (openChoiceMenu) { openChoiceMenu.remove(); openChoiceMenu = null; } }
+  window.addEventListener('mousedown', (e) => {
+    if (openChoiceMenu && !openChoiceMenu.contains(e.target)) {
+      if (openChoiceMenu._anchor && openChoiceMenu._anchor.contains(e.target)) suppressReopen = true;
+      closeChoiceMenu();
+    }
+  });
+  function attachChoiceDropdown(anchorEl, items, getIndex, pick) {
+    anchorEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (suppressReopen) { suppressReopen = false; return; }
+      if (openChoiceMenu) { closeChoiceMenu(); return; }
+      const menu = document.createElement('div');
+      menu.className = 'choice-menu';
+      const current = getIndex();
+      items.forEach((name, i) => {
+        const it = document.createElement('div');
+        it.className = 'choice-item' + (i === current ? ' sel' : '');
+        it.textContent = name;
+        it.addEventListener('click', (ev) => { ev.stopPropagation(); pick(i); closeChoiceMenu(); });
+        menu.appendChild(it);
+      });
+      menu._anchor = anchorEl;
+      document.body.appendChild(menu);
+      const r = anchorEl.getBoundingClientRect();
+      const mw = menu.offsetWidth, mh = menu.offsetHeight;
+      let left = r.left + r.width / 2 - mw / 2;
+      left = Math.max(4, Math.min(left, window.innerWidth - mw - 4));
+      let top = r.bottom + 4;
+      if (top + mh > window.innerHeight - 4) top = Math.max(4, r.top - mh - 4); // flip above if it would clip
+      menu.style.left = left + 'px';
+      menu.style.top = top + 'px';
+      openChoiceMenu = menu;
+    });
+  }
+  attachChoiceDropdown(styleLabel, STYLES, () => styleState.getChoiceIndex(), (i) => setStyle(i));
+
   /* NOISE TYPE chevron selector (APVTS Choice, 22nd parameter, POST-1.0
      2026-09-18) - same ComboBox pattern as the Style selector above; the
      display names mirror the AudioParameterChoice list exactly. */
@@ -786,7 +848,8 @@
   document.getElementById('noiseTypeUp').addEventListener('click', () => setNoiseType(noiseTypeState.getChoiceIndex() + 1));
   document.getElementById('noiseTypeDown').addEventListener('click', () => setNoiseType(noiseTypeState.getChoiceIndex() - 1));
   noiseTypeState.valueChangedEvent.addListener(() => renderNoiseType(noiseTypeState.getChoiceIndex()));
-  renderNoiseType(0);
+  renderNoiseType(1); // default WHITE (index 1) - POST-1.0 2026-09-18, mirrors the APVTS default change
+  attachChoiceDropdown(noiseTypeValue, NOISE_TYPES, () => noiseTypeState.getChoiceIndex(), (i) => setNoiseType(i));
 
   /* =========================================================
      Neumorphic knob: recessed well + raised dome + rotating

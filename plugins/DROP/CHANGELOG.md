@@ -1,5 +1,27 @@
 # DROP Changelog
 
+### Changed — 2026-09-18 (noise default WHITE + choice dropdowns)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "make the
+default noise white, everywhere were are multiple choises make a dropdown
+menu to choose, keep the arrows too."
+
+- **`noiseType` default STYLE → WHITE** — a fresh instance always risers
+  with classic white noise; STYLE (defer to the preset's authored color)
+  remains available as an explicit choice. Indices unchanged, so sessions
+  saved with any selection reload identically; only sessions predating
+  `noiseType` entirely now resolve to WHITE instead of the Style color.
+- **Choice dropdowns (chevrons kept):** clicking the Style selector's
+  label (Main page) or the NOISE TYPE chip's value (Advanced page) now
+  pops a dark-LCD dropdown of every choice; picking one routes through
+  the same setter the chevron arrows use, and the arrows are unchanged.
+  Build Length's step circles and the trigger-mode pill already display
+  all their choices at once, so they stay as-is. One menu at a time,
+  closes on outside click, flips above the anchor when near the window
+  bottom, scales with the proportional UI scaling.
+- Tests: noiseType default assertion superseded to WHITE; the STYLE
+  bit-identity test kept (reworded — STYLE is no longer the default).
+
 ### Fixed — 2026-09-18 (TRUE CUT: with TAIL at 0% the effect ends AT the downbeat, ms-precise)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "count

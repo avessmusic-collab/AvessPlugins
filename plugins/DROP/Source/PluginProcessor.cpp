@@ -245,7 +245,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         juce::ParameterID { "noiseType", 1 },
         "Noise Type",
         juce::StringArray { "STYLE", "WHITE", "PINK", "BROWN", "SWEEP", "SAW", "SHEPARD" },
-        0));
+        // Default 0 (STYLE) -> 1 (WHITE), POST-1.0 2026-09-18 (user-
+        // directed: "make the default noise white") - a fresh instance now
+        // always risers with classic white noise; the Style-authored color
+        // remains available as the explicit STYLE choice. Choice indices
+        // unchanged (sessions saved with any selection reload identically).
+        1));
 
     return layout;
 }

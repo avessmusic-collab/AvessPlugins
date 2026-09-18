@@ -1,0 +1,486 @@
+# v3 UI Design Specification
+# Plugin: DROP
+# Generated: 2026-09-13
+# Direction: SUPERSEDES v1/v2 (Swiss white/gray, two-page). v1/v2 remain on
+# disk as design history only — dead ends per user direction.
+#
+# v3 replicates the visual language of a user-supplied reference screenshot
+# (plugins/DROP/.ideas/mockups/v3-reference.png — a Brainworx bx_pulsar-style
+# GUI: split-zone charcoal panel, single electric-blue glow accent, glowing
+# wireframe centerpiece, glowing step-circles, bare draggable numeric
+# readouts with chevrons, pill segmented toggles, dark rim-lit knobs with
+# value arcs). DROP's own 19 APVTS parameters + Style/BuildLength/Trigger
+# are mapped onto that idiom. No Brainworx/bx_pulsar branding is reproduced
+# anywhere — wordmark is "d r o p" (lowercase, tracked), maker mark is
+# "AVESS" (mirrors the reference's top-right maker-name position).
+#
+# Layout model changed: v1/v2 were two-page (Main/Advanced). v3 is a SINGLE
+# zoned page (matches the reference's single-panel layout), superseding the
+# earlier two-page requirement per explicit user direction.
+
+window:
+  width: 1000
+  height: 560
+  resizable: true
+  min_width: 800
+  min_height: 450
+  max_width: 1400
+  max_height: 790
+  scaling_model: "root-em-resize-observer"   # same technique as v1/v2
+  base_root_font_size_px: 16
+
+colors:
+  # Single-accent electric-blue-glow system, replacing v1/v2's Swiss
+  # white/gray + red-accent palette entirely.
+  upper_zone_bg: "#17181B"          # darker charcoal (top lighting zone)
+  upper_zone_bg_vignette_center: "#1C1D21"
+  lower_zone_bg: "#202226"          # slightly lighter charcoal (bottom zone)
+  lower_zone_top_highlight: "#2A2C31"   # soft top-edge light on lower zone
+  panel_edge: "#0E0F11"
+  knob_face_top: "#2B2D32"
+  knob_face_bottom: "#18191C"
+  text_primary: "#E9EAED"           # near-white, knob-centered numerals
+  text_label: "#8B8D93"             # gray uppercase tracked labels
+  text_label_dim: "#5C5E63"         # unit suffixes, dimmer
+  accent: "#4A9EFF"                 # electric glow blue — the ONLY accent
+  accent_dim: "#2E5C8F"
+  accent_glow: "rgba(74,158,255,0.55)"
+  page_backdrop: "#D7D9DC"          # light-gray page the panel floats on (test HTML only)
+
+typography:
+  header: "'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+  body: "'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+  mono: "'IBM Plex Mono', 'SF Mono', 'Courier New', monospace"   # big numeric readouts, tabular
+  philosophy: >
+    Thin geometric/mono-flavored sans, uppercase, wide letter-spacing
+    throughout labels; all numeric readouts (knob-centered numerals, bare
+    big-number readouts, progress/phase text) use font-variant-numeric:
+    tabular-nums so digits never jitter width during drag/automation.
+  size:
+    wordmark: "1.05rem"
+    maker_mark: "0.85rem"
+    section_label_vertical: "0.62rem"
+    control_label: "0.6rem"
+    control_unit: "0.5rem"
+    bare_readout_number: "1.9rem"
+    knob_number_hero: "1.1rem"
+    knob_number_small: "0.85rem"
+    phase_readout: "0.6rem"
+    style_label: "1rem"
+  letter_spacing:
+    wordmark: "0.5em"      # "d r o p" — reference-style extreme tracking
+    maker_mark: "0.28em"
+    control_label: "0.1em"
+    section_label_vertical: "0.22em"
+    style_label: "0.18em"
+    phase_readout: "0.2em"
+
+# ---------------------------------------------------------------------------
+# MATERIAL SYSTEM — carried forward from v2's material philosophy (layered
+# shadow + inset highlight + subtle gradient on every raised control), now
+# themed to dark charcoal + electric blue instead of Swiss white/gray + red.
+# ---------------------------------------------------------------------------
+material:
+  philosophy: >
+    Two lighting zones (darker upper / lighter lower, joined by a curved
+    notch) instead of a flat single background. A soft radial vignette sits
+    over the whole panel. Every knob/pill/circle gets a subtle top-lit
+    radial or linear gradient + a 1px highlight edge, exactly like v2's
+    material system, just re-themed dark. Blue is reserved strictly for
+    value arcs, glow, and active/armed states — never used as a base fill
+    color, keeping it a true single-accent system.
+  panel_shape:
+    seam: >
+      SVG-drawn boundary (not a hard CSS split) between upper_zone_bg and
+      lower_zone_bg: a mostly-straight horizontal seam at y=300 (base
+      1000x560 coords) that dips into a smooth rounded notch (two cubic
+      bezier curves) between x=370 and x=630, centered on the STYLE
+      selector — mirrors the reference's scalloped notch under "AIR".
+      A thin semi-transparent light stroke traces the top of the seam for
+      a soft rim-light read.
+    vignette: "radial-gradient(ellipse at 50% 38%, transparent 45%, rgba(0,0,0,0.32) 100%) overlay, pointer-events:none"
+  elevation:
+    knob_shadow: "0 1px 1px rgba(0,0,0,0.5), 0 6px 14px rgba(0,0,0,0.45)"
+    knob_gradient: "radial-gradient(circle at 32% 26%, #2E3036 0%, #232427 45%, #17181B 100%)"
+    knob_rim_highlight: "inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -1px 2px rgba(0,0,0,0.5)"
+    pill_gradient: "linear-gradient(180deg, #24262B 0%, #1B1C20 100%)"
+    pill_shadow: "inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 2px rgba(0,0,0,0.4)"
+    step_circle_inactive: "linear-gradient(180deg, #232427 0%, #1A1B1E 100%)"
+    step_circle_active_glow: "0 0 0 2px var(--accent), 0 0 12px 2px var(--accent-glow)"
+  test_harness_only:
+    page_backdrop: "light-gray (#D7D9DC), matching the reference screenshot's floating-panel presentation"
+    panel_corners: "14px border-radius"
+    panel_shadow: "soft elevated drop shadow beneath the panel"
+    note: "These three properties are test-HTML presentation only — see ui-design-rules.md Rule 10. The production plugin panel itself fills its host window edge-to-edge; rounded corners/floating shadow are not implied for the real JUCE window chrome."
+
+# ---------------------------------------------------------------------------
+# MOTION SYSTEM — same techniques as v2 (never linear).
+# ---------------------------------------------------------------------------
+motion:
+  philosophy: "Identical approach to v2: continuous properties (the orb's loop radius/agitation/glow) are driven by a critically-damped mass-spring-damper integrator; discrete UI feedback (mode-pill slide, step-circle activation, trigger press) uses spring-overshoot cubic-bezier(0.34,1.56,0.64,1) CSS transitions. Nothing in v3 uses a linear or plain-ease transition for a state change."
+  continuous_properties: [orb.loopRadiusMul, orb.agitation, orb.glowIntensity, orb.activeLoopCount]
+  discrete_ui_feedback:
+    - "Trigger-mode pill sliding indicator (3-way MANUAL/MIDI/AUTO)"
+    - "Build-length step-circle activation (glow ring fade-in)"
+    - "DROP trigger button press/release + armed-state glow intensify"
+    - "Style selector chevron press feedback"
+
+# ---------------------------------------------------------------------------
+# Header (shared, not an APVTS parameter)
+# ---------------------------------------------------------------------------
+shared_elements:
+  - id: wordmark
+    type: label
+    text: "d r o p"
+    description: "Lowercase, extreme tracking (0.5em), thin weight — DROP's own mark, not a Brainworx reproduction."
+    position: { x: 24, y: 16 }
+    size: { width: 110, height: 24 }
+
+  - id: maker_mark
+    type: label
+    text: "AVESS"
+    description: "Uppercase, bold, tracked — mirrors the reference's top-right maker-name slot."
+    position: { x: 866, y: 16 }
+    size: { width: 110, height: 24 }
+
+  - id: header_rule
+    type: divider
+    position: { x: 0, y: 56 }
+    size: { width: 1000, height: 1 }
+
+  - id: buildLabel
+    type: label
+    text: "BUILD"
+    description: "Vertical rotated section label, far left edge, reference-style (mirrors PATTERN in the reference)."
+    position: { x: 16, y: 90 }
+    size: { width: 10, height: 160 }
+
+  - id: shapeLabel
+    type: label
+    text: "SHAPE"
+    description: "Vertical rotated section label, far right edge (mirrors FILTERS in the reference)."
+    position: { x: 974, y: 90 }
+    size: { width: 10, height: 160 }
+
+# ---------------------------------------------------------------------------
+# SINGLE PAGE — all 19 APVTS parameters + trigger + non-parameter UI state
+# (triggerMode, page/view concerns) in one zoned layout.
+# ---------------------------------------------------------------------------
+controls:
+  - id: triggerMode
+    type: segmented-toggle
+    display_variant: pill-3way
+    label: null
+    parameter: null   # non-APVTS UI state (like architecture.md's other non-parameter UI flags), still emits a message
+    choices: ["MANUAL", "MIDI", "AUTO"]
+    default: "MANUAL"
+    description: "Reference's DUAL/SEQUENCE pill idiom, extended to 3 segments with a spring-sliding indicator."
+    position: { x: 40, y: 70 }
+    size: { width: 248, height: 32 }
+
+  - id: buildLength
+    type: combo-box
+    display_variant: glow-step-circles
+    label: "BUILD LENGTH"
+    parameter: "buildLength"
+    parameter_type: choice
+    choices: ["1", "2", "4", "8", "16"]
+    default: "4"
+    description: "Reference's glowing PATTERN step-circle row idiom, repurposed: 5 circles, numeral inside each, active circle gets a blue glow ring."
+    position: { x: 40, y: 112 }
+    size: { width: 252, height: 58 }
+
+  - id: tension
+    type: bare-numeric-readout
+    label: "TENSION"
+    parameter: "tension"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    description: "Reference's MOD RATE/MOD AMT idiom: large blue tabular numeral, small gray label below, tiny up/down chevrons for fine increment, vertical-drag adjustable."
+    position: { x: 40, y: 180 }
+    size: { width: 108, height: 56 }
+
+  - id: chaos
+    type: bare-numeric-readout
+    label: "CHAOS"
+    parameter: "chaos"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 0.0
+    decimals: 0
+    position: { x: 158, y: 180 }
+    size: { width: 108, height: 56 }
+
+  - id: style
+    type: combo-box
+    display_variant: chevron-nav
+    label: null
+    parameter: "style"
+    parameter_type: choice
+    choices:
+      - "Clean EDM"
+      - "Big Room"
+      - "Techno Pressure"
+      - "Dark Techno"
+      - "Trap Pull"
+      - "DnB Rush"
+      - "Hyper"
+      - "Cinematic"
+      - "Minimal"
+      - "Vocal Build"
+      - "Drum Build"
+      - "Synth Build"
+      - "Full Mix"
+      - "Destroy"
+      - "Vacuum"
+      - "Reverse Energy"
+    default: "Clean EDM"
+    description: "Exact reference '‹ AIR ›' idiom — left/right chevrons cycle 16 DropStyles. Sits in the seam notch beneath the orb, matching the reference's AIR-selector placement."
+    position: { x: 390, y: 306 }
+    size: { width: 220, height: 36 }
+
+  - id: trigger
+    type: button
+    display_variant: glow-pill
+    label: "DROP"
+    parameter: "trigger"
+    parameter_type: bool
+    momentary: true
+    default: false
+    description: >
+      The one deliberate departure from the reference: a large, prominent
+      blue-glow pill button (the reference has no equivalent single hero
+      trigger — DROP's core interaction earns unique treatment). Glow
+      intensifies while armed/building.
+    position: { x: 380, y: 352 }
+    size: { width: 240, height: 54 }
+
+special_elements:
+  - id: liquid_orb
+    type: audio-reactive-wireframe-orb
+    description: >
+      Replaces v1/v2's liquid bubble entirely. A glowing wireframe orb built
+      from 4-7 overlapping irregular hand-drawn-looking loop paths (each an
+      independently-phased multi-harmonic-wobbled closed curve, per-loop
+      slight radius/rotation variance so they read as layered, not
+      identical/perfectly concentric), rendered with an SVG neon-glow
+      filter (blur + merge). A soft diffuse blue radial glow sits behind
+      the loops. Motion is spring-driven (never linear), reusing the same
+      mass-spring-damper integrator pattern from v2.
+    position: { x: 400, y: 96 }
+    size: { width: 200, height: 200 }
+    rendering:
+      loop_count_idle: 3
+      loop_count_peak: 7
+      technique: "each loop = closed Catmull-Rom-smoothed path around a circle, radius perturbed by 4 summed sine harmonics (unique phase/frequency offset per loop index) for an organic hand-drawn look; loop opacity = smoothstep(activeLoopCount - index), so loops fade in/out continuously as agitation rises/falls rather than popping"
+    states:
+      idle: { agitation: low, loops_active: "~3", glow: dim, note: "slow independent per-loop rotation drift, gentle breathing" }
+      building: { agitation: "rises with progress * intensity", loops_active: "3 -> 6-7 (continuous)", glow: "rises with progress * tension", note: "loops separate and swirl faster as build progresses" }
+      peak: { agitation: max, loops_active: 7, glow: max, note: "brief held-breath instant before collapse" }
+      vacuum: { agitation: "-> 0", loops_active: "-> ~1 (others fade)", glow: "-> near-zero", note: "smooth spring collapse to a single dim near-point, not an instant cut" }
+      impact: { agitation: "burst then decay", loops_active: "flash to 7+", glow: "flash bright white-blue then decay", note: "radius spring overshoots outward before settling — the 'physical' burst read" }
+      recovery: { agitation: decaying, loops_active: "-> 3", glow: "-> dim", note: "spring settle back to idle" }
+
+  - id: phase_readout
+    type: readout
+    description: "Small uppercase tabular text above the orb: IDLE / BUILDING / PEAK / VACUUM / IMPACT / RECOVERY. Dim gray at idle, blue+glow while active."
+    position: { x: 420, y: 70 }
+    size: { width: 160, height: 16 }
+
+  - id: progress_strip
+    type: phase-progress-strip
+    description: "Same phase-mapped strip concept as v1/v2 (0-84% Building fill / 84% fixed drop marker / 84-100% Recovery tail), re-themed blue with a soft glow on the fill and marker."
+    position: { x: 400, y: 416 }
+    size: { width: 200, height: 10 }
+
+  - id: tension_curve
+    type: curve-display
+    description: >
+      Reference's thin-line filter-curve idiom, repurposed to show the
+      current TENSION CURVE shape (a read-only preview of how tension
+      value maps to progress -> curve steepness, per architecture.md's
+      TransitionEngine curve shaping). Thin white/gray line on a near-black
+      box, redraws reactively as the Tension bare-readout is dragged.
+    position: { x: 700, y: 70 }
+    size: { width: 200, height: 96 }
+
+  - id: intensity
+    type: rotary-knob
+    display_variant: dark-rim-lit
+    label: "INTENSITY"
+    parameter: "intensity"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    description: "Reference DELAY/FEEDBACK-style large dark knob: centered white tabular numeral, thin blue value arc (no rotating pointer — arc + number IS the value display, matching the reference's knob idiom exactly), tracked gray label below with smaller dim unit suffix."
+    position: { x: 40, y: 436 }
+    size: { width: 90, height: 106 }
+
+  - id: dryWet
+    type: rotary-knob
+    display_variant: dark-rim-lit
+    label: "DRY / WET"
+    parameter: "dryWet"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 150, y: 436 }
+    size: { width: 90, height: 106 }
+
+  - id: filter
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "FILTER"
+    parameter: "filter"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 300, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: width
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "WIDTH"
+    parameter: "width"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 352, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: pitch
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "PITCH"
+    parameter: "pitch"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 404, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: gate
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "GATE"
+    parameter: "gate"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 456, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: stutter
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "STUTTER"
+    parameter: "stutter"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 508, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: delay
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "DELAY"
+    parameter: "delay"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 560, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: reverb
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "REVERB"
+    parameter: "reverb"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 612, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: distortion
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "DIST"
+    parameter: "distortion"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 664, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: digital
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "DIGITAL"
+    parameter: "digital"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 716, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: noise
+    type: rotary-knob
+    display_variant: dark-rim-lit-small
+    label: "NOISE"
+    parameter: "noise"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 100.0
+    decimals: 0
+    position: { x: 768, y: 448 }
+    size: { width: 42, height: 64 }
+
+  - id: impact
+    type: rotary-knob
+    display_variant: dark-rim-lit-hero
+    label: "IMPACT"
+    parameter: "impact"
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 50.0
+    decimals: 0
+    description: "Reference FEEDBACK-style hero knob position: largest knob on the panel, heaviest blue arc/glow."
+    position: { x: 822, y: 440 }
+    size: { width: 76, height: 96 }
+
+  - id: output
+    type: bare-numeric-readout
+    label: "OUTPUT"
+    parameter: "output"
+    range: [-60.0, 12.0]
+    unit: "dB"
+    default: 0.0
+    decimals: 1
+    description: "Reference's '449 Hz / 20.0k Hz' large-numeral-with-chevrons idiom, applied to Output gain."
+    position: { x: 908, y: 460 }
+    size: { width: 70, height: 56 }
+
+notes:
+  - "v3 supersedes v1/v2's two-page Swiss layout entirely, per explicit user direction — single zoned page modeled on the reference screenshot's visual language, DROP's own 19 parameters mapped onto that idiom."
+  - "Total: 19 APVTS parameters, IDs unchanged from v1/v2 — trigger, buildLength, style, intensity, tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, dryWet, output."
+  - "triggerMode (MANUAL/MIDI/AUTO) is non-APVTS UI state (parameter: null), matching architecture.md's documented non-parameter state category (trigger mode is explicitly listed there as ValueTree state, not APVTS) — it still emits a message on change for host-side wiring."
+  - "No Brainworx/bx_pulsar branding reproduced anywhere: wordmark is 'd r o p', maker mark is 'AVESS'."
+  - "Layout validated at base 1000x560 via a custom bounds/overlap/spacing checker (single flat control list, since v3 is one page): zero bounds violations, zero overlaps, zero spacing violations under the 10px minimum (the tightest legitimate gap, between adjacent module-macro knobs, sits exactly at 10px), all edges >=15px from the window boundary. Decorative-only elements (vertical rotated labels, the orb's glow bleed, knob arc rings) may render a few px beyond their nominal box, same allowance documented in v2 — this does not change any declared position/size."
+  - "Module macros (filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise) default to 100% per architecture.md Resolved Open Questions, unchanged from v1/v2."
+  - "Impact was moved from an earlier upper-right 'bare readout' draft placement to the lower-right hero-knob slot, and Output was made the bare-readout-with-chevrons control instead, to avoid representing any single parameter with two redundant widgets and to match the reference's actual idiom split: knobs for 'performance' controls (Intensity, Dry/Wet, the 10 macros, Impact), bare draggable numerals for 'shape/utility' controls (Tension, Chaos, Output) — mirroring the reference's own knobs-vs-bare-numbers split (Delay/Feedback/Mix/etc. are knobs; Mod Rate/Mod Amt/Diffusion/filter frequencies are bare numbers)."

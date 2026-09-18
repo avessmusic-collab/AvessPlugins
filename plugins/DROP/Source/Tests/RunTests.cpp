@@ -4571,7 +4571,13 @@ int main()
             for (int i = 0; ok && i < 7; ++i)
                 if (typeParam->choices[i] != expected[i]) ok = false;
             check (ok, "noiseType: exactly the 7 researched riser-source choices, in order");
-            check (typeParam->getIndex() == 0, "noiseType: defaults to STYLE (index 0 - defers to the DropStyle's authored color, so old sessions load bit-identical)");
+            // DOCUMENTED SUPERSESSION (2026-09-18, same day): default was
+            // STYLE (index 0); the user's follow-up "make the default noise
+            // white" changed it to WHITE (index 1). STYLE remains available
+            // as an explicit choice; indices are unchanged, so sessions
+            // saved with ANY selection reload identically - only sessions
+            // predating `noiseType` entirely now resolve to WHITE.
+            check (typeParam->getIndex() == 1, "noiseType: defaults to WHITE (index 1; SUPERSEDES the initial STYLE default, changed 2026-09-18 at user direction)");
         }
 
         // (b) dryWet default 50% (and factory presets re-authored to match).
@@ -4643,7 +4649,7 @@ int main()
         bool identical = true;
         for (int i = 0; i < blockSize && identical; ++i)
             if (styleDeferred.getSample (0, i) != explicitWhite.getSample (0, i)) identical = false;
-        check (identical, "[POST-1.0] noise types: STYLE (default) defers to the Style-authored color bit-for-bit (old sessions and the pre-noiseType build are unchanged)");
+        check (identical, "[POST-1.0] noise types: STYLE defers to the Style-authored color bit-for-bit (sessions saved with STYLE selected keep the exact pre-noiseType sound; note the DEFAULT is WHITE as of 2026-09-18)");
     }
 
     std::printf ("\n[POST-1.0] DAW grid lock, end-to-end - 16-bar riser ends EXACTLY on the host's 16-bar marker (advancing Ableton-style playhead)\n");

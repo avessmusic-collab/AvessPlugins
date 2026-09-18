@@ -182,8 +182,8 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 ### noiseType
 - **Type:** Choice
 - **Choices:** STYLE, WHITE, PINK, BROWN, SWEEP, SAW, SHEPARD
-- **Default:** STYLE (index 0 — defers to the active DropStyle's authored NoiseColor, the exact pre-noiseType behavior; old sessions load bit-identical)
-- **UI Control:** Dark mini-LCD chip with chevrons, "NOISE TYPE" (Advanced page, below the tension-curve graph, left of SYNC).
+- **Default:** WHITE (index 1 — **changed from STYLE, 2026-09-18 user-directed "make the default noise white"**; a fresh instance always risers with classic white noise. STYLE (index 0) remains available to defer to the active DropStyle's authored NoiseColor.)
+- **UI Control:** Dark mini-LCD chip with chevrons AND a click-to-open dropdown of all choices (Advanced page, below the tension-curve graph, left of SYNC — dropdown added 2026-09-18, see v10-ui.yaml `choice_dropdowns_and_white_default`).
 - **DSP Usage:** **POST-1.0 addition — 2026-09-18 (user-directed: "add choices for different kinds of noise"), 22nd parameter, strictly additive.** Selects `NoiseModule`'s riser source, grounded in the standard riser sound-design palette (researched 2026-09-18): WHITE = classic white-noise riser; PINK = darker 1/f; BROWN = deepest 1/f² rumble; SWEEP = white noise through a resonant low-pass swept 200Hz→12kHz with progress; SAW = tonal polyBLEP saw climbing 4 octaves (55→880Hz, R detuned +0.6%); SHEPARD = 6 octave-spaced windowed sines (endless-rise illusion). Live (not latched); the rise envelope (`riseAmountForProgress`, the gray graph curve) applies identically to every type, and RNG consumption is type-independent (determinism preserved under `noiseType` automation).
 
 ### noiseTension
