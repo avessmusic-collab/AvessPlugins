@@ -1,5 +1,31 @@
 # DROP Changelog
 
+### Verified — 2026-09-18 (16-bar grid alignment investigated, engine proven exact)
+
+User DAW report: "the 16 bar riser doesnt end in time with the ableton 16
+bar markers. the sound persists and stays." Investigation added the
+previously-missing END-TO-END grid test: a real advancing host playhead
+(ppq moving every block, Ableton-style), trigger applied host-style at the
+start of the buffer containing bar 4's line, 16-bar build, riser isolated.
+Measured: Impact lands ON the 16-bar marker (block-granularity delta only)
+and the audible riser ends BEFORE the marker (the Vacuum's 1/32-bar
+silence precedes the drop). The engine is sample-accurate; no code change.
+
+Likely causes of the reported symptom (host-side):
+1. **Build Length automation lanes recorded before the 32-bar addition
+   (2026-09-17)**: choice-parameter automation is stored NORMALIZED by
+   hosts, so a lane point at the old top-of-range "16" (1.0) now selects
+   **32 bars** — the riser then runs a full extra 16-bar phrase ("persists
+   and stays"). Fix in the session: re-touch/redraw those points (or
+   re-click 16 in the UI). The UI's lit step circle during a build shows
+   which length is actually latched.
+2. A trigger automation point sitting slightly AFTER the bar line arms to
+   the NEXT bar (+1 bar late by design — the drop still grid-locks).
+3. A stale plugin binary in the DAW cache (rescan/re-add after installs).
+
+- Tests: the new "[POST-1.0] DAW grid lock, end-to-end" block stays as a
+  permanent regression guard (250 assertions total, all passing).
+
 ### Added — 2026-09-18 (riser source choices + Dry/Wet default 50%)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "make

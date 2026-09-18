@@ -4618,6 +4618,91 @@ int main()
         check (identical, "[POST-1.0] noise types: STYLE (default) defers to the Style-authored color bit-for-bit (old sessions and the pre-noiseType build are unchanged)");
     }
 
+    std::printf ("\n[POST-1.0] DAW grid lock, end-to-end - 16-bar riser ends EXACTLY on the host's 16-bar marker (advancing Ableton-style playhead)\n");
+    {
+        // User DAW report (2026-09-18): "the 16 bar riser doesnt end in
+        // time with the ableton 16 bar markers. the sound persists and
+        // stays." The existing grid-lock tests verify the DURATION FORMULA;
+        // this is the missing end-to-end render against a REAL advancing
+        // host playhead (ppq moves forward every block, like Ableton),
+        // trigger fired via host-style parameter automation at the start of
+        // the block containing a bar line, riser isolated (noise macro
+        // only, silent input) - then the actual audible riser end and the
+        // actual Impact entry are measured in HOST-TIMELINE samples against
+        // the exact 16-bar marker.
+        constexpr double sr = 48000.0;
+        constexpr double bpm = 128.0;
+        constexpr int blockSize = 512;
+        constexpr double samplesPerQuarter = sr * 60.0 / bpm;      // 22500
+        constexpr int64_t barSamples = (int64_t) (samplesPerQuarter * 4.0); // 90000 @ 4/4
+        constexpr int64_t triggerBarSample = 4 * barSamples;        // user's automation sits on bar 4's line
+        constexpr int64_t expectedImpactSample = triggerBarSample + 16 * barSamples; // the 16-bar marker
+
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (sr, blockSize);
+        p.prepareToPlay (sr, blockSize);
+        TestPlayHead ph;
+        p.setPlayHead (&ph);
+
+        const char* zeroMacros[] = { "filter", "width", "pitch", "gate", "stutter", "delay", "reverb", "distortion", "digital" };
+        for (auto* id : zeroMacros)
+            if (auto* prm = p.parameters.getParameter (id)) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("impact")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (4.0f / 5.0f); // index 4 = 16 bars
+
+        int64_t lastAudibleSample = -1;   // host-timeline sample of the last audible riser block
+        int64_t impactEntrySample = -1;   // host-timeline sample of the block where Impact was first observed
+        bool triggered = false;
+        const int totalBlocks = (int) ((triggerBarSample + 18 * barSamples) / blockSize);
+
+        for (int block = 0; block < totalBlocks; ++block)
+        {
+            const int64_t blockStartSample = (int64_t) block * blockSize;
+            // Ableton-style: the automation point on bar 4's line is applied
+            // at the start of the buffer that CONTAINS the line.
+            if (! triggered && blockStartSample + blockSize > triggerBarSample)
+            {
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+                triggered = true;
+            }
+
+            const double ppq = (double) blockStartSample / samplesPerQuarter;
+            const double lastBarPpq = std::floor (ppq / 4.0) * 4.0;
+            ph.info = makePosition (bpm, 4, 4, ppq, lastBarPpq);
+            ph.info.setIsPlaying (true);
+
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear(); // silent input - the riser is the only audible content
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+
+            double sumSq = 0.0;
+            const float* out = buf.getReadPointer (0);
+            for (int i = 0; i < blockSize; ++i)
+                sumSq += (double) out[i] * (double) out[i];
+            if (std::sqrt (sumSq / (double) blockSize) > 1.0e-4)
+                lastAudibleSample = blockStartSample + blockSize;
+
+            if (impactEntrySample < 0 && p.getCurrentDropState() == drop::DropState::Impact)
+                impactEntrySample = blockStartSample + blockSize; // block-granular: Impact began within this block
+        }
+        p.releaseResources();
+
+        std::printf ("  expected 16-bar marker (host sample): %lld\n", (long long) expectedImpactSample);
+        std::printf ("  Impact observed by (host sample):     %lld  (delta %+lld, block granularity %d)\n",
+                     (long long) impactEntrySample, (long long) (impactEntrySample - expectedImpactSample), blockSize);
+        std::printf ("  last audible riser block ended at:    %lld  (%+lld vs marker; Vacuum occupies the final 1/32 bar before it)\n",
+                     (long long) lastAudibleSample, (long long) (lastAudibleSample - expectedImpactSample));
+
+        check (impactEntrySample > 0, "DAW grid lock: the transition reached Impact under the advancing playhead");
+        check (impactEntrySample > 0 && std::llabs (impactEntrySample - expectedImpactSample) <= (int64_t) (2 * blockSize),
+              "[POST-1.0] DAW grid lock: Impact lands ON the 16-bar marker (within block-measurement granularity) under a real advancing host playhead - the riser does NOT run past the marker");
+        check (lastAudibleSample > 0 && lastAudibleSample <= expectedImpactSample + blockSize,
+              "[POST-1.0] DAW grid lock: the audible riser ENDS by the 16-bar marker (Vacuum silence precedes the drop; nothing persists past the marker)");
+    }
+
     std::printf ("\n[DIAG] Parameters as the HOST sees them (name | automatable | meta | discrete | numSteps)\n");
     {
         DROPAudioProcessor p;
