@@ -2819,6 +2819,12 @@ int main()
         double phase = 0.0;
         const double phaseInc = 2.0 * juce::MathConstants<double>::pi * 220.0 / sr;
         bool sawPeak = false, sawImpact = false, sawIdleAfterImpact = false;
+        // POST-1.0 TRUE CUT (2026-09-18): at tail==0% the Impact state is
+        // now only ~5ms (240 samples) - Impact AND Recovery can both begin
+        // and end INSIDE one 1024-sample block, so block-granular state
+        // observation may never literally see DropState::Impact. "The drop
+        // happened" is therefore detected as any post-Peak progression
+        // (Impact observed directly, or Peak left for Recovery/Idle).
         std::vector<float> captured;             // impact onward, channel 0
         int idleBlocksCaptured = 0;
         int firstIdleCaptureIndex = -1;          // index into `captured` where the first fully-Idle block starts
@@ -2845,12 +2851,15 @@ int main()
 
             const auto postState = p.getCurrentDropState();
             if (postState == drop::DropState::Peak) sawPeak = true;
-            if (preState == drop::DropState::Impact || postState == drop::DropState::Impact) sawImpact = true;
+            if (preState == drop::DropState::Impact || postState == drop::DropState::Impact
+                || (sawPeak && (postState == drop::DropState::Recovery || postState == drop::DropState::Idle)))
+                sawImpact = true;
 
             if (sawImpact)
             {
                 const bool recoverySide = (preState == drop::DropState::Recovery)
-                    || (preState == drop::DropState::Impact && postState != drop::DropState::Impact);
+                    || (preState == drop::DropState::Impact && postState != drop::DropState::Impact)
+                    || (preState == drop::DropState::Peak && postState != drop::DropState::Peak && postState != drop::DropState::Impact);
                 if (recoverySide && measureStartIndex < 0)
                     measureStartIndex = (int) captured.size();
                 if (sawIdleAfterImpact && firstIdleCaptureIndex < 0 && preState == drop::DropState::Idle)
@@ -3976,15 +3985,27 @@ int main()
     {
         constexpr int blockSize = 256;
         constexpr int64_t impactStartSample = 191744; // see the updated Phase 3.4 transient-preservation test's doc comment for the derivation (grid-lock fix)
-        constexpr int64_t recoveryStartSample = impactStartSample + 10560; // 202304
-        constexpr int64_t recoveryStartBlockFloor = recoveryStartSample / blockSize; // 790 (truncated)
-        constexpr int captureFromBlock = (int) recoveryStartBlockFloor - 2;
-        constexpr int captureUntilBlock = (int) recoveryStartBlockFloor + 20; // ~20 blocks past Recovery's start, comfortably covers the ~10ms(480-sample) window under test plus margin
-        constexpr int64_t actualCaptureFromSample = (int64_t) captureFromBlock * blockSize;
-        constexpr int64_t boundaryIndex = recoveryStartSample - actualCaptureFromSample;
+        // POST-1.0 TRUE CUT (2026-09-18, user-directed "so the sound stops
+        // imidietly volumewise"): with tail==0% the IMPACT window itself now
+        // collapses to ~5ms (240 samples @48k) - the CUT capture's recovery
+        // boundary therefore sits at impactStart+240, while the ring capture
+        // (tail above the epsilon) keeps the full Style-authored 0.22s
+        // window (impactStart+10560) byte-identically.
+        constexpr int64_t kCutRecoveryStart  = impactStartSample + 240;   // 191984
+        constexpr int64_t kRingRecoveryStart = impactStartSample + 10560; // 202304
 
-        auto measureTail = [&] (float tailPercent) -> std::vector<float>
+        // Captures DROP's OWN contribution (out - in), the transport-stop
+        // test's convention (TRUE CUT update): the input deliberately
+        // hard-silences at the recovery boundary, and measuring raw output
+        // would score that synthetic input edge itself as a "discontinuity"
+        // at whatever phase the sine happens to hold there.
+        auto measureTail = [&] (float tailPercent, int64_t recoveryStartSample, int64_t& boundaryIndexOut) -> std::vector<float>
         {
+            const int64_t recoveryStartBlockFloor = recoveryStartSample / blockSize;
+            const int captureFromBlock = (int) recoveryStartBlockFloor - 2;
+            const int captureUntilBlock = (int) recoveryStartBlockFloor + 20; // ~20 blocks past Recovery's start, comfortably covers the ~10ms(480-sample) window under test plus margin
+            const int64_t actualCaptureFromSample = (int64_t) captureFromBlock * blockSize;
+            boundaryIndexOut = recoveryStartSample - actualCaptureFromSample;
             DROPAudioProcessor p;
             p.setRateAndBufferSizeDetails (48000.0, blockSize);
             p.prepareToPlay (48000.0, blockSize);
@@ -4029,15 +4050,22 @@ int main()
                 {
                     const float* out = buf.getReadPointer (0);
                     for (int i = 0; i < blockSize; ++i)
-                        captured.push_back (out[i]);
+                    {
+                        // Residual = out - in (in recomputed from the same
+                        // deterministic formula the input loop used).
+                        const int64_t globalSample = (int64_t) block * blockSize + i;
+                        const float inVal = (globalSample < recoveryStartSample) ? 0.7f * std::sin ((float) globalSample * 0.06f) : 0.0f;
+                        captured.push_back (out[i] - inVal);
+                    }
                 }
             }
             p.releaseResources();
             return captured;
         };
 
-        const auto cutCapture = measureTail (0.0f);  // exact CUT
-        const auto ringCapture = measureTail (0.1f);  // just above the epsilon - should still ring
+        int64_t cutBoundaryIndex = 0, ringBoundaryIndex = 0;
+        const auto cutCapture = measureTail (0.0f, kCutRecoveryStart, cutBoundaryIndex);   // exact CUT (5ms impact + 5ms recovery)
+        const auto ringCapture = measureTail (0.1f, kRingRecoveryStart, ringBoundaryIndex); // just above the epsilon - full impact window, should still ring
 
         auto maxStepNear = [&] (const std::vector<float>& v, int64_t center, int64_t halfWindow) -> float
         {
@@ -4047,8 +4075,8 @@ int main()
             return m;
         };
         constexpr float kMaxAllowedStep = 0.35f; // same documented bound as the post-impact-continuity/transport-stop tests
-        const float cutMaxStep = maxStepNear (cutCapture, boundaryIndex, 8);
-        check (cutMaxStep < kMaxAllowedStep, "TAIL=CUT: no discontinuity step above the documented bound at the exact Impact->Recovery boundary when tail==0%");
+        const float cutMaxStep = maxStepNear (cutCapture, cutBoundaryIndex, 8);
+        check (cutMaxStep < kMaxAllowedStep, "TAIL=CUT: no discontinuity step of DROP's own contribution (out - in) above the documented bound at the exact Impact->Recovery boundary when tail==0%");
 
         constexpr int64_t kTenMsSamples = 480; // ~10ms @48kHz
         auto peakAbsInWindow = [&] (const std::vector<float>& v, int64_t start, int64_t len) -> float
@@ -4058,14 +4086,14 @@ int main()
                 m = std::max (m, std::abs (v[(size_t) i]));
             return m;
         };
-        const float cutPeakAt10ms = peakAbsInWindow (cutCapture, boundaryIndex + kTenMsSamples, blockSize);
-        const float ringPeakAt10ms = peakAbsInWindow (ringCapture, boundaryIndex + kTenMsSamples, blockSize);
+        const float cutPeakAt10ms = peakAbsInWindow (cutCapture, cutBoundaryIndex + kTenMsSamples, blockSize);
+        const float ringPeakAt10ms = peakAbsInWindow (ringCapture, ringBoundaryIndex + kTenMsSamples, blockSize);
 
-        std::printf ("  tail=0%% (CUT): peak |output| ~10ms after Impact ends = %.6f; tail=0.1%% (ring): peak |output| at the SAME point = %.6f\n", cutPeakAt10ms, ringPeakAt10ms);
+        std::printf ("  tail=0%% (CUT): peak |residual| ~10ms after its (5ms) Impact ends = %.6f; tail=0.1%% (ring): peak |residual| ~10ms after ITS (full-window) Impact ends = %.6f\n", cutPeakAt10ms, ringPeakAt10ms);
 
-        check (cutPeakAt10ms < 1.0e-3f, "TAIL=CUT: tail==0% produces near-silence within ~10ms of Impact's end (clean, click-free cut, no ring-out)");
+        check (cutPeakAt10ms < 1.0e-3f, "TAIL=CUT: tail==0% produces near-silence within ~10ms of its (collapsed ~5ms) Impact's end - with TRUE CUT the effect's own sound is gone ~10ms past the bar-counted downbeat");
         check (ringPeakAt10ms > cutPeakAt10ms * 5.0f,
-              "TAIL=CUT: tail just above 0% (0.1%) still measurably RINGS at the SAME ~10ms-post-Impact point - the CUT behavior is isolated to exactly 0% (continuity of the exponential mapping preserved above the epsilon, not a general 'short tail always silent' regression)");
+              "TAIL=CUT: tail just above 0% (0.1%) still measurably RINGS ~10ms past its own Impact window - the CUT behavior (collapsed window included) is isolated to exactly 0% (continuity of the exponential mapping preserved above the epsilon, not a general 'short tail always silent' regression)");
     }
 
     std::printf ("\n[POST-1.0] BPM publication - VisualizationFrame reports the host BPM when a playhead is present, the fallback marker when not\n");
@@ -4651,6 +4679,13 @@ int main()
         if (auto* prm = p.parameters.getParameter ("impact")) prm->setValueNotifyingHost (0.0f);
         if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
         if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (4.0f / 5.0f); // index 4 = 16 bars
+        // Pinned above the CUT epsilon (POST-1.0 TRUE CUT, 2026-09-18): at
+        // the tail==0% DEFAULT the Impact state is now only ~5ms and can
+        // pass entirely inside one block, making the block-granular Impact
+        // observation below flaky. Grid timing itself is tail-independent
+        // (Impact's START is what lands on the marker); 40% keeps the full
+        // Style-authored window observable.
+        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.4f);
 
         int64_t lastAudibleSample = -1;   // host-timeline sample of the last audible riser block
         int64_t impactEntrySample = -1;   // host-timeline sample of the block where Impact was first observed

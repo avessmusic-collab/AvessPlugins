@@ -1,5 +1,32 @@
 # DROP Changelog
 
+### Fixed — 2026-09-18 (TRUE CUT: with TAIL at 0% the effect ends AT the downbeat, ms-precise)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "count
+the bars with bpm and make it precise to miliseconds. so when the effect
+of 8 bars for example ends. when there is no tail and cut is active. so
+the sound stops imidietly volumewise."
+
+- **Root cause of the residual lingering:** the bar-counted BPM math was
+  already sample-exact (Impact's first sample lands ON the downbeat), but
+  TAIL=CUT only shortened RECOVERY — the Impact STATE still ran its full
+  Style-authored window (~220–240ms) past the bar line, exciting the
+  dedicated short-tail impact reverb and running the drive overlays, so
+  the effect audibly persisted ~a quarter second past the counted bars.
+- **Fix:** with CUT active (tail==0%), the ENTIRE post-drop window now
+  collapses: Impact state = ~5ms (its only remaining job is handing the
+  clean dry return through), Recovery = ~5ms (existing per-sample
+  dB-linear fade to exact 0), and the shortTailReverb's send is gated to
+  0 during Impact (latched per build, `tailCutActiveForBuild`) so nothing
+  is excited at the drop in the first place. Net: the effect's own sound
+  is measurably GONE within ~10ms of the BPM-exact bar-counted downbeat —
+  measured residual 0.000000 at +10ms (vs 0.23 for tail=0.1%, which keeps
+  the full Style-authored impact window and ring byte-identically).
+- Tests updated for the collapsed window (Bug F boundary constants +
+  residual-based step measurement; per-sample-cut state detection; the
+  DAW grid test pins tail above the epsilon since grid timing is
+  tail-independent). 250 assertions, all passing.
+
 ### Verified — 2026-09-18 (16-bar grid alignment investigated, engine proven exact)
 
 User DAW report: "the 16 bar riser doesnt end in time with the ableton 16

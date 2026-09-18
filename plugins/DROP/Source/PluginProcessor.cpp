@@ -536,11 +536,35 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     if (tailRaw <= kTailCutEpsilon)
     {
         tailSeconds = kTailCutSeconds;
+
+        // POST-1.0 "TRUE CUT" FIX (2026-09-18, user-directed: "count the
+        // bars with bpm and make it precise to miliseconds. so when the
+        // effect of 8 bars for example ends. when there is no tail and cut
+        // is active. so the sound stops imidietly volumewise"). TAIL=CUT
+        // previously shortened only RECOVERY - the Impact STATE still ran
+        // its full Style-authored window (~220-240ms) past the downbeat,
+        // with the dedicated shortTailReverb being excited at the drop and
+        // the drive overlays active, so the effect audibly lingered ~a
+        // quarter second past the bar line it had just landed on. With CUT
+        // active the ENTIRE post-drop window now collapses to the same
+        // ~5ms: Impact state = kTailCutSeconds (its only remaining job is
+        // handing the untouched dry return through), Recovery =
+        // kTailCutSeconds (the existing per-sample dB envelope fades any
+        // residual wet to an exact 0), and tailCutActiveForBuild (latched
+        // here, like every other per-build duration decision) additionally
+        // gates the shortTailReverb's SEND to 0 during Impact so there is
+        // nothing to ring in the first place. Net: the effect's own sound
+        // ends within ~10ms (~= "millisecond-precise") of the bar-counted
+        // BPM-exact downbeat; every tail ABOVE the epsilon keeps the full
+        // Style-authored Impact window byte-identically.
+        d.impactSamples = (int64_t) std::llround(currentSampleRate * kTailCutSeconds);
+        tailCutActiveForBuild = true;
     }
     else
     {
         const float tail01 = juce::jlimit(0.0f, 1.0f, tailRaw / 100.0f);
         tailSeconds = kTailMinSeconds * std::pow(kTailMaxSeconds / kTailMinSeconds, (double) tail01);
+        tailCutActiveForBuild = false;
     }
     d.recoverySamples = (int64_t) std::llround(currentSampleRate * tailSeconds);
 
@@ -1475,7 +1499,13 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
         // the drop by then) never re-excites shortTailReverb - only its
         // ALREADY-excited internal state keeps ringing out, decayed by the
         // per-sample tail blend at the end of this method.
-        const float reverbSendWeightOverride = (dropState == drop::DropState::Recovery) ? 0.0f : -1.0f;
+        // POST-1.0 "TRUE CUT" (2026-09-18): with tailCutActiveForBuild the
+        // send is 0 during Impact TOO - the shortTailReverb is never
+        // excited at the drop, so with CUT there is nothing to ring past
+        // the bar line at all (see computeDurationsForNewBuild()'s CUT
+        // branch doc comment).
+        const float reverbSendWeightOverride =
+            (dropState == drop::DropState::Recovery || tailCutActiveForBuild) ? 0.0f : -1.0f;
         // accentLevel: Style-authored scale on the synthesized sub-hit/burst
         // accents ONLY (POST-1.0 2026-09-17, user DAW report: Dark Techno
         // "adds a drum kick" - that Style authors this to 0.0; see

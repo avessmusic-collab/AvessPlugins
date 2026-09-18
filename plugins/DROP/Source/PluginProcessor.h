@@ -740,6 +740,15 @@ private:
     // Impact (e.g. a hypothetical zero-length-Impact edge case).
     int64_t impactCarryoverElapsedSamples = -1;
 
+    // POST-1.0 "TRUE CUT" (2026-09-18): latched by
+    // computeDurationsForNewBuild() alongside the per-build durations -
+    // true when the build was armed with tail==0% (CUT). With it set, the
+    // Impact state is only ~5ms long AND processSegment() gates the
+    // shortTailReverb's send to 0 during Impact, so the effect's own sound
+    // ends within ~10ms of the bar-counted downbeat (see the CUT branch's
+    // doc comment in computeDurationsForNewBuild()).
+    bool tailCutActiveForBuild = false;
+
     // POST-1.0 TRANSPORT-STOP SAFETY state (see this class's top doc comment
     // "POST-1.0 SECOND IMPROVEMENT SESSION", Bug E, and processBlock()'s
     // "transport-stop" doc comment). Audio-thread-owned; no atomics needed
