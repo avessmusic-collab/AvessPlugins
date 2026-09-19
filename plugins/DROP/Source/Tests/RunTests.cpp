@@ -4976,6 +4976,61 @@ int main()
         check (allSoundContiguousToVacuum, "[POST-1.0] sound length: the riser's audible sound is contiguous (no mid-build gaps or early stop) and continues right up to the Vacuum before the drop, for every choice - 'the sound during the drop continues for the selected amount of bars'");
     }
 
+    std::printf ("\n[POST-1.0] Idle transparency (2026-09-19 bug-check) - an untriggered DROP must not audibly color the signal\n");
+    {
+        // The always-process/weight-mix design gives every module a small
+        // Style-authored weight even at progress 0 (architecture.md:
+        // budget "near-zero at Idle") - this quantifies the worst case:
+        // dryWet pinned FULLY WET (default is 50%, halving whatever this
+        // measures), default macros (100%), default intensity, sine input,
+        // never triggered. The plugin's own contribution (out - in) must
+        // stay far below audibility.
+        constexpr double sr = 48000.0;
+        constexpr int blockSize = 512;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (sr, blockSize);
+        p.prepareToPlay (sr, blockSize);
+        if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f); // worst case: 100% wet
+
+        double phase = 0.0;
+        const double inc = 2.0 * juce::MathConstants<double>::pi * 220.0 / sr;
+        double sumIn = 0.0, sumResid = 0.0;
+        for (int block = 0; block < 40; ++block) // first blocks settle smoothers/filters; last 10 measured
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            std::vector<float> inCopy ((size_t) blockSize);
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const float s = 0.5f * (float) std::sin (phase);
+                phase += inc;
+                buf.setSample (0, i, s);
+                buf.setSample (1, i, s);
+                inCopy[(size_t) i] = s;
+            }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block >= 30)
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const double r = (double) buf.getSample (0, i) - (double) inCopy[(size_t) i];
+                    sumResid += r * r;
+                    sumIn += (double) inCopy[(size_t) i] * (double) inCopy[(size_t) i];
+                }
+        }
+        p.releaseResources();
+        const double residRatio = sumIn > 0.0 ? std::sqrt (sumResid / sumIn) : 0.0;
+        const double residDb = 20.0 * std::log10 (juce::jmax (residRatio, 1.0e-12));
+        std::printf ("  idle residual (out - in) at 100%% wet, defaults: %.5f (%.1f dB below the signal)\n", residRatio, -residDb);
+        // BUG FOUND AND FIXED by this test (2026-09-19): pre-fix, the
+        // Style curves' small authored START weights leaked through
+        // computeWeights() at Idle and this measured 0.199 (-14dB - clearly
+        // audible coloring on an UNTRIGGERED plugin). The Idle/Arming
+        // weight gate in processSegment() (see its doc comment) takes this
+        // to the float noise floor (~-138dB measured).
+        check (residRatio < 0.001,
+              "[POST-1.0] idle transparency: an untriggered DROP's own contribution is at least 60dB below the signal even at 100% wet (measured ~-138dB; the pre-fix idle-weight leak measured -14dB and fails this by construction) - the plugin is inert until triggered");
+    }
+
     std::printf ("\n[POST-1.0] Knob correctness (2026-09-18 audit) - DRY/WET 0%% is transparent mid-build; OUTPUT scales gain exactly\n");
     {
         // "check so knobs work corectly": the module macros already carry

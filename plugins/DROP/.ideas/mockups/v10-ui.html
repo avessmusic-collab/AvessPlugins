@@ -638,6 +638,12 @@
     pageAdvanced.classList.toggle('active', !isMain);
     pageNavButtons.forEach(b => b.classList.toggle('active', b.dataset.page === which));
     pageNavIndicator.style.transform = isMain ? 'translateX(0)' : 'translateX(100%)';
+    // BUGFIX (2026-09-19 bug-check): an open choice dropdown is a
+    // fixed-position overlay - switching pages left it floating over the
+    // OTHER page (its anchor now hidden). Close it on any page switch.
+    // (closeChoiceMenu is a hoisted function declaration defined with the
+    // dropdown helper below.)
+    closeChoiceMenu();
   }
   pageNavButtons.forEach((btn) => btn.addEventListener('click', () => showPage(btn.dataset.page)));
 
@@ -806,6 +812,11 @@
       closeChoiceMenu();
     }
   });
+  // BUGFIX (2026-09-19 bug-check): the menu is fixed-position at
+  // client coords captured on open - a window resize (which also rescales
+  // the whole UI via the root font-size) leaves it floating at a stale
+  // position/size. Close instead of tracking.
+  window.addEventListener('resize', closeChoiceMenu);
   function attachChoiceDropdown(anchorEl, items, getIndex, pick) {
     anchorEl.addEventListener('click', (e) => {
       e.stopPropagation();

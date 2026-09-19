@@ -1193,9 +1193,31 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // shapes are evaluated; feeding them the ALREADY-curved `progress` here
     // (the pre-fix behavior) composed two end-weighted curves together,
     // which was the exact reported bug.
-    const auto weights = drop::IntensityBudget::computeWeights(style, linearProgress, macroPercent, intensity01,
-                                                                 tension01, chaos01, audioAnalyzer.getSourceProfile(),
-                                                                 chaosJitter);
+    auto weights = drop::IntensityBudget::computeWeights(style, linearProgress, macroPercent, intensity01,
+                                                           tension01, chaos01, audioAnalyzer.getSourceProfile(),
+                                                           chaosJitter);
+
+    // POST-1.0 IDLE-TRANSPARENCY BUGFIX (2026-09-19 bug-check round).
+    // MEASURED BUG: an UNTRIGGERED instance colored the signal at only
+    // ~14dB below the input at 100% wet (~-20dB at the 50% dryWet
+    // default) - clearly audible. ROOT CAUSE: the Style curves author
+    // small nonzero START weights (budgetEnvelope startWeight ~0.05,
+    // module-curve starts up to ~0.1) so computeWeights() at progress==0
+    // hands every module a small live weight - correct DURING a build
+    // (architecture.md: budget "near-zero at Idle/early Building" refers
+    // to the build envelope's shape), but Idle/Arming are NOT part of any
+    // build: the plugin must be inert until the transition actually runs.
+    // FIX: hard-zero all shared-pool weights outside an active transition.
+    // Entry into Building steps from 0 to the tiny authored start weights
+    // under each module's own ~20ms weight smoother, exactly at the bar
+    // boundary where the build begins - inaudible, and it also means the
+    // delay/reverb buffers stay UNFED while idle (no stale pre-trigger
+    // echoes) and the post-cut return to Idle stays bit-dry. Peak/Impact/
+    // Recovery keep their live progress==0 weights untouched (the
+    // transient-preservation behavior is calibrated against them).
+    if (dropState == drop::DropState::Idle || dropState == drop::DropState::Arming)
+        for (size_t wi = 0; wi < (size_t) drop::BudgetModule::Count; ++wi)
+            weights.value[wi] = 0.0f;
 
     // Cached for the visualization-frame push at the end of processBlock()
     // (see that call site's doc comment, and the lastComputedProgress/

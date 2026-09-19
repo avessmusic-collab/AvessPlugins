@@ -1,5 +1,33 @@
 # DROP Changelog
 
+### Fixed — 2026-09-19 (bug-check round: idle-transparency leak + dropdown edge cases)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "check
+for bugs." Code-review-driven audit of the recent rounds; one significant
+DSP bug and two UI edge cases found and fixed.
+
+- **Idle-transparency leak (significant, fixed):** an UNTRIGGERED
+  instance colored the signal at only ~14dB below the input at 100% wet
+  (~-20dB at the 50% default) — clearly audible before DROP was ever
+  pressed. **Root cause:** the Style curves author small nonzero START
+  weights (budget envelope ~0.05, module-curve starts up to ~0.1), and
+  `computeWeights()` at progress 0 handed every module that small live
+  weight during Idle/Arming too — correct DURING a build, wrong outside
+  one. **Fix:** all shared-pool weights are hard-zeroed while
+  Idle/Arming; Building entry steps from 0 to the tiny authored starts
+  under each module's ~20ms weight smoother exactly at the bar boundary.
+  Side benefits: delay/reverb buffers stay unfed while idle (no stale
+  pre-trigger echoes) and the post-cut return to Idle stays bit-dry.
+  Measured: idle residual now ~-138dB (float noise floor), was -14dB.
+  Peak/Impact/Recovery weights untouched (transient-preservation
+  calibration preserved — full suite passes unchanged).
+- **UI: choice dropdown edge cases:** switching MAIN/ADVANCED pages left
+  an open dropdown floating over the other page (its anchor hidden), and
+  a window resize left it at a stale position/scale. Both now close the
+  menu.
+- Tests: new idle-transparency block (locks the fix at 60dB minimum,
+  fails the pre-fix leak by construction). 261 assertions, all passing.
+
 ### Changed — 2026-09-19 (Vacuum volume fades are now decibel-linear)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "make
