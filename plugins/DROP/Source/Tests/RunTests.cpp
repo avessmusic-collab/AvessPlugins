@@ -4840,6 +4840,116 @@ int main()
         check (allEndByMarker, "[POST-1.0] grid lock at every tempo: the audible riser ends BY the marker in every case - the bar count is 'perfect at every bpm'");
     }
 
+    std::printf ("\n[POST-1.0] Sound length == selected bars, for EVERY Build Length choice (2026-09-19 verification)\n");
+    {
+        // User request: "test so the lenght of the sound during the drop
+        // continues for the selected ammount of bars". For each of the six
+        // Build Length choices, an advancing-playhead render verifies:
+        //   (1) the Building state spans exactly N bars minus the carved-out
+        //       Vacuum (the grid-lock design),
+        //   (2) Impact lands ON the trigger+N-bars marker,
+        //   (3) the riser's audible sound is CONTIGUOUS once it rises above
+        //       threshold and continues right up to the Vacuum - no early
+        //       stop, no gaps, nothing past the marker.
+        constexpr double sr = 48000.0;
+        constexpr double bpm = 120.0;
+        constexpr int blockSize = 512;
+        constexpr double samplesPerQuarter = sr * 60.0 / bpm; // 24000
+        constexpr int64_t barSamples = (int64_t) (samplesPerQuarter * 4.0); // 96000
+        constexpr int64_t triggerBarSample = 2 * barSamples;
+        const int barsChoices[] = { 1, 2, 4, 8, 16, 32 };
+
+        bool allBuildSpansExact = true, allImpactOnMarker = true, allSoundContiguousToVacuum = true;
+        for (int choiceIndex = 0; choiceIndex < 6; ++choiceIndex)
+        {
+            const int bars = barsChoices[choiceIndex];
+            const int64_t expectedImpactSample = triggerBarSample + (int64_t) bars * barSamples;
+
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (sr, blockSize);
+            p.prepareToPlay (sr, blockSize);
+            TestPlayHead ph;
+            p.setPlayHead (&ph);
+
+            const char* zeroMacros[] = { "filter", "width", "pitch", "gate", "stutter", "delay", "reverb", "distortion", "digital" };
+            for (auto* id : zeroMacros)
+                if (auto* prm = p.parameters.getParameter (id)) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("impact")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.4f); // keeps Impact block-observable (see the grid tests above)
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost ((float) choiceIndex / 5.0f);
+
+            int64_t buildingSamplesCounted = 0;
+            int64_t impactEntrySample = -1;
+            int64_t firstAudibleSample = -1, lastAudibleSample = -1;
+            bool audibleLatched = false; // hysteresis: onset latches at -60dBFS; only a fall back below -80dBFS afterwards counts as a REAL dropout (raw threshold-crossing jitter at the riser's quiet fade-in is measurement noise, not a gap)
+            bool audibleGap = false;
+            bool triggered = false;
+            const int totalBlocks = (int) ((triggerBarSample + (int64_t) (bars + 2) * barSamples) / blockSize);
+
+            for (int block = 0; block < totalBlocks; ++block)
+            {
+                const int64_t blockStartSample = (int64_t) block * blockSize;
+                if (! triggered && blockStartSample + blockSize > triggerBarSample)
+                {
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+                    triggered = true;
+                }
+                const double ppq = (double) blockStartSample / samplesPerQuarter;
+                ph.info = makePosition (bpm, 4, 4, ppq, std::floor (ppq / 4.0) * 4.0);
+                ph.info.setIsPlaying (true);
+
+                juce::AudioBuffer<float> buf (2, blockSize);
+                buf.clear();
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+
+                const auto state = p.getCurrentDropState();
+                if (state == drop::DropState::Building) buildingSamplesCounted += blockSize;
+                if (impactEntrySample < 0 && state == drop::DropState::Impact)
+                    impactEntrySample = blockStartSample + blockSize;
+
+                double sumSq = 0.0;
+                const float* out = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                    sumSq += (double) out[i] * (double) out[i];
+                const double blockRms = std::sqrt (sumSq / (double) blockSize);
+                if (blockRms > 1.0e-3 && ! audibleLatched) // -60dBFS: clearly-audible onset
+                {
+                    audibleLatched = true;
+                    firstAudibleSample = blockStartSample;
+                }
+                if (audibleLatched && blockRms < 1.0e-4 // -80dBFS: genuinely stopped
+                    && blockStartSample + blockSize < expectedImpactSample - 4000) // before the (expected-silent) Vacuum region
+                    audibleGap = true;
+                if (blockRms > 1.0e-4)
+                    lastAudibleSample = blockStartSample + blockSize;
+            }
+            p.releaseResources();
+
+            // Vacuum at 120 BPM (Clean EDM, 1/32 division) = 96000/32 = 3000 samples.
+            const int64_t expectedBuilding = (int64_t) bars * barSamples - 3000;
+            const double buildErrBlocks = (double) (buildingSamplesCounted - expectedBuilding) / (double) blockSize;
+            std::printf ("  %2d bars: building=%lld (expected %lld, err %+.1f blocks)  impactBy=%lld (marker %lld, delta %+lld)  audible %lld..%lld  gap=%s\n",
+                         bars, (long long) buildingSamplesCounted, (long long) expectedBuilding, buildErrBlocks,
+                         (long long) impactEntrySample, (long long) expectedImpactSample,
+                         (long long) (impactEntrySample - expectedImpactSample),
+                         (long long) firstAudibleSample, (long long) lastAudibleSample, audibleGap ? "YES" : "no");
+
+            if (std::llabs (buildingSamplesCounted - expectedBuilding) > 2 * blockSize) allBuildSpansExact = false;
+            if (impactEntrySample <= 0 || std::llabs (impactEntrySample - expectedImpactSample) > 2 * blockSize) allImpactOnMarker = false;
+            if (firstAudibleSample < 0 || audibleGap
+                || lastAudibleSample > expectedImpactSample + blockSize
+                || lastAudibleSample < expectedImpactSample - 3000 - 2 * blockSize)
+                allSoundContiguousToVacuum = false;
+        }
+
+        check (allBuildSpansExact, "[POST-1.0] sound length: the Building state spans EXACTLY the selected bar count minus the carved-out Vacuum, for every choice 1/2/4/8/16/32");
+        check (allImpactOnMarker, "[POST-1.0] sound length: Impact lands ON the trigger+N-bars marker for every choice - the drop arrives exactly when the selected bars have elapsed");
+        check (allSoundContiguousToVacuum, "[POST-1.0] sound length: the riser's audible sound is contiguous (no mid-build gaps or early stop) and continues right up to the Vacuum before the drop, for every choice - 'the sound during the drop continues for the selected amount of bars'");
+    }
+
     std::printf ("\n[POST-1.0] Knob correctness (2026-09-18 audit) - DRY/WET 0%% is transparent mid-build; OUTPUT scales gain exactly\n");
     {
         // "check so knobs work corectly": the module macros already carry
