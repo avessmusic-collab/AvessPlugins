@@ -4173,7 +4173,7 @@ int main()
             if (delta > 1.0e-6f) allMatch = false;
         }
         std::printf ("  worst delta across 201 samples, single-arg vs. explicit noiseTension01=0.5 = %.8f\n", worstDelta);
-        check (allMatch, "[POST-1.0] riseAmountForProgress(p, 0.5) is byte-identical (within float epsilon) to the pre-existing single-arg smoothstep across a full sweep - the default noiseTension setting is a genuine no-op vs. the pre-noiseTension build");
+        check (allMatch, "[POST-1.0] riseAmountForProgress(p, 0.5) is byte-identical (within float epsilon) to the pre-existing single-arg smoothstep across a full sweep - 0.5 is the family's NEUTRAL point (note: the PARAMETER's default became 0% on 2026-09-19; the function's own default arg stays 0.5, the neutral shape)");
     }
 
     std::printf ("\n[POST-1.0] NoiseModule::riseAmountForProgress() - monotonic in progress + correct endpoints at 5 noiseTension settings (0, 0.25, 0.5, 0.75, 1.0)\n");
@@ -4230,8 +4230,11 @@ int main()
         auto* noiseTensionP = p.parameters.getParameter ("noiseTension");
         check (noiseTensionP != nullptr, "PluginProcessor: `noiseTension` parameter exists and is retrievable by ID");
         if (noiseTensionP != nullptr)
-            check (nearlyEqual ((double) noiseTensionP->getValue(), 0.5, 1.0e-6),
-                  "PluginProcessor: `noiseTension` parameter defaults to 50% (normalized 0.5, range is 0-100% linear)");
+            // DOCUMENTED SUPERSESSION (2026-09-19, user-directed: "make the
+            // noise curve to be default where the 0% is"): was 50%
+            // (normalized 0.5, the neutral shape point).
+            check (nearlyEqual ((double) noiseTensionP->getValue(), 0.0, 1.0e-6),
+                  "PluginProcessor: `noiseTension` parameter defaults to 0% (normalized 0.0, earliest-bloom shape; SUPERSEDES the original 50% neutral default, changed 2026-09-19 at user direction)");
     }
 
     std::printf ("\n[POST-1.0] PluginProcessor - setStateInformation()/replaceState() tolerates a session missing `noiseTension` (pre-noiseTension, 20-param session compatibility)\n");
@@ -4266,8 +4269,10 @@ int main()
         auto* tensionP = target.parameters.getParameter ("tension");
         check (noiseTensionP != nullptr, "pre-noiseTension compatibility: `noiseTension` parameter still exists after loading a state missing its node");
         if (noiseTensionP != nullptr)
-            check (nearlyEqual ((double) noiseTensionP->getValue(), 0.5, 1.0e-6),
-                  "pre-noiseTension compatibility: `noiseTension` loads at its default (50%) when absent from a restored pre-noiseTension (20-param) session");
+            // DOCUMENTED SUPERSESSION (2026-09-19): default is now 0%, see
+            // the default-value assertion above.
+            check (nearlyEqual ((double) noiseTensionP->getValue(), 0.0, 1.0e-6),
+                  "pre-noiseTension compatibility: `noiseTension` loads at its CURRENT default (0% as of 2026-09-19) when absent from a restored pre-noiseTension (20-param) session");
         if (tensionP != nullptr)
             check (nearlyEqual ((double) tensionP->getValue(), 0.8, 1.0e-4),
                   "pre-noiseTension compatibility: an unrelated pre-existing parameter (`tension`) still round-trips correctly through the same replaceState() call");
@@ -4543,7 +4548,7 @@ int main()
         {
             const float t = (float) decileTenths / 10.0f;
             const double measuredNorm = rmsAtOne > 1.0e-9 ? rmsNear (t) / rmsAtOne : 0.0;
-            const float expected = drop::NoiseModule::riseAmountForProgress (t, 0.5f); // default noiseTension
+            const float expected = drop::NoiseModule::riseAmountForProgress (t, 0.0f); // the render runs at the PARAM default, which is 0% as of 2026-09-19 (was 50%) - expectation must track it so graph==sound stays the property under test
             const double error = std::abs (measuredNorm - (double) expected);
             std::printf ("  t=%.1f: measured_rms/rms(1)=%.4f  riseAmountForProgress=%.4f  |error|=%.4f\n", (double) t, measuredNorm, (double) expected, error);
             if (error > 0.1) allWithinTolerance = false;

@@ -1,5 +1,23 @@
 # DROP Changelog
 
+### Changed — 2026-09-19 (NOISE curve default 50% → 0%)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "make
+the noise curve to be default where the 0% is."
+
+- **`noiseTension` ("Noise Curve" in the DAW, the NOISE chip in the UI)
+  default 50% → 0%** — a fresh instance uses the earliest-bloom riser
+  shape (exponent k = 2^-1.2 ≈ 0.435, riser audible sooner in the build).
+  50% remains the family's neutral point that reproduces the base
+  dB-linear curve exactly; parameter ID/range/mapping unchanged, saved
+  sessions keep their own value. The Advanced-page graph's gray NOISE
+  curve reads the live parameter, so it shows the new default shape
+  automatically — graph and sound stay provably identical (the
+  curve-honesty test's expectation now tracks the 0% default).
+- Tests: default assertion superseded to 0%; curve-honesty expectation
+  updated to the param default; neutral-point (0.5) function test kept
+  with clarified wording. 256 assertions, all passing.
+
 ### Verified/Optimized — 2026-09-18 (full audit: bar precision at every BPM, knob correctness, perf)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "check

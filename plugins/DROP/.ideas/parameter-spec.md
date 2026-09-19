@@ -189,7 +189,7 @@ Non-parameter state (NOT APVTS, stored in a child `juce::ValueTree` per architec
 ### noiseTension
 - **Type:** Float
 - **Range:** 0 to 100 %
-- **Default:** 50
+- **Default:** 0 (**changed 50 → 0, POST-1.0 2026-09-19, user-directed "make the noise curve to be default where the 0% is"** — earliest-bloom shape; 50% remains the family's neutral point that reproduces the base dB-linear curve exactly)
 - **Skew Factor:** linear
 - **UI Control:** Dark inset mini-LCD, identical treatment to Tension/Chaos (Advanced page, directly beneath them — takes the slot `tail` vacated when it moved below the tension-curve graph). "NOISE TENSION" label.
 - **DSP Usage:** **POST-1.0 addition — 2026-09-17 (user-directed improvement).** Shapes HOW `NoiseModule`'s white-noise riser builds — same directional semantics as `tension` (higher = more end-weighted / later bloom; lower = earlier bloom). Does **NOT** change the noise LEVEL (that remains the `noise` macro's job). Wired into `drop::NoiseModule::riseAmountForProgress(progress01, noiseTension01)`'s second argument: `pow(smoothstep(progress01), k)` where `k = pow(2.0, (noiseTension01 - 0.5) * 2.4)` — `k == 1.0` exactly at the 50% default, so `riseAmountForProgress()` reproduces the pre-`noiseTension` smoothstep bit-for-bit at default (a genuine no-op vs. the pre-`noiseTension` build). Also drives the Advanced page's TENSION CURVE display's gray NOISE curve, which redraws live using the same shared function (single source of truth, cross-checked by `RunTests.cpp`).

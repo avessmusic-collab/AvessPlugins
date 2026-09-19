@@ -394,9 +394,12 @@
            the user's request. See .ideas/mockups/v10-ui.yaml's
            `noise_tension_chip_and_tail_relocation` amendment note. -->
       <div class="mini-screen" style="left:17.25rem; top:9.375rem; width:6.75rem; height:3.5rem;"
-           data-param="noiseTension" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-step="1">
+           data-param="noiseTension" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1">
+        <!-- data-default 50 -> 0, POST-1.0 2026-09-19 (user-directed "make
+             the noise curve to be default where the 0% is") - mirrors the
+             APVTS default change. -->
         <div class="mini-screen-label">NOISE</div>
-        <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">50</span><span style="font-size:0.6rem;">%</span></div>
+        <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">0</span><span style="font-size:0.6rem;">%</span></div>
         <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
       </div>
 

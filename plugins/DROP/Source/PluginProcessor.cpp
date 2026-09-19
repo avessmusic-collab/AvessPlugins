@@ -228,7 +228,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         juce::ParameterID { "noiseTension", 1 },
         "Noise Curve", // UI chip reads "NOISE"; DAW name stays distinct from the "Noise" macro so automation lists are unambiguous (ID unchanged - sessions/automation intact)
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
-        50.0f,
+        // Default 50 -> 0, POST-1.0 2026-09-19 (user-directed: "make the
+        // noise curve to be default where the 0% is") - a fresh instance
+        // uses the earliest-bloom shape (k = 2^-1.2, riser audible sooner
+        // in the build); 50% remains the neutral point where the shape
+        // family reproduces the base dB-linear curve exactly. Saved
+        // sessions carry their own value and are unaffected.
+        0.0f,
         "%"));
 
     // --- POST-1.0 SEVENTH IMPROVEMENT SESSION addition (2026-09-18, user-
