@@ -1,5 +1,16 @@
 # DROP Changelog
 
+### Changed — 2026-09-19 (Build Length default 4 → 16 bars)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "make
+default 16 bar selected."
+
+- **`buildLength` default index 2 (4 bars) → index 4 (16 bars)** — a
+  fresh instance arms a 16-bar build. Choice list/indices unchanged;
+  saved sessions carry their own value; factory presets keep their own
+  authored lengths. UI's statically-active step circle moved 4 → 16 in
+  lockstep.
+
 ### Fixed — 2026-09-19 (bug-check round: idle-transparency leak + dropdown edge cases)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "check

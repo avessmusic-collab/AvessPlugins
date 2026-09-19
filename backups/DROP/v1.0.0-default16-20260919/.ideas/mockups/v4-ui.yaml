@@ -1,0 +1,134 @@
+# v4 UI Design Specification
+# Plugin: DROP
+# Generated: 2026-09-13
+# v4 = v3 + three targeted fixes, requested after the user reviewed v3 live
+# in the browser (screenshot-verified). Everything else — layout table,
+# all 19 parameter bindings, palette, typography, material system, motion
+# system — is IDENTICAL to v3. v1/v2/v3 remain on disk untouched.
+
+window:
+  width: 1000
+  height: 560
+  resizable: true
+  min_width: 800
+  min_height: 450
+  max_width: 1400
+  max_height: 790
+  scaling_model: "root-em-resize-observer"
+  base_root_font_size_px: 16
+
+colors:
+  upper_zone_bg: "#17181B"
+  upper_zone_bg_vignette_center: "#1C1D21"
+  lower_zone_bg: "#202226"
+  lower_zone_top_highlight: "#2A2C31"
+  panel_edge: "#0E0F11"
+  knob_face_top: "#2B2D32"
+  knob_face_bottom: "#18191C"
+  text_primary: "#E9EAED"
+  text_label: "#8B8D93"
+  text_label_dim: "#5C5E63"
+  accent: "#4A9EFF"
+  accent_dim: "#2E5C8F"
+  accent_glow: "rgba(74,158,255,0.55)"
+  page_backdrop: "#D7D9DC"
+
+typography: "unchanged from v3 — see v3-ui.yaml"
+material: "unchanged from v3 — see v3-ui.yaml (same shadow/gradient/vignette/notch system)"
+motion: "unchanged from v3 — same spring-damper + cubic-bezier(0.34,1.56,0.64,1) approach"
+
+# ---------------------------------------------------------------------------
+# v4 FIXES (the only substantive changes vs v3)
+# ---------------------------------------------------------------------------
+v4_fixes:
+  - id: orb_density
+    priority: highest
+    problem: >
+      v3's idle orb rendered as only ~2 faint circles plus a soft glow blob —
+      far weaker than the reference's dense 5-7 crisp, clearly individual
+      overlapping loops. Root causes identified: (a) only 3 of 7 loops were
+      "active" (opaque) at idle — the rest were fully transparent; (b) each
+      loop's center offset was tiny (~5px) and radius variance only ~±9%,
+      so the 3 visible loops nearly coincided instead of forming a visible
+      tangle; (c) a GROUP-level opacity multiplier (tied to the glow spring,
+      ~0.5 at idle) additionally dimmed everything, including the crisp
+      source lines, not just a halo.
+    fix: >
+      Rebuilt as two independent SVG layers sharing the same 8 loop paths
+      each frame: a crisp layer (constant per-loop opacity ~0.72-0.9,
+      stroke-width ~1.7-2.4px, NEVER multiplied by a group-level glow
+      opacity) and a separate blurred glow layer (CSS blur(5px), wider
+      stroke, opacity driven by the glow spring) rendered underneath. Glow
+      now intensifies as a halo AROUND the crisp lines instead of replacing
+      them. Loop count target is now a constant 8 (NUM_LOOPS) at idle/
+      building/peak/impact/recovery — density no longer ramps with
+      agitation; only VACUUM deliberately thins the loop count down to
+      ~1.5 (the collapse-to-a-point moment), which is the one place fewer
+      loops is intentional. Loop centers now use a golden-angle (2.39997
+      rad) distribution with 7-17px offsets (was a uniform ~5px), each
+      loop additionally gets its own eccentricity (elliptical squash on
+      independent x/y axes, ±14%) and a fixed per-loop rotation offset —
+      together these make the 8 loops read as a genuinely irregular,
+      hand-drawn-looking overlapping tangle instead of near-identical
+      concentric circles, matching the reference. The orb's geometric
+      center is unchanged (still (100,100) in its own 200x200 viewBox,
+      i.e. optically centered in its zone) — the golden-angle offset
+      distribution is symmetric around that center by construction.
+    orb_position: { x: 400, y: 96, width: 200, height: 200 }   # unchanged from v3
+
+  - id: upper_right_density
+    priority: high
+    problem: >
+      Dead space between the orb and the tension-curve box; the curve
+      panel was a bare rectangle with just a label — didn't feel as
+      intentional as the reference's FILTERS module.
+    fix: >
+      Enriched the tension-curve display: added 5 hairline grid ticks
+      (0/25/50/75/100%) plus a baseline, small dim axis labels "BUILD"
+      (left) and "DROP" (right) instead of generic percentages (more
+      thematic — matches what the x-axis actually represents: transition
+      progress from Build start to the Drop), a derived curve-shape label
+      ("GENTLE" / "S-CURVE" / "LATE ACCEL", computed from the current
+      Tension value's range — decorative/informative only, not a new
+      parameter), and a small blue position dot that travels along the
+      curve in real time during the demo animation (tracks drop.progress
+      through Building, sits at the end through Peak/Vacuum/Impact/
+      Recovery, resets on Idle). Below the curve box, added a compact
+      read-only IMPACT mirror readout (same big-blue-numeral idiom as
+      Tension/Chaos/Output, but non-interactive — no drag, no chevrons —
+      exactly the same "read-only mirror" pattern already established by
+      v1/v2's bar_length_readout) to fill the remaining void, per the
+      coordinator's explicit suggestion. This does not add a new APVTS
+      parameter — it mirrors the existing Impact knob's live value.
+    tensionCurve_position: { x: 700, y: 70, width: 200, height: 110 }   # v3 was height 96
+    impactMirror_position: { x: 700, y: 198, width: 108, height: 56 }  # new element
+
+  - id: phase_label_anchor
+    priority: medium
+    problem: "The floating 'IDLE' text top-center read as an orphaned, unstyled word with no visual relationship to the module below it."
+    fix: >
+      Converted the bare text into a small pill-shaped status module (dark
+      translucent chip, thin border, matching the visual language already
+      used for the mode-pill/style-nav elsewhere) containing a tiny status
+      LED dot followed by the tracked phase text. The LED dot is dim gray
+      at Idle and switches to glowing blue (with a soft box-shadow halo)
+      whenever a phase is live. Kept directly above the orb (8px gap,
+      documented as an intentional tight grouping — same precedent as
+      v1/v2's trigger→bar_length_readout pairing) so it now reads as the
+      orb module's own status readout rather than a stray label.
+    position: { x: 420, y: 70, width: 160, height: 18 }   # v3 was height 16
+
+controls_and_special_elements: >
+  Identical to v3-ui.yaml's `controls` and `special_elements` lists (all 19
+  parameter bindings, all positions/sizes) EXCEPT: phase_readout height
+  16->18, tension_curve height 96->110, and the addition of one new
+  read-only special element, impact_mirror (position/size above). See
+  v3-ui.yaml for the full control-by-control table — it is not repeated
+  here verbatim to avoid drift between the two files; only deltas are
+  documented in this file.
+
+notes:
+  - "Layout re-validated at base 1000x560 with the v4 deltas applied (taller phaseChip, taller tensionCurve, new impactMirror element): zero bounds violations, zero overlaps. One documented intentional-grouping exception carries over from the same class of exception in v1/v2/v3: the 8px gap between phaseChip and the orb (below the 10px general minimum, but a deliberate tight coupling between a status readout and the module it describes)."
+  - "impact_mirror is read-only (no parameter attachment of its own) — it displays the live value of the existing 'impact' parameter, same non-duplicating-widget precedent as v1/v2's bar_length_readout mirroring buildLength."
+  - "No new APVTS parameters were added in v4. Still exactly 19: trigger, buildLength, style, intensity, tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, dryWet, output."
+  - "v1, v2, and v3 remain completely untouched on disk as design history."

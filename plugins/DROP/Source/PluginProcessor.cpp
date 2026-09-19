@@ -32,7 +32,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         juce::ParameterID { "buildLength", 1 },
         "Build Length",
         juce::StringArray { "1", "2", "4", "8", "16", "32" },
-        2)); // default: 4 bars
+        4)); // default: 16 bars (index 4; was 4 bars/index 2 - changed 2026-09-19, user-directed "make default 16 bar selected". Saved sessions carry their own value.)
 
     // style - selects the data-driven DropStyle (16 factory styles).
     layout.add(std::make_unique<juce::AudioParameterChoice>(

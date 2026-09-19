@@ -1,0 +1,413 @@
+# v1 UI Design Specification
+# Plugin: DROP
+# Generated: 2026-09-13
+# Aesthetic base: swiss-minimal-001, adapted (white/gray ground, single red accent)
+#
+# DROP is a musical transition engine (BUILD -> TENSION -> VACUUM -> IMPACT -> RECOVERY).
+# This mockup implements a two-page interface: a minimal MAIN page (2 knobs + trigger +
+# audio-reactive liquid-bubble centerpiece) and an ADVANCED page (all remaining controls,
+# gridded Swiss-style). Exactly 19 APVTS parameters are exposed across both pages.
+
+window:
+  width: 700
+  height: 500
+  resizable: true
+  min_width: 560
+  min_height: 400
+  max_width: 1200
+  max_height: 900
+  # Vector/em-based scaling model (no viewport units used anywhere):
+  # A ResizeObserver on <body> computes scale = clamp(min(w/700, h/500), 0.75, 1.8)
+  # and sets documentElement.style.fontSize = 16 * scale. All layout is authored in
+  # rem so the entire UI (borders, knobs, type, gaps) scales together, proportionally,
+  # with no reflow/breakpoints. Corner resize affordance shown in test harness via
+  # CSS `resize: both` on the plugin frame (test HTML only).
+  scaling_model: "root-em-resize-observer"
+  base_root_font_size_px: 16
+
+colors:
+  # Swiss Minimal adapted: off-white ground / soft gray structure / near-black text.
+  # Single restrained accent (brick red) reserved for the DROP trigger and rising
+  # tension state — used sparingly, Swiss-poster style.
+  background: "#F4F2EE"      # off-white ground (paper, not pure white)
+  surface: "#FBFAF8"         # panel/card surface, barely lighter than ground
+  structure_line: "#D8D4CC"  # 1-2px hairline rules / dividers
+  border_strong: "#1B1A17"   # near-black, 2px control borders (Swiss discipline)
+  text_primary: "#1B1A17"    # near-black
+  text_secondary: "#7A766D"  # soft gray, secondary/muted text
+  text_tertiary: "#A6A296"   # faint gray, disabled/hint text
+  accent: "#B7311F"          # restrained brick red — trigger, tension, drop marker
+  accent_soft: "#E7C9C2"     # pale red tint — bubble mid-tension wash
+  knob_fill: "#FBFAF8"
+  knob_indicator: "#1B1A17"
+  focus_ring: "#1B1A17"
+
+typography:
+  header: "'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+  body: "'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif"
+  mono: "'IBM Plex Mono', 'SF Mono', 'Courier New', monospace"  # tabular value readouts
+  size:
+    wordmark: "1.1rem"     # 17.6px @ base
+    section_label: "0.68rem"
+    control_label: "0.62rem"
+    value_readout: "0.62rem"
+    tab: "0.68rem"
+  weight:
+    wordmark: 700
+    section_label: 600
+    control_label: 500
+    value_readout: 500
+  letter_spacing:
+    wordmark: "0.14em"
+    section_label: "0.12em"
+    control_label: "0.06em"
+  text_transform:
+    wordmark: uppercase
+    section_label: uppercase
+    control_label: uppercase
+
+# ---------------------------------------------------------------------------
+# Shared header, rendered identically on both pages (not an APVTS parameter;
+# page_nav is UI view-state only, per architecture.md "Non-parameter state").
+# ---------------------------------------------------------------------------
+shared_elements:
+  - id: wordmark
+    type: label
+    text: "DROP"
+    position: { x: 24, y: 16 }
+    size: { width: 120, height: 24 }
+
+  - id: page_nav
+    type: segmented-toggle
+    label: null
+    parameter: null   # view-state only, not bound to APVTS
+    choices: ["MAIN", "ADVANCED"]
+    default: "MAIN"
+    position: { x: 560, y: 16 }
+    size: { width: 120, height: 28 }
+
+  - id: header_rule
+    type: divider
+    position: { x: 0, y: 50 }
+    size: { width: 700, height: 2 }
+
+# ---------------------------------------------------------------------------
+# PAGE 1 — MAIN (minimal: 2 knobs + trigger + centerpiece visualization)
+# ---------------------------------------------------------------------------
+pages:
+  - id: main
+    layout: custom
+    controls:
+      - id: intensity
+        type: rotary-knob
+        label: "Intensity"
+        parameter: "intensity"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 50.0
+        decimals: 0
+        position: { x: 150, y: 372 }
+        size: { width: 80, height: 100 }
+
+      - id: dryWet
+        type: rotary-knob
+        label: "Dry / Wet"
+        parameter: "dryWet"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 470, y: 372 }
+        size: { width: 80, height: 100 }
+
+      - id: trigger
+        type: button
+        label: "DROP"
+        parameter: "trigger"
+        parameter_type: bool
+        momentary: true
+        default: false
+        position: { x: 275, y: 380 }
+        size: { width: 150, height: 60 }
+
+    special_elements:
+      - id: liquid_bubble
+        type: audio-reactive-blob
+        description: >
+          Signature centerpiece. Organic SVG blob (8-12 perturbed points around a
+          circle, Catmull-Rom/cubic-bezier smoothed) whose radius/jitter reacts to
+          fake input level, and whose stroke/fill color interpolates toward the
+          accent red as tension * transition-progress rises. Doubles as the
+          tension display (per architecture.md visualization requirement:
+          progress, tensionLevel, currentState, inputRMS all representable).
+        data_source: "fake_input_level, fake_transition_progress, fake_state"
+        position: { x: 230, y: 70 }
+        size: { width: 240, height: 240 }
+        states:
+          idle:
+            description: "Slow gentle breathing, low-amplitude organic jitter, near-black 2px stroke, off-white fill, no accent."
+            agitation: low
+            color_mix: 0.0   # 0 = pure structure gray/black, 1 = full accent red
+          building:
+            description: "Agitation and color-mix rise monotonically with transition progress * tension param. Radius pulses harder with fake input level."
+            agitation: rising (progress-driven)
+            color_mix: "progress * (tension/100)"
+          peak:
+            description: "Brief held-breath instant at progress==1, max agitation, near-full accent wash, just before collapse."
+            agitation: max
+            color_mix: 0.85
+          vacuum:
+            description: "Rapid collapse to a thin near-flat horizontal line (2px stroke, near-invisible fill) — the signature 'disappearance'. ~150-300ms."
+            agitation: none
+            color_mix: 0.1
+          impact:
+            description: "Burst: quick scale overshoot (~1.4x) past resting radius, radial accent-red ring flash outward, then fast settle."
+            agitation: burst
+            color_mix: "1.0 -> fade"
+          recovery:
+            description: "Settles back to idle breathing over ~600-900ms, agitation and color-mix decay to 0."
+            agitation: decaying
+            color_mix: "fade -> 0.0"
+
+      - id: progress_strip
+        type: phase-progress-strip
+        description: >
+          Thin horizontal strip beneath the bubble mapping DropStateMachine phases
+          spatially (not literal time): 0-84% = Building playhead fill, 84% = fixed
+          drop-point marker (accent tick) representing Peak->Vacuum->Impact, 84-100%
+          = Recovery tail. Fill animates left-to-right during Building; playhead
+          resets to 0 after Recovery completes.
+        position: { x: 110, y: 326 }
+        size: { width: 480, height: 16 }
+
+      - id: bar_length_readout
+        type: readout
+        description: "Read-only mirror of the buildLength parameter (edited on Advanced page). Not independently editable here."
+        bound_to_parameter: "buildLength"
+        position: { x: 310, y: 448 }
+        size: { width: 80, height: 18 }
+
+  # -------------------------------------------------------------------------
+  # PAGE 2 — ADVANCED (all remaining controls, Swiss-grid discipline)
+  # -------------------------------------------------------------------------
+  - id: advanced
+    layout: grid
+    sections:
+      - id: transition_setup
+        label: "Transition"
+        rule_above: { position: { x: 0, y: 50 }, height: 2 }
+      - id: shape
+        label: "Shape"
+        rule_above: { position: { x: 0, y: 126 }, height: 2 }
+      - id: modules
+        label: "Modules"
+        rule_above: { position: { x: 0, y: 226 }, height: 2 }
+      - id: output_section
+        label: "Output"
+    controls:
+      # --- Row 1: Transition setup ---
+      - id: buildLength
+        type: combo-box
+        display_variant: segmented-buttons
+        label: "Build Length"
+        parameter: "buildLength"
+        parameter_type: choice
+        choices: ["1", "2", "4", "8", "16"]
+        choice_suffix: "BAR"
+        default: "4"
+        position: { x: 24, y: 62 }
+        size: { width: 376, height: 56 }
+
+      - id: style
+        type: combo-box
+        display_variant: dropdown
+        label: "Style"
+        parameter: "style"
+        parameter_type: choice
+        choices:
+          - "Clean EDM"
+          - "Big Room"
+          - "Techno Pressure"
+          - "Dark Techno"
+          - "Trap Pull"
+          - "DnB Rush"
+          - "Hyper"
+          - "Cinematic"
+          - "Minimal"
+          - "Vocal Build"
+          - "Drum Build"
+          - "Synth Build"
+          - "Full Mix"
+          - "Destroy"
+          - "Vacuum"
+          - "Reverse Energy"
+        default: "Clean EDM"
+        position: { x: 420, y: 62 }
+        size: { width: 256, height: 56 }
+
+      # --- Row 2: Shape knobs ---
+      - id: tension
+        type: rotary-knob
+        label: "Tension"
+        parameter: "tension"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 50.0
+        decimals: 0
+        position: { x: 103, y: 138 }
+        size: { width: 60, height: 80 }
+
+      - id: chaos
+        type: rotary-knob
+        label: "Chaos"
+        parameter: "chaos"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 0.0
+        decimals: 0
+        position: { x: 320, y: 138 }
+        size: { width: 60, height: 80 }
+
+      - id: impact
+        type: rotary-knob
+        label: "Impact"
+        parameter: "impact"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 50.0
+        decimals: 0
+        position: { x: 537, y: 138 }
+        size: { width: 60, height: 80 }
+
+      # --- Row 3: Module macros (1 of 2) — 0-100%, DEFAULT 100% ---
+      - id: filter
+        type: rotary-knob
+        label: "Filter"
+        parameter: "filter"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 65, y: 234 }
+        size: { width: 48, height: 66 }
+
+      - id: width
+        type: rotary-knob
+        label: "Width"
+        parameter: "width"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 195, y: 234 }
+        size: { width: 48, height: 66 }
+
+      - id: pitch
+        type: rotary-knob
+        label: "Pitch"
+        parameter: "pitch"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 325, y: 234 }
+        size: { width: 48, height: 66 }
+
+      - id: gate
+        type: rotary-knob
+        label: "Gate"
+        parameter: "gate"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 455, y: 234 }
+        size: { width: 48, height: 66 }
+
+      - id: stutter
+        type: rotary-knob
+        label: "Stutter"
+        parameter: "stutter"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 585, y: 234 }
+        size: { width: 48, height: 66 }
+
+      # --- Row 4: Module macros (2 of 2) ---
+      - id: delay
+        type: rotary-knob
+        label: "Delay"
+        parameter: "delay"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 65, y: 314 }
+        size: { width: 48, height: 66 }
+
+      - id: reverb
+        type: rotary-knob
+        label: "Reverb"
+        parameter: "reverb"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 195, y: 314 }
+        size: { width: 48, height: 66 }
+
+      - id: distortion
+        type: rotary-knob
+        label: "Distortion"
+        parameter: "distortion"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 325, y: 314 }
+        size: { width: 48, height: 66 }
+
+      - id: digital
+        type: rotary-knob
+        label: "Digital"
+        parameter: "digital"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 455, y: 314 }
+        size: { width: 48, height: 66 }
+
+      - id: noise
+        type: rotary-knob
+        label: "Noise"
+        parameter: "noise"
+        range: [0.0, 100.0]
+        unit: "%"
+        default: 100.0
+        decimals: 0
+        position: { x: 585, y: 314 }
+        size: { width: 48, height: 66 }
+
+      # --- Row 5: Output (prominent, per Swiss guideline: peripheral + larger) ---
+      - id: output
+        type: rotary-knob
+        label: "Output"
+        parameter: "output"
+        range: [-60.0, 12.0]
+        unit: "dB"
+        default: 0.0
+        decimals: 1
+        position: { x: 315, y: 398 }
+        size: { width: 70, height: 84 }
+
+notes:
+  - "All positions in px at base 700x500 / 16px root font-size; rendered in rem so they scale losslessly with the ResizeObserver-driven root font-size (see window.scaling_model). No vh/vw/dvh/svh used anywhere."
+  - "Parameter IDs match architecture.md's Parameter Mapping table exactly (camelCase where specified: buildLength, dryWet). Total: 19 APVTS parameters — trigger, buildLength, style, intensity, tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, dryWet, output."
+  - "page_nav is view-state only (matches architecture.md's 'UI advanced-row-expanded flag' style of non-parameter state), not an APVTS parameter."
+  - "bar_length_readout is a read-only mirror, not an independent control — it does not double-count buildLength."
+  - "Module macros (filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise) default to 100% per architecture.md Resolved Open Questions (macro is a multiplier on an already-tasteful Style-authored curve, not a second attenuation layer)."
+  - "Control type mapping: Float -> rotary-knob (WebSliderRelay), Bool momentary -> button (WebToggleButtonRelay-style momentary binding), Choice -> combo-box (WebComboBoxRelay), rendered as segmented-buttons (buildLength, 5 choices) or dropdown (style, 16 choices) per display_variant."
+  - "Layout validated for base 700x500: all controls >=15px from window edges (except the intentionally grouped trigger->bar_length_readout pair at 8px, a deliberate tight label-to-control coupling), >=10px between unrelated controls, no overlaps, all controls meet minimum usable sizes (knobs >=40px diameter, buttons >=60x24px)."

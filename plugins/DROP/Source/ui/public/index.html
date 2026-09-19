@@ -295,11 +295,14 @@
 
       <div class="step-row">
         <div class="step-circles" id="buildLengthSteps" data-param="buildLength">
+          <!-- default active circle 4 -> 16, POST-1.0 2026-09-19
+               (user-directed "make default 16 bar selected") - mirrors the
+               APVTS buildLength default change (index 2 -> 4). -->
           <button class="step-circle" data-value="1">1</button>
           <button class="step-circle" data-value="2">2</button>
-          <button class="step-circle active" data-value="4">4</button>
+          <button class="step-circle" data-value="4">4</button>
           <button class="step-circle" data-value="8">8</button>
-          <button class="step-circle" data-value="16">16</button>
+          <button class="step-circle active" data-value="16">16</button>
           <button class="step-circle" data-value="32">32</button>
         </div>
         <div class="step-caption">BUILD LENGTH (BARS)</div>
@@ -768,7 +771,7 @@
   const buildLengthSteps = document.getElementById('buildLengthSteps');
   const buildLengthState = getComboBoxState('buildLength');
   const BUILD_LENGTH_BARS = [1, 2, 4, 8, 16, 32]; // 32 appended 2026-09-17 with the 6th step circle (kept in lockstep with the APVTS choice list)
-  let currentBuildLengthBars = 4;
+  let currentBuildLengthBars = 16; // matches the APVTS default (index 4) as of 2026-09-19
   function renderBuildLength(index) {
     currentBuildLengthBars = BUILD_LENGTH_BARS[index];
     buildLengthSteps.querySelectorAll('.step-circle').forEach((b, i) => b.classList.toggle('active', i === index));
