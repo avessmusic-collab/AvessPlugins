@@ -20,7 +20,7 @@ void VacuumModule::reset()
 float VacuumModule::computeGain(double elapsedSamples, double totalWindowSamples, float depthAmount01) noexcept
 {
     depthAmount01 = juce::jlimit(0.0f, 1.0f, depthAmount01);
-    const float floorGain = juce::Decibels::decibelsToGain(juce::jmap(depthAmount01, 0.0f, 1.0f, kMaxFloorDb, kMinFloorDb));
+    const float floorDb = juce::jmap(depthAmount01, 0.0f, 1.0f, kMaxFloorDb, kMinFloorDb);
 
     if (totalWindowSamples <= 0.0 || elapsedSamples <= 0.0 || elapsedSamples >= totalWindowSamples)
         return 1.0f; // outside the window: fully transparent, continuous hand-off to/from neighboring processing
@@ -29,19 +29,31 @@ float VacuumModule::computeGain(double elapsedSamples, double totalWindowSamples
     const double fadeOutEnd = (double) kFadeOutFraction;
     const double holdEnd = fadeOutEnd + (double) kHoldFraction;
 
+    // POST-1.0 (2026-09-19, user-directed: "make the vacume volume in db").
+    // DOCUMENTED SUPERSESSION of the raised-cosine AMPLITUDE fades: measured
+    // in decibels a cosine amplitude fade hangs near full level and then
+    // plunges (the same perceptual class as the superseded tail-envelope
+    // and noise-rise shapes, both already converted to dB-linear). The
+    // collapse/return are now DECIBEL-LINEAR ramps between 0dB and the
+    // depth-mapped floor (kMaxFloorDb..kMinFloorDb - the floor itself was
+    // always specified in dB): every equal slice of the fade drops/raises
+    // the same number of dB, the perceptually even "volume in dB" fade.
+    // Value-continuity at the seams is exact (both branches hit floorDb at
+    // their hold-side ends and 0dB at the window edges); the discrete
+    // per-sample steps at the seams sit AT the floor level (<= -12dB) and
+    // are orders of magnitude below the click-free bounds (verified by the
+    // Phase 3.3 continuity tests).
     if (t < fadeOutEnd)
     {
         const double x = juce::jlimit(0.0, 1.0, t / juce::jmax(1.0e-9, fadeOutEnd));
-        const float shape = 0.5f * (1.0f + std::cos((float) (juce::MathConstants<double>::pi * x)));
-        return floorGain + (1.0f - floorGain) * shape;
+        return juce::Decibels::decibelsToGain(floorDb * (float) x);
     }
 
     if (t < holdEnd)
-        return floorGain;
+        return juce::Decibels::decibelsToGain(floorDb);
 
     const double x = juce::jlimit(0.0, 1.0, (t - holdEnd) / juce::jmax(1.0e-9, (double) kFadeInFraction));
-    const float shape = 0.5f * (1.0f - std::cos((float) (juce::MathConstants<double>::pi * x)));
-    return floorGain + (1.0f - floorGain) * shape;
+    return juce::Decibels::decibelsToGain(floorDb * (float) (1.0 - x));
 }
 
 void VacuumModule::process(juce::dsp::AudioBlock<float> block, double elapsedSamplesAtBlockStart,

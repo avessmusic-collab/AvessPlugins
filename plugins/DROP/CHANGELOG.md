@@ -1,5 +1,25 @@
 # DROP Changelog
 
+### Changed — 2026-09-19 (Vacuum volume fades are now decibel-linear)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "make
+the vacume volume in db."
+
+- **VacuumModule's collapse and return fades are now dB-LINEAR** —
+  previously raised-cosine fades in AMPLITUDE, which measured in decibels
+  hang near full level and then plunge (the same perceptual class as the
+  superseded tail-envelope and noise-rise shapes, both already converted
+  to dB-linear). Equal slices of the vacuum's fade now drop/raise equal
+  dB between 0dB and the depth-mapped floor (−12dB..−36dB, which was
+  always specified in dB) — a perceptually even dive into the vacuum and
+  return out of it. Hold depth, window timing, fractions, and the
+  low/high/width collapse hooks are unchanged.
+- Continuity re-verified: value-exact at every seam, worst single-sample
+  step 0.159 at the deliberately extreme 120-sample stress window (bound
+  0.5), seam slopes at the floor level orders below the click bound. New
+  test asserts constant dB slope across the fade-out (spread < 0.5dB per
+  decile). 260 assertions, all passing.
+
 ### Changed — 2026-09-19 (NOISE curve default 50% → 0%)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "make

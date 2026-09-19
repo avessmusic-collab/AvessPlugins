@@ -1536,11 +1536,15 @@ int main()
         }
         check (allOk, "VacuumModule::computeGain(): finite, in-range [floor,1], and no single-sample discontinuity across window lengths from 44100 samples down to a deliberately extreme 120-sample (far beyond 200+ BPM 1/64-note scale) edge case");
 
-        // Derivative continuity (stronger than mere value continuity,
-        // architecture.md "must be click-free"): at both internal
-        // boundaries (fade-out->hold, hold->fade-in), the discrete slope
-        // immediately either side should be near zero, matching the
-        // raised-cosine's zero-derivative endpoints.
+        // Slope smallness at the internal boundaries (architecture.md "must
+        // be click-free"): at both internal boundaries (fade-out->hold,
+        // hold->fade-in) the discrete slope immediately either side must be
+        // near zero. UPDATED RATIONALE (2026-09-19 dB-linear supersession,
+        // "make the vacume volume in db"): originally this matched the
+        // raised-cosine's zero-derivative endpoints; the dB-linear ramps
+        // satisfy the same bound because the seams sit AT the floor level
+        // (<= -12dB), where a constant-dB-per-sample ramp's absolute
+        // per-sample step is tiny by construction.
         const double totalWindow = 4410.0;
         const double fadeOutEndSample = 0.2 * totalWindow;
         const double holdEndSample = 0.7 * totalWindow;
@@ -1554,6 +1558,28 @@ int main()
                 boundariesSmooth = false;
         }
         check (boundariesSmooth, "VacuumModule::computeGain(): derivative is continuous (near-zero slope either side) at both internal segment boundaries, not just the value");
+
+        // POST-1.0 (2026-09-19, user-directed "make the vacume volume in
+        // db"): the collapse and return fades are DECIBEL-LINEAR - equal
+        // slices of the fade drop/raise equal dB. Measured across the
+        // fade-out at depth 1 (0dB -> -36dB floor): the per-slice dB drop
+        // must be constant.
+        {
+            const double win = 44100.0;
+            const double fadeOutSamples = 0.2 * win;
+            float minStepDb = 1.0e9f, maxStepDb = -1.0e9f;
+            for (int i = 1; i <= 10; ++i)
+            {
+                const float a = drop::VacuumModule::computeGain (fadeOutSamples * (double) (i - 1) / 10.0 + 1.0, win, 1.0f);
+                const float b = drop::VacuumModule::computeGain (fadeOutSamples * (double) i / 10.0, win, 1.0f);
+                const float stepDb = juce::Decibels::gainToDecibels (a, -120.0f) - juce::Decibels::gainToDecibels (b, -120.0f);
+                minStepDb = juce::jmin (minStepDb, stepDb);
+                maxStepDb = juce::jmax (maxStepDb, stepDb);
+            }
+            std::printf ("  vacuum fade-out per-decile dB drop: min %.2f, max %.2f (spread %.2f)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
+            check (maxStepDb - minStepDb < 0.5f,
+                  "[POST-1.0] VacuumModule: the collapse fade is decibel-LINEAR (constant dB slope across the fade-out; SUPERSEDES the raised-cosine amplitude fade, which in dB hung near full level then plunged) - 'the vacuum volume is in dB'");
+        }
     }
 
     //==========================================================================
