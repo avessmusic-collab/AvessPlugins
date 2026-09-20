@@ -1520,7 +1520,17 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // doc comment. Identical to the prior single-weight process() call
     // whenever delaySendWeight == delayReturnWeight (always true outside
     // Peak/Impact/Recovery).
-    delayModule.processWithSendReturn(segmentBlock, delaySendWeight, delayReturnWeight, progress, musicalClock);
+    // POST-1.0 (2026-09-20, "make it fade slowly"): during Recovery the
+    // legacy feedback formula collapsed to 0.2 (progress==0), killing the
+    // echoes ~14dB per generation long before the tail window ended - the
+    // reported "tail cuts way too fast" regardless of the envelope.
+    // kTailRingFeedback sustains the repeats through the window so the
+    // dB-linear tail envelope is the governing, slow fade; the envelope's
+    // exact-zero landing (and the Recovery->Idle hygiene reset) still
+    // guarantees silence at the window's end.
+    constexpr float kTailRingFeedback = 0.82f;
+    delayModule.processWithSendReturn(segmentBlock, delaySendWeight, delayReturnWeight, progress, musicalClock,
+                                       inRecovery ? kTailRingFeedback : -1.0f);
 
     // SaturationModule: Impact-state overlay (architecture.md ImpactEngine
     // "light SaturationModule pass") is blended in via max() - never LESS
@@ -1540,7 +1550,28 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     //  injection site above filterModule.process().)
     // POST-1.0 bugfix (Bug C "stale tails"): send/return split, same
     // rationale as DelayModule above.
-    reverbModule.processWithSendReturn(segmentBlock, reverbSendWeight, reverbReturnWeight, progress);
+    // POST-1.0 (2026-09-20, "make it fade slowly", reverb half): the
+    // Building-path parameters (roomSize 0.25 at progress 0, damping 0.5)
+    // decay in a few hundred ms - far shorter than the tail window.
+    // During Recovery the ALREADY-STORED reverb energy is re-parameterized
+    // to a long-but-bounded decay (large room, low damping; freezeMode
+    // stays 0 per architecture.md's "never engaged" rule - boundedness is
+    // preserved) so the ring sustains through the window and the
+    // dB-linear tail envelope governs the slow fade. The send is 0 here,
+    // so only the ring-out is affected.
+    if (inRecovery)
+    {
+        juce::dsp::Reverb::Parameters tailRingParams;
+        tailRingParams.roomSize = 0.92f;
+        tailRingParams.damping = 0.25f;
+        tailRingParams.width = 1.0f;
+        tailRingParams.freezeMode = 0.0f;
+        reverbModule.processWithParamsSendReturn(segmentBlock, reverbSendWeight, reverbReturnWeight, tailRingParams);
+    }
+    else
+    {
+        reverbModule.processWithSendReturn(segmentBlock, reverbSendWeight, reverbReturnWeight, progress);
+    }
 
     // VacuumModule: state-gated (NOT IntensityBudget weight-blended,
     // architecture.md Processing Chain "Routing notes") - applied to the

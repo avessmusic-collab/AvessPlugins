@@ -61,7 +61,8 @@ void DelayModule::process(juce::dsp::AudioBlock<float> block, float weight, floa
 }
 
 void DelayModule::processWithSendReturn(juce::dsp::AudioBlock<float> block, float sendWeight, float returnWeight,
-                                         float progress, const MusicalClock& clock) noexcept
+                                         float progress, const MusicalClock& clock,
+                                         float feedbackOverride) noexcept
 {
     const int numSamples = (int) block.getNumSamples();
     const int numChannels = (int) block.getNumChannels();
@@ -91,7 +92,9 @@ void DelayModule::processWithSendReturn(juce::dsp::AudioBlock<float> block, floa
     // also nonzero) - during the ducked Peak/Impact/Recovery states
     // `progress` is exactly 0 (computeIntensityProgress()) so this reduces
     // to the flat 0.2 floor regardless of which weight is passed.
-    const float feedbackAmount = juce::jlimit(0.0f, kMaxFeedback, 0.2f + 0.5f * progress * returnWeight);
+    const float feedbackAmount = (feedbackOverride >= 0.0f)
+        ? juce::jlimit(0.0f, kMaxFeedback, feedbackOverride) // POST-1.0 2026-09-20: Recovery tail-ring override (see header doc)
+        : juce::jlimit(0.0f, kMaxFeedback, 0.2f + 0.5f * progress * returnWeight);
 
     sendWeightSmoothed.setTargetValue(sendWeight);
     returnWeightSmoothed.setTargetValue(returnWeight);

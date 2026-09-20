@@ -5110,8 +5110,8 @@ int main()
         // the window (the -60dB version was dead by +300ms and fails the
         // r300 floor by construction), AND strictly decaying checkpoint to
         // checkpoint (the hold version was near-FLAT from +50 to +150ms).
-        check (r50 > 1.0e-3 && r150 > 5.0e-4 && r300 > 2.0e-4,
-              "[POST-1.0] tail audibility: with tail=50% the tails audibly ring well into the Recovery window (+50/+150/+300ms) - 'tail active' produces a real tail");
+        check (r50 > 1.0e-3 && r150 > 5.0e-4 && r300 > 2.0e-4 && r500 > 3.0e-4,
+              "[POST-1.0] tail audibility: with tail=50% the tails audibly ring THROUGH the Recovery window (+50/+150/+300/+500ms) - the sustained tail-ring feedback + long recovery reverb decay (2026-09-20 'make it fade slowly') keep the fade governed by the dB-linear envelope; the collapsed-feedback path measured 0.00004 at +500ms and fails by construction");
         check (r150 < r50 && r300 < r150 && r500 < r300,
               "[POST-1.0] tail audibility: the ring DECAYS continuously checkpoint-to-checkpoint - a slope, no sustain plateau");
         check (r1200 < 1.0e-4,

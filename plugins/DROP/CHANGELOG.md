@@ -1,5 +1,29 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (tail rings through its window: sustained feedback + long recovery reverb)
+
+Stays at 1.0.0. User report: "still the tail cuts way to fast. make it
+fade out when tail is active. make it fade slowly."
+
+- **Root cause (the envelope was no longer the problem — the CONTENT
+  died):** during Recovery the delay's feedback formula collapsed to 0.2
+  (it scales with build progress, which is 0 there) — each echo
+  generation lost ~14dB and the ring vanished long before the window;
+  the reverb's Building parameters (roomSize 0.25 at progress 0) decay
+  in a few hundred ms likewise.
+- **Fix:** during Recovery the delay runs a sustained tail-ring feedback
+  (0.82, still under the 0.92 hard clamp) and the reverb's already-
+  stored energy is re-parameterized to a long-but-bounded decay
+  (roomSize 0.92 / damping 0.25; freezeMode stays 0 per architecture) —
+  the dB-linear tail envelope is now the governing, slow, even fade
+  across the whole window, with the exact-zero landing and the
+  Recovery→Idle hygiene reset unchanged.
+- Measured (tail=50%, 0.78s window): +300ms 0.0039 (was 0.0006, 6.6x),
+  +500ms 0.00086 (was 0.00004, 21x) — and still exactly silent past the
+  window. Test floors extended to lock the through-window ring
+  (+500ms floor; the collapsed-feedback path fails by construction).
+  270 assertions, all passing.
+
 ### Changed — 2026-09-20 (delay/reverb now genuinely apply to the noise riser)
 
 Stays at 1.0.0. User request: "make so reverb and delay applys to white

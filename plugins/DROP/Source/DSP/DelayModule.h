@@ -64,8 +64,20 @@ public:
      * sendWeight==returnWeight==weight, so the two entry points are
      * observably identical whenever the caller passes equal weights).
      */
+    /*
+     * POST-1.0 (2026-09-20, user: "still the tail cuts way to fast. make
+     * it fade out when tail is active. make it fade slowly"):
+     * `feedbackOverride` (sentinel -1 = legacy formula) pins the feedback
+     * coefficient directly - PluginProcessor passes kTailRingFeedback
+     * (high, still < kMaxFeedback) during Recovery, where the legacy
+     * formula collapsed to 0.2 (progress==0 there -> each echo generation
+     * lost ~14dB and the tail died long before its window, regardless of
+     * the tail envelope). With sustained repeats, the dB-linear tail
+     * envelope becomes the governing, slow fade across the whole window.
+     */
     void processWithSendReturn(juce::dsp::AudioBlock<float> block, float sendWeight, float returnWeight,
-                                float progress, const MusicalClock& clock) noexcept;
+                                float progress, const MusicalClock& clock,
+                                float feedbackOverride = -1.0f) noexcept;
 
     /**
      * Stage 3 DSP Phase 3.5: the base (left-channel) delay division is
