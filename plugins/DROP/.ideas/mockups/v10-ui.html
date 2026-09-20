@@ -243,7 +243,15 @@
     background: radial-gradient(circle at 35% 28%, #FFFFFF 0%, #F3F4F7 55%, #E6E8EE 100%);
     box-shadow: var(--neu-shadow-dark), var(--neu-shadow-light), inset 0 1px 1px rgba(255,255,255,0.9);
   }
-  .knob-dome-inner { position: absolute; inset: 0; transform-origin: center center; }
+  /* BUGFIX companion (2026-09-20, "the orange moves exactly with the
+     knob"): the pointer previously had NO transition while the arc eased
+     320ms - they desynced on every value change. Now BOTH share the exact
+     same 320ms curve (programmatic jumps sweep pointer+arc in lockstep)
+     and BOTH drop to instant via .no-anim during a live drag (1:1 with
+     the mouse). */
+  .knob-dome-inner { position: absolute; inset: 0; transform-origin: center center;
+    transition: transform 320ms cubic-bezier(0.22, 0.9, 0.3, 1); }
+  .knob-dome-inner.no-anim { transition: none; }
   .knob-pointer { position: absolute; top: 12%; left: 50%; width: 0.16rem; height: 0.16rem; border-radius: 50%;
     background: #A8ABB6; box-shadow: inset 0 0.5px 1px rgba(0,0,0,0.3); transform: translateX(-50%); }
   .knob-arc { position: absolute; top: 50%; left: 50%; width: 122%; height: 122%; transform: translate(-50%, -50%); overflow: visible; pointer-events: none; }
@@ -251,6 +259,13 @@
   .knob-arc .arc-fill { stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; fill: none;
     filter: drop-shadow(0 0 2px var(--accent-glow));
     transition: stroke-dasharray 320ms cubic-bezier(0.22, 0.9, 0.3, 1); }
+  /* BUGFIX (2026-09-20, user: "the orange moves exactly with the knob"):
+     the 320ms dasharray ease above made the orange arc TRAIL the pointer
+     during a live drag (the pointer's dome rotation has no transition and
+     tracks the mouse instantly). While the user is actually dragging, the
+     arc must be 1:1 - the ease stays for PROGRAMMATIC jumps only (preset
+     loads, host-automation snaps), where the smooth sweep is wanted. */
+  .knob-arc .arc-fill.no-anim { transition: none; }
   .knob-label { display: block; margin-top: 0.45rem; font-size: 0.56rem; font-weight: 600; letter-spacing: 0.08em; color: var(--text-dark); text-transform: uppercase; text-shadow: var(--text-halo); }
   .knob-label .kv-num { color: var(--accent); font-variant-numeric: tabular-nums; text-shadow: var(--text-halo); }
   .knob-label .unit { color: var(--text-dark-dim); font-weight: 400; text-shadow: var(--text-halo); }
@@ -966,6 +981,8 @@
     let dragging = false, startY = 0, startNorm = 0;
     root.addEventListener('mousedown', (e) => {
       dragging = true; startY = e.clientY; startNorm = normalized; e.preventDefault();
+      arc.fill.classList.add('no-anim'); // 1:1 while dragging (see .no-anim CSS comments)
+      domeInner.classList.add('no-anim');
       state.sliderDragStarted();
     });
     window.addEventListener('mousemove', (e) => {
@@ -974,7 +991,12 @@
       render(normalized);
       state.setNormalisedValue(normalized);
     });
-    window.addEventListener('mouseup', () => { if (dragging) state.sliderDragEnded(); dragging = false; });
+    window.addEventListener('mouseup', () => {
+      if (dragging) state.sliderDragEnded();
+      dragging = false;
+      arc.fill.classList.remove('no-anim'); // restore the lockstep smooth sweep for programmatic/host jumps
+      domeInner.classList.remove('no-anim');
+    });
     root.addEventListener('wheel', (e) => {
       e.preventDefault();
       normalized = Math.min(1, Math.max(0, normalized + (e.deltaY < 0 ? 0.01 : -0.01)));

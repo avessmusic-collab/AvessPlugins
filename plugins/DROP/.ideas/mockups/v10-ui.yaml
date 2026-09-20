@@ -882,3 +882,14 @@ choice_dropdowns_and_white_default:
     - "Toggle semantics: one menu at a time; closes on outside mousedown or a second label click (suppressReopen flag prevents the mousedown-close/click-reopen race); flips above the anchor when it would clip the window bottom."
     - "noiseType default STYLE -> WHITE (APVTS index 0 -> 1) at user direction; chip's static value and initial render updated to WHITE. Choice indices unchanged."
   validation: "Menu is a floating overlay (z-index 999) - no static-layout geometry changes; anchors unchanged."
+
+knob_arc_pointer_sync:
+  date: 2026-09-20
+  reason: "User: 'test the knob speed, so the graphics are smooth and the orange moves exactly with the knob'."
+  findings:
+    - "Geometry verified EXACT by construction: arc VIS = 0.75*C (270 degrees) rotated 135deg == the pointer's rotate(-135 + norm*270); both driven by the same `norm` in one render() call. Drag sensitivity: 150px for full travel, rendered synchronously per mousemove (no rAF deferral)."
+    - "BUG FOUND: .arc-fill carried a 320ms stroke-dasharray ease while .knob-dome-inner (the pointer) had NO transition - the orange arc trailed the pointer by up to 320ms on every value change, most visibly during drags."
+  changes:
+    - "Pointer (.knob-dome-inner) now shares the arc's exact 320ms cubic-bezier transition - programmatic jumps (dblclick reset, preset loads, host automation snaps, wheel steps) sweep pointer+arc in LOCKSTEP."
+    - "During a live mouse drag BOTH get .no-anim (transition: none) from mousedown to mouseup - 1:1 with the mouse, restored on release."
+  validation: "No geometry/layout changes; class toggles only."

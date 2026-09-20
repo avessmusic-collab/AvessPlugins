@@ -1,5 +1,25 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (knob pointer and orange arc now move in exact sync)
+
+Stays at 1.0.0 per this repo's factory convention. User request: "test
+the knob speed, so the graphics are smooth and the orange moves exactly
+with the knob."
+
+- **Verified exact by construction:** the arc's visible span (0.75 of the
+  circle = 270°, rotated 135°) and the pointer's rotation
+  (−135° + norm·270°) are driven by the same normalized value in one
+  render call — the geometry cannot diverge. Drag sensitivity is 150px
+  for full travel, rendered synchronously on every mouse move.
+- **Bug found and fixed:** the orange arc carried a 320ms ease on its
+  fill while the pointer had NO transition — the arc trailed the pointer
+  by up to 320ms on every change, most visibly during drags. Now the
+  pointer shares the arc's exact 320ms curve (programmatic jumps —
+  double-click reset, preset loads, host automation, wheel steps — sweep
+  pointer + arc in lockstep), and during a live drag BOTH drop to
+  instant (1:1 with the mouse), restored on release.
+- UI-only change (class toggles); 261 assertions, all passing.
+
 ### Changed — 2026-09-19 (Build Length default 4 → 16 bars)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "make
