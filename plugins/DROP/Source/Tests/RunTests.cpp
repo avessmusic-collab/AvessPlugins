@@ -2758,8 +2758,10 @@ int main()
             // SESSION, user-directed: "make the default tail zero"): was 35%
             // (normalized 0.35). Default 0% == the TAIL=CUT behavior - a
             // fresh instance cuts cleanly at the drop; ring-out is opt-in.
-            check (nearlyEqual ((double) tailP->getValue(), 0.0, 1.0e-6),
-                  "PluginProcessor: `tail` parameter defaults to 0% == TAIL=CUT (normalized 0.0; SUPERSEDES the original 35% default, changed 2026-09-17 at user direction)");
+            // DOCUMENTED SUPERSESSION (2026-09-20, user-directed "make
+            // default tail 0.7 sec"): was 0% (CUT), before that 35%.
+            check (nearlyEqual ((double) tailP->getValue(), 0.4691, 1.0e-3),
+                  "PluginProcessor: `tail` parameter defaults to 46.91% == 0.70s nominal tail (SUPERSEDES the 0%/CUT default of 2026-09-17; CUT remains available at exactly 0%)");
     }
 
     std::printf ("\n[POST-1.0] PluginProcessor - setStateInformation()/replaceState() tolerates a session missing `tail` (pre-1.0.0-tail compatibility)\n");
@@ -2796,10 +2798,10 @@ int main()
         auto* intensityP = target.parameters.getParameter ("intensity");
         check (tailP != nullptr, "pre-tail compatibility: `tail` parameter still exists after loading a state missing its node");
         if (tailP != nullptr)
-            // DOCUMENTED SUPERSESSION (2026-09-17): default is now 0% (CUT),
-            // see the default-value test above.
-            check (nearlyEqual ((double) tailP->getValue(), 0.0, 1.0e-6),
-                  "pre-tail compatibility: `tail` loads at its default (0% == CUT) when absent from a restored pre-1.0.0-tail session");
+            // DOCUMENTED SUPERSESSION (2026-09-20): default is now 46.91%
+            // (0.70s), see the default-value test above.
+            check (nearlyEqual ((double) tailP->getValue(), 0.4691, 1.0e-3),
+                  "pre-tail compatibility: `tail` loads at its CURRENT default (46.91% == 0.70s as of 2026-09-20) when absent from a restored pre-1.0.0-tail session");
         if (intensityP != nullptr)
             check (nearlyEqual ((double) intensityP->getValue(), 0.9, 1.0e-4),
                   "pre-tail compatibility: the OTHER 19 parameters (e.g. intensity) still round-trip correctly through the SAME replaceState() call - proves this is a targeted `tail`-only default fallback, not a broken/no-op restore");

@@ -1,5 +1,15 @@
 # DROP Changelog
 
+### Changed — 2026-09-20 (default tail 0.70s)
+
+Stays at 1.0.0. User request: "make default tail 0.7 sec." `tail`
+default 0% (CUT) → 46.91%, the exact knob position whose exponential
+mapping yields a 0.70s nominal tail (audible body; the gradual-fade
+extension rings ~2.5× that before true silence). CUT remains available
+at exactly 0%; saved sessions keep their own value; the knob's static
+caption now reads "TAIL · 0.70s". Two default assertions superseded.
+271 assertions, all passing.
+
 ### Fixed — 2026-09-20 (tail fades away gradually and rings past the bar marker; no end-of-window chop)
 
 Stays at 1.0.0. User report: "MAKE the tail fade away gradualy, dont cut

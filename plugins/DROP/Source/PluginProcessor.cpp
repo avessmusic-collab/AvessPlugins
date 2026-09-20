@@ -203,11 +203,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout DROPAudioProcessor::createPa
         "Tail",
         juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f, 1.0f),
         // POST-1.0 SIXTH IMPROVEMENT SESSION (2026-09-17, user-directed:
-        // "make the default tail zero") - default 35.0f -> 0.0f: a fresh
-        // instance now CUTS cleanly at the drop (tail==0 maps to the
-        // ~5ms kTailCutSeconds fast-fade window, see
-        // computeDurationsForNewBuild()); ring-out is opt-in via the knob.
-        0.0f,
+        // "make the default tail zero") - default 35.0f -> 0.0f (CUT).
+        // POST-1.0 (2026-09-20, user-directed: "make default tail 0.7
+        // sec") - 0.0f -> 46.91f, the exact knob position whose
+        // exponential mapping yields 0.70s nominal tail (the audible body;
+        // the gradual-fade extension rings ~2.5x that). CUT remains
+        // available at exactly 0%.
+        46.91f,
         "%"));
 
     // --- POST-1.0 FOURTH IMPROVEMENT SESSION addition (2026-09-17, user-
