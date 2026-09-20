@@ -1464,10 +1464,25 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     const float delaySendWeight = inRecovery ? 0.0f
         : juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
                      noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
-    const float delayReturnWeight = inRecovery ? frozenDelayReturnWeight
+    // Recovery delay return scaled by reverb availability (see the
+    // kTailRingFeedback comment below - full when the delay ring IS the
+    // tail, half when the reverb wash carries the body).
+    const float delayReturnWeight = inRecovery ? ((1.0f - 0.5f * macroPercent[(size_t) drop::BudgetModule::Reverb]) * frozenDelayReturnWeight)
         : juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
                      kNoiseReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
-    const float reverbSendWeight = inRecovery ? 0.0f
+    // POST-1.0 (2026-09-20, user: "make all the fade curves way smoother.
+    // like a normal sound would fade out"). DOCUMENTED SUPERSESSION of the
+    // Recovery send==0 rule for the REVERB (the delay's stays 0): with the
+    // send closed, the delay's tail was a chain of DISCRETE repeats
+    // (~250ms apart at the tempo tap) - the fade pulsed instead of
+    // melting. Keeping the reverb's send open at the frozen return level
+    // lets those repeats (and the ring generally) continuously re-diffuse
+    // into the long recovery reverb - one smooth wash. The ORIGINAL
+    // hazard behind send==0 (live input re-exciting a tail that then
+    // never ended) is structurally gone: the per-sample tail envelope
+    // scales the ENTIRE effect contribution to an exact 0.0 by the
+    // window's end regardless of what fed the reverb.
+    const float reverbSendWeight = inRecovery ? frozenReverbReturnWeight
         : juce::jmax(weights.value[(size_t) drop::BudgetModule::Reverb],
                      noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
     const float reverbReturnWeight = inRecovery ? frozenReverbReturnWeight
@@ -1555,7 +1570,20 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // dB-linear tail envelope is the governing, slow fade; the envelope's
     // exact-zero landing (and the Recovery->Idle hygiene reset) still
     // guarantees silence at the window's end.
-    constexpr float kTailRingFeedback = 0.82f;
+    // 0.82 -> 0.72 (2026-09-20 smoother-fade round): with the repeats now
+    // re-diffusing through the open recovery reverb, slightly lower delay
+    // feedback lets each repeat MELT into the wash instead of punching
+    // through it as a discrete bump - the reverb sustains the body of the
+    // tail, the envelope shapes the fade.
+    // ADAPTIVE (2026-09-20 smoother-fade round, final form): how much the
+    // repeats melt vs. punch depends on whether a reverb wash EXISTS to
+    // carry the tail's body. REVERB macro at 0 -> the delay ring IS the
+    // tail: full 0.82 feedback, full return (pulsing echoes are then the
+    // user's explicit choice). REVERB up -> repeats decay faster (0.62)
+    // and return at half level, seeding the wash instead of punching
+    // through it - one continuous, smooth fade.
+    const float reverbAvail = macroPercent[(size_t) drop::BudgetModule::Reverb];
+    const float kTailRingFeedback = 0.82f - 0.20f * reverbAvail;
     delayModule.processWithSendReturn(segmentBlock, delaySendWeight, delayReturnWeight, progress, musicalClock,
                                        inRecovery ? kTailRingFeedback : -1.0f);
 

@@ -1,5 +1,29 @@
 # DROP Changelog
 
+### Changed — 2026-09-20 (tail fades as one smooth wash, not pulsing repeats)
+
+Stays at 1.0.0. User: "make all the fade curves way smoother. like a
+normal sound would fade out."
+
+- **Root cause of the lumpy fade:** the tail's delay repeats arrived as
+  DISCRETE pulses (~250ms apart at the tempo tap) with the reverb's input
+  closed during Recovery — the fade wobbled instead of melting.
+- **Fix (adaptive):** during Recovery the reverb's send now stays open at
+  the frozen return level, so the repeats continuously re-diffuse into
+  the long recovery reverb (safe: the per-sample envelope guarantees an
+  exact zero at the window's end — the original never-ending-tail hazard
+  behind send==0 is structurally gone). The delay's direct return and
+  its ring feedback now scale with REVERB availability: reverb up →
+  repeats at half return / 0.62 feedback, melting into the wash; REVERB
+  macro at 0 → full 0.82 feedback and full return, because pulsing
+  echoes are then the user's explicit tail choice.
+- Measured (tail-region excess dB wobble, all presets+noise types):
+  worst case 34.6dB → 15.2dB, mean 6.8dB → 5.5dB; ring levels at every
+  checkpoint equal or fuller; still exactly silent past the window. The
+  Rise & Fade Atlas re-rendered from the new build (plots now use ~100ms
+  loudness integration, matching perception). 271 assertions, all
+  passing.
+
 ### Fixed — 2026-09-20 (progress-strip fill alignment) + rise/fade atlas tool
 
 Stays at 1.0.0. User: "move the orange bar that fills inside the groove
