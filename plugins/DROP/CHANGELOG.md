@@ -1,5 +1,33 @@
 # DROP Changelog
 
+### Changed — 2026-09-20 (delay/reverb now genuinely apply to the noise riser)
+
+Stays at 1.0.0. User request: "make so reverb and delay applys to white
+noise too."
+
+- **Root cause:** the riser sits at the head of the chain (since the
+  earlier "noise before the effects" round), but its echo returned at
+  send x return ≈ the shared-pool weight SQUARED (−20..−40dB below the
+  riser) — effectively no delay/reverb on the noise.
+- **Fix (three coordinated boosts, all scaled by the riser's live
+  audibility x the module's macro, so DELAY/REVERB at 0% still fully
+  silence their modules and the curve-honesty/transparency contracts
+  hold):** (1) SENDS open toward the macros' full values as the riser
+  climbs — the buffers charge with the actual riser; (2) the BUILDING
+  returns open with the riser (capped 0.5) — the in-build echo/reverb
+  wash is now clearly audible, with at most −6dB dry crossfade at the
+  build's climax (right before the Vacuum, the classic wash-into-the-
+  drop character); (3) the FROZEN Recovery returns open the same way —
+  the tail replays the riser's echoes/reverb (~−22dB bloom; the prime
+  delay echoes intentionally land inside the Impact window, where
+  returns stay tiny to protect the drop transient — the core impact
+  philosophy is untouched, and Peak/Impact remain byte-identical since
+  the riser's level is 0 there).
+- Tests: new riser-send block (relative ring-vs-riser ratios with the
+  pre-fix path failing by construction, macro-gating zero check, plus a
+  fixed capture-length bug in its own first draft). 270 assertions, all
+  passing.
+
 ### Changed — 2026-09-20 (tail slope a bit longer: 30dB → 24dB range)
 
 Stays at 1.0.0. User follow-up: "a bit longer." The tail's dB-linear

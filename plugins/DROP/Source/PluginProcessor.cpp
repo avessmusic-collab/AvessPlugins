@@ -1338,10 +1338,30 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     const int64_t recoveryElapsedAtSegmentStart = (recoveryTotalSamples > 0)
         ? (recoveryTotalSamples - dropStateMachine.samplesUntilNextTransition()) : 0;
 
+    // POST-1.0 (2026-09-20 riser-sends round): computed BEFORE the frozen-
+    // return capture below so the tail can replay the riser's echoes at an
+    // audible level - see the send-boost comment at the delay/reverb
+    // send/return weights further down for the full rationale.
+    const float noiseSendLevel = macroPercent[(size_t) drop::BudgetModule::Noise]
+        * drop::NoiseModule::riseAmountForProgress(progress, noiseTensionParam->load() / 100.0f);
+
     if (dropState == drop::DropState::Building)
     {
-        frozenDelayReturnWeight = weights.value[(size_t) drop::BudgetModule::Delay];
-        frozenReverbReturnWeight = weights.value[(size_t) drop::BudgetModule::Reverb];
+        // POST-1.0 (2026-09-20, "make so reverb and delay applys to white
+        // noise too", part 2): the frozen RETURN also opens with the
+        // riser (x the module macro, capped by kNoiseTailReturnScale) -
+        // the small budget weight alone replayed the (now well-charged)
+        // buffers at ~-56dB, still inaudible. Recovery is the documented
+        // sanctioned state for returns above the live budget weight ("the
+        // ONLY state where wet-return legitimately needs to exceed the
+        // live IntensityBudget weight"); the 0.5 cap bounds the tail's
+        // dry-crossfade dilution to -6dB at Recovery's start, decaying
+        // with the tail slope.
+        constexpr float kNoiseTailReturnScale = 0.5f;
+        frozenDelayReturnWeight = juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
+            kNoiseTailReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
+        frozenReverbReturnWeight = juce::jmax(weights.value[(size_t) drop::BudgetModule::Reverb],
+            kNoiseTailReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
     }
 
     // POST-1.0 REGRESSION FIX (2026-09-16, second pass - coordinator-reported
@@ -1382,10 +1402,50 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // root-cause comment above). Multiplying a segment-start envelope in
     // here as well would both re-introduce the segment-granularity
     // staircase AND double-apply the decay.
-    const float delaySendWeight = inRecovery ? 0.0f : weights.value[(size_t) drop::BudgetModule::Delay];
-    const float delayReturnWeight = inRecovery ? frozenDelayReturnWeight : delaySendWeight;
-    const float reverbSendWeight = inRecovery ? 0.0f : weights.value[(size_t) drop::BudgetModule::Reverb];
-    const float reverbReturnWeight = inRecovery ? frozenReverbReturnWeight : reverbSendWeight;
+    // POST-1.0 (2026-09-20, user-directed: "make so reverb and delay
+    // applys to white noise too"). The riser is injected at the HEAD of
+    // the chain (the earlier "noise in the chain before the effects"
+    // round), but what actually reached the delay/reverb buffers was
+    // send-scaled by the small shared-pool weight and returned scaled by
+    // it AGAIN - the riser's echo came back at ~weight^2 (-20..-40dB
+    // below the riser), i.e. inaudible. FIX: while the riser is audibly
+    // present, the SENDS open up to at least the riser's own audible
+    // level (x that module's macro, so DELAY/REVERB at 0% still fully
+    // silence their module - the transparency/curve-honesty contracts
+    // hold). RETURNS stay at the budget weight - raising returns would
+    // crossfade the dry bus toward wet and duck the music (the exact
+    // documented Phase 3.4 transient-preservation regression). The richer
+    // buffers also feed Recovery's frozen-return tail, so the riser's
+    // echoes ring out after the drop.
+    // noiseSendLevel (computed above, before the frozen-return capture):
+    // the riser's PROGRESSION x the user's NOISE macro - deliberately NOT
+    // scaled by computeNoiseWeight()'s intensity/style level factors
+    // (~0.15 typical): scaling by those left the send boost negligible
+    // (measured ring still ~-60dB). As the riser climbs to its peak the
+    // sends open toward the DELAY/REVERB macros' full values - the riser
+    // (and, at the build's climax, the music with it) is then genuinely
+    // echoed/reverberated, and the ring survives into the tail.
+    // RETURNS also open with the riser (same 0.5 cap as the frozen-return
+    // boost): with the return left at the small budget weight the fully-
+    // charged buffers still came back ~17dB under the riser - inaudible
+    // as an effect. The dry-crossfade dilution this permits (up to -6dB
+    // at the build's very climax, right before the Vacuum silences
+    // everything anyway) is the classic wash-into-the-drop character.
+    // Peak/Impact are byte-identical (riser level is 0 there, boost
+    // vanishes - the transient-preservation calibration is untouched).
+    constexpr float kNoiseReturnScale = 0.5f;
+    const float delaySendWeight = inRecovery ? 0.0f
+        : juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
+                     noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
+    const float delayReturnWeight = inRecovery ? frozenDelayReturnWeight
+        : juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
+                     kNoiseReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
+    const float reverbSendWeight = inRecovery ? 0.0f
+        : juce::jmax(weights.value[(size_t) drop::BudgetModule::Reverb],
+                     noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
+    const float reverbReturnWeight = inRecovery ? frozenReverbReturnWeight
+        : juce::jmax(weights.value[(size_t) drop::BudgetModule::Reverb],
+                     kNoiseReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
 
     // Stage 3 DSP Phase 3.4: ImpactEngine's coordination-drive values
     // (architecture.md: ImpactEngine "drives existing modules into a

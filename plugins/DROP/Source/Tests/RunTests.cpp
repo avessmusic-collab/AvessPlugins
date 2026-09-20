@@ -5118,6 +5118,113 @@ int main()
               "[POST-1.0] tail audibility: silent after the Recovery window ends (the dB-linear slope + exact-zero landing still guarantee the window boundary)");
     }
 
+    std::printf ("\n[POST-1.0] Riser feeds delay/reverb (2026-09-20: 'make so reverb and delay applys to white noise too')\n");
+    {
+        // Silent input the ENTIRE run - the riser is the only content, so
+        // any post-drop ring is BY CONSTRUCTION the delay/reverb applied
+        // to the white noise. Pre-fix, the riser reached the buffers only
+        // at the small shared-pool send weight and returned at ~weight^2
+        // (-20..-40dB below the riser) - inaudible. With the
+        // riser-audibility send boost the ring is loud and unmistakable.
+        struct RingResult { double ringPeak; double riserEndRms; };
+        auto measureRing = [] (float delayMacro, float reverbMacro) -> RingResult
+        {
+            constexpr double sr = 48000.0;
+            constexpr int blockSize = 512;
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (sr, blockSize);
+            p.prepareToPlay (sr, blockSize);
+            const char* zeroMacros[] = { "filter", "width", "pitch", "gate", "stutter", "distortion", "digital" };
+            for (auto* id : zeroMacros)
+                if (auto* prm = p.parameters.getParameter (id)) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("delay")) prm->setValueNotifyingHost (delayMacro);
+            if (auto* prm = p.parameters.getParameter ("reverb")) prm->setValueNotifyingHost (reverbMacro);
+            if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("impact")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("dryWet")) prm->setValueNotifyingHost (1.0f);
+            if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.4f);
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+            int64_t impactEndSample = -1, captureStart = -1;
+            double riserEndRms = 0.0; // RMS of the last full Building block - the riser's own direct level, the natural reference for the echo's audibility
+            std::vector<float> captured;
+            // 560 blocks (~6s): fallback-transport Arming alone can take a
+            // full 2s bar, plus 2s Building + Impact + the 0.65s Recovery
+            // under test - a 400-block run ended BEFORE the +100ms
+            // measurement window and read an empty capture as exact zero.
+            for (int block = 0; block < 560; ++block)
+            {
+                const int64_t blockStart = (int64_t) block * blockSize;
+                juce::AudioBuffer<float> buf (2, blockSize);
+                buf.clear(); // silent input throughout
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+                if (p.getCurrentDropState() == drop::DropState::Building)
+                {
+                    double sumSq = 0.0;
+                    const float* out = buf.getReadPointer (0);
+                    for (int i = 0; i < blockSize; ++i)
+                        sumSq += (double) out[i] * (double) out[i];
+                    riserEndRms = std::sqrt (sumSq / (double) blockSize); // keep overwriting: ends at the LAST building block
+                }
+                if (p.getCurrentDropState() == drop::DropState::Impact) impactEndSample = blockStart + blockSize;
+                if (impactEndSample > 0 && captureStart < 0) captureStart = blockStart;
+                if (captureStart >= 0)
+                {
+                    const float* out = buf.getReadPointer (0);
+                    captured.insert (captured.end(), out, out + blockSize);
+                }
+            }
+            p.releaseResources();
+            if (impactEndSample <= 0) return RingResult { -1.0, 0.0 };
+            // PEAK of 20ms-windowed RMS over the first 250ms of Recovery:
+            // the delay's first echo of the build-end riser arrives at
+            // (tempo tap - Impact window) ~ +30ms, and generations are
+            // ~250ms apart - a single fixed-offset window can land BETWEEN
+            // echoes and read only the quiet inter-echo floor.
+            double peak = 0.0;
+            const int64_t winLen = (int64_t) (0.02 * sr);
+            for (int64_t off = 0; off + winLen < (int64_t) (0.25 * sr); off += winLen / 2)
+            {
+                const int64_t start = (impactEndSample - captureStart) + off;
+                double sumSq = 0.0; int64_t n = 0;
+                for (int64_t i = start; i < start + winLen && i < (int64_t) captured.size(); ++i, ++n)
+                    sumSq += (double) captured[(size_t) i] * (double) captured[(size_t) i];
+                if (n > 0) peak = juce::jmax (peak, std::sqrt (sumSq / (double) n));
+            }
+            return RingResult { peak, riserEndRms };
+        };
+
+        const auto ringDelay = measureRing (1.0f, 0.0f);
+        const auto ringReverb = measureRing (0.0f, 1.0f);
+        const auto ringNone = measureRing (0.0f, 0.0f);
+        const double delayRatio = ringDelay.riserEndRms > 1.0e-9 ? ringDelay.ringPeak / ringDelay.riserEndRms : 0.0;
+        const double reverbRatio = ringReverb.riserEndRms > 1.0e-9 ? ringReverb.ringPeak / ringReverb.riserEndRms : 0.0;
+        std::printf ("  riser-only post-drop ring peak vs the riser's own end-of-build RMS: delay %.5f/%.5f (%.2fx) reverb %.5f/%.5f (%.2fx) none=%.5f\n",
+                     ringDelay.ringPeak, ringDelay.riserEndRms, delayRatio,
+                     ringReverb.ringPeak, ringReverb.riserEndRms, reverbRatio, ringNone.ringPeak);
+        check (ringDelay.ringPeak >= 0.0 && ringReverb.ringPeak >= 0.0 && ringNone.ringPeak >= 0.0, "riser-send test: all three renders reached Impact");
+        check (ringDelay.riserEndRms > 1.0e-3 && ringReverb.riserEndRms > 1.0e-3, "riser-send test sanity: the riser itself is audible at the end of Building");
+        // Floor calibration note: the riser's PRIME delay echoes land inside
+        // the Impact window (tempo tap ~250ms > the ~220ms window), where
+        // returns stay deliberately tiny to protect the drop transient (the
+        // plugin's core impact philosophy) - what reaches the tail is the
+        // second echo generation / the reverb's decayed state, measured at
+        // ~6-8% of the riser's end level (~-22dB bloom). The floors lock in
+        // that audible bloom; the pre-fix weight^2 path measured ~2% and
+        // fails them. (The DOMINANT audible change of this round is the
+        // in-build echo/reverb wash from the riser-scaled returns.)
+        check (delayRatio > 0.05,
+              "[POST-1.0] riser->delay: the riser's post-drop delay ring peaks at >= 5% of the riser's own end-of-build level (audible tail bloom; pre-fix ~2% fails by construction)");
+        check (reverbRatio > 0.05,
+              "[POST-1.0] riser->reverb: the riser's post-drop reverb ring peaks at >= 5% of the riser's own end-of-build level");
+        check (ringNone.ringPeak < 1.0e-4,
+              "[POST-1.0] riser-send macro gating: with DELAY/REVERB macros at 0 the riser leaves NO ring (the send boost is macro-scaled - the knobs still fully govern their modules, and the curve-honesty measurement conditions stay valid)");
+    }
+
     std::printf ("\n[POST-1.0] Knob correctness (2026-09-18 audit) - DRY/WET 0%% is transparent mid-build; OUTPUT scales gain exactly\n");
     {
         // "check so knobs work corectly": the module macros already carry
