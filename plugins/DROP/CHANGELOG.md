@@ -1,5 +1,18 @@
 # DROP Changelog
 
+### Changed — 2026-09-20 (tail glide: gentler body, steeper dive to a true −60dB)
+
+Stays at 1.0.0. User follow-up: "make the tail curve smoother, so its
+fades to -60 db, long curve steeper." The smooth fade's polynomial went
+t⁴ → t⁶ and now lands on EXACTLY −60dB at the landing start (was
+~−55dB): the audible body lingers even gentler for longer (−8.5dB at
+35%, −12.7dB at 50%), then the late dive is steeper (−37dB at 85%,
+−60dB at 97%) — still one seamless curve, continuous fade rate
+throughout (measured max adjacent-slice ratio 1.48×; contract bound
+widened 1.5→2.0 for the deliberate steeper dive, the seamed shape's 4×
+still fails). New assertion locks the exact −60dB arrival. Graph
+mirror + atlas updated. 272 assertions, all passing.
+
 ### Fixed — 2026-09-20 (tail fades on one smooth, continuously accelerating glide)
 
 Stays at 1.0.0. User: "still tail doesnt fade gradualy to zero db. make

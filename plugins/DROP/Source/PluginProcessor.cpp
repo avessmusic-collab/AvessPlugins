@@ -1172,31 +1172,36 @@ static float tailEnvelopeForT(float recoveryT) noexcept
     // (24dB over 70% -> 36dB over 27%) - heard as "audible tail, then
     // suddenly swallowed". The dB trajectory is now ONE smooth function
     // with a CONTINUOUS derivative everywhere:
-    //     dB(t) = -( kBodyDb * t  +  (kFullDb - kBodyDb) * t^4 )
+    //     dB(t) = -( kBodyDb * t  +  (kFullDb - kBodyDb*kLand) * (t/kLand)^6 )
+    // (t^4 -> t^6 + exact -60dB, 2026-09-20 user follow-up: "make the tail
+    // curve smoother, so its fades to -60 db, long curve steeper" - the
+    // sextic keeps the body even gentler for longer, makes the late dive
+    // STEEPER, and the curve now reaches exactly -kFullDb at the landing
+    // start instead of ~-55dB):
     // - initial slope exactly the gentle, user-approved kBodyDb (24dB per
-    //   window): the audible body fades exactly as before early on;
-    // - the t^4 term takes over GRADUALLY (C-infinity, no seam), carrying
-    //   the level to ~-(kFullDb) by the window's end;
-    // - the raised-cosine landing then closes from wherever the smooth
-    //   curve reached at kTailLandingStartT (~-55dB, inaudible) to an
+    //   window): the audible body fades softly and stays present longer;
+    // - the t^6 term takes over GRADUALLY (C-infinity, no seam), diving
+    //   to EXACTLY -kFullDb (-60dB) at kTailLandingStartT;
+    // - the raised-cosine landing then closes from -60dB (inaudible) to an
     //   EXACT 0.0 - the click-free Recovery->Idle reset invariant.
-    // Milestones (dB): t=0.35 -> -8.9, t=0.5 -> -14.3, t=0.7 -> -25.4,
-    // t=0.85 -> -39.2 - one continuous, smoothly accelerating glide.
+    // Milestones (dB): t=0.35 -> -8.5, t=0.5 -> -12.7, t=0.7 -> -21.8,
+    // t=0.85 -> -37.0, t=0.97 -> -60.0.
     constexpr float kBodyDb = 24.0f;
     constexpr float kFullDb = 60.0f;
     constexpr float kTailLandingStartT = 0.97f;
     recoveryT = juce::jlimit(0.0f, 1.0f, recoveryT);
     auto smoothDb = [] (float t) noexcept
     {
-        const float t2 = t * t;
-        return kBodyDb * t + (kFullDb - kBodyDb) * t2 * t2;
+        const float x = t / kTailLandingStartT;
+        const float x2 = x * x;
+        return kBodyDb * t + (kFullDb - kBodyDb * kTailLandingStartT) * x2 * x2 * x2;
     };
     if (recoveryT <= kTailLandingStartT)
         return std::pow(10.0f, -smoothDb(recoveryT) / 20.0f);
     const float envAtLandingStart = std::pow(10.0f, -smoothDb(kTailLandingStartT) / 20.0f);
     const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
     // Raised-cosine 1->0 over the landing window, scaled by the (already
-    // ~-55dB, inaudible) level the smooth curve reached at its start -
+    // exactly -60dB, inaudible) level the smooth curve reached at its start -
     // C0-continuous at the seam, and EXACTLY 0 at recoveryT == 1.
     return envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
 }

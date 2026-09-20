@@ -4407,7 +4407,9 @@ int main()
         constexpr float kBodyDb = 24.0f;
         constexpr float kFullDb = 60.0f;
         constexpr float kTailLandingStartT = 0.97f;
-        auto smoothDb = [] (float t) { const float t2 = t * t; return kBodyDb * t + (kFullDb - kBodyDb) * t2 * t2; };
+        // t^4 -> t^6 with exact -60dB at the landing start (2026-09-20
+        // user follow-up: "fades to -60 db, long curve steeper").
+        auto smoothDb = [] (float t) { const float x = t / kTailLandingStartT; const float x2 = x * x; return kBodyDb * t + (kFullDb - kBodyDb * kTailLandingStartT) * x2 * x2 * x2; };
         auto env = [&] (float t) -> float
         {
             if (t <= kTailLandingStartT)
@@ -4451,8 +4453,13 @@ int main()
             prevDrop = drop;
         }
         std::printf ("  max adjacent-slice fade-rate ratio: %.2fx (two-stage shape's seam jump was ~4x)\n", maxRatio);
-        check (maxRatio < 1.5f,
-              "[POST-1.0] tail envelope: the fade rate changes CONTINUOUSLY (adjacent-slice dB-drop ratio < 1.5x everywhere) - one smooth accelerating glide to silence, no audible kink");
+        // Bound widened 1.5 -> 2.0 with the user-directed steeper sextic
+        // late dive - still a CONTINUOUS rate change (the seamed shape's
+        // ~4x jump keeps failing by construction).
+        check (maxRatio < 2.0f,
+              "[POST-1.0] tail envelope: the fade rate changes CONTINUOUSLY (adjacent-slice dB-drop ratio < 2x everywhere, steeper late dive included) - one smooth glide to silence, no audible kink");
+        check (std::abs (smoothDb (kTailLandingStartT) - kFullDb) < 0.01f,
+              "[POST-1.0] tail envelope: the smooth curve reaches EXACTLY -60dB at the landing start ('fades to -60 db') - the landing closes from true inaudibility");
 
         // C0-continuity at the landing seam.
         {

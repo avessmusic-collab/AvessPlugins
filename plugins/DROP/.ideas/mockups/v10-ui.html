@@ -1288,7 +1288,7 @@
         // Mirrors tailEnvelopeForT()'s SMOOTH ACCELERATING fade
         // (2026-09-20 final, "make it fade smoothly"): one continuous dB
         // trajectory 24*t + 36*t^4, cosine landing to exact 0.
-        const sdb = (tt) => 24 * tt + 36 * tt * tt * tt * tt;
+        const sdb = (tt) => { const x = tt / 0.97; return 24 * tt + (60 - 24 * 0.97) * x * x * x * x * x * x; }; // sextic, exact -60dB at landing (2026-09-20 'steeper' follow-up)
         if (t <= 0.97) e = Math.pow(10, -sdb(t) / 20);
         else e = Math.pow(10, -sdb(0.97) / 20) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
         const px = CURVE_X1 + t * tailW;
