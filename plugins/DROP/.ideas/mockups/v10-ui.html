@@ -486,7 +486,12 @@
           <line id="curveDropDivider" x1="188" x2="188" y1="14" y2="84" stroke="rgba(232,130,60,0.4)" stroke-width="1" stroke-dasharray="2 2"></line>
           <path id="curvePathTail" fill="none" stroke="#E8823C" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.9"></path>
           <circle id="curveDot" cx="8" cy="84" r="2.6" fill="#E8823C" style="filter:drop-shadow(0 0 4px rgba(232,130,60,0.75));"></circle>
-          <text x="8" y="130" font-size="8" fill="#5A5F68" letter-spacing="1">BUILD</text>
+          <!-- Region labels (2026-09-20, user: "the tail shouldnt be
+               counted in the ammount of bars for the rise"): the label pair
+               makes the timeline split explicit - the bars carry ONLY the
+               rise (left region, live bar count), the tail is its own
+               annex AFTER the drop (right region, live seconds). -->
+          <text id="curveBuildLabel" x="8" y="130" font-size="8" fill="#5A5F68" letter-spacing="1">BUILD &middot; 16 BARS</text>
           <text x="188" y="130" font-size="8" fill="#5A5F68" letter-spacing="1" text-anchor="middle">DROP</text>
           <text x="8" y="118" font-size="6" fill="#A78BFA" letter-spacing="0.6">— TENSION</text>
           <text x="292" y="118" font-size="6" fill="#8A8F98" letter-spacing="0.6" text-anchor="end">— NOISE</text>
@@ -815,6 +820,10 @@
   function renderBuildLength(index) {
     currentBuildLengthBars = BUILD_LENGTH_BARS[index];
     buildLengthSteps.querySelectorAll('.step-circle').forEach((b, i) => b.classList.toggle('active', i === index));
+    // Live bar count on the graph's BUILD region label (2026-09-20: the
+    // bars carry only the rise; the tail annex is labeled separately).
+    const bl = document.getElementById('curveBuildLabel');
+    if (bl) bl.textContent = 'BUILD \u00B7 ' + currentBuildLengthBars + ' BARS';
   }
   buildLengthSteps.querySelectorAll('.step-circle').forEach((btn, index) => {
     btn.addEventListener('click', () => {
@@ -1225,10 +1234,10 @@
       curveTailLabel.setAttribute('opacity', '0');
     } else {
       const tailSecs = 0.15 * Math.pow(4.0 / 0.15, tailNorm);
-      // x2.5 gradual-fade extension (2026-09-20 "dont cut it instantly"):
-      // the actual ring runs 2.5x the knob's nominal seconds; the curve's
-      // width maps that full extent against the 10s maximum ring.
-      const tailW = Math.max(10, Math.min(1, (tailSecs * 2.5) / 10.0) * (292 - CURVE_X1));
+      // EXACT mapping (2026-09-20 "as long as selected" round - the x2.5
+      // extension is superseded): the ring lasts precisely the knob's
+      // seconds; width maps them against the 4s maximum.
+      const tailW = Math.max(10, Math.min(1, tailSecs / 4.0) * (292 - CURVE_X1));
       const M = 16;
       let dTail = '';
       for (let i = 0; i <= M; i++) {
@@ -1245,6 +1254,7 @@
         dTail += (i === 0 ? 'M ' : 'L ') + px.toFixed(1) + ' ' + py.toFixed(1) + ' ';
       }
       curvePathTail.setAttribute('d', dTail);
+      curveTailLabel.textContent = '\u2014 TAIL ' + (tailSecs < 1 ? tailSecs.toFixed(2) : tailSecs.toFixed(1)) + 's';
       curveTailLabel.setAttribute('opacity', '1');
     }
     curveReady = true;

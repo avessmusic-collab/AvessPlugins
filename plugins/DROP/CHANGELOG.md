@@ -1,5 +1,29 @@
 # DROP Changelog
 
+### Changed — 2026-09-20 (tail = exactly the selected seconds, after the bars)
+
+Stays at 1.0.0. User: "the tail shouldnt be counted in the ammount of
+bars for the rise. make the tail continue for as long as selected after
+the bars end."
+
+- **Timing model confirmed and made explicit:** the bars carry ONLY the
+  rise (Impact lands on the bar marker, sample-exact — unchanged); the
+  tail is its own window strictly AFTER the bars.
+- **Selected == actual:** the ×2.5 gradual-fade extension (which made a
+  0.70s knob ring ~1.75s) is superseded — the tail now rings for
+  PRECISELY the selected seconds after the drop, fading its full 60dB
+  dB-linearly within that window (the sustained ring content + reverb
+  wash keep it audible throughout; the exact-zero landing keeps the end
+  click-free; CUT untouched). Measured: 0.1% → 0.149s, 100% → 4.0000s.
+- **UI:** the graph's regions are now labeled live — "BUILD · N BARS"
+  under the rise (tracks the Build Length selection) and "— TAIL X.XXs"
+  under the tail annex — making the bars/tail split explicit; the tail
+  curve's width maps the exact seconds against the 4s maximum.
+- Atlas re-rendered (0.70s tiles now show 0.70s rings). Tests
+  recalibrated (duration expectations back to exact-knob values; the
+  extension's "still ringing past nominal" assertion deliberately
+  inverted). 271 assertions, all passing.
+
 ### Changed — 2026-09-20 (tail fades as one smooth wash, not pulsing repeats)
 
 Stays at 1.0.0. User: "make all the fade curves way smoother. like a

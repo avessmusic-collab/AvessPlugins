@@ -3060,17 +3060,14 @@ int main()
         // Block-granularity (256 samples = ~5.3ms @48kHz) measurement
         // tolerance, generously widened for the practical fuzz of
         // "count whole blocks the state machine reports Recovery".
-        // DOCUMENTED SUPERSESSION (2026-09-20 gradual-fade round, "dont cut
-        // it instantly... continue after the bars maker ends"): Recovery now
-        // runs kTailFadeExtension (2.5x) times the knob's nominal mapped
-        // seconds, with the envelope range grown 24dB -> 60dB in exact
-        // proportion (identical dB/s slope) so the same fade continues to
-        // true inaudibility instead of chopping at -24dB. Expected windows
-        // therefore scale x2.5: ~0.375s at 0.1%, ~10.0s at 100%.
-        check (nearlyEqual (recoveryJustAboveZeroSeconds, 0.376, 0.03),
-              "tail param scales Recovery duration: tail=0.1% -> ~0.375s (kTailMinSeconds x the 2.5 gradual-fade extension; SUPERSEDES the pre-extension ~0.15s expectation)");
-        check (nearlyEqual (recovery100Seconds, 10.0, 0.3),
-              "tail param scales Recovery duration: tail=100% -> ~10.0s (kTailMaxSeconds x the 2.5 gradual-fade extension)");
+        // DOCUMENTED SUPERSESSION chain (2026-09-20): the x2.5 extension
+        // (which briefly made these ~0.375s/~10.0s) is itself superseded by
+        // the user's "make the tail continue for as long as SELECTED" -
+        // the knob is now exact again: Recovery == the mapped seconds.
+        check (nearlyEqual (recoveryJustAboveZeroSeconds, 0.15, 0.02),
+              "tail param scales Recovery duration: tail=0.1% -> ~0.15s EXACTLY as selected (kTailMinSeconds; the x2.5 extension is superseded - selected == actual)");
+        check (nearlyEqual (recovery100Seconds, 4.0, 0.15),
+              "tail param scales Recovery duration: tail=100% -> ~4.0s EXACTLY as selected (kTailMaxSeconds)");
         check (recovery100Samples > recoveryJustAboveZeroSamples * 10,
               "tail param scales Recovery duration: 100% produces a MUCH longer Recovery than 0.1% (monotonic exponential mapping, not a flat/ignored parameter)");
     }
@@ -5116,21 +5113,22 @@ int main()
             return n > 0 ? std::sqrt (sumSq / (double) n) : 0.0;
         };
         const double r50 = rmsAt (0.05), r150 = rmsAt (0.15), r300 = rmsAt (0.30), r500 = rmsAt (0.50), r1200 = rmsAt (1.20), r2300 = rmsAt (2.30);
-        std::printf ("  ring RMS after Impact end: +50ms=%.5f +150ms=%.5f +300ms=%.5f +500ms=%.5f +1.2s=%.5f +2.3s=%.5f (extended recovery window ~1.94s)\n",
+        std::printf ("  ring RMS after Impact end: +50ms=%.5f +150ms=%.5f +300ms=%.5f +500ms=%.5f +1.2s=%.5f +2.3s=%.5f (exact recovery window ~0.78s at tail=50%%)\n",
                      r50, r150, r300, r500, r1200, r2300);
-        // Updated for the pure-slope envelope (2026-09-20 second
-        // iteration, "it sould be a slope. decaing"): audible well into
-        // the window (the -60dB version was dead by +300ms and fails the
-        // r300 floor by construction), AND strictly decaying checkpoint to
-        // checkpoint (the hold version was near-FLAT from +50 to +150ms).
-        check (r50 > 1.0e-3 && r150 > 5.0e-4 && r300 > 2.0e-4 && r500 > 3.0e-4,
-              "[POST-1.0] tail audibility: with tail=50% the tails audibly ring THROUGH the Recovery window (+50/+150/+300/+500ms) - the sustained tail-ring feedback + long recovery reverb decay (2026-09-20 'make it fade slowly') keep the fade governed by the dB-linear envelope; the collapsed-feedback path measured 0.00004 at +500ms and fails by construction");
-        check (r150 < r50 && r300 < r150 && r500 < r300 && r1200 < r500,
+        // Final calibration (2026-09-20 "as long as selected" round): the
+        // window is EXACTLY the knob's mapped seconds (~0.775s at 50%),
+        // fading the full 60dB within it - audible through the body,
+        // continuously decaying, and silent once the SELECTED time is up.
+        // (The 'still ringing at +1.2s' assertion of the superseded x2.5
+        // extension is deliberately inverted: selected == actual now.)
+        check (r50 > 1.0e-3 && r150 > 5.0e-4 && r300 > 2.0e-4,
+              "[POST-1.0] tail audibility: with tail=50% the tails audibly ring through the selected window's body (+50/+150/+300ms) - the sustained tail-ring content keeps the dB-linear envelope the governing fade");
+        check (r150 < r50 && r300 < r150 && r500 < r300,
               "[POST-1.0] tail audibility: the ring DECAYS continuously checkpoint-to-checkpoint - a slope, no sustain plateau");
-        check (r1200 > 1.0e-5,
-              "[POST-1.0] tail audibility (2026-09-20 gradual-fade round): the tail is STILL (quietly) ringing at +1.2s - past the knob's nominal ~0.78s and past bar markers - instead of being chopped at the nominal window's end (the pre-extension build measured 0.00000 here by construction)");
+        check (r1200 < 1.0e-4,
+              "[POST-1.0] tail audibility: silent once the SELECTED window (~0.78s) is over (+1.2s quiet) - the tail lasts exactly as long as selected after the bars end");
         check (r2300 < 1.0e-4,
-              "[POST-1.0] tail audibility: genuinely silent after the extended window ends (~1.94s) - the fade completes to inaudibility, then exact zero");
+              "[POST-1.0] tail audibility: still silent well past the window");
     }
 
     std::printf ("\n[POST-1.0] Riser feeds delay/reverb (2026-09-20: 'make so reverb and delay applys to white noise too')\n");

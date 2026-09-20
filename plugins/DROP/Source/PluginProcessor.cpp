@@ -577,18 +577,17 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     {
         const float tail01 = juce::jlimit(0.0f, 1.0f, tailRaw / 100.0f);
         tailSeconds = kTailMinSeconds * std::pow(kTailMaxSeconds / kTailMinSeconds, (double) tail01);
-        // POST-1.0 (2026-09-20, "MAKE the tail fade away gradualy, dont cut
-        // it instantly. Make the tail continue after the bars maker ends"):
-        // the Recovery STATE runs kTailFadeExtension x the knob's mapped
-        // seconds, and tailEnvelopeForT()'s range grew 24dB -> 60dB in
-        // exact proportion - the fade SLOPE (dB per second) is unchanged
-        // from the approved "a bit longer" tuning, but the same slope now
-        // rings on past the knob's nominal length (and past bar markers)
-        // down to true inaudibility instead of being chopped at -24dB.
-        // The knob/UI keep displaying the nominal seconds (the audible
-        // body of the tail, its first ~24dB); CUT is untouched.
-        static constexpr double kTailFadeExtension = 60.0 / 24.0; // 2.5
-        tailSeconds *= kTailFadeExtension;
+        // POST-1.0 (2026-09-20, final same-day iteration: "the tail
+        // shouldnt be counted in the ammount of bars for the rise. make the
+        // tail continue for as long as selected after the bars end").
+        // DOCUMENTED SUPERSESSION of the x2.5 kTailFadeExtension: it made
+        // the actual ring 2.5x the knob's displayed seconds (selected !=
+        // actual). The knob is now EXACT: the bars carry only the rise
+        // (Impact lands ON the bar marker, unchanged), and the tail rings
+        // for precisely the selected seconds AFTER the bars end, fading
+        // the full 60dB dB-linearly within that window (the sustained
+        // tail-ring content + reverb wash keep it audible throughout;
+        // the exact-zero landing keeps the end click-free). CUT untouched.
         tailCutActiveForBuild = false;
     }
     d.recoverySamples = (int64_t) std::llround(currentSampleRate * tailSeconds);
