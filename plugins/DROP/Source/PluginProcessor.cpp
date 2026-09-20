@@ -1128,7 +1128,7 @@ static float tailEnvelopeForT(float recoveryT) noexcept
     //     have sustain. it sould be a slope. decaing").
     //   Current: decays from the very first sample, dB-LINEARLY (the
     //     plugin-wide "volume in dB" convention), but over a GENTLE
-    //     kTailFadeRangeDb = 30dB across the window - shallow enough that
+    //     kTailFadeRangeDb across the window - shallow enough that
     //     the ring stays audible deep into the window even stacked on the
     //     natural decay (the -60dB version's failure), steep enough to be
     //     an unmistakable continuous decay (the hold version's failure).
@@ -1137,7 +1137,10 @@ static float tailEnvelopeForT(float recoveryT) noexcept
     // TAIL=CUT (~5ms window) keeps its clean instant-stop character: the
     // same shape compressed into 240 samples (~0.13dB/sample) is a fast,
     // click-free stop.
-    constexpr float kTailFadeRangeDb = 30.0f;
+    // 30dB -> 24dB, 2026-09-20 same-day user follow-up ("a bit longer"):
+    // a ~20% shallower slope keeps the ring audibly present longer
+    // within the same window; shape/landing unchanged.
+    constexpr float kTailFadeRangeDb = 24.0f;
     constexpr float kTailLandingStartT = 0.97f;
     recoveryT = juce::jlimit(0.0f, 1.0f, recoveryT);
     if (recoveryT <= kTailLandingStartT)
@@ -1145,7 +1148,7 @@ static float tailEnvelopeForT(float recoveryT) noexcept
     const float envAtLandingStart = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f));
     const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
     // Raised-cosine 1->0 over the landing window, scaled by the (already
-    // -30dB-quiet) level reached at its start - C0-continuous with the
+    // -24dB-quiet) level reached at its start - C0-continuous with the
     // dB-linear branch at the seam, and EXACTLY 0 at recoveryT == 1.
     return envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
 }

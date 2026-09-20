@@ -1,5 +1,14 @@
 # DROP Changelog
 
+### Changed — 2026-09-20 (tail slope a bit longer: 30dB → 24dB range)
+
+Stays at 1.0.0. User follow-up: "a bit longer." The tail's dB-linear
+decay range across its window softened 30dB → 24dB (~20% shallower
+slope) — the ring stays audibly present longer within the same window;
+shape, landing, and CUT behavior unchanged. Graph TAIL curve mirrors
+the new slope. Measured (+50ms 0.0064, +150ms 0.0044, +300ms 0.0006 —
+each ~15-35% louder than at 30dB). 265 assertions, all passing.
+
 ### Changed — 2026-09-20 (tail envelope: pure decaying slope, no sustain)
 
 Stays at 1.0.0 per this repo's factory convention. User follow-up: "tail

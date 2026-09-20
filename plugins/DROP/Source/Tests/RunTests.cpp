@@ -4388,10 +4388,11 @@ int main()
         //       SUSTAIN ("tail shouldnt have sustain. it sould be a slope.
         //       decaing").
         //   (3) CURRENT: decays from the very first sample, dB-linear over
-        //       a GENTLE 30dB across the window - unmistakably a slope,
+        //       a GENTLE range across the window (30dB -> 24dB same day,
+        //       "a bit longer") - unmistakably a slope,
         //       still audible deep into the window. Landing unchanged.
         // This block mirrors processSegment()'s tailEnvelopeForT() exactly.
-        constexpr float kTailFadeRangeDb = 30.0f;
+        constexpr float kTailFadeRangeDb = 24.0f;
         constexpr float kTailLandingStartT = 0.97f;
         auto env = [] (float t) -> float
         {
@@ -4428,7 +4429,7 @@ int main()
             minStepDb = juce::jmin (minStepDb, stepDb);
             maxStepDb = juce::jmax (maxStepDb, stepDb);
         }
-        std::printf ("  per-slice dB drop across the slope: min %.2f dB, max %.2f dB (spread %.2f dB; total 30dB across the window)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
+        std::printf ("  per-slice dB drop across the slope: min %.2f dB, max %.2f dB (spread %.2f dB; total 24dB across the window)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
         check (maxStepDb - minStepDb < 0.5f,
               "[POST-1.0] tail envelope: the slope is decibel-linear (constant dB drop per slice across the whole window) - perceptually even decay, per the plugin-wide dB-linear convention");
 

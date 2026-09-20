@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DROP — UI Mockup v2 (premium rendering pass)</title>
+
+<style>
+  /* ============================================================
+     WebView constraints (see ui-design-rules.md)
+     - No viewport units anywhere (100vh/100vw/100dvh/100svh)
+     - html, body { height: 100%; } required foundation
+     - Native app feel: user-select none, context menu disabled
+     ============================================================ */
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: default;
+    overflow: hidden;
+    background: #0c0c0b; /* outside-frame backdrop, test harness only */
+    font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  }
+
+  /* ---------- Test-harness preview frame (Rule 10) ---------- */
+  .harness {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .harness-caption {
+    color: #8a8880;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  .plugin-frame {
+    width: 700px;
+    height: 500px;
+    min-width: 560px;
+    min-height: 400px;
+    max-width: 1200px;
+    max-height: 900px;
+    border: 2px solid #3a3934;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.55);
+    overflow: hidden;
+    position: relative;
+    resize: both; /* drag the bottom-right corner to test resizable/scalable behavior */
+    background: #F4F2EE;
+  }
+
+  .plugin-frame::after {
+    /* visible corner resize affordance, mimicking a native resize grip */
+    content: "";
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 12px;
+    height: 12px;
+    background:
+      linear-gradient(135deg, transparent 0%, transparent 45%, #B7311F 45%, #B7311F 55%, transparent 55%, transparent 100%);
+    pointer-events: none;
+    opacity: 0.55;
+  }
+
+  /* ============================================================
+     PLUGIN UI — everything below fills .plugin-frame at 100%/100%
+     and is authored in rem, scaled by JS via root font-size.
+     ============================================================ */
+
+  :root {
+    --bg: #F4F2EE;
+    --bg-grad-top: #F6F4F0;
+    --bg-grad-bottom: #F0EEE8;
+    --surface: #FBFAF8;
+    --surface-grad-top: #FCFBF9;
+    --surface-grad-bottom: #F3F1EC;
+    --line: #D8D4CC;
+    --border-strong: #1B1A17;
+    --text: #1B1A17;
+    --text-secondary: #7A766D;
+    --text-tertiary: #A6A296;
+    --accent: #B7311F;
+    --accent-deep: #8F2618;
+    --accent-soft: #E7C9C2;
+    --knob-fill: #FBFAF8;
+
+    /* Material system: layered elevation + inset highlight/shadow, per aesthetic spec */
+    --shadow-knob: 0 1px 1px rgba(27,26,23,0.10), 0 5px 12px rgba(27,26,23,0.09), 0 0.5px 0 rgba(27,26,23,0.04);
+    --shadow-btn: 0 1px 2px rgba(27,26,23,0.14), 0 8px 18px rgba(27,26,23,0.16);
+    --shadow-chip: 0 1px 2px rgba(27,26,23,0.06), 0 1px 0 rgba(255,255,255,0.6) inset;
+    --inset-highlight: inset 0 1px 0 rgba(255,255,255,0.75);
+    --inset-shadow: inset 0 -1px 1px rgba(27,26,23,0.06);
+
+    font-size: 16px; /* overwritten live by ResizeObserver */
+  }
+
+  #container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(180deg, var(--bg-grad-top) 0%, var(--bg-grad-bottom) 100%);
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  /* Subtle paper grain — decorative only, non-interactive, kept extremely quiet */
+  #grainOverlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.045;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.88' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.85 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    background-size: 160px 160px;
+  }
+
+  /* ---------- Header (shared across pages) ---------- */
+  .header {
+    position: absolute;
+    left: 0; top: 0; right: 0;
+    height: 3.125rem; /* 50px */
+    border-bottom: 0.125rem solid var(--border-strong);
+    background: linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 100%);
+  }
+
+  .wordmark {
+    position: absolute;
+    left: 1.5rem; top: 1rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .wordmark::after {
+    content: "";
+    display: inline-block;
+    width: 0.4rem;
+    height: 0.4rem;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px rgba(183,49,31,0.14);
+    margin-left: 0.35rem;
+    border-radius: 50%;
+    vertical-align: middle;
+    transform: translateY(-0.1rem);
+  }
+
+  .page-nav {
+    position: absolute;
+    right: 1.5rem; top: 1rem;
+    width: 7.5rem; height: 1.75rem;
+    display: flex;
+    border: 0.125rem solid var(--border-strong);
+    overflow: hidden;
+    box-shadow: var(--shadow-chip);
+  }
+  .nav-indicator {
+    position: absolute;
+    inset: 0 50% 0 0;
+    background: linear-gradient(180deg, #26231D 0%, var(--border-strong) 100%);
+    z-index: 1;
+    transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .page-nav button {
+    position: relative;
+    z-index: 2;
+    flex: 1;
+    background: transparent;
+    border: none;
+    font-family: inherit;
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text);
+    cursor: default;
+    transition: color 220ms ease 60ms;
+  }
+  .page-nav button + button {
+    border-left: 0.125rem solid var(--border-strong);
+  }
+  .page-nav button.active {
+    color: var(--bg);
+  }
+
+  /* ---------- Pages (crossfade + spring settle, not a hard cut) ---------- */
+  .page {
+    position: absolute;
+    left: 0; top: 3.125rem; right: 0; bottom: 0;
+    opacity: 0;
+    transform: translateY(5px);
+    pointer-events: none;
+    transition: opacity 320ms ease-out, transform 480ms cubic-bezier(0.22, 1.32, 0.4, 1);
+  }
+  .page.active {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+
+  /* ================= MAIN PAGE ================= */
+
+  #bubbleWrap {
+    position: absolute;
+    left: 14.375rem; top: 1.25rem; /* 230px, 70px */
+    width: 15rem; height: 15rem;   /* 240px */
+  }
+
+  #progressStrip {
+    position: absolute;
+    left: 6.875rem; top: 17.25rem;
+    width: 30rem; height: 1rem;
+  }
+  #dropMarker { filter: drop-shadow(0 0 2px rgba(183,49,31,0.55)); }
+
+  .knob-block {
+    position: absolute;
+    width: 5rem; height: 6.25rem; /* 80x100 */
+    text-align: center;
+  }
+  .knob-block.intensity { left: 9.375rem; top: 20.125rem; } /* x150 y372-50=322 */
+  .knob-block.dryWet    { left: 29.375rem; top: 20.125rem; } /* x470 */
+
+  .trigger-btn {
+    position: absolute;
+    left: 17.1875rem; top: 20.625rem; /* x275 y380-50=330 */
+    width: 9.375rem; height: 3.75rem; /* 150x60 */
+    background: linear-gradient(180deg, #26231D 0%, var(--border-strong) 100%);
+    color: var(--bg);
+    border: 0.125rem solid var(--border-strong);
+    box-shadow: var(--shadow-btn), var(--inset-highlight);
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    cursor: default;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1), background 140ms linear, box-shadow 140ms linear;
+  }
+  .trigger-btn.armed {
+    background: linear-gradient(180deg, #C64432 0%, var(--accent) 100%);
+    border-color: var(--accent-deep);
+    box-shadow: 0 1px 2px rgba(183,49,31,0.35), 0 8px 20px rgba(183,49,31,0.30), var(--inset-highlight);
+  }
+  .trigger-btn.pressed { transform: scale(0.94); }
+
+  .bar-readout {
+    position: absolute;
+    left: 19.375rem; top: 24.875rem; /* x310 y448-50=398 */
+    width: 5rem; height: 1.125rem;
+    text-align: center;
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ================= ADVANCED PAGE ================= */
+
+  .section-rule {
+    position: absolute;
+    left: 0; right: 0; height: 0.125rem;
+    background: var(--line);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.6);
+  }
+
+  .adv-control {
+    position: absolute;
+    text-align: center;
+  }
+
+  .field-label {
+    display: block;
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 0.35rem;
+  }
+
+  /* Segmented build-length buttons */
+  .segmented {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .segmented button {
+    flex: 1;
+    height: 2.5rem;
+    background: linear-gradient(180deg, var(--surface-grad-top) 0%, var(--surface-grad-bottom) 100%);
+    border: 0.125rem solid var(--border-strong);
+    box-shadow: var(--inset-highlight), 0 1px 2px rgba(27,26,23,0.05);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text);
+    cursor: default;
+    transition: background 140ms linear, box-shadow 140ms linear;
+  }
+  .segmented button .suffix {
+    display: block;
+    font-size: 0.5rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.08em;
+    margin-top: 0.15rem;
+  }
+  .segmented button.active {
+    background: linear-gradient(180deg, #26231D 0%, var(--border-strong) 100%);
+    color: var(--bg);
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.35);
+  }
+  .segmented button.active .suffix { color: var(--text-tertiary); }
+
+  /* Style dropdown */
+  .style-select {
+    width: 100%;
+    height: 2.5rem;
+    background-color: var(--surface);
+    background-image:
+      linear-gradient(180deg, var(--surface-grad-top) 0%, var(--surface-grad-bottom) 100%),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M0 0L5 6L10 0Z' fill='%231B1A17'/></svg>");
+    background-repeat: no-repeat;
+    background-position: left top, right 0.75rem center;
+    background-size: 100% 100%, 0.55rem 0.35rem;
+    border: 0.125rem solid var(--border-strong);
+    box-shadow: var(--inset-highlight), 0 1px 2px rgba(27,26,23,0.05);
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text);
+    padding: 0 1.6rem 0 0.6rem;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    border-radius: 0;
+    cursor: default;
+  }
+
+  /* ---------- Knob (generic, all rotary controls) ---------- */
+  .knob {
+    position: relative;
+    margin: 0 auto;
+    border-radius: 50%;
+    background: radial-gradient(circle at 34% 28%, #FFFFFF 0%, var(--knob-fill) 42%, #EEECE5 100%);
+    border: 0.125rem solid var(--border-strong);
+    box-shadow: var(--shadow-knob), var(--inset-highlight), var(--inset-shadow);
+    cursor: default;
+  }
+  .knob-body {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    transform-origin: center center;
+  }
+  .knob-indicator {
+    position: absolute;
+    top: 0.2rem;
+    left: 50%;
+    width: 0.09rem;
+    height: 38%;
+    background: var(--border-strong);
+    box-shadow: 0 0 0 0.5px rgba(255,255,255,0.4);
+    transform: translateX(-50%);
+  }
+  .knob-center-dot {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 0.18rem; height: 0.18rem;
+    background: var(--border-strong);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .knob-value {
+    display: block;
+    margin-top: 0.35rem;
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+    font-size: 0.62rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  /* Decorative value-arc + tick overlay — absolutely positioned INSIDE .knob via
+     percentage inset, so it never changes the control's validated bounding box
+     or document flow (only primary controls get this; the 10 module macros
+     intentionally stay ring-free to avoid visual noise, per "no clutter"). */
+  .knob-arc { position: absolute; inset: -16%; overflow: visible; pointer-events: none; }
+  .arc-track { stroke: var(--line); stroke-width: 3; fill: none; }
+  .arc-fill  { stroke: var(--border-strong); stroke-width: 3; stroke-linecap: round; fill: none;
+               transition: stroke-dasharray 320ms cubic-bezier(0.22, 0.9, 0.3, 1); }
+  .arc-tick  { stroke: var(--text-tertiary); stroke-width: 2; }
+
+  /* ---------- Debug parameter monitor (test HTML only) ---------- */
+  .debug-monitor {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    background: rgba(10,10,9,0.9);
+    color: #8fe38f;
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+    font-size: 11px;
+    padding: 8px 12px;
+    border: 1px solid #333;
+    min-width: 170px;
+    pointer-events: none;
+    z-index: 10000;
+  }
+  .debug-label { color: #666; font-size: 9px; margin-bottom: 4px; letter-spacing: 1px; }
+  .debug-param { font-weight: bold; color: #8fe38f; }
+  .debug-value { color: #fff; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .debug-normalized { color: #888; font-size: 10px; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+
+<div class="harness">
+  <div class="harness-caption">DROP — v2 mockup (premium rendering pass) — drag bottom-right corner of frame to test resizable/scalable UI (base 700×500)</div>
+  <div class="plugin-frame" id="pluginFrame">
+    <div id="container">
+      <div id="grainOverlay"></div>
+
+      <!-- Shared header -->
+      <div class="header">
+        <div class="wordmark">DROP</div>
+        <div class="page-nav">
+          <div class="nav-indicator" id="navIndicator"></div>
+          <button id="navMain" class="active">Main</button>
+          <button id="navAdvanced">Advanced</button>
+        </div>
+      </div>
+
+      <!-- ================= MAIN PAGE ================= -->
+      <div class="page active" id="pageMain">
+
+        <div id="bubbleWrap">
+          <svg id="bubbleSvg" viewBox="0 0 240 240" width="100%" height="100%" style="overflow:visible;">
+            <defs>
+              <filter id="goo" x="-40%" y="-40%" width="180%" height="180%">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"></feGaussianBlur>
+                <feColorMatrix in="blur" mode="matrix"
+                  values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9" result="goo"></feColorMatrix>
+              </filter>
+              <radialGradient id="bubbleGrad" cx="34%" cy="28%" r="78%">
+                <stop id="gradStop1" offset="0%" stop-color="#FFFFFF"></stop>
+                <stop id="gradStop2" offset="55%" stop-color="#F4F2EE"></stop>
+                <stop id="gradStop3" offset="100%" stop-color="#D9D5CC"></stop>
+              </radialGradient>
+              <radialGradient id="specGrad" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"></stop>
+                <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"></stop>
+              </radialGradient>
+            </defs>
+
+            <ellipse id="groundShadow" cx="120" cy="204" rx="66" ry="13" fill="#1B1A17" opacity="0.09" style="filter:blur(7px);"></ellipse>
+
+            <g id="gooGroup" style="filter:url(#goo);">
+              <path id="bubblePath" fill="url(#bubbleGrad)"></path>
+              <circle id="satellite1" r="8" fill="url(#bubbleGrad)"></circle>
+              <circle id="satellite2" r="6" fill="url(#bubbleGrad)"></circle>
+            </g>
+
+            <path id="rimPath" fill="none" stroke="#1B1A17" stroke-width="1.5" opacity="0.78"></path>
+            <ellipse id="specHighlight" fill="url(#specGrad)" style="filter:blur(4px);"></ellipse>
+            <circle id="bubbleGlow" cx="120" cy="120" r="105" fill="none" stroke="#B7311F" stroke-width="0" opacity="0"></circle>
+          </svg>
+        </div>
+
+        <div id="progressStrip">
+          <svg width="100%" height="100%" viewBox="0 0 480 16" preserveAspectRatio="none">
+            <rect x="0" y="6" width="480" height="4" fill="none" stroke="#D8D4CC" stroke-width="2"></rect>
+            <rect id="progressFill" x="0" y="6" width="0" height="4" fill="#1B1A17"></rect>
+            <line id="dropMarker" x1="403" y1="0" x2="403" y2="16" stroke="#B7311F" stroke-width="2"></line>
+          </svg>
+        </div>
+
+        <div class="knob-block intensity" data-param="intensity" data-arc="1" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:5rem;height:5rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.4rem;">Intensity</span>
+          <span class="knob-value">50%</span>
+        </div>
+
+        <div class="knob-block dryWet" data-param="dryWet" data-arc="1" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:5rem;height:5rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.4rem;">Dry / Wet</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <button class="trigger-btn" id="triggerBtn">Drop</button>
+
+        <div class="bar-readout" id="barReadout">Build: 4 Bars</div>
+      </div>
+
+      <!-- ================= ADVANCED PAGE ================= -->
+      <div class="page" id="pageAdvanced">
+
+        <div class="section-rule" style="top:0.75rem;"></div>
+        <div class="section-rule" style="top:4.75rem;"></div>
+        <div class="section-rule" style="top:11rem;"></div>
+
+        <!-- Row 1: Build Length + Style -->
+        <div class="adv-control" style="left:1.5rem; top:0.75rem; width:23.5rem;">
+          <span class="field-label">Build Length</span>
+          <div class="segmented" id="buildLengthSeg" data-param="buildLength">
+            <button data-value="1">1<span class="suffix">BAR</span></button>
+            <button data-value="2">2<span class="suffix">BAR</span></button>
+            <button data-value="4" class="active">4<span class="suffix">BAR</span></button>
+            <button data-value="8">8<span class="suffix">BAR</span></button>
+            <button data-value="16">16<span class="suffix">BAR</span></button>
+          </div>
+        </div>
+
+        <div class="adv-control" style="left:26.25rem; top:0.75rem; width:16rem; text-align:left;">
+          <span class="field-label">Style</span>
+          <select class="style-select" id="styleSelect" data-param="style">
+            <option>Clean EDM</option>
+            <option>Big Room</option>
+            <option>Techno Pressure</option>
+            <option>Dark Techno</option>
+            <option>Trap Pull</option>
+            <option>DnB Rush</option>
+            <option>Hyper</option>
+            <option>Cinematic</option>
+            <option>Minimal</option>
+            <option>Vocal Build</option>
+            <option>Drum Build</option>
+            <option>Synth Build</option>
+            <option>Full Mix</option>
+            <option>Destroy</option>
+            <option>Vacuum</option>
+            <option>Reverse Energy</option>
+          </select>
+        </div>
+
+        <!-- Row 2: Tension / Chaos / Impact -->
+        <div class="adv-control knob-adv" style="left:6.4375rem; top:5.5rem; width:3.75rem;"
+             data-param="tension" data-arc="1" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3.75rem;height:3.75rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.35rem;">Tension</span>
+          <span class="knob-value">50%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:20rem; top:5.5rem; width:3.75rem;"
+             data-param="chaos" data-arc="1" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3.75rem;height:3.75rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.35rem;">Chaos</span>
+          <span class="knob-value">0%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:33.5625rem; top:5.5rem; width:3.75rem;"
+             data-param="impact" data-arc="1" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3.75rem;height:3.75rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.35rem;">Impact</span>
+          <span class="knob-value">50%</span>
+        </div>
+
+        <!-- Row 3: module macros 1/2 (no arc/ticks — kept minimal by design) -->
+        <div class="adv-control knob-adv" style="left:4.0625rem; top:11.5rem; width:3rem;"
+             data-param="filter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Filter</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:12.1875rem; top:11.5rem; width:3rem;"
+             data-param="width" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Width</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:20.3125rem; top:11.5rem; width:3rem;"
+             data-param="pitch" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Pitch</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:28.4375rem; top:11.5rem; width:3rem;"
+             data-param="gate" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Gate</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:36.5625rem; top:11.5rem; width:3rem;"
+             data-param="stutter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Stutter</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <!-- Row 4: module macros 2/2 -->
+        <div class="adv-control knob-adv" style="left:4.0625rem; top:16.5rem; width:3rem;"
+             data-param="delay" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Delay</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:12.1875rem; top:16.5rem; width:3rem;"
+             data-param="reverb" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Reverb</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:20.3125rem; top:16.5rem; width:3rem;"
+             data-param="distortion" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Distortion</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:28.4375rem; top:16.5rem; width:3rem;"
+             data-param="digital" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Digital</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <div class="adv-control knob-adv" style="left:36.5625rem; top:16.5rem; width:3rem;"
+             data-param="noise" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+          <div class="knob" style="width:3rem;height:3rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.3rem;">Noise</span>
+          <span class="knob-value">100%</span>
+        </div>
+
+        <!-- Row 5: Output -->
+        <div class="adv-control knob-adv" style="left:19.6875rem; top:21.75rem; width:4.375rem;"
+             data-param="output" data-arc="1" data-min="-60" data-max="12" data-default="0" data-unit="dB" data-decimals="1">
+          <div class="knob" style="width:4rem;height:4rem;">
+            <div class="knob-body"><div class="knob-indicator"></div><div class="knob-center-dot"></div></div>
+          </div>
+          <span class="field-label" style="margin-top:0.35rem;">Output</span>
+          <span class="knob-value">0.0 dB</span>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Debug parameter monitor (test HTML only, non-interactive) -->
+<div class="debug-monitor">
+  <div class="debug-label">PARAMETER MONITOR</div>
+  <div class="debug-param" id="debugParam">—</div>
+  <div class="debug-value" id="debugValue">—</div>
+  <div class="debug-normalized" id="debugNormalized">—</div>
+</div>
+
+<script>
+  /* =========================================================
+     Native app feel: disable context menu / drag
+     ========================================================= */
+  document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+  document.addEventListener("dragstart", (e) => { e.preventDefault(); });
+
+  /* =========================================================
+     Mock JUCE backend — simulates WebSliderRelay / WebToggleButtonRelay /
+     WebComboBoxRelay for browser-only testing. Same call shape the real
+     production JS will use.
+     ========================================================= */
+  const paramState = {}; // id -> normalized 0..1 (or string for choice)
+
+  window.Juce = {
+    getSliderState: (id) => {
+      if (!(id in paramState)) paramState[id] = 0.5;
+      return {
+        getNormalisedValue: () => paramState[id],
+        setNormalisedValue: (v) => {
+          paramState[id] = v;
+          console.log(`[Juce.SliderState] ${id} -> ${v.toFixed(4)}`);
+        },
+        valueChangedEvent: { addListener: (fn) => console.log(`[Juce] listener added: slider ${id}`) }
+      };
+    },
+    getToggleState: (id) => {
+      return {
+        value: false,
+        setValue: (v) => console.log(`[Juce.ToggleState] ${id} -> ${v}`),
+        valueChangedEvent: { addListener: (fn) => console.log(`[Juce] listener added: toggle ${id}`) }
+      };
+    },
+    getComboBoxState: (id) => {
+      return {
+        selectedId: 0,
+        setSelectedId: (v) => console.log(`[Juce.ComboBoxState] ${id} -> ${v}`),
+        valueChangedEvent: { addListener: (fn) => console.log(`[Juce] listener added: combo ${id}`) }
+      };
+    }
+  };
+
+  /* =========================================================
+     Debug monitor
+     ========================================================= */
+  function updateDebugMonitor(paramId, displayValue, normalized) {
+    document.getElementById('debugParam').textContent = paramId;
+    document.getElementById('debugValue').textContent = displayValue;
+    document.getElementById('debugNormalized').textContent =
+      (normalized === null || normalized === undefined) ? '' : `${(normalized * 100).toFixed(1)}%`;
+  }
+
+  /* =========================================================
+     Root-em scaling model (no viewport units): ResizeObserver
+     maps plugin-frame size -> documentElement root font-size.
+     ========================================================= */
+  const BASE_W = 700, BASE_H = 500, BASE_REM = 16;
+  const frame = document.getElementById('pluginFrame');
+  function applyScale(w, h) {
+    let scale = Math.min(w / BASE_W, h / BASE_H);
+    scale = Math.max(0.75, Math.min(1.8, scale));
+    document.documentElement.style.fontSize = (BASE_REM * scale) + 'px';
+  }
+  const ro = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const { width, height } = entry.contentRect;
+      applyScale(width, height);
+    }
+  });
+  ro.observe(frame);
+  applyScale(frame.clientWidth, frame.clientHeight);
+
+  /* =========================================================
+     Page navigation (view-state only, not an APVTS parameter)
+     Spring-eased sliding indicator + crossfade (CSS-driven).
+     ========================================================= */
+  const navMain = document.getElementById('navMain');
+  const navAdvanced = document.getElementById('navAdvanced');
+  const navIndicator = document.getElementById('navIndicator');
+  const pageMain = document.getElementById('pageMain');
+  const pageAdvanced = document.getElementById('pageAdvanced');
+
+  function showPage(which) {
+    const isMain = which === 'main';
+    pageMain.classList.toggle('active', isMain);
+    pageAdvanced.classList.toggle('active', !isMain);
+    navMain.classList.toggle('active', isMain);
+    navAdvanced.classList.toggle('active', !isMain);
+    navIndicator.style.transform = isMain ? 'translateX(0)' : 'translateX(100%)';
+  }
+  navMain.addEventListener('click', () => showPage('main'));
+  navAdvanced.addEventListener('click', () => showPage('advanced'));
+
+  /* =========================================================
+     Tiny reusable value-arc + tick builder (decorative overlay,
+     absolutely positioned INSIDE the knob via % inset — never
+     changes the control's validated bounding box or hit target).
+     Only used for primary controls (data-arc="1").
+     ========================================================= */
+  function buildKnobArc(knobEl) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'knob-arc');
+    svg.setAttribute('viewBox', '0 0 100 100');
+
+    const R = 46;
+    const C = 2 * Math.PI * R;
+    const VIS = 0.75 * C; // 270 of 360 degrees visible
+
+    function mkCircle(cls) {
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', '50');
+      c.setAttribute('cy', '50');
+      c.setAttribute('r', String(R));
+      c.setAttribute('class', cls);
+      c.setAttribute('transform', 'rotate(135 50 50)');
+      return c;
+    }
+    const track = mkCircle('arc-track');
+    track.setAttribute('stroke-dasharray', `${VIS.toFixed(2)} ${C.toFixed(2)}`);
+    const fill = mkCircle('arc-fill');
+    fill.setAttribute('stroke-dasharray', `0 ${C.toFixed(2)}`);
+    svg.appendChild(track);
+    svg.appendChild(fill);
+
+    [-135, 0, 135].forEach((angle) => {
+      const rad = (angle * Math.PI) / 180;
+      const x1 = 50 + 40 * Math.sin(rad), y1 = 50 - 40 * Math.cos(rad);
+      const x2 = 50 + 47 * Math.sin(rad), y2 = 50 - 47 * Math.cos(rad);
+      const line = document.createElementNS(svgNS, 'line');
+      line.setAttribute('x1', x1.toFixed(2));
+      line.setAttribute('y1', y1.toFixed(2));
+      line.setAttribute('x2', x2.toFixed(2));
+      line.setAttribute('y2', y2.toFixed(2));
+      line.setAttribute('class', 'arc-tick');
+      svg.appendChild(line);
+    });
+
+    knobEl.appendChild(svg);
+    return { fill, C, VIS };
+  }
+
+  /* =========================================================
+     Generic knob interaction (drag vertical = change value)
+     Rotates the KNOB BODY (parent), not just the indicator,
+     per ui-design-rules.md Rule 8.
+     ========================================================= */
+  function initKnob(root) {
+    const min = parseFloat(root.dataset.min);
+    const max = parseFloat(root.dataset.max);
+    const def = parseFloat(root.dataset.default);
+    const unit = root.dataset.unit || '';
+    const decimals = parseInt(root.dataset.decimals || '0', 10);
+    const paramId = root.dataset.param;
+    const knobDiv = root.querySelector('.knob');
+    const knobBody = root.querySelector('.knob-body');
+    const valueEl = root.querySelector('.knob-value');
+    const state = window.Juce.getSliderState(paramId);
+
+    const arc = root.dataset.arc === '1' ? buildKnobArc(knobDiv) : null;
+
+    function format(v) {
+      const txt = v.toFixed(decimals);
+      return unit === '%' ? `${txt}%` : (unit ? `${(v>=0 && (min<0)) ? '+' : ''}${txt} ${unit}` : txt);
+    }
+
+    function render(norm) {
+      const value = min + norm * (max - min);
+      const degrees = -135 + norm * 270;
+      knobBody.style.transform = `rotate(${degrees}deg)`;
+      valueEl.textContent = format(value);
+      if (arc) arc.fill.setAttribute('stroke-dasharray', `${(norm * arc.VIS).toFixed(2)} ${arc.C.toFixed(2)}`);
+      return value;
+    }
+
+    let normalized = (def - min) / (max - min);
+    render(normalized);
+    state.setNormalisedValue(normalized);
+
+    let dragging = false, startY = 0, startNorm = 0;
+    root.addEventListener('mousedown', (e) => {
+      dragging = true;
+      startY = e.clientY;
+      startNorm = normalized;
+      knobDiv.style.boxShadow = 'var(--shadow-knob), inset 0 1px 3px rgba(27,26,23,0.18)';
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dy = startY - e.clientY;
+      normalized = Math.min(1, Math.max(0, startNorm + dy / 150));
+      const value = render(normalized);
+      state.setNormalisedValue(normalized);
+      updateDebugMonitor(paramId, format(value), normalized);
+    });
+    window.addEventListener('mouseup', () => {
+      dragging = false;
+      knobDiv.style.boxShadow = '';
+    });
+
+    root.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      normalized = Math.min(1, Math.max(0, normalized + (e.deltaY < 0 ? 0.01 : -0.01)));
+      const value = render(normalized);
+      state.setNormalisedValue(normalized);
+      updateDebugMonitor(paramId, format(value), normalized);
+    }, { passive: false });
+
+    root.addEventListener('mouseenter', () => {
+      const value = min + normalized * (max - min);
+      updateDebugMonitor(paramId, format(value), normalized);
+    });
+  }
+
+  document.querySelectorAll('.knob-block, .knob-adv').forEach(initKnob);
+
+  /* =========================================================
+     Build Length — segmented choice control
+     ========================================================= */
+  const buildLengthSeg = document.getElementById('buildLengthSeg');
+  const buildLengthState = window.Juce.getComboBoxState('buildLength');
+  const barReadout = document.getElementById('barReadout');
+  let currentBuildLengthBars = 4;
+
+  buildLengthSeg.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      buildLengthSeg.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentBuildLengthBars = parseInt(btn.dataset.value, 10);
+      buildLengthState.setSelectedId(currentBuildLengthBars);
+      barReadout.textContent = `Build: ${currentBuildLengthBars} Bar${currentBuildLengthBars > 1 ? 's' : ''}`;
+      updateDebugMonitor('buildLength', `${currentBuildLengthBars} bars`, null);
+    });
+  });
+
+  /* =========================================================
+     Style — dropdown choice control
+     ========================================================= */
+  const styleSelect = document.getElementById('styleSelect');
+  const styleState = window.Juce.getComboBoxState('style');
+  styleSelect.addEventListener('change', () => {
+    styleState.setSelectedId(styleSelect.selectedIndex);
+    updateDebugMonitor('style', styleSelect.value, styleSelect.selectedIndex / (styleSelect.options.length - 1));
+  });
+
+  /* =========================================================
+     Trigger button — tactile press feedback (spring release)
+     ========================================================= */
+  const triggerBtn = document.getElementById('triggerBtn');
+  triggerBtn.addEventListener('mousedown', () => triggerBtn.classList.add('pressed'));
+  window.addEventListener('mouseup', () => triggerBtn.classList.remove('pressed'));
+
+  /* =========================================================
+     Critically-damped mass-spring-damper integrator.
+     Drives every continuous visual transition in the bubble
+     (never a linear/lerp tween) so motion reads as physical:
+     energetic overshoot on impact, gentle settle on recovery.
+     ========================================================= */
+  class Spring {
+    constructor(stiffness, damping, value = 0) {
+      this.k = stiffness; this.d = damping;
+      this.value = value; this.target = value; this.vel = 0;
+    }
+    update(dt) {
+      const force = (this.target - this.value) * this.k - this.vel * this.d;
+      this.vel += force * dt;
+      this.value += this.vel * dt;
+      return this.value;
+    }
+  }
+
+  /* =========================================================
+     Liquid bubble — layered metaball-style SVG rendering:
+     goo-blurred main path + orbiting satellite droplets,
+     a crisp gradient-filled + specular-highlighted surface pass
+     on top, and a soft grounding shadow underneath. Reacts to a
+     fake input level and a scripted build->vacuum->impact demo
+     sequence driven by the DROP trigger (UI never executes DSP).
+     ========================================================= */
+  const bubblePath = document.getElementById('bubblePath');
+  const rimPath = document.getElementById('rimPath');
+  const satellite1 = document.getElementById('satellite1');
+  const satellite2 = document.getElementById('satellite2');
+  const bubbleGlow = document.getElementById('bubbleGlow');
+  const groundShadow = document.getElementById('groundShadow');
+  const specHighlight = document.getElementById('specHighlight');
+  const gradStop1 = document.getElementById('gradStop1');
+  const gradStop2 = document.getElementById('gradStop2');
+  const gradStop3 = document.getElementById('gradStop3');
+  const progressFill = document.getElementById('progressFill');
+  const triggerState = window.Juce.getToggleState('trigger');
+
+  const CX = 120, CY = 120, BASE_R = 78;
+  const POINTS = 10;
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function mixColor(hexA, hexB, t) {
+    const a = hexToRgb(hexA), b = hexToRgb(hexB);
+    const r = Math.round(lerp(a[0], b[0], t));
+    const g = Math.round(lerp(a[1], b[1], t));
+    const bl = Math.round(lerp(a[2], b[2], t));
+    return `rgb(${r},${g},${bl})`;
+  }
+
+  // Catmull-Rom -> cubic bezier, closed loop: smooth organic liquid curves
+  // (replaces straight polygon segments for a genuinely refined blob outline).
+  function catmullRom2bezier(points) {
+    const n = points.length;
+    let d = `M ${points[0][0].toFixed(2)} ${points[0][1].toFixed(2)} `;
+    for (let i = 0; i < n; i++) {
+      const p0 = points[(i - 1 + n) % n];
+      const p1 = points[i];
+      const p2 = points[(i + 1) % n];
+      const p3 = points[(i + 2) % n];
+      const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+      const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+      const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += `C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${p2[0].toFixed(2)} ${p2[1].toFixed(2)} `;
+    }
+    return d + 'Z';
+  }
+
+  // 4 summed sine harmonics (differing frequency/phase per point index) for
+  // a genuinely organic, non-repeating liquid deformation.
+  function computeRadius(idx, agitation, radiusMul, t) {
+    const wobble =
+      Math.sin(t * 0.0016 + idx * 1.7) * 0.42 +
+      Math.sin(t * 0.0037 + idx * 3.1) * 0.26 +
+      Math.sin(t * 0.0071 + idx * 0.6) * 0.18 +
+      Math.sin(t * 0.0029 - idx * 2.3) * 0.14;
+    return BASE_R * radiusMul * (1 + wobble * agitation);
+  }
+
+  function buildBlobPath(agitation, radiusMul, t) {
+    const points = [];
+    for (let i = 0; i < POINTS; i++) {
+      const angle = (i / POINTS) * Math.PI * 2;
+      const r = computeRadius(i, agitation, radiusMul, t);
+      points.push([CX + Math.cos(angle) * r, CY + Math.sin(angle) * r]);
+    }
+    return catmullRom2bezier(points);
+  }
+
+  function buildVacuumPath(collapseT) {
+    const h = lerp(BASE_R, 3, collapseT);
+    const w = lerp(BASE_R, BASE_R * 0.92, collapseT);
+    const points = [];
+    for (let i = 0; i < POINTS; i++) {
+      const angle = (i / POINTS) * Math.PI * 2;
+      points.push([CX + Math.cos(angle) * w, CY + Math.sin(angle) * h]);
+    }
+    return catmullRom2bezier(points);
+  }
+
+  // Demo/DSP-simulated state (UI never executes real DSP; this is a
+  // scripted stand-in so the motion design can be judged in-browser)
+  const drop = {
+    phase: 'idle',       // idle | building | peak | vacuum | impact | recovery
+    progress: 0,
+    phaseStartTime: 0,
+    phaseDuration: 0,
+    t: 0
+  };
+
+  function startDemo() {
+    if (drop.phase !== 'idle' && drop.phase !== 'recovery') return;
+    const bars = currentBuildLengthBars;
+    const durationMap = { 1: 1500, 2: 2200, 4: 3600, 8: 5400, 16: 8200 };
+    drop.phase = 'building';
+    drop.phaseStartTime = performance.now();
+    drop.phaseDuration = durationMap[bars] || 3600;
+    triggerBtn.classList.add('armed');
+    triggerState.setValue(true);
+    updateDebugMonitor('trigger', 'ARMED (building)', 1);
+  }
+  triggerBtn.addEventListener('click', startDemo);
+
+  function advancePhase(now) {
+    const elapsed = now - drop.phaseStartTime;
+    const p = Math.min(1, elapsed / drop.phaseDuration);
+
+    if (drop.phase === 'building') {
+      drop.progress = p;
+      if (p >= 1) { drop.phase = 'peak'; drop.phaseStartTime = now; drop.phaseDuration = 90; }
+    } else if (drop.phase === 'peak') {
+      if (p >= 1) { drop.phase = 'vacuum'; drop.phaseStartTime = now; drop.phaseDuration = 220; }
+    } else if (drop.phase === 'vacuum') {
+      drop.progress = p;
+      if (p >= 1) {
+        drop.phase = 'impact'; drop.phaseStartTime = now; drop.phaseDuration = 260;
+        triggerBtn.classList.remove('armed');
+      }
+    } else if (drop.phase === 'impact') {
+      drop.progress = p;
+      if (p >= 1) { drop.phase = 'recovery'; drop.phaseStartTime = now; drop.phaseDuration = 800; }
+    } else if (drop.phase === 'recovery') {
+      drop.progress = p;
+      if (p >= 1) { drop.phase = 'idle'; drop.progress = 0; triggerState.setValue(false); }
+    }
+  }
+
+  function updateProgressStrip() {
+    // 0-84% of strip = Building; 84% fixed = drop marker (Peak/Vacuum/Impact); 84-100% = Recovery tail
+    let fillPct = 0;
+    if (drop.phase === 'building') fillPct = drop.progress * 84;
+    else if (drop.phase === 'peak' || drop.phase === 'vacuum' || drop.phase === 'impact') fillPct = 84;
+    else if (drop.phase === 'recovery') fillPct = 84 + drop.progress * 16;
+    else fillPct = 0;
+    progressFill.setAttribute('width', (fillPct / 100 * 480).toFixed(1));
+  }
+
+  const tensionState = window.Juce.getSliderState('tension');
+  const intensityState = window.Juce.getSliderState('intensity');
+
+  // Springs: looser (lower damping) on radius/agitation so impact overshoots
+  // and settles like a real liquid; tighter on color so tension reads promptly.
+  const radiusSpring = new Spring(150, 15, 1.0);
+  const agitationSpring = new Spring(95, 13, 0.06);
+  const colorSpring = new Spring(170, 24, 0.0);
+  const glowSpring = new Spring(230, 19, 0.0);
+
+  let lastFrameTime = null;
+
+  function frame_(now) {
+    if (lastFrameTime === null) lastFrameTime = now;
+    const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+    drop.t = now;
+    if (drop.phase !== 'idle') advancePhase(now);
+
+    const tensionNorm = tensionState.getNormalisedValue();
+    const intensityNorm = intensityState.getNormalisedValue();
+
+    let targetAgitation = 0.06, targetColorMix = 0.0, targetRadiusMul = 1.0, targetGlow = 0.0;
+
+    if (drop.phase === 'building') {
+      targetAgitation = 0.08 + drop.progress * 0.55 * (0.4 + intensityNorm * 0.6);
+      targetColorMix = drop.progress * tensionNorm;
+      targetRadiusMul = 1.0 + drop.progress * 0.12;
+    } else if (drop.phase === 'peak') {
+      targetAgitation = 0.7; targetColorMix = 0.88; targetRadiusMul = 1.14;
+    } else if (drop.phase === 'vacuum') {
+      targetAgitation = 0.02;
+      targetColorMix = lerp(0.88, 0.15, drop.progress);
+      targetRadiusMul = lerp(1.14, 0.18, drop.progress);
+    } else if (drop.phase === 'impact') {
+      const burst = drop.progress < 0.35 ? (drop.progress / 0.35) : (1 - (drop.progress - 0.35) / 0.65);
+      targetAgitation = 0.55 * (1 - drop.progress * 0.6);
+      targetRadiusMul = 1.0 + burst * 0.55;
+      targetColorMix = Math.max(0, 0.9 - drop.progress * 0.9);
+      targetGlow = burst;
+    } else if (drop.phase === 'recovery') {
+      targetAgitation = lerp(0.35, 0.06, drop.progress);
+      targetColorMix = lerp(0.3, 0.0, drop.progress);
+      targetRadiusMul = lerp(1.1, 1.0, drop.progress);
+    }
+
+    radiusSpring.target = targetRadiusMul;
+    agitationSpring.target = targetAgitation;
+    colorSpring.target = targetColorMix;
+    glowSpring.target = targetGlow;
+    radiusSpring.update(dt);
+    agitationSpring.update(dt);
+    colorSpring.update(dt);
+    glowSpring.update(dt);
+
+    const agitation = Math.max(0, agitationSpring.value);
+    const radiusMul = Math.max(0.05, radiusSpring.value);
+    const colorMix = Math.min(1, Math.max(0, colorSpring.value));
+    const glow = Math.min(1, Math.max(0, glowSpring.value));
+
+    const d = (drop.phase === 'vacuum') ? buildVacuumPath(drop.progress) : buildBlobPath(agitation, radiusMul, now);
+    bubblePath.setAttribute('d', d);
+    rimPath.setAttribute('d', d);
+
+    // Satellite droplets: huddle close (near-merged) when calm, orbit further
+    // out and grow when agitated — the "metaball" energy read.
+    const satAngle1 = now * 0.0009 + 1.1, satAngle2 = now * 0.0013 + 4.2;
+    const satDist = BASE_R * radiusMul * (0.5 + agitation * 0.6);
+    satellite1.setAttribute('cx', (CX + Math.cos(satAngle1) * satDist).toFixed(2));
+    satellite1.setAttribute('cy', (CY + Math.sin(satAngle1) * satDist).toFixed(2));
+    satellite1.setAttribute('r', (5 + agitation * 11).toFixed(2));
+    satellite2.setAttribute('cx', (CX + Math.cos(satAngle2) * satDist * 0.82).toFixed(2));
+    satellite2.setAttribute('cy', (CY + Math.sin(satAngle2) * satDist * 0.82).toFixed(2));
+    satellite2.setAttribute('r', (3.5 + agitation * 8).toFixed(2));
+
+    // Internal gradient — cool white/gray at rest, warm red wash under tension
+    // (soft "internal refraction" read).
+    gradStop1.setAttribute('stop-color', mixColor('#FFFFFF', '#FBEAE7', colorMix * 0.6));
+    gradStop2.setAttribute('stop-color', mixColor('#F4F2EE', '#F2D9D3', colorMix));
+    gradStop3.setAttribute('stop-color', mixColor('#D9D5CC', '#C05A4C', colorMix));
+    rimPath.setAttribute('stroke', mixColor('#1B1A17', '#B7311F', colorMix));
+
+    // Specular highlight (glass/liquid sheen), fixed upper-left, softens as
+    // agitation rises (energy scatters the sheen).
+    const specR = BASE_R * radiusMul;
+    specHighlight.setAttribute('cx', (CX - specR * 0.32).toFixed(2));
+    specHighlight.setAttribute('cy', (CY - specR * 0.40).toFixed(2));
+    specHighlight.setAttribute('rx', (specR * 0.30).toFixed(2));
+    specHighlight.setAttribute('ry', (specR * 0.19).toFixed(2));
+    specHighlight.setAttribute('opacity', Math.max(0.12, (0.55 - agitation * 0.25)).toFixed(2));
+
+    // Grounding shadow breathes gently with radius/impact
+    groundShadow.setAttribute('rx', (58 + (radiusMul - 1) * 40).toFixed(2));
+    groundShadow.setAttribute('opacity', (0.08 + glow * 0.05).toFixed(2));
+
+    // Impact ring flash
+    if (glow > 0.01) {
+      bubbleGlow.setAttribute('stroke-width', (glow * 9).toFixed(1));
+      bubbleGlow.setAttribute('opacity', (glow * 0.5).toFixed(2));
+      bubbleGlow.setAttribute('r', (BASE_R * (1 + glow * 0.65)).toFixed(1));
+    } else {
+      bubbleGlow.setAttribute('opacity', '0');
+      bubbleGlow.setAttribute('stroke-width', '0');
+    }
+
+    updateProgressStrip();
+    requestAnimationFrame(frame_);
+  }
+  requestAnimationFrame(frame_);
+
+  /* =========================================================
+     Initial debug monitor state
+     ========================================================= */
+  updateDebugMonitor('—', 'hover or drag a control', null);
+</script>
+
+</body>
+</html>
