@@ -1,5 +1,21 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (progress-strip fill alignment) + rise/fade atlas tool
+
+Stays at 1.0.0. User: "move the orange bar that fills inside the groove
+of the white bar its a bit below. show me how the sound rises and fades
+for every preset and every noise choice, with and without tail."
+
+- **UI bug:** the Main-page progress strip's orange fill SVG was
+  display:inline, sitting on the text baseline — rendered a few px below
+  the groove. Now display:block (+ overflow clip to the groove's rounded
+  ends): the orange sits exactly inside the white groove.
+- **New dev tool `DROP_Profiles`** (Source/Tools/RenderProfiles.cpp,
+  CMake target): offline-renders real processBlock() audio for every
+  factory preset (16) and every noiseType (7), tail CUT vs 0.70s — 46
+  renders, windowed-RMS trajectories as JSON. Used to produce the
+  "DROP Rise & Fade Atlas" visualization delivered to the user.
+
 ### Changed — 2026-09-20 (default tail 0.70s)
 
 Stays at 1.0.0. User request: "make default tail 0.7 sec." `tail`

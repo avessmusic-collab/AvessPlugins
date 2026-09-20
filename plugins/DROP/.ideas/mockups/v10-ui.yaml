@@ -909,3 +909,9 @@ tail_curve_slope_update:
   reason: "User: 'tail shouldnt have sustain. it sould be a slope. decaing' - same-day follow-up to tail_curve_on_graph."
   changes:
     - "Graph TAIL curve shape updated in lockstep with the DSP's final envelope form: pure dB-linear decaying slope (30dB across the window, no hold plateau) + cosine landing. Geometry/width mapping unchanged."
+
+progress_strip_fill_alignment:
+  date: 2026-09-20
+  reason: "User: 'move the orange bar that fills inside the groove of the white bar its a bit below'."
+  changes:
+    - "BUG: the progress strip's fill SVG was display:inline, so it sat on the text BASELINE inside the groove div - the orange fill rendered a few px below the groove. Fixed with #progressStrip svg { display: block; } plus overflow:hidden on the groove so the fill clips to the rounded ends."

@@ -163,3 +163,43 @@ target_compile_definitions(DROP_Tests
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
 )
+
+# ---------------------------------------------------------------------------
+# DROP_Profiles - offline rise/fade profile renderer (POST-1.0 dev tool,
+# 2026-09-20, user request: "show me how the sound rises and fades for every
+# preset and every noise choice, with and without tail"). Renders real
+# processBlock() audio for each configuration and prints windowed-RMS
+# trajectories as JSON to stdout; consumed by ad-hoc visualization pages.
+# Same link recipe as DROP_Tests above.
+#   cmake --build build --target DROP_Profiles
+#   ./build/plugins/DROP/DROP_Profiles > profiles.json
+# ---------------------------------------------------------------------------
+add_executable(DROP_Profiles EXCLUDE_FROM_ALL
+    Source/Tools/RenderProfiles.cpp
+    ${DROP_CORE_SOURCES}
+)
+target_include_directories(DROP_Profiles PRIVATE Source)
+target_link_libraries(DROP_Profiles
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra
+        DROP_UIResources
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(DROP_Profiles
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+)

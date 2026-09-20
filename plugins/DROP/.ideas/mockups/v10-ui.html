@@ -173,7 +173,15 @@
     position: absolute; left: 23.75rem; top: 22.5rem; width: 15rem; height: 0.75rem; border-radius: 999px;
     background: var(--body-bg);
     box-shadow: var(--neu-inset-dark-sm), var(--neu-inset-light-sm);
+    overflow: hidden;
   }
+  /* BUGFIX (2026-09-20, user: "move the orange bar that fills inside the
+     groove of the white bar its a bit below"): the fill SVG was
+     display:inline, so it sat on the TEXT BASELINE inside the groove div -
+     rendering the orange a few px below the groove. Block display pins it
+     exactly inside the groove; overflow:hidden above clips the fill to the
+     groove's rounded ends. */
+  #progressStrip svg { display: block; }
 
   /* ---------- Style / preset selector - dark inset screen ---------- */
   .style-nav { position: absolute; left: 24.375rem; top: 11.25rem; width: 13.75rem; height: 2.25rem;
