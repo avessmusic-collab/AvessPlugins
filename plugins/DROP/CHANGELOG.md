@@ -1,5 +1,24 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (the tail no longer depends on the NOISE macro)
+
+Stays at 1.0.0. User: "i have active tail and get no tail" (persisting
+after the transport-stop fix). Found configuration hole: every tail
+boost (delay/reverb sends and the frozen tail returns) was keyed to
+macroPercent[Noise] × the riser's rise curve — with the NOISE macro
+turned down/off (a completely normal way to run DROP on real music),
+the whole tail system collapsed back to the inaudible ~weight² path.
+The tail knob was active; the tail was structurally absent.
+
+- **Fix:** the wash now opens with the BUILD'S own curved progress —
+  the tail belongs to the whole build (music included); the riser rides
+  along in it. DELAY/REVERB macros remain the only gates (0% still
+  silences their module; curve-honesty/transparency contracts hold;
+  Idle/Peak/Impact byte-identical — progress is 0 there).
+- New DAW-reality scenario D (NOISE macro fully OFF): tail rings
+  identically to the defaults case (+100ms 0.0754 vs near-zero
+  pre-fix, failing by construction). 286 assertions, all passing.
+
 ### Fixed — 2026-09-20 (in-depth test suite: 3 real engine bugs found and fixed)
 
 Stays at 1.0.0. User: "make more tests, in depth." Eight new depth areas

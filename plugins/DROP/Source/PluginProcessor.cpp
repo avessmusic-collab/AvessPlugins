@@ -1445,12 +1445,17 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     const int64_t recoveryElapsedAtSegmentStart = (recoveryTotalSamples > 0)
         ? (recoveryTotalSamples - dropStateMachine.samplesUntilNextTransition()) : 0;
 
-    // POST-1.0 (2026-09-20 riser-sends round): computed BEFORE the frozen-
-    // return capture below so the tail can replay the riser's echoes at an
-    // audible level - see the send-boost comment at the delay/reverb
-    // send/return weights further down for the full rationale.
-    const float noiseSendLevel = macroPercent[(size_t) drop::BudgetModule::Noise]
-        * drop::NoiseModule::riseAmountForProgress(progress, noiseTensionParam->load() / 100.0f);
+    // POST-1.0 (2026-09-20 riser-sends round; REKEYED same day, user:
+    // "i have active tail and get no tail"): originally this level was
+    // macroPercent[Noise] x the riser's rise curve - which silently made
+    // the ENTIRE tail system depend on the NOISE macro. With the riser
+    // turned down/off (a completely normal way to use DROP on real music),
+    // sends and frozen returns collapsed back to the inaudible ~weight^2
+    // path: tail knob active, no tail. The wash now opens with the BUILD'S
+    // OWN curved progress - the tail belongs to the whole build (music
+    // included), the riser merely rides along in it. The DELAY/REVERB
+    // macros remain the (only, correct) gates.
+    const float buildSendLevel = progress;
 
     if (dropState == drop::DropState::Building)
     {
@@ -1466,9 +1471,9 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
         // with the tail slope.
         constexpr float kNoiseTailReturnScale = 0.5f;
         frozenDelayReturnWeight = juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
-            kNoiseTailReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
+            kNoiseTailReturnScale * buildSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
         frozenReverbReturnWeight = juce::jmax(weights.value[(size_t) drop::BudgetModule::Reverb],
-            kNoiseTailReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
+            kNoiseTailReturnScale * buildSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
     }
 
     // POST-1.0 REGRESSION FIX (2026-09-16, second pass - coordinator-reported
@@ -1524,7 +1529,7 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // documented Phase 3.4 transient-preservation regression). The richer
     // buffers also feed Recovery's frozen-return tail, so the riser's
     // echoes ring out after the drop.
-    // noiseSendLevel (computed above, before the frozen-return capture):
+    // buildSendLevel (computed above, before the frozen-return capture):
     // the riser's PROGRESSION x the user's NOISE macro - deliberately NOT
     // scaled by computeNoiseWeight()'s intensity/style level factors
     // (~0.15 typical): scaling by those left the send boost negligible
@@ -1543,13 +1548,13 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     constexpr float kNoiseReturnScale = 0.5f;
     const float delaySendWeight = inRecovery ? 0.0f
         : juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
-                     noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
+                     buildSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
     // Recovery delay return scaled by reverb availability (see the
     // kTailRingFeedback comment below - full when the delay ring IS the
     // tail, half when the reverb wash carries the body).
     const float delayReturnWeight = inRecovery ? ((1.0f - 0.5f * macroPercent[(size_t) drop::BudgetModule::Reverb]) * frozenDelayReturnWeight)
         : juce::jmax(weights.value[(size_t) drop::BudgetModule::Delay],
-                     kNoiseReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
+                     kNoiseReturnScale * buildSendLevel * macroPercent[(size_t) drop::BudgetModule::Delay]);
     // POST-1.0 (2026-09-20, user: "make all the fade curves way smoother.
     // like a normal sound would fade out"). DOCUMENTED SUPERSESSION of the
     // Recovery send==0 rule for the REVERB (the delay's stays 0): with the
@@ -1564,10 +1569,10 @@ void DROPAudioProcessor::processSegment(juce::AudioBuffer<float>& buffer, int st
     // window's end regardless of what fed the reverb.
     const float reverbSendWeight = inRecovery ? frozenReverbReturnWeight
         : juce::jmax(weights.value[(size_t) drop::BudgetModule::Reverb],
-                     noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
+                     buildSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
     const float reverbReturnWeight = inRecovery ? frozenReverbReturnWeight
         : juce::jmax(weights.value[(size_t) drop::BudgetModule::Reverb],
-                     kNoiseReturnScale * noiseSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
+                     kNoiseReturnScale * buildSendLevel * macroPercent[(size_t) drop::BudgetModule::Reverb]);
 
     // Stage 3 DSP Phase 3.4: ImpactEngine's coordination-drive values
     // (architecture.md: ImpactEngine "drives existing modules into a

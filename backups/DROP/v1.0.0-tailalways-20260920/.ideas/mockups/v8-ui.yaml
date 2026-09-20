@@ -1,0 +1,636 @@
+# v8 UI Design Specification
+# Plugin: DROP
+# Generated: 2026-09-14
+# v8 = v7 PLUS two changes requested after the user supplied a reference
+# image (plugins/DROP/.ideas/mockups/v8-reference-bubble.png — photoreal
+# iridescent soap bubbles: transparent membrane, thin-film rainbow swirls,
+# crisp specular highlights, a mid-burst frame with satellite droplets):
+# "change the blue colour, and the water blob i asked for in to
+# something like this." (1) RE-RENDERED the orb centerpiece: the v6/v7
+# 28-point soft-body PHYSICS SIMULATION is unchanged, but the surface now
+# renders as a transparent thin-film soap bubble — near-invisible glassy
+# fill (the recessed chamber shows through), 3 layered stroke copies of
+# the deformed path carrying a slowly-rotating cyan/magenta/gold/green
+# gradient (speed scales with tension/agitation), two deformation-tracking
+# specular highlights, and Impact is now a genuine POP (spring-driven
+# rupture flash, extra satellite mini-bubbles, torn-film shred fragments,
+# then the membrane reforms during Recovery) — see bubble_rendering_v8
+# below. (2) REPLACED the flat electric-blue accent with an iridescent
+# cyan/violet/magenta oil-film gradient system, applied consistently to
+# every arc/glow/progress-fill/LED/active-state across both pages (also
+# fixed several leftover pre-v6 flat-blue rgba() values that had survived
+# the v6 color pass uncaught) — see accent_system_v8 below. Knob and
+# bare-readout numerals stay neutral white for legibility, per explicit
+# direction. Everything else (Impact centering, 3D knob material, layout/
+# geometry, all 19 parameter bindings, the two-page structure, the motion
+# system) is reused VERBATIM from v7 — see v7-ui.yaml for that full spec;
+# this file restates the complete control/geometry table for standalone
+# readability. v1-v7 remain on disk, untouched, as design history.
+
+window:
+  width: 1000
+  height: 560
+  resizable: true
+  min_width: 800
+  min_height: 450
+  max_width: 1400
+  max_height: 790
+  scaling_model: "root-em-resize-observer"
+  base_root_font_size_px: 16
+
+colors:
+  # v8 CHANGE 2: flat electric-blue accent REPLACED by an iridescent oil-film
+  # gradient system. Charcoal panel/body palette (upper/lower zone, text)
+  # stays byte-identical — only the accent identity changed.
+  upper_zone_bg: "#17181B"                    # unchanged
+  lower_zone_bg: "#202226"                    # unchanged
+  lower_zone_top_highlight: "#2A2C31"         # unchanged
+  text_primary: "#E9EAED"                     # unchanged (already high contrast)
+  text_label: "#9DA0A8"                       # unchanged from v6/v7
+  text_label_dim: "#6E7076"                   # unchanged from v6/v7
+  accent_cyan: "#3FD3E0"                      # new — primary iridescent hue 1
+  accent_violet: "#A868D8"                    # new — gradient midpoint / flat-fallback color
+  accent_magenta: "#C64DBE"                   # new — primary iridescent hue 2
+  accent_gold: "#E0B84D"                      # new — used SPARINGLY (bubble film only, not general UI chrome)
+  accent: "#A868D8"                           # was #3B9BFF (flat blue) — now the violet midpoint, used only where a single flat color is unavoidable (e.g. curve-type-label text)
+  accent_dim: "#7A5A96"                       # was #2F6BAF
+  accent_glow_a: "rgba(63,211,224,0.5)"       # cyan glow half of every two-tone glow pair
+  accent_glow_b: "rgba(198,77,190,0.5)"       # magenta glow half of every two-tone glow pair
+  page_backdrop: "#D7D9DC"                    # test-HTML-only floating-panel backdrop, unchanged
+  numeral_policy: "Knob AND bare-readout (Tension/Chaos/Output) numerals both stay neutral white (var(--text-primary)) for legibility, per explicit direction ('Knob numerals/labels stay neutral white/gray') — extended to bare-readout numerals too for consistency (design judgment, documented here): the new accent lives in soft two-tone (cyan+magenta) text-shadow glows behind the numerals, never in the numeral color itself."
+
+typography: "unchanged from v3/v4"
+motion: "unchanged from v3/v4 — critically-damped spring integrator for continuous orb motion, cubic-bezier(0.34,1.56,0.64,1) for discrete UI feedback"
+
+# ---------------------------------------------------------------------------
+# CHANGE 1 — 3D DEPTH SYSTEM (new in v5)
+# ---------------------------------------------------------------------------
+depth_system:
+  philosophy: >
+    Single consistent light source from above. Every element is either
+    RAISED (knobs, the DROP button, the lower "deck") or RECESSED (the
+    upper "well", the tension-curve display, step-circles, the progress
+    strip track, the bare-readout number chips, the orb's chamber) —
+    never ambiguous. Depth communicated entirely through shadow/highlight
+    physics (contact + ambient shadow pairs, inset shadows, rim
+    highlights) — no fake perspective, no skeuomorphic ornamentation, text
+    stays perfectly flat/legible.
+  raised_elements:
+    knobs:
+      superseded_in_v7: "the v5/v6 single-layer radial-gradient cap description below is SUPERSEDED by knob_3d_material (see that section for the current two-layer outer-rim + inset-domed-face system) — kept here only as history of what v5/v6 shipped."
+      cap_gradient_v5_v6_history: "multi-stop radial-gradient(circle at 34% 23%, #3a3d44 0%, #2c2e33 25%, #212226 55%, #17181b 85%, #0f1012 100%) — simulates a domed cap lit from above (user feedback in v7: 'still read as flat shaded circles')"
+      rim_highlight_v5_v6_history: "radial-gradient(ellipse 60% 30% at 50% 9%, rgba(255,255,255,0.17), transparent 70%) layered as a second background — crisp bright catch-line along the top rim"
+      texture_v5_v6_history: "repeating-linear-gradient brushed texture at ~2% opacity, third background layer — kept extremely subtle, reads as matte, not noisy"
+      shadow: "v7: 0 2px 3px rgba(0,0,0,0.55) [tight contact shadow] + 0 14px 30px rgba(0,0,0,0.48) [wide soft ambient shadow] + inset 0 1px 0 rgba(255,255,255,0.12) [rim] + inset 0 -2px 3px rgba(0,0,0,0.4) [outer rim internal shade] — strengthened slightly from v5/v6 for a more physically substantial puck read"
+    drop_button:
+      idle: "thick raised pill — same contact+ambient shadow pairing as knobs, plus inset top rim highlight for a rounded-edge read"
+      pressed: "shadow collapses to a tight, low-opacity contact shadow only (ambient shadow removed); transform: translateY(2px) scale(0.97) — a genuine physical depression, not just a scale bounce"
+  recessed_elements:
+    upper_zone: "recessed well — a dark linear-gradient overlay (opacity 0.35 -> 0 over the top ~50px) sits just below the header, reading as a shadow cast into the recess by the panel's own top bezel"
+    tension_curve_display: "inset 0 2px 4px rgba(0,0,0,0.5) + inset 0 -1px 0 rgba(255,255,255,0.03), unchanged dark fill from v4"
+    step_circles: "flipped from v4's raised-chip look to a true recessed well: radial-gradient(circle at 50% 40%, #16171a, #0e0f11) fill + inset 0 3px 6px rgba(0,0,0,0.7); the active state's blue glow now reads as LED light spilling out of the well (inset blue glow + outer glow combined) rather than a raised highlight"
+    progress_strip: "wrapped in a thin recessed track (dark fill + inset shadow) instead of a bare stroked rect"
+    bare_readout_chips: "Tension/Chaos/Output/Impact-mirror numerals now sit inside a small recessed panel (dark fill + inset shadow + rounded corners), not bare floating text — padding added via box-sizing:border-box so the control's already-validated outer bounding box is unchanged"
+    orb_chamber: "a dark radial-gradient well (#0c0d0f center -> transparent) plus inset shadow sits behind the orb (stronger shadow at the top interior edge, faint highlight at the bottom — consistent with the top-down light source), reading as a recessed glass chamber the orb floats inside"
+  panel_seam_emboss: >
+    The curved notch boundary between zones now renders as two offset
+    strokes instead of one: a dark crease (rgba(0,0,0,0.5), drawn first)
+    and a light catch-line 1.5px below it (rgba(255,255,255,0.20), drawn
+    second) — a real emboss read, not a flat divider line.
+
+# ---------------------------------------------------------------------------
+# CHANGE 2 — TWO PAGES (restored, per explicit user direction)
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# v6 CHANGE 1 — KNOB VALUE-ARC CONCENTRICITY FIX
+# ---------------------------------------------------------------------------
+knob_arc_fix:
+  bug_report: >
+    User: "blue arches around knobs are all out of place" — every knob's
+    blue value arc rendered offset up-and-left of its cap, visible clearly
+    on Main's large Intensity/Dry-Wet knobs and more subtly on the
+    macro grid.
+  root_cause: >
+    .knob3-arc (the arc SVG overlay) was an absolutely-positioned <svg>
+    with `inset: -10%` and NO explicit width/height attributes or CSS
+    width/height. An <svg> used this way is a CSS "replaced element" —
+    per the CSS2.1 absolutely-positioned-replaced-element algorithm,
+    when width/height compute to 'auto' (which happens here, since only
+    the four inset offsets were specified, not width/height directly),
+    browsers fall back to the element's intrinsic size / viewBox-derived
+    aspect ratio rather than reliably "stretching" to fill the inset box
+    the way a normal (non-replaced) element would. This is a well-known,
+    historically UA-inconsistent CSS corner case — exactly why the arc
+    read as "offset" rather than a clean, predictable transform error.
+  fix: >
+    Replaced the inset-based sizing with explicit percentage width/height
+    (120% each — no longer 'auto', so the replaced-element special case
+    no longer applies) plus transform-based centering: `top:50%; left:50%;
+    transform: translate(-50%,-50%)`. This technique has zero UA
+    ambiguity and is scale-invariant by construction (percentages and
+    transform-percentages both resolve against/relative-to the same
+    element's own box at every root-em scale factor). Also added explicit
+    width="100%" height="100%" SVG attributes at element-creation time in
+    JS as a belt-and-suspenders redundancy.
+  verification_proof: >
+    Algebraic proof that arc-center == cap-center for every knob size W
+    (all knob caps are square, W x W, explicit inline CSS):
+      top:50% -> arc box top-left.y (pre-transform) = 0.5W
+      left:50% -> arc box top-left.x (pre-transform) = 0.5W
+      width:120%/height:120% -> arc box size = 1.2W x 1.2W (resolves
+        cleanly against the W x W containing block — non-auto, no
+        replaced-element ambiguity)
+      transform: translate(-50%,-50%) shifts by -50% of the ARC's OWN
+        box size (1.2W), i.e. -0.6W in x and y
+      final arc box top-left = (0.5W-0.6W, 0.5W-0.6W) = (-0.1W, -0.1W)
+      final arc box center = (-0.1W+0.6W, -0.1W+0.6W) = (0.5W, 0.5W)
+      cap center (by definition) = (0.5W, 0.5W)
+      => offset = (0, 0) for every W, at every scale.
+  verification_numbers:
+    - { knob: "Intensity (Main)",        cap_px: 200, arc_box_px: 240.0, cap_center: [100.0, 100.0], arc_center: [100.0, 100.0], offset_px: [0.0, 0.0] }
+    - { knob: "Dry/Wet (Main)",          cap_px: 200, arc_box_px: 240.0, cap_center: [100.0, 100.0], arc_center: [100.0, 100.0], offset_px: [0.0, 0.0] }
+    - { knob: "Impact (Advanced)",       cap_px: 112, arc_box_px: 134.4, cap_center: [56.0, 56.0],   arc_center: [56.0, 56.0],   offset_px: [0.0, 0.0] }
+    - { knob: "Macro knobs x10 (Advanced)", cap_px: 56, arc_box_px: 67.2, cap_center: [28.0, 28.0],  arc_center: [28.0, 28.0],   offset_px: [0.0, 0.0] }
+    - { scale_check: "root-em ResizeObserver scale factor", tested: [0.75, 1.0, 1.5], result: "offset_px: [0.0, 0.0] at every scale — holds by construction, not just at base size" }
+
+# ---------------------------------------------------------------------------
+# v6 CHANGE 2 — LIQUID BLOB SOFT-BODY PHYSICS (replaces the wireframe orb)
+# ---------------------------------------------------------------------------
+liquid_blob_physics:
+  summary: >
+    28 surface points arranged around the blob's center, each point
+    independently spring-anchored to a shared radius target AND coupled
+    to its two immediate neighbors via a discrete Laplacian term — this
+    coupling is what makes a poke at one point ripple around the entire
+    membrane instead of just wobbling that one point in isolation. This
+    is the key structural difference from the v3-v5 wireframe loops
+    (which had no point-to-point coupling at all).
+  point_count: 28
+  base_radius_px: 56
+  per_point_spring: { stiffness: 70, damping: 9 }
+  neighbor_coupling_strength: 20
+  idle_sloshing: "two rotating low-order sine harmonics (order 1 and 2) biasing each point's target radius by angle — reads as a slow, continuous slosh rather than a static resting shape"
+  audio_level_pokes: "periodic randomized impulses applied to a small angular neighborhood (cosine falloff, +/-4 points), frequency interval 220ms (high agitation) to 900ms (idle) and magnitude both scale with the current agitation spring value — simulates audio-reactive surface disturbance without executing any real DSP"
+  volume_conservation: "soft/approximate: each frame, the average point radius is nudged 2.5% of the way back toward the target base radius — keeps overall size roughly constant over time without erasing the local squash-one-side/bulge-the-other asymmetry a real poke produces (a rigorous incompressible-fluid solve was judged unnecessary for a UI mockup)"
+  phase_behavior:
+    idle: "agitation target 0.15 (gentle continuous life, not static), radius target 1.0x — UNCHANGED from v6/v7"
+    building: "agitation ramps 0.15 -> ~0.9 with progress * (intensity-weighted), radius grows slightly to 1.10x, internal color mix ramps with progress * tension — UNCHANGED"
+    peak: "agitation 1.0 (max), radius 1.12x, color mix 0.9 — UNCHANGED"
+    vacuum: "radius target collapses to 0.22x (tight trembling droplet); agitation INCREASED (0.5->0.85) for visible high-frequency trembling — UNCHANGED, still happens 'before the pop' exactly as requested"
+    impact: "v8: now a genuine POP, not just a splash. Same underlying physics edge-trigger as v6/v7 (radius spring target spikes to up to 2.1x with a loose/overshooting spring, 6 strong random pokes hit the body's own surface points for an asymmetric burst) PLUS three new v8 additions fired at the same phase-entry instant: a one-shot popFlashSpring impulse (value snapped to 1, spring-decays smoothly back to 0 — drives the rupture flash + film opacity dip, see bubble_rendering_v8.pop_sequence below), 8 satellite droplets (was 6) now rendered as mini bubbles, and 3 short-lived torn-film 'shred' line fragments."
+    recovery: "agitation and radius decay back to idle levels via the same spring damping; popFlash also continues decaying to 0 across this phase, so the membrane visibly 'reforms' as the flash fades — no special-cased reform logic needed, it falls out of the existing spring physics"
+  satellite_droplets:
+    max_count: 8   # was 6 — bumped for a fuller spray, closer to the reference's droplet density
+    physics: "initial outward velocity + slight upward bias, gravity 130px/s^2, velocity drag ~1.4%/frame, radius/opacity fade via a life timer — UNCHANGED physics"
+    rendering_v8: "now rendered as tiny BUBBLES rather than solid dots — fill=url(#bubbleGlassGrad) (same near-transparent glassy fill as the main body) + a thin 1px stroke=url(#bubbleIrisGradA) (the same rotating iridescent gradient as the main rim) — reads as fragments of the same film, not colored dust"
+    merge_behavior: "a droplet deactivates (opacity->0, 'merges' back into the body) once its distance from center falls below 90% of the current body radius, OR its life timer expires — whichever comes first — UNCHANGED"
+  shred_fragments_v8:
+    max_count: 3
+    description: "short torn-film wisps — new in v8, selling the membrane rupture beyond the round droplets, per the reference's mid-burst frame showing thin trailing highlight shapes near the tear"
+    rendering: "3 pre-created SVG <line> elements, stroke=url(#bubbleIrisGradA), stroke-linecap round; each spawned at a random point on the pre-pop boundary with outward velocity + slight upward bias, length shrinks with remaining life, fades ~1.6x faster than the droplets (short-lived by design, a quick torn-wisp read rather than a lingering fragment)"
+  performance: "single requestAnimationFrame loop shared with the rest of the UI (phase chip, progress strip, curve redraw); ~28-point path rebuild (reused for all 3 iridescent stroke copies, not recomputed 3x) + a handful of trivial per-point/per-droplet/per-shred arithmetic operations per frame — well within budget for a UI mockup, no physics library, no WebGL, no offscreen canvas"
+
+# ---------------------------------------------------------------------------
+# v8 CHANGE 1 — IRIDESCENT SOAP-BUBBLE RENDERING (physics unchanged, see liquid_blob_physics above)
+# ---------------------------------------------------------------------------
+bubble_rendering_v8:
+  reference: "plugins/DROP/.ideas/mockups/v8-reference-bubble.png — photoreal soap bubbles: transparent membrane, thin-film rainbow swirl concentrated at the rim (magenta/cyan/gold/green, asymmetric/irregular distribution, not a uniform rainbow ring), crisp white specular highlight(s), slight asymmetric deformation, and a mid-burst frame with several small satellite droplets near the rupture point."
+  transparent_body: "the main path's fill changed from an opaque-ish 3-stop radial gradient (v6/v7) to #bubbleGlassGrad — a radial gradient with stop-opacity 0.05-0.16 throughout (center ~0.05, thickening slightly toward the rim to ~0.16), cool dark/refractive tint (#0c141c/#18242f) — the recessed glass chamber behind the orb visibly shows through the center, reading as a thin film rather than a solid ball."
+  iridescent_rim:
+    technique: "3 stroke-only <path> copies of the SAME 'd' string as the main body (set every frame, so they track every deformation automatically — never a static overlay): blobIrisOuter (stroke-width 7, opacity ~0.22, blurred 2px — the soft outer color bleed), blobIrisMid (stroke-width 4, opacity ~0.5 — the visible color band), blobIrisRim (stroke-width 1.5, opacity ~0.85 — the crisp edge line). Outer uses gradient B, mid+rim share gradient A."
+    gradients: "two 5-stop linearGradients (magenta -> cyan -> gold -> green -> magenta, looping seamlessly for clean rotation): bubbleIrisGradA drives the rim+mid layers, bubbleIrisGradB (different stop order/phase) drives the outer blurred layer independently, for a richer layered swirl than a single rotating gradient would give."
+    animation: "gradientTransform 'rotate(angle 0.5 0.5)' updated every frame — angleA advances ~14-124deg/s, angleB advances the opposite direction ~10-95deg/s, BOTH scaling with agitation and colorMix (tension-driven) — satisfies 'faster iridescent swirl toward the drop' directly, and reads as genuinely alive/swirling even at idle (slow, ~14-16deg/s) rather than static."
+  specular_highlights: "TWO now (was one) — blobSpecular (main, upper-left, larger, angle -0.85rad) and blobSpecular2 (smaller, secondary, angle 2.05rad, lower on the bubble) — both use the same 'sample actual point radius at a fixed light-source angle via linear interpolation between the two nearest surface points' technique from v6/v7, so both visibly ride the deforming surface. Matches the reference's double-highlight glassy look."
+  pop_sequence:
+    trigger: "same phase-entry edge detection as v6/v7's spawnSplash() — fires once when drop.phase transitions into 'impact'"
+    popFlashSpring: "a Spring instance whose target is always 0; at pop-instant its .value is snapped to 1.0 (an impulse, not a target change) and its own critically-damped physics smoothly decays it back to 0 over the following few hundred ms — this is what makes the rupture read as 'click-free... no abrupt frame jumps' per the explicit requirement, since every visual driven by popFlash is a continuous spring curve, never a binary toggle"
+    body_and_film_dip: "blobPath fill-opacity and all 3 iris-stroke opacities are multiplied by (1 - popFlash*0.88) / (1 - popFlash*0.7) respectively — the membrane visibly dims/ruptures at the flash peak, then smoothly recovers as popFlash decays, reading as 'reform during Recovery'"
+    popFlashRing: "a white ring (circle, stroke-only) whose radius/stroke-width/opacity all scale with popFlash — a bright brief flash coincident with the rupture"
+    concurrent_spawns: "spawnSplash() (8 mini-bubble droplets) and spawnShreds() (3 torn-film line fragments) both fire at the same instant as the popFlash impulse, plus the existing 6-poke body burst — all four effects landing together is what sells the 'pop' as one coherent event rather than several disconnected animations"
+  vacuum_unchanged: "confirmed unchanged from v6/v7 — still sucks the bubble into a small (0.22x) trembling droplet before the pop sequence, satisfying 'vacuum still sucks it into a small trembling droplet before the pop' exactly as specified"
+
+# ---------------------------------------------------------------------------
+# v8 CHANGE 2 — IRIDESCENT ACCENT SYSTEM (replaces flat electric blue everywhere)
+# ---------------------------------------------------------------------------
+accent_system_v8:
+  shared_gradient: "a single <linearGradient id=\"iridAccentGrad\"> (cyan #3FD3E0 -> soft blue-violet #7FA8E0 -> violet #A868D8 -> magenta #C64DBE), defined once in a 0x0 hidden <svg> near the top of the document and referenced via url(#iridAccentGrad) from any SVG element on the page — including the dynamically-created per-knob value-arc SVGs (fragment-ID references resolve across all inline SVGs sharing the same HTML document's ID space, standard behavior in every modern browser)."
+  converted_to_gradient_fill_or_stroke: [knob value-arc fill (.arc-fill), progress-strip fill, progress-strip drop-marker stroke, tension-curve travelling dot fill]
+  converted_to_two_tone_glow: [knob value-arc drop-shadow filter, drop-marker drop-shadow filter, curve-dot drop-shadow filter, phase-LED box-shadow, step-circle active-state box-shadow, DROP-trigger idle + armed box-shadow glows, resize-grip corner affordance]
+  leftover_bug_fixed: "the v6 color pass updated the --accent/--accent-dim/--accent-glow CSS custom properties but missed FOUR hardcoded rgba(74,158,255,...) values (the pre-v6 flat blue) that had been typed directly instead of referencing the variables: step-circle active glow (x2), DROP-trigger idle glow, DROP-trigger armed glow. All four are fixed in this same v8 pass (found via a full-file grep audit, not just spot-checked) and converted to the same two-tone cyan+magenta treatment as everything else."
+  numerals_stay_neutral: "knob3-value AND bare-value both use var(--text-primary) (white) for the numeral color itself — per explicit direction for knob numerals, extended to bare-readout numerals too for consistency (documented design judgment) — the accent only appears as a soft two-tone (cyan+magenta) text-shadow glow behind the numeral, never as the text color"
+  gold_usage: "reserved for the bubble's own iridescent film gradients (bubbleIrisGradA/B) only — NOT used anywhere in the general UI chrome (arcs/progress/LEDs/glows), per the explicit 'gold sparingly... not a rainbow explosion' direction"
+  palette_restraint: "every general-UI accent use is a 2-color (cyan+magenta) or 4-stop cyan-violet-magenta gradient/glow pair — never more than 2 hues in any single UI element outside the bubble itself, keeping the accent system legible/premium rather than a full rainbow"
+
+# ---------------------------------------------------------------------------
+# v7 CHANGE 1 — IMPACT KNOB CENTERING AUDIT
+# ---------------------------------------------------------------------------
+knob_centering_audit:
+  bug_report: 'User (verbatim): "impact knob is out of center."'
+  candidates_investigated:
+    - candidate: "(a) Cap not vertically centered inside its arc ring — arc centers on the WRAP (which also contains the label) instead of on the cap itself, so the cap rides high/low within the ring."
+      verdict: "NOT A BUG in this implementation — re-audited and confirmed. .knob3-arc is appended as a child of .knob3 (the cap div itself), NOT .knob3-wrap, and its CSS (top:50%;left:50%;width:120%;height:120%;transform:translate(-50%,-50%), fixed in v6) resolves entirely against .knob3's own box. The label lives in a sibling <span> outside .knob3, so it cannot affect the arc's centering. Re-ran the v6 algebraic proof for all 4 knob tiers (200px/112px/56px caps) — offset is still (0,0) at every size. This was thoroughly fixed in v6 and remains correct; it was not the cause of the v7 report."
+      offset_px: [0.0, 0.0]
+    - candidate: "(b) Knob not horizontally centered within its column/gap between the Tension/Chaos chips and the tension-curve box."
+      verdict: "CONFIRMED REAL BUG — this was the actual cause. See before/after below."
+    - candidate: "(c) The IMPACT % label not centered under the cap."
+      verdict: "NOT AN INDEPENDENT BUG — the label is centered via text-align:center on .knob3-wrap, resolving against the SAME wrap width the cap's margin:0 auto centering also resolves against, so label and cap always share one center by construction. Once (b) is fixed (the wrap itself is correctly placed), the label is automatically correctly centered under the cap too — confirmed, no separate fix needed."
+  root_cause_b: >
+    Impact's wrap box was placed at x=470 (width 130, box-center 535px).
+    The true midpoint of the gap between the left column (Tension/Chaos,
+    ending at x=266) and the right column (tension-curve box, starting at
+    x=620) is (266+620)/2 = 443px. 535 - 443 = 92px — the knob sat visibly
+    crowded toward the curve side rather than centered in the gap, which
+    is exactly what the user perceived as "out of center."
+  fix_pass1: "Moved the wrap's left edge from x=470 to x=378 (box-center now exactly 443px, the midpoint of the two neighboring columns, box unchanged at 130x150)."
+  fix_pass1_before_after:
+    before: { wrap_left_px: 470, box_center_px: 535, gap_to_left_column_px: 204, gap_to_right_column_px: 20, symmetric: false }
+    after:  { wrap_left_px: 378, box_center_px: 443, gap_to_left_column_px: 112, gap_to_right_column_px: 112, symmetric: true }
+  fix_pass2_user_clarification: >
+    User (verbatim, after seeing pass 1): "impact is still not in the
+    center cnter it with the groove you ve made in the line of the ui" —
+    clarifying that the intended centering anchor is the SEAM NOTCH's
+    dip (the "groove" in the zone-divider line), not the midpoint between
+    the neighboring columns. Pass 1's x=443 was the wrong reference point
+    entirely, not just a wrong number.
+  notch_center_verification: >
+    Computed the notch's true dip center algebraically from the seam SVG
+    path (M0,300 L370,300 C430,300 435,344 500,344 C565,344 570,300
+    630,300 L1000,300): the point (500,344) is a shared ON-CURVE endpoint
+    of both cubic bezier segments (not merely a control point), and the
+    two segments are exactly mirror-symmetric around it — left span
+    370->500 = 130px, right span 500->630 = 130px; control-point offsets
+    60px/65px from each curve's start, mirrored exactly (630-570=60,
+    630-565=65). This proves the notch's deepest/center point is exactly
+    x=500, not assumed.
+  main_page_center_axis_audit: >
+    Confirmed every Main-page element already shares this exact x=500
+    center: orbWrap (left 400, width 200, center 500), style-nav (left
+    390, width 220, center 500), trigger-btn/DROP (left 380, width 240,
+    center 500), progressStrip (left 400, width 200, center 500),
+    phaseChip (left 420, width 160, center 500) — all OK, confirming
+    x=500 is genuinely the UI's shared center axis across both pages, not
+    an Advanced-page-only concern.
+  fix_pass2_before_after:
+    before: { wrap_left_px: 378, box_center_px: 443, offset_from_notch_px: 57 }
+    after:  { wrap_left_px: 435, box_center_px: 500, offset_from_notch_px: 0 }
+  final_gaps: { gap_to_left_column_px: 169, gap_to_right_column_px: 55, symmetric: false, note: "intentionally asymmetric — x=500 is not the columns' midpoint, it is the UI's actual shared center axis (the notch/orb/style-selector/DROP-button column); confirmed via the layout validator that this produces zero overlaps (55px and 169px gaps both comfortably exceed the 10px minimum)" }
+  verification: "cap-center == notch-dip-center == every Main-page element's center, all exactly x=500 — computed and confirmed via the layout validator, not just asserted."
+
+# ---------------------------------------------------------------------------
+# v7 CHANGE 2 — TRULY 3D KNOB MATERIAL
+# ---------------------------------------------------------------------------
+knob_3d_material:
+  bug_report: 'User (verbatim): "make the knobs to be 3 dimentional." Prior v5/v6 caps used a single radial-gradient background layer — read as a flat shaded circle rather than a physical object, despite the shadow/highlight tokens already present.'
+  reference_check: "Re-examined plugins/DROP/.ideas/mockups/v3-reference.png specifically for knob material: its knobs (DELAY, MIX, FEEDBACK, AMOUNT, etc.) show a distinct darker OUTER ring/body with a lighter, subtly domed INNER face, a strong vertical light gradient (lighter top, fading to near-black bottom), and a thin bright catch-line right at the top rim edge — unmistakably a two-layer physical puck, not a single flat gradient."
+  structure: "Two CSS layers instead of one, applied identically to every knob tier via percentage-based sizing (scales proportionally at 200px/112px/56px alike, no per-size overrides needed):"
+  outer_layer_knob3:
+    role: "the visible cylindrical side-wall/rim band — the 'height' of the physical puck"
+    background: "radial-gradient(circle at 50% 30%, #303236 0%, #16171a 72%)"
+    shadow: "var(--knob-contact-shadow) [tight, 0 2px 3px rgba(0,0,0,0.55)] + var(--knob-ambient-shadow) [wide, 0 14px 30px rgba(0,0,0,0.48)] + var(--knob-rim) [inset top highlight] + var(--knob-internal-shade) [inset bottom shade]"
+  inset_layer_knob3_before:
+    role: "the domed TOP FACE — a ::before pseudo-element inset 9% inside the outer rim (percentage inset, so the rim band's width scales proportionally at every cap size)"
+    background_layers_top_to_bottom_paint_order:
+      - "radial-gradient(ellipse 56% 24% at 50% 17%, rgba(255,255,255,0.30) 0%, transparent 68%) — the soft elliptical sheen near the top, deliberately blurred/soft via a wide ellipse + gradual falloff rather than a hard specular dot"
+      - "repeating-linear-gradient brushed texture, unchanged from v5/v6 (~2.5% opacity)"
+      - "linear-gradient(180deg, #4c4f56 0%, #35373c 28%, #202226 60%, #0d0e10 100%) — the strong single-top-light-source VERTICAL gradient (replaces the old radial 'spotlight' gradient, which read as flat because its falloff was circular/directionless rather than reading as a light source from above)"
+    bevel_shadow: "inset 0 1px 1px rgba(255,255,255,0.22) [inner highlight where the face meets the rim] + inset 0 -2px 4px rgba(0,0,0,0.55) [inner shadow at the same boundary] — together these read as a real beveled edge, not a flat painted circle"
+  numeral: "unchanged — .knob3-value remains an absolutely-positioned, flex-centered overlay on top of both layers (paints after ::before in DOM/paint order), still reads as engraved-centered"
+  arc_unaffected: "confirmed the ::before face layer does not change .knob3's own box size (it's an inset overlay, not a layout participant), so the v6 arc-concentricity fix is completely unaffected by this change — re-verified the (0,0) offset proof still holds"
+  scale_proportionality: "every measurement in both layers is a percentage (inset 9%, gradient stop percentages, ellipse size percentages) — the identical CSS rule produces a proportionally-scaled identical effect at 200px (Intensity/Dry-Wet), 112px (Impact), and 56px (macro knobs) alike, and continues to scale correctly with the root-em ResizeObserver window-scaling factor, with no per-size CSS overrides required"
+
+page_navigation:
+  style: "reference-style 2-segment sliding pill (same mechanism as v3/v4's 3-way trigger-mode pill, generalized to 2 segments), spring-overshoot indicator transition"
+  choices: ["MAIN", "ADVANCED"]
+  position: { x: 400, y: 16, width: 200, height: 28 }   # sits in the shared header row (y0-56), centered
+  parameter: null   # view-state only, matches architecture.md's non-parameter UI-state category
+  shared_chrome: "Both pages render the identical header, panel background (upper/lower zone gradients + embossed seam), and vignette — only the content-layer's children swap, so switching pages feels like navigating one physical device, not loading a different skin."
+
+pages:
+  - id: main
+    label: "MAIN"
+    description: >
+      The showcase page: orb centerpiece (dense crisp loops, v4 fix #1),
+      phase LED module (v4 fix #3), the STYLE chevron selector sitting in
+      the seam notch, the big DROP trigger + progress strip, Build Length
+      step-circles (kept here since the page has ample room without the
+      Advanced-only controls — stays uncluttered per the user's
+      allowance), and exactly two large showcase-grade 3D knobs,
+      INTENSITY and DRY/WET, flanking the orb left/right.
+    controls:
+      - id: buildLength
+        type: combo-box
+        display_variant: recessed-glow-step-circles
+        parameter: "buildLength"
+        position: { x: 40, y: 112 }
+        size: { width: 252, height: 58 }
+      - id: intensity
+        type: rotary-knob
+        display_variant: dark-rim-lit-hero-3d
+        parameter: "intensity"
+        range: [0.0, 100.0]
+        default: 50.0
+        description: "Large showcase knob, ~200px cap, flanks the orb on the left."
+        position: { x: 66, y: 200 }
+        size: { width: 220, height: 300 }
+      - id: dryWet
+        type: rotary-knob
+        display_variant: dark-rim-lit-hero-3d
+        parameter: "dryWet"
+        range: [0.0, 100.0]
+        default: 100.0
+        description: "Mirrors Intensity on the right of the orb."
+        position: { x: 714, y: 200 }
+        size: { width: 220, height: 300 }
+      - id: style
+        type: combo-box
+        display_variant: chevron-nav
+        parameter: "style"
+        position: { x: 390, y: 306 }
+        size: { width: 220, height: 36 }
+      - id: trigger
+        type: button
+        display_variant: raised-glow-pill-3d
+        parameter: "trigger"
+        parameter_type: bool
+        momentary: true
+        position: { x: 380, y: 352 }
+        size: { width: 240, height: 54 }
+    special_elements:
+      - id: liquid_blob
+        type: audio-reactive-iridescent-soap-bubble
+        description: >
+          v8 RE-RENDERED (physics unchanged from v6/v7): a transparent
+          thin-film soap bubble — the same 28-point soft-body simulation
+          now renders as a near-invisible glassy body with a slowly
+          rotating cyan/magenta/gold/green iridescent rim, two
+          deformation-tracking specular highlights, and a genuine POP on
+          Impact (rupture flash + mini-bubble droplets + torn-film shreds,
+          reforming during Recovery). See bubble_rendering_v8 above for
+          the full rendering spec and liquid_blob_physics for the
+          unchanged underlying simulation. Same position/size as always —
+          floats in the identical recessed glass chamber
+          (#orbWrap::before, CSS, byte-identical to v5-v7).
+        position: { x: 400, y: 96 }
+        size: { width: 200, height: 200 }
+        renamed_from: liquid_orb   # v3-v5 id, kept here for traceability
+      - id: phase_readout
+        type: readout
+        description: "Identical to v4 fix #3 (LED-dot status pill)."
+        position: { x: 420, y: 70 }
+        size: { width: 160, height: 18 }
+      - id: progress_strip
+        type: phase-progress-strip
+        display_variant: recessed-track
+        position: { x: 400, y: 416 }
+        size: { width: 200, height: 10 }
+    vertical_labels:
+      - { id: buildLabel, text: "BUILD", position: { x: 16, y: 90, width: 10, height: 160 } }
+      - { id: mixLabel, text: "MIX", position: { x: 974, y: 90, width: 10, height: 160 } }
+
+  - id: advanced
+    label: "ADVANCED"
+    description: >
+      Everything else, in the same reference language. Rebalanced TWICE
+      after user review: pass 1 spread content into 3 stacked rows (fixed
+      the original top-heavy/bottom-cramped layout); pass 2 (this one)
+      restructured into the coordinator's explicit final geometry — an
+      upper recessed well read as two balanced columns (not a 3-row
+      stack), and a true 2x5 grid for the module bank instead of one
+      cramped row of 10.
+    controls:
+      - id: triggerMode
+        type: segmented-toggle
+        display_variant: pill-3way
+        parameter: null   # non-APVTS UI state, still emits a message
+        description: "Upper well, left column, top."
+        position: { x: 40, y: 80 }
+        size: { width: 248, height: 32 }
+        zone: upper_well_left
+      - id: tension
+        type: bare-numeric-readout
+        display_variant: recessed-chip
+        parameter: "tension"
+        description: "Upper well, left column, below the pill."
+        position: { x: 40, y: 150 }
+        size: { width: 108, height: 56 }
+        zone: upper_well_left
+      - id: chaos
+        type: bare-numeric-readout
+        display_variant: recessed-chip
+        parameter: "chaos"
+        description: "Upper well, left column, beside Tension."
+        position: { x: 158, y: 150 }
+        size: { width: 108, height: 56 }
+        zone: upper_well_left
+      - id: impact
+        type: rotary-knob
+        display_variant: dark-rim-lit-hero-3d
+        parameter: "impact"
+        description: >
+          Upper well, CENTER GAP. SUPERSEDED positioning fix (still v7,
+          in-place, per explicit user clarification): the user's intended
+          centering anchor is the SEAM NOTCH's dip (the groove in the
+          zone-divider line), not the midpoint between the neighboring
+          columns. Verified the notch's true dip center algebraically from
+          the seam SVG path's bezier control points (symmetric: 130px
+          spans and mirrored 60px/65px control offsets on both sides of
+          x=500 — see knob_centering_audit below) — it is exactly x=500,
+          matching the shared center axis every Main-page element (orb,
+          style-selector, DROP button, progress strip, phase chip) already
+          uses. Impact's box-center is now exactly x=500 (wrap_left=435,
+          width=130). This makes the gaps to its two neighbors
+          intentionally ASYMMETRIC (169px to Tension/Chaos, 55px to the
+          curve box) — that is correct and expected, since x=500 is not
+          the midpoint of x40-266/x620-920, it is the UI's actual shared
+          center axis.
+        position: { x: 435, y: 100 }
+        size: { width: 130, height: 150 }
+        zone: upper_well_center
+        center_x: 500   # matches the seam notch dip and every Main-page element's center
+      - id: filter
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "filter"
+        position: { x: 168, y: 320 }
+        size: { width: 60, height: 72 }   # TRUE rendered height, see box_model_audit below (was nominal 84, incorrectly taller than actual content)
+        zone: lower_deck_grid
+        grid: { row: 1, col: 1 }
+      - id: width
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "width"
+        position: { x: 284, y: 320 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 1, col: 2 }
+      - id: pitch
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "pitch"
+        position: { x: 400, y: 320 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 1, col: 3 }
+      - id: gate
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "gate"
+        position: { x: 516, y: 320 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 1, col: 4 }
+      - id: stutter
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "stutter"
+        position: { x: 632, y: 320 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 1, col: 5 }
+      - id: delay
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "delay"
+        position: { x: 168, y: 415 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 2, col: 1 }
+      - id: reverb
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "reverb"
+        position: { x: 284, y: 415 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 2, col: 2 }
+      - id: distortion
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "distortion"
+        position: { x: 400, y: 415 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 2, col: 3 }
+      - id: digital
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "digital"
+        position: { x: 516, y: 415 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 2, col: 4 }
+      - id: noise
+        type: rotary-knob
+        display_variant: dark-rim-lit-small-3d
+        parameter: "noise"
+        position: { x: 632, y: 415 }
+        size: { width: 60, height: 72 }
+        zone: lower_deck_grid
+        grid: { row: 2, col: 5 }
+      - id: output
+        type: bare-numeric-readout
+        display_variant: recessed-chip
+        parameter: "output"
+        description: "Lower deck, large readout chip at x790-950, vertically centered in the deck (~y370) — well clear of the bottom-right panel corner and the test-harness-only debug monitor. Box-model audit: true rendered height ~80px (see box_model_audit below) vs. this nominal 90px box — already safe, no reposition needed."
+        position: { x: 790, y: 325 }
+        size: { width: 160, height: 90 }
+        zone: lower_deck_right
+    box_model_audit:
+      trigger: >
+        User review found the lower-deck macro grid's row 2 (delay/reverb/
+        distortion/digital/noise) rendering with labels at/clipped by the
+        panel's bottom edge, ~60px lower than the validator's nominal
+        84px-tall box predicted. Root cause: the validator was checking a
+        nominal design box (position + size fields), not the TRUE rendered
+        height of the actual DOM element (knob cap + margin + label text
+        line, per the real CSS), which for these small knobs turned out
+        different from the assumed 84px. Audited every Advanced-page
+        element's real CSS box model instead of guessing.
+      methodology: >
+        For each element type, computed true rendered height as:
+        knob-cap-height (explicit CSS width/height, exact) + label
+        margin-top (explicit CSS, exact) + label line-box height
+        (font-size * conservative 1.4 line-height multiplier, since no
+        explicit line-height is set and this can't be measured in-browser
+        in this environment — no node/browser automation available, so a
+        deliberately conservative overestimate was used rather than
+        risking another under-estimate).
+      grid_knobs:
+        cap_height_px: 56          # 3.5rem, explicit CSS on .knob3
+        label_margin_top_px: 4.8   # 0.3rem, explicit CSS on .knob3-label-small
+        label_font_size_px: 8      # 0.5rem
+        label_line_height_estimate_px: 11.2   # 8 * 1.4 conservative multiplier
+        true_rendered_height_px: 72           # 56 + 4.8 + 11.2, rounded
+        previous_nominal_height_px: 84        # was WRONG — overstated by 12px in the OTHER direction, which is why row2 still clipped: the real problem was the absolute `top` values (330/440) leaving too little margin to the panel bottom once the true (if smaller) box is placed that low, combined with row2's `top:440` computed against a nominal box that didn't match the actual rendered stack — corrected by both fixing the height AND moving the rows up.
+        new_positions: "row 1 y=320 (was 330), row 2 y=415 (was 440)"
+        row1_seam_clearance_px: 20    # 320 - 300 (seam datum), matches coordinator's "~20px clearance" requirement exactly
+        row2_true_bottom_margin_px: 73  # 560 - (415 + 72), comfortably clears the coordinator's 30px-minimum rule
+        row_gutter_px: 23             # 415 - (320 + 72)
+      output_chip:
+        true_rendered_height_estimate_px: 80   # padding(8) + value-line(~33 at 1.8rem font) + chevrons block(~16) + label margin(4.8) + label line(~11) + bottom padding(7.2)
+        nominal_height_px: 90
+        verdict: "safe — nominal already exceeds true rendered height, no change needed"
+      vertical_labels:
+        note: >
+          Rotated text (writing-mode: vertical-rl); true content extent
+          along the reading axis estimated per label at ~12px effective
+          per-character advance (font-size 0.62rem=9.92px + letter-spacing
+          0.22em): SHAPE ~60px, FILTERS/MODULES ~85px, OUTPUT ~73px — all
+          far under their allocated 180-220px boxes. Verdict: safe, no
+          change needed, existing generous allocation already covers the
+          true content with large margin.
+    special_elements:
+      - id: tension_curve
+        type: curve-display
+        description: >
+          WIDENED to 300x140 (was 200x110) and repositioned to the upper
+          well's right column (x620-920, y80-220) — it is the well's
+          hero element and earns the extra space per the coordinator's
+          explicit instruction. Grid ticks, BUILD/DROP axis labels,
+          travelling position dot, derived curve-type label, and recessed
+          inset styling all unchanged in behavior, just rendered into the
+          larger viewBox (0 0 300 140 instead of 0 0 200 110).
+        position: { x: 620, y: 80 }
+        size: { width: 300, height: 140 }
+    vertical_labels:
+      - { id: shapeLabel,   text: "SHAPE",   position: { x: 16,  y: 70,  width: 10, height: 180 } }
+      - { id: filtersLabel, text: "FILTERS", position: { x: 974, y: 70,  width: 10, height: 220 } }
+      - { id: modulesLabel, text: "MODULES", position: { x: 16,  y: 310, width: 10, height: 210 } }
+      - { id: outputLabel,  text: "OUTPUT",  position: { x: 974, y: 310, width: 10, height: 210 } }
+
+shared_elements:
+  - id: wordmark
+    text: "d r o p"
+    position: { x: 24, y: 16 }
+    size: { width: 110, height: 24 }
+  - id: maker_mark
+    text: "AVESS"
+    position: { x: 866, y: 16 }
+    size: { width: 110, height: 24 }
+  - id: page_nav
+    position: { x: 400, y: 16 }
+    size: { width: 200, height: 28 }
+  - id: header_rule
+    position: { x: 0, y: 56 }
+    size: { width: 1000, height: 1 }
+
+notes:
+  - "v8 SUMMARY: two changes on top of v7, everything else (Impact centering, 3D knob material, two-page layout, all 19 param bindings, motion system) reused verbatim. (1) Re-rendered the orb centerpiece as a transparent iridescent soap bubble per a user-supplied reference image (v8-reference-bubble.png) — the 28-point soft-body physics simulation itself is completely unchanged; only the rendering changed: near-transparent glassy fill (chamber shows through), 3 layered rotating-gradient stroke copies of the live deformed path for the thin-film swirl (speed scales with tension/agitation), two deformation-tracking specular highlights, and Impact is now a genuine spring-driven pop (rupture flash + mini-bubble droplets + torn-film shreds, reforming during Recovery) — see bubble_rendering_v8 above. (2) Replaced the flat electric-blue accent with a cyan/violet/magenta oil-film gradient system across every arc/glow/progress-fill/LED/active-state on both pages, including fixing 4 leftover hardcoded pre-v6 blue rgba() values that had escaped the v6 color pass — see accent_system_v8 above. Knob AND bare-readout numerals both stay neutral white for legibility (documented design judgment extending the explicit 'knob numerals stay neutral' direction to bare-readouts too)."
+  - "Layout re-validated at base 1000x560 for both pages: zero position/size changes needed anywhere — the bubble renders inside the identical #orbWrap container (x400,y96,200x200) and every other control's rendered HTML position was cross-checked against v7's table and confirmed byte-identical, isolating this iteration's diff to exactly the two requested changes (bubble rendering + accent system), both of which are CSS/JS/SVG-attribute-only."
+  - "v7 IN-PLACE REFINEMENT (same v7 files, per explicit user direction — 'no v8'): after seeing pass 1's fix (centered Impact between the two neighboring columns, x=443), the user clarified the intended anchor is the seam NOTCH's groove/dip, not the columns' midpoint. Verified the notch's true dip center algebraically from the seam SVG path's bezier symmetry (exactly x=500, not assumed) and confirmed every Main-page element (orb, style-selector, DROP button, progress strip, phase chip) already shares that same x=500 center axis. Moved Impact's wrap to x=435 (box-center exactly 500). This makes the gaps to Impact's two neighbors intentionally asymmetric (169px left, 55px right) — expected and correct, confirmed via the layout validator to produce zero overlaps. See knob_centering_audit's fix_pass2_* fields above for full numbers."
+  - "v7 SUMMARY: two changes on top of v6, everything else (liquid blob physics, arc concentricity fix, color tuning, two-page layout, all 19 param bindings) reused verbatim. (1) Audited every candidate cause of the user-reported 'impact knob is out of center' and fixed the real one: the Impact wrap box was not centered in the gap between the Tension/Chaos column and the tension-curve box (was 92px off-center toward the curve; now exactly centered, symmetric 112px/112px gaps on both sides — see knob_centering_audit above for the full audit including the two hypotheses investigated and ruled out). (2) Rebuilt the knob cap material into a genuine two-layer physical puck (outer side-wall rim + inset domed top face with a single-top-light-source vertical gradient, soft elliptical sheen, and an inner bevel ring) applied identically and proportionally to all three knob sizes (200px/112px/56px) — see knob_3d_material above."
+  - "Layout re-validated at base 1000x560 for both pages with the ONE position change (Impact's wrap, x470->x378): zero bounds violations, zero overlaps, zero spacing violations on both Main (unchanged) and Advanced. Every other control's rendered HTML position was cross-checked against v6's table and confirmed unchanged (byte-identical), isolating this iteration's diff to exactly the two requested changes."
+  - "v6 SUMMARY: three changes on top of v5, everything else (two-page layout, all 19 param bindings, the dark bx_pulsar-derived language, the full 3D depth system) reused verbatim. (1) Fixed a knob value-arc concentricity bug affecting every knob (see knob_arc_fix above for root cause, fix, and verification numbers proving zero offset at every knob size and every window scale). (2) Replaced the wireframe-loop orb with a genuine liquid blob soft-body physics simulation (see liquid_blob_physics above). (3) Tuned text-label/text-label-dim/accent/accent-glow for better legibility and a touch more accent vibrancy — same palette identity, adjusted values (see colors above)."
+  - "Layout re-validated at base 1000x560 for BOTH pages using v5's validated geometry table verbatim (no position/size changes were needed — the liquid blob renders inside the identical #orbWrap container, same x400,y96,200x200 box as the old orb): zero bounds violations, zero overlaps, zero spacing violations under 10px on both Main and Advanced (one documented intentional grouping carried over unchanged: phaseChip<->orb, 8px). Every rendered HTML position was additionally cross-checked programmatically against this table and matched exactly, confirming the v6 code changes (CSS/JS only) did not drift any control's geometry."
+  - "Layout validated per-page (two independent flat control lists, base 1000x560): MAIN — zero bounds violations, zero overlaps, zero spacing violations under 10px except one documented intentional grouping (phaseChip <-> orb, 8px, same precedent as v1-v4) — UNCHANGED across all three Advanced-page fix passes. ADVANCED — re-validated after the THIRD pass (this one, the box-model correction): zero bounds violations, zero overlaps, zero spacing violations under 10px, AND zero violations of the coordinator's 30px-from-bottom-edge rule, this time checked against TRUE rendered element heights rather than nominal design boxes (see box_model_audit for methodology and computed values) — macro grid row 2's true bottom now sits 73px above the panel bottom (pass 2 was technically passing the validator at a 36px margin, but against a nominal 84px box that didn't match the real rendered content, which is why it still clipped visually)."
+  - "ADVANCED-page fix history, pass 1: the original ship of v5 clustered triggerMode/tension/chaos/curve/impact_mirror at the top (y70-254) and crammed 10 macros + Impact + Output against the bottom edge (y400-520), leaving a ~250px dead middle band. Fixed by redistributing into 3 STACKED rows — this made the page better but still failed review: a ~150px dead band remained (y290-440), the single 10-knob row still read as cramped/too-low, and Output was still too close to the bottom-right corner (and the test-harness-only debug monitor)."
+  - "ADVANCED-page fix history, pass 2: restructured per the coordinator's explicit final geometry, replacing the 3-stacked-row model with an UPPER RECESSED WELL (y70-300) read as two balanced COLUMNS instead of stacked rows — left column (x40-266): triggerMode pill (y80) + Tension/Chaos chips (y150); right column (x620-920): the tension-curve display WIDENED to 300x140 (was 200x110, it earns the space as the well's hero element); and Impact deliberately placed in the CENTER GAP (x470-600, y100-250) between the two columns so the well has no dead middle, per the coordinator's explicit suggestion — plus Impact was enlarged again (130x150). The LOWER RAISED DECK (y300-540) now holds the 10 macros as a true 2x5 GRID (56px caps, was one row of 42-48px caps) centered horizontally at x430 exactly matching the requested target, plus a large Output readout chip (160x90, was 110x70) at x790-950 vertically centered in the deck (~y370) — nowhere near the bottom-right corner. This pass placed the grid rows at y330/y440 against a NOMINAL 84px-tall box per knob — pass 3 found that nominal height didn't match the true rendered content and corrected both the height and the row y-positions."
+  - "ADVANCED-page fix history, pass 3 (current, box-model correction): user review of pass 2 found the macro grid's row 2 labels rendering clipped at/near the panel's bottom edge, ~60px lower than the validator predicted — because the validator was checking pass 2's nominal 84px-tall box, not the DOM element's true rendered height. Audited the real CSS box model for every Advanced element (see box_model_audit block above the special_elements section for full methodology and per-element numbers). Grid knobs' true height is 72px (56px cap + 4.8px label margin + ~11.2px conservative label-line estimate) — the rows were then moved to y=320 (was 330) and y=415 (was 440) using this corrected height, giving row 1 exactly the requested ~20px clearance from the seam datum (y300) and row 2 a true 73px margin from the panel bottom (comfortably over the coordinator's 30px minimum). Output and the vertical labels were audited too and found already safe (their nominal boxes already exceed true rendered content) — no changes needed there."
+  - "Impact arc-visibility bug: diagnosed and fixed. The arc math itself (buildKnobArc()/render() in the JS) is identical for every knob and was confirmed to match the reference image's own convention (re-examined: the reference's FEEDBACK knob at its default value of 50 also shows an arc spanning only the bottom-left-to-top range, i.e. the same 'left-half' shape at 50% — this is not unique to Impact and not a math error). The actual bug was CSS: .knob3-arc .arc-track (the always-visible background channel/track behind the blue value-fill) was rgba(255,255,255,0.08) — nearly invisible against the dark knob face. At default/partial values (e.g. Impact's 50%, unlike the macros which default to 100% and so show a visually-complete fill regardless), the unfilled remainder of the ring simply wasn't rendering, making the arc read as an incomplete/broken/asymmetric shape rather than a full recessed channel half-highlighted in blue. Fixed by raising the track to rgba(255,255,255,0.22) — clearly visible as a full 270-degree ring at every knob size, still subtle/recessed per the depth system. This is a global CSS fix (affects every knob, not just Impact) and was the correct place to fix it since the arc math itself was already correct and reference-accurate."
+  - "Total: still exactly 19 APVTS parameters, same IDs as v1-v4 — trigger, buildLength, style, intensity, tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, dryWet, output. Split across two pages: MAIN carries trigger, buildLength, style, intensity, dryWet (5). ADVANCED carries tension, chaos, impact, filter, width, pitch, gate, stutter, delay, reverb, distortion, digital, noise, output (14). 5+14=19."
+  - "triggerMode and page_nav are both non-APVTS UI state (parameter: null), matching architecture.md's documented non-parameter-state category — both still emit messages on change."
+  - "Module macros default to 100% (unchanged, per architecture.md Resolved Open Questions)."
+  - "v1, v2, v3, and v4 remain completely untouched on disk as design history. Within v5 itself, the MAIN page is also unchanged across all three Advanced-page fix passes — only the ADVANCED page's geometry, the removal of impact_mirror, the global arc-track CSS fix, and (this pass) the macro-grid box-model correction were touched, per the coordinator's explicit instruction not to touch Main."
+  - "v6 note: v1 through v5 (all yaml + test-html pairs) remain completely untouched on disk as design history — confirmed via unchanged file timestamps before and after this iteration. v6 only ADDS two new files (v6-ui.yaml, v6-ui-test.html); no existing file was modified."
+  - "v7 note: v1 through v6 (all yaml + test-html pairs) remain completely untouched on disk as design history — confirmed via unchanged file timestamps before and after this iteration. v7 only ADDS two new files (v7-ui.yaml, v7-ui-test.html); no existing file was modified."
+  - "v8 note: v1 through v7 (all yaml + test-html pairs) remain completely untouched on disk as design history — confirmed via unchanged file timestamps before and after this iteration. v8 only ADDS two new files (v8-ui.yaml, v8-ui-test.html); no existing file was modified. The reference image plugins/DROP/.ideas/mockups/v8-reference-bubble.png was read and studied before implementing the bubble rendering."

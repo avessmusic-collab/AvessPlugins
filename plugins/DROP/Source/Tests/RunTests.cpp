@@ -5376,6 +5376,8 @@ int main()
             p.setPlayHead (&ph);
             // DEFAULTS ONLY - the exact state a fresh instance has.
             if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (2.0f / 5.0f); // 4 bars (only deviation: keeps the render compact; charging/behavior is identical in kind)
+            if (scenario == 3) // D: the RISER turned fully off - the tail must belong to the BUILD, not the noise macro
+                if (auto* prm = p.parameters.getParameter ("noise")) prm->setValueNotifyingHost (0.0f);
             if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
 
             int64_t impactEnd = -1, captureStart = -1, eventSample = -1;
@@ -5396,6 +5398,7 @@ int main()
                 {
                     if (scenario == 1 && timelineSample >= eventSample) timelineSample = 0; // loop back to bar 0
                     if (scenario == 2) stopped = true;
+                    // scenario 3 (noise off): continuous playback, like A
                 }
 
                 const double ppq = (double) timelineSample / spq;
@@ -5440,9 +5443,9 @@ int main()
             return { rmsAt (0.10), rmsAt (0.30), rmsAt (0.60), 0.4 / std::sqrt (2.0) };
         };
 
-        const char* names[] = { "A continuous", "B loop-wrap ", "C stop      " };
-        std::array<std::array<double, 4>, 3> results {};
-        for (int sc = 0; sc < 3; ++sc)
+        const char* names[] = { "A continuous", "B loop-wrap ", "C stop      ", "D noise off " };
+        std::array<std::array<double, 4>, 4> results {};
+        for (int sc = 0; sc < 4; ++sc)
         {
             results[(size_t) sc] = run (sc);
             const auto& r = results[(size_t) sc];
@@ -5456,6 +5459,8 @@ int main()
         // C's stop lands ~+250ms after Impact's end (the event anchor
         // latches early in the Impact window), so +300ms is genuinely
         // POST-STOP: the pre-fix abort measured exactly 0.00000 there.
+        check (results[3][0] > 5.0e-3,
+              "[POST-1.0] DAW reality D: with the NOISE macro fully OFF, the music's own tail still rings after the drop - the tail belongs to the build, not the riser (the noise-macro-keyed send boost measured near-zero here and fails by construction)");
         check (results[2][0] > 2.0e-3 && results[2][1] > 2.0e-3,
               "[POST-1.0] DAW reality C: pressing STOP shortly after the drop lets the tail keep ringing out (like any reverb/delay would) - the transport-stop abort no longer fires post-drop (pre-fix it hard-muted the ring ~5ms after stop and fails this by construction)");
     }
