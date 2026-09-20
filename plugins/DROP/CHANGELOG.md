@@ -1,5 +1,22 @@
 # DROP Changelog
 
+### Added — 2026-09-20 (hover tooltips on every control)
+
+Stays at 1.0.0. User request: "make so when u hover above the elemts a
+description of what the knob or selectior does apperas."
+
+- Every control on both pages now shows a short producer-language
+  description after ~500ms of hover: the DROP trigger, Build Length
+  circles, Style selector, Intensity, Dry/Wet, progress strip, phase
+  chip, trigger-mode pill, Tension/Chaos/NOISE chips, the curve graph,
+  NOISE TYPE chip, SYNC chip, the Impact hero, all 10 module macros,
+  the TAIL knob and the OUTPUT screen (27 tips total).
+- One shared dark-LCD tooltip chip (same visual family as the dropdown
+  menus): positioned above the element (below when clipped),
+  click-through, hidden on leave and on press so it never gets in the
+  way of a drag; follows the proportional UI scaling. UI-only change;
+  271 assertions, all passing.
+
 ### Fixed — 2026-09-20 (tail audible again: two-stage fade within the exact selected window)
 
 Stays at 1.0.0. User report: "i cant hear a tail" — a real regression

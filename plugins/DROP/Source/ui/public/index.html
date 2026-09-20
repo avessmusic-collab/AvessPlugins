@@ -214,6 +214,18 @@
   .choice-item:hover { color: var(--accent); background: rgba(232,130,60,0.10); }
   .choice-item.sel { color: var(--accent); text-shadow: 0 0 6px var(--accent-glow); }
 
+  /* ---------- Hover tooltips - POST-1.0 (2026-09-20, user-directed:
+     "when u hover above the elements a description of what the knob or
+     selector does appears"). One shared fixed-position chip (same
+     dark-LCD family as .choice-menu), driven by data-tip attributes;
+     ~500ms hover delay, hides on leave/press. ---------- */
+  #uiTooltip { position: fixed; z-index: 1000; max-width: 15rem; pointer-events: none;
+    background: linear-gradient(180deg, #14161B, #0C0E12); border: 1px solid #2A2E36; border-radius: 0.4rem;
+    box-shadow: 0 8px 20px rgba(10,12,16,0.45); padding: 0.42rem 0.6rem;
+    font: 400 0.6rem/1.45 "IBM Plex Mono", monospace; letter-spacing: 0.03em; color: #C9CDD4;
+    opacity: 0; transition: opacity 140ms ease; }
+  #uiTooltip.show { opacity: 1; }
+
   /* ---------- DROP trigger - raised neumorphic pill w/ press-in physics ---------- */
   .trigger-btn {
     position: absolute; left: 22.5rem; top: 16.25rem; width: 17.5rem; height: 4rem; border-radius: 999px;
@@ -317,7 +329,7 @@
       <div class="vlabel" style="left:60.875rem; top:5.625rem; height:10rem;">MIX</div>
 
       <div class="step-row">
-        <div class="step-circles" id="buildLengthSteps" data-param="buildLength">
+        <div class="step-circles" id="buildLengthSteps" data-param="buildLength" data-tip="Build length: how many bars the rise lasts before the drop.">
           <!-- default active circle 4 -> 16, POST-1.0 2026-09-19
                (user-directed "make default 16 bar selected") - mirrors the
                APVTS buildLength default change (index 2 -> 4). -->
@@ -331,17 +343,17 @@
         <div class="step-caption">BUILD LENGTH (BARS)</div>
       </div>
 
-      <div id="phaseChip"><span class="phase-led"></span><span class="phase-text">IDLE</span></div>
+      <div id="phaseChip" data-tip="Current phase: idle, building, drop or tail."><span class="phase-led"></span><span class="phase-text">IDLE</span></div>
 
-      <div class="style-nav" data-param="style">
+      <div class="style-nav" data-param="style" data-tip="Style: 16 transition characters (curves, effects, timing). Click the name for the full list.">
         <button class="chev-btn" id="styleLeft">&lsaquo;</button>
         <span class="style-label" id="styleLabel">Clean EDM</span>
         <button class="chev-btn" id="styleRight">&rsaquo;</button>
       </div>
 
-      <button class="trigger-btn" id="triggerBtn" data-param="trigger">Drop</button>
+      <button class="trigger-btn" id="triggerBtn" data-param="trigger" data-tip="Fires the transition: the build rises for the selected bars and the drop lands exactly on the bar line.">Drop</button>
 
-      <div id="progressStrip">
+      <div id="progressStrip" data-tip="Build progress: fills as the rise approaches the drop.">
         <!-- widened 200x10 -> 240x12 (1.2x uniform scale) as it inherits part of
              the former bubble's centerpiece role; fill color/glow now carries
              tension x input level during a drop - see script "STRIP GLOW". -->
@@ -352,7 +364,7 @@
 
       <!-- Intensity / Dry-Wet - large neumorphic hero domes -->
       <div class="knob-wrap" style="left:4.125rem; top:12.5rem; width:13.75rem;"
-           data-param="intensity" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+           data-param="intensity" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-tip="Overall effect intensity across the build.">
         <div class="knob-well" style="width:11rem;height:11rem;">
           <div class="knob-dome" style="width:7.5rem;height:7.5rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div>
         </div>
@@ -360,7 +372,7 @@
       </div>
 
       <div class="knob-wrap" style="left:44.625rem; top:12.5rem; width:13.75rem;"
-           data-param="dryWet" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+           data-param="dryWet" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-tip="Global mix: your dry signal vs the effect.">
         <!-- data-default 100 -> 50, POST-1.0 2026-09-18 (user-directed "make
              default dry wet 50%") - mirrors the APVTS default change. -->
         <div class="knob-well" style="width:11rem;height:11rem;">
@@ -380,7 +392,7 @@
       <!-- triggerMode is NON-APVTS ValueTree state (architecture.md), bound
            via the "setTriggerMode"/"getInitialUIState" native-function
            bridge in v10-PluginEditor.cpp - NOT a WebComboBoxRelay. -->
-      <div class="mode-pill" id="modePill" data-param="triggerMode" style="top:5rem;">
+      <div class="mode-pill" id="modePill" data-param="triggerMode" style="top:5rem;" data-tip="Trigger source: the DROP button, any MIDI note, or host automation.">
         <div class="mode-indicator" id="modeIndicator"></div>
         <button data-value="manual" class="active">MANUAL</button>
         <button data-value="midi">MIDI</button>
@@ -388,14 +400,14 @@
       </div>
 
       <div class="mini-screen" style="left:2.5rem; top:9.375rem; width:6.75rem; height:3.5rem;"
-           data-param="tension" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-step="1">
+           data-param="tension" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-step="1" data-tip="Tension curve: higher bends the rise later, toward the drop.">
         <div class="mini-screen-label">TENSION</div>
         <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">50</span><span style="font-size:0.6rem;">%</span></div>
         <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
       </div>
 
       <div class="mini-screen" style="left:9.875rem; top:9.375rem; width:6.75rem; height:3.5rem;"
-           data-param="chaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1">
+           data-param="chaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1" data-tip="Seeded variation: adds musical randomness, identical on every render.">
         <div class="mini-screen-label">CHAOS</div>
         <div class="mini-screen-value" style="font-size:1.05rem;"><span class="bv-num">0</span><span style="font-size:0.6rem;">%</span></div>
         <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
@@ -420,7 +432,7 @@
            the user's request. See .ideas/mockups/v10-ui.yaml's
            `noise_tension_chip_and_tail_relocation` amendment note. -->
       <div class="mini-screen" style="left:17.25rem; top:9.375rem; width:6.75rem; height:3.5rem;"
-           data-param="noiseTension" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1">
+           data-param="noiseTension" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1" data-tip="Noise curve: how the riser blooms. Higher = later bloom.">
         <!-- data-default 50 -> 0, POST-1.0 2026-09-19 (user-directed "make
              the noise curve to be default where the 0% is") - mirrors the
              APVTS default change. -->
@@ -436,7 +448,7 @@
            curveBox's bottom edge (13.75rem) and the OUTPUT screen's top
            edge (20.3125rem) - see .ideas/mockups/v10-ui.yaml's
            `sync_bpm_chip` amendment for the exact gap-verification math. -->
-      <div class="mini-screen" id="syncChip" style="left:49.375rem; top:14.375rem; width:10rem; height:3.5rem;">
+      <div class="mini-screen" id="syncChip" data-tip="Tempo sync: follows the host BPM while playing; internal 120 BPM otherwise." style="left:49.375rem; top:14.375rem; width:10rem; height:3.5rem;">
         <div class="mini-screen-label">SYNC</div>
         <div class="mini-screen-value" style="font-size:1.05rem;"><span id="syncValue">INT 120</span></div>
       </div>
@@ -450,7 +462,7 @@
            in the spot the TAIL knob vacated when it joined the lower macro
            row (below the graph, left of SYNC - same mini-LCD family/row as
            SYNC). See v10-ui.yaml's `noise_type_chip` amendment note. -->
-      <div class="mini-screen" id="noiseTypeChip" style="left:38.75rem; top:14.375rem; width:10rem; height:3.5rem;">
+      <div class="mini-screen" id="noiseTypeChip" data-tip="Riser sound: white, pink or brown noise, a resonant sweep, a rising saw, or a Shepard tone. Click the value for the list." style="left:38.75rem; top:14.375rem; width:10rem; height:3.5rem;">
         <div class="mini-screen-label">NOISE TYPE</div>
         <div class="mini-screen-value" style="font-size:0.95rem;"><span id="noiseTypeValue">WHITE</span></div>
         <div class="mini-chevrons"><div class="mchev up" id="noiseTypeUp"></div><div class="mchev down" id="noiseTypeDown"></div></div>
@@ -465,7 +477,7 @@
            against the SAME x-axis as the tension curve. Main tension curve
            (#curvePath) recolored PURPLE (#A78BFA). See v10-ui.yaml's
            tension_noise_dual_curve amendment note for the color rationale. -->
-      <div id="curveBox" style="left:38.75rem; top:5rem; width:18.75rem; height:8.75rem;">
+      <div id="curveBox" data-tip="The build's shape: tension curve (purple), noise rise (gray), and the tail's fade after the drop (orange)." style="left:38.75rem; top:5rem; width:18.75rem; height:8.75rem;">
         <div class="curve-label">TENSION CURVE</div>
         <div class="curve-type-label" id="curveTypeLabel">S-CURVE</div>
         <svg width="100%" height="100%" viewBox="0 0 300 140" preserveAspectRatio="none">
@@ -501,7 +513,7 @@
 
       <!-- Impact hero: LED-dot-ring treatment -->
       <div class="knob-wrap" id="impactWrap" style="left:27.1875rem; top:6.25rem; width:8.125rem;"
-           data-param="impact" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+           data-param="impact" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-tip="Drop strength: vacuum depth, stereo burst and impact reverb.">
         <div class="knob-well" id="impactWell" style="width:6.5rem;height:6.5rem;">
           <div class="knob-dome" style="width:4.2rem;height:4.2rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div>
         </div>
@@ -510,52 +522,52 @@
 
       <!-- 10 module macros - small neumorphic domes -->
       <div class="knob-wrap" style="left:2.5rem; top:20rem; width:3.75rem;"
-           data-param="filter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="filter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Filter sweep amount in the build.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">FILTER &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:9.75rem; top:20rem; width:3.75rem;"
-           data-param="width" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="width" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Stereo width movement in the build.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">WIDTH &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:17rem; top:20rem; width:3.75rem;"
-           data-param="pitch" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="pitch" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Pitch rise/fall amount in the build.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">PITCH &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:24.25rem; top:20rem; width:3.75rem;"
-           data-param="gate" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="gate" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Tempo-synced gate chops in the build.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">GATE &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:31.5rem; top:20rem; width:3.75rem;"
-           data-param="stutter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="stutter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Buffer-stutter amount in the build.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">STUTTER &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:2.5rem; top:25.9375rem; width:3.75rem;"
-           data-param="delay" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="delay" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Tempo-synced delay: echoes in the build and the tail.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">DELAY &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:9.75rem; top:25.9375rem; width:3.75rem;"
-           data-param="reverb" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="reverb" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Reverb: space in the build and the tail's wash.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">REVERB &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:17rem; top:25.9375rem; width:3.75rem;"
-           data-param="distortion" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="distortion" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Saturation amount in the build.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">DIST &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:24.25rem; top:25.9375rem; width:3.75rem;"
-           data-param="digital" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="digital" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Bit/rate crush accents late in the build.">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">DIGITAL &middot; <span class="kv-num">100</span></span>
       </div>
       <div class="knob-wrap" style="left:31.5rem; top:25.9375rem; width:3.75rem;"
-           data-param="noise" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+           data-param="noise" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" data-tip="Riser loudness (the noise itself).">
         <div class="knob-well" style="width:3.4rem;height:3.4rem;"><div class="knob-dome" style="width:2.1rem;height:2.1rem;"><div class="knob-dome-inner"><div class="knob-pointer"></div></div></div></div>
         <span class="knob-label knob-label-small">NOISE &middot; <span class="kv-num">100</span></span>
       </div>
@@ -574,7 +586,7 @@
            label logic below); ring-out is opt-in. See v10-ui.yaml's
            `knob_rows_left_shift_and_tail_join` amendment note. -->
       <div class="knob-wrap" style="left:38.75rem; top:25.9375rem; width:3.75rem;"
-           data-param="tail" data-min="0" data-max="100" data-default="46.91" data-unit="%" data-decimals="0">
+           data-param="tail" data-min="0" data-max="100" data-default="46.91" data-unit="%" data-decimals="0" data-tip="Tail length in seconds after the drop. 0 = instant clean cut.">
         <!-- data-default 0 -> 46.91 (= 0.70s nominal), POST-1.0 2026-09-20
              (user-directed "make default tail 0.7 sec") - mirrors the APVTS
              default change; caption below shows seconds. -->
@@ -583,7 +595,7 @@
       </div>
 
       <div class="mini-screen" style="left:49.375rem; top:20.3125rem; width:10rem; height:5.625rem;"
-           data-param="output" data-min="-60" data-max="12" data-default="0" data-unit="dB" data-decimals="1" data-step="0.5">
+           data-param="output" data-min="-60" data-max="12" data-default="0" data-unit="dB" data-decimals="1" data-step="0.5" data-tip="Output gain, after everything.">
         <div class="mini-screen-label">OUTPUT</div>
         <div class="mini-screen-value" style="font-size:1.6rem;"><span class="bv-num">0.0</span><span style="font-size:0.7rem;">dB</span></div>
         <div class="mini-chevrons"><div class="mchev up" data-dir="1"></div><div class="mchev down" data-dir="-1"></div></div>
@@ -898,6 +910,36 @@
     });
   }
   attachChoiceDropdown(styleLabel, STYLES, () => styleState.getChoiceIndex(), (i) => setStyle(i));
+
+  /* Hover tooltips (POST-1.0 2026-09-20): every element carrying a
+     data-tip attribute shows the shared #uiTooltip chip after a short
+     hover; positioned above the element (below when clipped), hidden on
+     leave/press so it never obstructs a drag. */
+  const uiTooltip = document.createElement('div');
+  uiTooltip.id = 'uiTooltip';
+  document.body.appendChild(uiTooltip);
+  let tipTimer = null;
+  function hideTip() { if (tipTimer) { clearTimeout(tipTimer); tipTimer = null; } uiTooltip.classList.remove('show'); }
+  document.querySelectorAll('[data-tip]').forEach((el) => {
+    el.addEventListener('mouseenter', () => {
+      if (tipTimer) clearTimeout(tipTimer);
+      tipTimer = setTimeout(() => {
+        uiTooltip.textContent = el.dataset.tip;
+        uiTooltip.classList.add('show');
+        const r = el.getBoundingClientRect();
+        // measure after content set
+        const tw = uiTooltip.offsetWidth, th = uiTooltip.offsetHeight;
+        let left = r.left + r.width / 2 - tw / 2;
+        left = Math.max(4, Math.min(left, window.innerWidth - tw - 4));
+        let top = r.top - th - 8;
+        if (top < 4) top = r.bottom + 8;
+        uiTooltip.style.left = left + 'px';
+        uiTooltip.style.top = top + 'px';
+      }, 500);
+    });
+    el.addEventListener('mouseleave', hideTip);
+    el.addEventListener('mousedown', hideTip);
+  });
 
   /* NOISE TYPE chevron selector (APVTS Choice, 22nd parameter, POST-1.0
      2026-09-18) - same ComboBox pattern as the Style selector above; the

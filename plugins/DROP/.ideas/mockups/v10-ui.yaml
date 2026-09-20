@@ -915,3 +915,11 @@ progress_strip_fill_alignment:
   reason: "User: 'move the orange bar that fills inside the groove of the white bar its a bit below'."
   changes:
     - "BUG: the progress strip's fill SVG was display:inline, so it sat on the text BASELINE inside the groove div - the orange fill rendered a few px below the groove. Fixed with #progressStrip svg { display: block; } plus overflow:hidden on the groove so the fill clips to the rounded ends."
+
+hover_tooltips:
+  date: 2026-09-20
+  reason: "User: 'make so when u hover above the elemts a description of what the knob or selectior does apperas'."
+  changes:
+    - "Every control (both pages) carries a data-tip description in producer language: DROP trigger, Build Length circles, Style selector, Intensity, Dry/Wet, progress strip, phase chip, mode pill, Tension/Chaos/NOISE chips, curve graph, NOISE TYPE chip, SYNC chip, Impact hero, the 10 module macros, TAIL knob, OUTPUT screen."
+    - "One shared #uiTooltip chip (dark-LCD family, same visual language as .choice-menu): ~500ms hover delay, positioned above the element (below when clipped at the window top), pointer-events none, hidden on mouse-leave and on press so it never obstructs a drag; rem-sized so it follows the proportional scaling."
+  validation: "Floating overlay only (z-index 1000); no layout/geometry changes to any control."
