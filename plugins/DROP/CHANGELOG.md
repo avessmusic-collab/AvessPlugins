@@ -1,5 +1,25 @@
 # DROP Changelog
 
+### Changed — 2026-09-20 (tail envelope: pure decaying slope, no sustain)
+
+Stays at 1.0.0 per this repo's factory convention. User follow-up: "tail
+shouldnt have sustain. it sould be a slope. decaing."
+
+- **The tail envelope decays from the very first sample** — the same-day
+  hold-70%-then-fade shape (which fixed audibility) read as a sustain
+  plateau. Final form: dB-LINEAR slope across the whole window, but over
+  a GENTLE 30dB (the inaudibility of the original was its −60dB
+  steepness stacked on the tails' natural decay, not the slope concept)
+  — unmistakably a continuous decay, still audible well into the window,
+  same cosine landing to exact 0. TAIL=CUT unchanged in character.
+- Measured (tail=50%): +50ms 0.0060 → +150ms 0.0038 → +300ms 0.0004 —
+  strictly decaying checkpoint-to-checkpoint, silent past the window.
+- The graph's TAIL curve mirrors the new slope exactly. Tests: envelope
+  block superseded to the slope form (strictly-decreasing + dB-linear +
+  no-plateau assertions; the hold shape fails by construction);
+  audibility block gains the decay-shape assertion. 265 assertions, all
+  passing.
+
 ### Fixed — 2026-09-20 (tail was inaudible; TAIL knob in seconds; TAIL curve on the graph)
 
 Stays at 1.0.0 per this repo's factory convention. User report: "when i

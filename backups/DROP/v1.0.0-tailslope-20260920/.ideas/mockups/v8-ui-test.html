@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DROP — UI Mockup v8 (iridescent soap-bubble blob + oil-film accent)</title>
+
+<style>
+  /* ============================================================
+     WebView constraints (see ui-design-rules.md)
+     - No viewport units anywhere (100vh/100vw/100dvh/100svh)
+     - html, body { height: 100%; } required foundation
+     - Native app feel: user-select none, context menu disabled
+     ============================================================ */
+
+  html, body { height: 100%; margin: 0; padding: 0; }
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: default;
+    overflow: hidden;
+    background: #D7D9DC; /* light-gray page backdrop — test HTML only */
+    font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  }
+
+  .harness { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; }
+  .harness-caption { color: #6b6d70; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-family: 'IBM Plex Mono', 'SF Mono', monospace; }
+
+  .plugin-frame {
+    width: 1000px; height: 560px;
+    min-width: 800px; min-height: 450px;
+    max-width: 1400px; max-height: 790px;
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+    resize: both;
+    box-shadow: 0 30px 70px rgba(20,20,22,0.35), 0 10px 24px rgba(20,20,22,0.22);
+    background: #17181B;
+  }
+  .plugin-frame::after {
+    content: "";
+    position: absolute; right: 3px; bottom: 3px; width: 12px; height: 12px;
+    background: linear-gradient(135deg, transparent 0%, transparent 45%, #3FD3E0 45%, #C64DBE 55%, transparent 55%, transparent 100%);
+    pointer-events: none; opacity: 0.5;
+  }
+
+  :root {
+    --upper-bg: #17181B;
+    --text-primary: #E9EAED;
+    --text-label: #9DA0A8;
+    --text-label-dim: #6E7076;
+    /* v8: iridescent oil-film accent system (replaces the flat electric blue).
+       --accent stays as a single flat "representative" color (violet midpoint)
+       for the rare spots where a gradient isn't practical (small text labels);
+       everything else (arcs, progress fill, LEDs, active-state glows) uses the
+       cyan/violet/magenta gradient directly via url(#iridAccentGrad) or a
+       two-tone cyan+magenta glow pair. */
+    --accent-cyan: #3FD3E0;
+    --accent-violet: #A868D8;
+    --accent-magenta: #C64DBE;
+    --accent-gold: #E0B84D;
+    --accent: #A868D8;
+    --accent-dim: #7A5A96;
+    --accent-glow-a: rgba(63,211,224,0.5);
+    --accent-glow-b: rgba(198,77,190,0.5);
+
+    /* v5 depth system tokens */
+    --knob-contact-shadow: 0 2px 3px rgba(0,0,0,0.55);
+    --knob-ambient-shadow: 0 14px 30px rgba(0,0,0,0.48);
+    --knob-rim: inset 0 1px 0 rgba(255,255,255,0.12);
+    --knob-internal-shade: inset 0 -2px 3px rgba(0,0,0,0.4);
+    --recess-shadow: inset 0 2px 4px rgba(0,0,0,0.5), inset 0 -1px 0 rgba(255,255,255,0.03);
+    --pill-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 1px 2px rgba(0,0,0,0.4);
+
+    font-size: 16px;
+  }
+
+  #container { position: relative; width: 100%; height: 100%; color: var(--text-primary); overflow: hidden; background: var(--upper-bg); }
+  #panelBg { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  #vignette {
+    position: absolute; inset: 0; z-index: 5; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 38%, transparent 45%, rgba(0,0,0,0.32) 100%);
+  }
+  .content-layer { position: relative; z-index: 2; width: 100%; height: 100%; }
+
+  /* ---------- Header (shared, identical on both pages) ---------- */
+  .header { position: absolute; left: 0; top: 0; right: 0; height: 3.5rem; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .wordmark { position: absolute; left: 1.5rem; top: 1rem; font-size: 1.05rem; font-weight: 300; letter-spacing: 0.5em; text-transform: lowercase; color: var(--text-primary); }
+  .maker-mark { position: absolute; right: 1.5rem; top: 1.05rem; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.28em; color: var(--text-label); }
+
+  /* ---------- Page-nav pill (shared, header-embedded) ---------- */
+  .page-nav {
+    position: absolute; left: 25rem; top: 1rem;
+    width: 12.5rem; height: 1.75rem;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #1c1d21 0%, #131417 100%);
+    box-shadow: var(--recess-shadow), 0 1px 0 rgba(255,255,255,0.04);
+    display: flex;
+    overflow: hidden;
+  }
+  .page-nav-indicator {
+    position: absolute; inset: 0.1875rem; width: calc(50% - 0.25rem);
+    border-radius: 999px;
+    background: linear-gradient(180deg, #3a3d44 0%, #2c2e33 100%);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.10);
+    transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 1;
+  }
+  .page-nav button {
+    position: relative; z-index: 2; flex: 1;
+    background: transparent; border: none; font-family: inherit;
+    font-size: 0.58rem; font-weight: 700; letter-spacing: 0.14em;
+    color: var(--text-label); cursor: default; transition: color 200ms ease;
+  }
+  .page-nav button.active { color: var(--text-primary); }
+
+  .vlabel {
+    position: absolute; width: 0.625rem;
+    writing-mode: vertical-rl; transform: rotate(180deg);
+    text-align: center; font-size: 0.62rem; font-weight: 600; letter-spacing: 0.22em;
+    color: var(--text-label-dim); z-index: 2;
+  }
+
+  /* ---------- Pages (crossfade + spring settle) ---------- */
+  .page { position: absolute; left: 0; top: 3.5rem; right: 0; bottom: 0; opacity: 0; transform: translateY(5px); pointer-events: none;
+    transition: opacity 320ms ease-out, transform 480ms cubic-bezier(0.22, 1.32, 0.4, 1); }
+  .page.active { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
+  /* ---------- Trigger-mode 3-way pill (Advanced) ---------- */
+  .mode-pill {
+    position: absolute; left: 2.5rem; top: 4.375rem;
+    width: 15.5rem; height: 2rem; border-radius: 999px;
+    background: linear-gradient(180deg, #1c1d21 0%, #131417 100%);
+    box-shadow: var(--recess-shadow);
+    display: flex; overflow: hidden;
+  }
+  .mode-indicator {
+    position: absolute; inset: 0.1875rem; width: calc(33.333% - 0.25rem); border-radius: 999px;
+    background: linear-gradient(180deg, #3a3d44 0%, #2c2e33 100%);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+    transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 1;
+  }
+  .mode-pill button { position: relative; z-index: 2; flex: 1; background: transparent; border: none; font-family: inherit;
+    font-size: 0.56rem; font-weight: 600; letter-spacing: 0.1em; color: var(--text-label); cursor: default; transition: color 200ms ease; }
+  .mode-pill button.active { color: var(--text-primary); }
+
+  /* ---------- Build length: recessed glow step-circles (Main) ---------- */
+  .step-row { position: absolute; left: 2.5rem; top: 7rem; width: 15.75rem; height: 3.625rem; }
+  .step-circles { display: flex; gap: 0.8125rem; }
+  .step-circle {
+    width: 2.5rem; height: 2.5rem; border-radius: 50%;
+    background: radial-gradient(circle at 50% 40%, #16171a 0%, #0e0f11 75%);
+    border: 1px solid rgba(0,0,0,0.6);
+    box-shadow: inset 0 3px 6px rgba(0,0,0,0.7), inset 0 -1px 0 rgba(255,255,255,0.03);
+    color: var(--text-label);
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; font-variant-numeric: tabular-nums;
+    cursor: default;
+    transition: box-shadow 320ms cubic-bezier(0.34, 1.56, 0.64, 1), border-color 320ms ease, color 320ms ease;
+  }
+  .step-circle.active {
+    color: #fff; border-color: var(--accent-dim);
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.6), inset 0 0 8px rgba(63,211,224,0.35),
+                0 0 12px 2px rgba(63,211,224,0.35), 0 0 16px 3px rgba(198,77,190,0.28), 0 0 0 1px rgba(168,104,216,0.3);
+  }
+  .step-caption { margin-top: 0.5rem; font-size: 0.56rem; letter-spacing: 0.14em; color: var(--text-label-dim); }
+
+  /* ---------- Bare numeric readouts — now recessed chips ---------- */
+  .bare-readout {
+    position: absolute; text-align: center; cursor: default;
+    padding: 0.5rem 0.35rem 0.45rem; border-radius: 0.6rem;
+    background: linear-gradient(180deg, #121317 0%, #17181c 100%);
+    box-shadow: var(--recess-shadow);
+    border: 1px solid rgba(0,0,0,0.4);
+  }
+  /* v8: numerals stay neutral white for legibility (matching the "knob numerals stay
+     neutral" direction, extended here for consistency) — the new accent lives in the
+     soft two-tone glow behind the text, not in the text color itself. */
+  .bare-value { font-family: 'IBM Plex Mono', 'SF Mono', monospace; font-size: 1.9rem; font-weight: 300; color: var(--text-primary);
+    text-shadow: 0 0 8px rgba(63,211,224,0.32), 0 0 11px rgba(198,77,190,0.28); font-variant-numeric: tabular-nums; line-height: 1; }
+  .bare-unit { font-size: 0.55em; color: var(--text-label-dim); margin-left: 0.15rem; }
+  .bare-chevrons { display: flex; flex-direction: column; align-items: center; gap: 0.1875rem; margin-top: 0.1875rem; }
+  .chev-mini { width: 0; height: 0; cursor: default; opacity: 0.7; }
+  .chev-mini:hover { opacity: 1; }
+  .chev-mini.up { border-left: 0.25rem solid transparent; border-right: 0.25rem solid transparent; border-bottom: 0.3125rem solid var(--text-label); }
+  .chev-mini.down { border-left: 0.25rem solid transparent; border-right: 0.25rem solid transparent; border-top: 0.3125rem solid var(--text-label); }
+  .bare-label { display: block; margin-top: 0.3rem; font-size: 0.58rem; letter-spacing: 0.12em; color: var(--text-label); }
+
+  /* ---------- Phase status module ---------- */
+  #phaseChip {
+    position: absolute; left: 26.25rem; top: 4.375rem; width: 10rem; height: 1.125rem;
+    display: flex; align-items: center; justify-content: center; gap: 0.35rem;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(38,40,45,0.55) 0%, rgba(26,27,31,0.55) 100%);
+    border: 1px solid rgba(255,255,255,0.05);
+    box-shadow: var(--recess-shadow);
+    font-size: 0.56rem; font-weight: 600; letter-spacing: 0.2em; color: var(--text-label-dim);
+    transition: color 300ms ease;
+  }
+  .phase-led { width: 0.375rem; height: 0.375rem; border-radius: 50%; background: #4a4d54; transition: background 300ms ease, box-shadow 300ms ease; }
+  #phaseChip.live { color: var(--accent); }
+  #phaseChip.live .phase-led { background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+    box-shadow: 0 0 5px 1px var(--accent-glow-a), 0 0 7px 1px var(--accent-glow-b); }
+
+  /* ---------- Orb + recessed glass chamber ---------- */
+  #orbWrap { position: absolute; left: 25rem; top: 6rem; width: 12.5rem; height: 12.5rem; }
+  #orbWrap::before {
+    content: "";
+    position: absolute; inset: -18%;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 46%, #0b0c0e 0%, #121317 52%, rgba(18,19,23,0) 78%);
+    box-shadow: inset 0 6px 14px rgba(0,0,0,0.65), inset 0 -3px 10px rgba(255,255,255,0.025);
+    z-index: -1;
+  }
+  /* v6: wireframe-loop-specific rules removed (#orbGlowLayer/#orbCrispLayer no
+     longer exist) — the liquid blob's layers are styled via SVG attributes set
+     directly in JS/markup below, no dedicated CSS classes needed. */
+
+  /* ---------- Style chevron selector ---------- */
+  .style-nav { position: absolute; left: 24.375rem; top: 19.125rem; width: 13.75rem; height: 2.25rem;
+    display: flex; align-items: center; justify-content: center; gap: 0.75rem; }
+  .style-nav .chev-btn { background: transparent; border: none; color: var(--text-label); font-size: 1rem; line-height: 1; cursor: default;
+    transition: color 160ms ease, transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .style-nav .chev-btn:active { transform: scale(0.85); }
+  .style-label { font-size: 1rem; font-weight: 400; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-primary);
+    min-width: 8.5rem; text-align: center; font-variant-numeric: tabular-nums; }
+
+  /* ---------- DROP trigger — thick raised 3D pill w/ press depression ---------- */
+  .trigger-btn {
+    position: absolute; left: 23.75rem; top: 22rem; width: 15rem; height: 3.375rem;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #2b2d32 0%, #1a1b1e 60%, #17181b 100%);
+    border: 1px solid rgba(0,0,0,0.5);
+    box-shadow: var(--knob-contact-shadow), var(--knob-ambient-shadow), var(--knob-rim),
+                0 0 0 1px rgba(168,104,216,0.14), 0 0 14px 2px rgba(63,211,224,0.10), 0 0 16px 2px rgba(198,77,190,0.10);
+    color: var(--text-primary);
+    font-family: inherit; font-size: 0.9rem; font-weight: 700; letter-spacing: 0.3em; text-transform: uppercase;
+    cursor: default; display: flex; align-items: center; justify-content: center;
+    transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 220ms ease, border-color 220ms ease;
+  }
+  .trigger-btn.armed {
+    border-color: var(--accent-violet);
+    box-shadow: var(--knob-contact-shadow), var(--knob-ambient-shadow), var(--knob-rim),
+                0 0 0 1px rgba(168,104,216,0.4), 0 0 30px 5px rgba(63,211,224,0.30), 0 0 34px 6px rgba(198,77,190,0.28);
+    color: #fff;
+  }
+  .trigger-btn.pressed {
+    transform: translateY(2px) scale(0.97);
+    box-shadow: 0 1px 1px rgba(0,0,0,0.5), inset 0 2px 4px rgba(0,0,0,0.4);
+  }
+
+  /* ---------- Progress strip — recessed track ---------- */
+  #progressStrip {
+    position: absolute; left: 25rem; top: 26rem; width: 12.5rem; height: 0.625rem;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #121317 0%, #17181c 100%);
+    box-shadow: var(--recess-shadow);
+  }
+  #dropMarker { filter: drop-shadow(0 0 3px rgba(63,211,224,0.6)) drop-shadow(0 0 3px rgba(198,77,190,0.55)); }
+
+  /* ---------- Tension curve display — recessed ---------- */
+  #curveBox {
+    position: absolute; left: 43.75rem; top: 4.375rem; width: 12.5rem; height: 6.875rem;
+    background: linear-gradient(180deg, #101115 0%, #16171b 100%);
+    border: 1px solid rgba(0,0,0,0.5);
+    box-shadow: var(--recess-shadow);
+    border-radius: 0.4rem;
+  }
+  #curveBox .curve-label { position: absolute; left: 0.5rem; top: 0.3rem; font-size: 0.5rem; letter-spacing: 0.14em; color: var(--text-label-dim); }
+  #curveBox .curve-type-label { position: absolute; right: 0.5rem; top: 0.3rem; font-size: 0.5rem; letter-spacing: 0.1em; color: var(--accent); opacity: 0.85; }
+
+  /* ---------- Knobs — v5 3D raised system, all tiers ---------- */
+  .knob3-wrap { position: absolute; text-align: center; }
+  /* v7 fix (task 2): rebuilt for genuine physical dimensionality, matching the
+     reference's unmistakably domed knobs. Two layers instead of one flat gradient:
+       .knob3       = the outer side-wall/rim (a visible cylindrical edge band —
+                       width scales proportionally via % inset on ::before below,
+                       so it holds at 200px/112px/56px alike), plus the contact +
+                       ambient shadow pair beneath.
+       .knob3::before = the inset domed TOP FACE: a strong vertical light-to-dark
+                       gradient (single top light source, distinctly lighter top
+                       fading to near-black bottom — not the old radial "spotlight"
+                       look), a soft elliptical sheen near the top (blurred, not a
+                       hard dot), the brushed texture, and an inner bevel ring
+                       (inset highlight + inset shadow) where the face meets the
+                       rim, reading as a real edge, not a flat painted circle. */
+  .knob3 {
+    position: relative; margin: 0 auto; border-radius: 50%;
+    background: radial-gradient(circle at 50% 30%, #303236 0%, #16171a 72%);
+    box-shadow: var(--knob-contact-shadow), var(--knob-ambient-shadow), var(--knob-rim), var(--knob-internal-shade);
+    cursor: default;
+  }
+  .knob3::before {
+    content: "";
+    position: absolute;
+    inset: 9%;
+    border-radius: 50%;
+    background:
+      radial-gradient(ellipse 56% 24% at 50% 17%, rgba(255,255,255,0.30) 0%, transparent 68%),
+      repeating-linear-gradient(115deg, rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 4px),
+      linear-gradient(180deg, #4c4f56 0%, #35373c 28%, #202226 60%, #0d0e10 100%);
+    box-shadow:
+      inset 0 1px 1px rgba(255,255,255,0.22),
+      inset 0 -2px 4px rgba(0,0,0,0.55);
+    pointer-events: none;
+  }
+  .knob3-value { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace; color: var(--text-primary); font-variant-numeric: tabular-nums; font-weight: 500;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6), 0 0 10px rgba(255,255,255,0.06); }
+  /* v6 fix: was `inset: -10%` with no explicit width/height on this absolutely-
+     positioned <svg> (a CSS replaced element) — browsers fall back to intrinsic/
+     viewBox-derived sizing instead of reliably stretching to the inset box, which
+     read as the arc rendering offset up-and-left of the knob cap, inconsistently
+     across sizes/scales. Fixed with explicit percentage width/height (no longer
+     'auto', so the replaced-element special case no longer applies) + transform-
+     based centering, which has zero UA ambiguity: cap center == arc center by
+     construction at every knob size and every window scale factor. */
+  .knob3-arc { position: absolute; top: 50%; left: 50%; width: 120%; height: 120%;
+    transform: translate(-50%, -50%); overflow: visible; pointer-events: none; }
+  /* v5 fix: track was near-invisible (0.08 alpha), so any knob below 100% (e.g. Impact's default
+     50%) read as an incomplete/asymmetric arc instead of a full ring with a blue value highlight.
+     Bumped to a clearly-visible-but-still-recessed 0.22 so the full 270-degree channel always shows. */
+  .knob3-arc .arc-track { stroke: rgba(255,255,255,0.22); stroke-width: 3; fill: none; }
+  .knob3-arc .arc-fill { stroke: url(#iridAccentGrad); stroke-width: 3; stroke-linecap: round; fill: none;
+    filter: drop-shadow(0 0 3px rgba(63,211,224,0.45)) drop-shadow(0 0 3px rgba(198,77,190,0.45));
+    transition: stroke-dasharray 320ms cubic-bezier(0.22, 0.9, 0.3, 1); }
+  .knob3-label { display: block; margin-top: 0.4rem; font-size: 0.58rem; font-weight: 600; letter-spacing: 0.1em; color: var(--text-label); }
+  .knob3-label .unit { color: var(--text-label-dim); font-weight: 400; margin-left: 0.15rem; }
+  .knob3-label-small { font-size: 0.5rem; margin-top: 0.3rem; }
+  .knob3-label-hero { font-size: 0.7rem; margin-top: 0.6rem; }
+
+  /* ---------- Debug parameter monitor (test HTML only) ---------- */
+  .debug-monitor { position: fixed; bottom: 10px; right: 10px; background: rgba(10,10,9,0.92); color: #8fe38f;
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace; font-size: 11px; padding: 8px 12px; border: 1px solid #333;
+    min-width: 170px; pointer-events: none; z-index: 10000; }
+  .debug-label { color: #666; font-size: 9px; margin-bottom: 4px; letter-spacing: 1px; }
+  .debug-param { font-weight: bold; color: #8fe38f; }
+  .debug-value { color: #fff; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .debug-normalized { color: #888; font-size: 10px; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+
+<div class="harness">
+  <div class="harness-caption">DROP — v8 mockup — iridescent soap-bubble blob (pops on Impact) + cyan/violet/magenta oil-film accent — drag bottom-right corner to test resizable UI (base 1000×560)</div>
+  <div class="plugin-frame" id="pluginFrame">
+    <div id="container">
+
+      <svg id="panelBg" viewBox="0 0 1000 560" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="upperGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#1C1D21"></stop>
+            <stop offset="100%" stop-color="#17181B"></stop>
+          </linearGradient>
+          <linearGradient id="lowerGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#2A2C31"></stop>
+            <stop offset="12%" stop-color="#232529"></stop>
+            <stop offset="100%" stop-color="#1E2024"></stop>
+          </linearGradient>
+          <linearGradient id="upperRecess" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#000000" stop-opacity="0.35"></stop>
+            <stop offset="100%" stop-color="#000000" stop-opacity="0"></stop>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="1000" height="560" fill="url(#upperGrad)"></rect>
+        <!-- v5: upper zone reads as a recessed well — shadow cast just below the header -->
+        <rect x="0" y="56" width="1000" height="50" fill="url(#upperRecess)"></rect>
+        <path d="M0,300 L370,300 C430,300 435,344 500,344 C565,344 570,300 630,300 L1000,300 L1000,560 L0,560 Z" fill="url(#lowerGrad)"></path>
+        <!-- v5: embossed seam — dark crease drawn first, light catch-line offset 1.5px below -->
+        <path d="M0,300 L370,300 C430,300 435,344 500,344 C565,344 570,300 630,300 L1000,300"
+              fill="none" stroke="rgba(0,0,0,0.5)" stroke-width="2"></path>
+        <path d="M0,301.5 L370,301.5 C430,301.5 435,345.5 500,345.5 C565,345.5 570,301.5 630,301.5 L1000,301.5"
+              fill="none" stroke="rgba(255,255,255,0.20)" stroke-width="1"></path>
+      </svg>
+
+      <div id="vignette"></div>
+
+      <!-- v8: shared iridescent accent gradient, referenced via url(#iridAccentGrad)
+           from any SVG element on the page (knob value-arcs created dynamically in
+           JS, the progress-strip fill/marker, the tension-curve dot) — a single
+           cyan -> soft violet -> magenta sweep, tuned to stay legible on charcoal
+           (not a full rainbow). 0x0, purely a shared <defs> host. -->
+      <svg width="0" height="0" style="position:absolute;" aria-hidden="true">
+        <defs>
+          <linearGradient id="iridAccentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#3FD3E0"></stop>
+            <stop offset="45%" stop-color="#7FA8E0"></stop>
+            <stop offset="72%" stop-color="#A868D8"></stop>
+            <stop offset="100%" stop-color="#C64DBE"></stop>
+          </linearGradient>
+        </defs>
+      </svg>
+
+      <div class="content-layer">
+
+        <div class="header">
+          <div class="wordmark">drop</div>
+          <div class="maker-mark">AVESS</div>
+          <div class="page-nav" id="pageNav">
+            <div class="page-nav-indicator" id="pageNavIndicator"></div>
+            <button data-page="main" class="active">MAIN</button>
+            <button data-page="advanced">ADVANCED</button>
+          </div>
+        </div>
+
+        <!-- ================= MAIN PAGE ================= -->
+        <div class="page active" id="pageMain">
+          <div class="vlabel" style="left:1rem; top:5.625rem; height:10rem;">BUILD</div>
+          <div class="vlabel" style="left:60.875rem; top:5.625rem; height:10rem;">MIX</div>
+
+          <div class="step-row">
+            <div class="step-circles" id="buildLengthSteps" data-param="buildLength">
+              <button class="step-circle" data-value="1">1</button>
+              <button class="step-circle" data-value="2">2</button>
+              <button class="step-circle active" data-value="4">4</button>
+              <button class="step-circle" data-value="8">8</button>
+              <button class="step-circle" data-value="16">16</button>
+            </div>
+            <div class="step-caption">BUILD LENGTH (BARS)</div>
+          </div>
+
+          <div id="phaseChip"><span class="phase-led"></span><span class="phase-text">IDLE</span></div>
+
+          <div id="orbWrap">
+            <!-- v8: iridescent soap bubble (re-rendered from v6/v7's liquid blob;
+                 the 28-point soft-body physics simulation itself is UNCHANGED, only
+                 the rendering + the Impact behavior changed). Transparent glassy
+                 fill (the recessed chamber shows through the center, reading as a
+                 thin film rather than a solid ball); a rotating multi-stop
+                 cyan/magenta/gold/green gradient stroked along the SAME deformed
+                 path as 3 layered copies (soft outer blur, mid band, crisp rim) so
+                 the iridescence visibly tracks every ripple/squash/bulge, not a
+                 static overlay; two specular highlights (main + secondary) that
+                 track deformation like before; on Impact the membrane visually
+                 ruptures (a bright pop-flash ring + a sharp dip in body/film
+                 opacity, smoothly spring-driven, not a hard cut) while satellite
+                 droplets (now tiny bubbles themselves) and torn-film "shred"
+                 fragments spray outward, then the body reforms and wobbles to
+                 rest during Recovery. Same recessed glass chamber as before
+                 (#orbWrap::before, CSS, unchanged). -->
+            <svg id="orbSvg" viewBox="0 0 200 200" width="100%" height="100%" style="overflow:visible;">
+              <defs>
+                <radialGradient id="bubbleGlassGrad" cx="40%" cy="32%" r="78%">
+                  <stop offset="0%" stop-color="#111a24" stop-opacity="0.05"></stop>
+                  <stop offset="62%" stop-color="#0c141c" stop-opacity="0.05"></stop>
+                  <stop offset="100%" stop-color="#18242f" stop-opacity="0.16"></stop>
+                </radialGradient>
+                <linearGradient id="bubbleIrisGradA" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#E85FC2"></stop>
+                  <stop offset="26%" stop-color="#5FC7E8"></stop>
+                  <stop offset="52%" stop-color="#E0C25F"></stop>
+                  <stop offset="76%" stop-color="#6FE0A8"></stop>
+                  <stop offset="100%" stop-color="#E85FC2"></stop>
+                </linearGradient>
+                <linearGradient id="bubbleIrisGradB" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#5FC7E8"></stop>
+                  <stop offset="30%" stop-color="#E0C25F"></stop>
+                  <stop offset="60%" stop-color="#E85FC2"></stop>
+                  <stop offset="85%" stop-color="#6FE0A8"></stop>
+                  <stop offset="100%" stop-color="#5FC7E8"></stop>
+                </linearGradient>
+                <radialGradient id="blobGlowGrad" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="#B87AD8" stop-opacity="0.35"></stop>
+                  <stop offset="55%" stop-color="#5FC7E8" stop-opacity="0.14"></stop>
+                  <stop offset="100%" stop-color="#5FC7E8" stop-opacity="0"></stop>
+                </radialGradient>
+                <radialGradient id="blobSpecGrad" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"></stop>
+                  <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"></stop>
+                </radialGradient>
+              </defs>
+              <ellipse id="blobShadow" cx="100" cy="178" rx="58" ry="11" fill="#000000" opacity="0.38" style="filter:blur(6px);"></ellipse>
+              <ellipse id="blobGlow" cx="100" cy="100" rx="80" ry="80" fill="url(#blobGlowGrad)" style="filter:blur(7px);"></ellipse>
+              <path id="blobPath" fill="url(#bubbleGlassGrad)" stroke="none"></path>
+              <path id="blobIrisOuter" fill="none" stroke="url(#bubbleIrisGradB)" stroke-width="7" opacity="0.22" style="filter:blur(2px);"></path>
+              <path id="blobIrisMid" fill="none" stroke="url(#bubbleIrisGradA)" stroke-width="4" opacity="0.5"></path>
+              <path id="blobIrisRim" fill="none" stroke="url(#bubbleIrisGradA)" stroke-width="1.5" opacity="0.85"></path>
+              <circle id="popFlashRing" cx="100" cy="100" r="58" fill="none" stroke="#FFFFFF" stroke-width="0" opacity="0"></circle>
+              <g id="dropletsLayer"></g>
+              <g id="shredsLayer"></g>
+              <ellipse id="blobSpecular" fill="url(#blobSpecGrad)" style="filter:blur(2.5px);"></ellipse>
+              <ellipse id="blobSpecular2" fill="url(#blobSpecGrad)" style="filter:blur(1.6px);"></ellipse>
+            </svg>
+          </div>
+
+          <div class="style-nav" data-param="style">
+            <button class="chev-btn" id="styleLeft">‹</button>
+            <span class="style-label" id="styleLabel">Clean EDM</span>
+            <button class="chev-btn" id="styleRight">›</button>
+          </div>
+
+          <button class="trigger-btn" id="triggerBtn">Drop</button>
+
+          <div id="progressStrip">
+            <svg width="100%" height="100%" viewBox="0 0 200 10" preserveAspectRatio="none">
+              <rect x="0" y="4" width="200" height="2" fill="none" stroke="rgba(255,255,255,0.10)" stroke-width="2"></rect>
+              <rect id="progressFill" x="0" y="4" width="0" height="2" fill="url(#iridAccentGrad)"></rect>
+              <line id="dropMarker" x1="168" y1="0" x2="168" y2="10" stroke="url(#iridAccentGrad)" stroke-width="2"></line>
+            </svg>
+          </div>
+
+          <!-- Intensity / Dry-Wet — large showcase 3D knobs flanking the orb -->
+          <div class="knob3-wrap" style="left:4.125rem; top:12.5rem; width:13.75rem;"
+               data-param="intensity" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:12.5rem;height:12.5rem;"><div class="knob3-value" style="font-size:2.4rem;"><span class="kv-num">50</span></div></div>
+            <span class="knob3-label knob3-label-hero">INTENSITY<span class="unit">%</span></span>
+          </div>
+
+          <div class="knob3-wrap" style="left:44.625rem; top:12.5rem; width:13.75rem;"
+               data-param="dryWet" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:12.5rem;height:12.5rem;"><div class="knob3-value" style="font-size:2.4rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-hero">DRY/WET<span class="unit">%</span></span>
+          </div>
+        </div>
+
+        <!-- ================= ADVANCED PAGE ================= -->
+        <!-- v5 fix (2nd pass): explicit two-column upper well + 2x5 lower
+             deck grid, per exact coordinator geometry. Upper recessed well
+             (y70-300): left column (triggerMode, Tension/Chaos) + right
+             column (widened tension-curve, ~300x140) with the Impact hero
+             knob bridging the center gap between them so the well reads as
+             balanced, not empty-middle. Lower raised deck (y300-540): 10
+             macros as a true 2x5 grid (56px caps) centered around x430,
+             plus a large Output readout chip well clear of the bottom-right
+             corner. Nothing sits within 30px of the panel bottom. -->
+        <div class="page" id="pageAdvanced">
+          <div class="vlabel" style="left:1rem; top:4.375rem; height:11.25rem;">SHAPE</div>
+          <div class="vlabel" style="left:60.875rem; top:4.375rem; height:13.75rem;">FILTERS</div>
+          <div class="vlabel" style="left:1rem; top:19.375rem; height:13.125rem;">MODULES</div>
+          <div class="vlabel" style="left:60.875rem; top:19.375rem; height:13.125rem;">OUTPUT</div>
+
+          <!-- Upper well, left column -->
+          <div class="mode-pill" id="modePill" style="top:5rem;">
+            <div class="mode-indicator" id="modeIndicator"></div>
+            <button data-value="manual" class="active">MANUAL</button>
+            <button data-value="midi">MIDI</button>
+            <button data-value="auto">AUTO</button>
+          </div>
+
+          <div class="bare-readout" style="left:2.5rem; top:9.375rem; width:6.75rem;"
+               data-param="tension" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" data-step="1">
+            <div class="bare-value"><span class="bv-num">50</span><span class="bare-unit">%</span></div>
+            <div class="bare-chevrons"><div class="chev-mini up" data-dir="1"></div><div class="chev-mini down" data-dir="-1"></div></div>
+            <span class="bare-label">TENSION</span>
+          </div>
+
+          <div class="bare-readout" style="left:9.875rem; top:9.375rem; width:6.75rem;"
+               data-param="chaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" data-step="1">
+            <div class="bare-value"><span class="bv-num">0</span><span class="bare-unit">%</span></div>
+            <div class="bare-chevrons"><div class="chev-mini up" data-dir="1"></div><div class="chev-mini down" data-dir="-1"></div></div>
+            <span class="bare-label">CHAOS</span>
+          </div>
+
+          <!-- Upper well, right column: widened curve display (its own hero) -->
+          <div id="curveBox" style="left:38.75rem; top:5rem; width:18.75rem; height:8.75rem;">
+            <div class="curve-label">TENSION CURVE</div>
+            <div class="curve-type-label" id="curveTypeLabel">S-CURVE</div>
+            <svg width="100%" height="100%" viewBox="0 0 300 140" preserveAspectRatio="none">
+              <g id="curveGrid"></g>
+              <path id="curvePath" fill="none" stroke="#9AA0A8" stroke-width="1.4"></path>
+              <circle id="curveDot" cx="8" cy="84" r="2.6" fill="url(#iridAccentGrad)" style="filter:drop-shadow(0 0 3px rgba(63,211,224,0.7)) drop-shadow(0 0 3px rgba(198,77,190,0.6));"></circle>
+              <text x="8" y="130" font-size="8" fill="#6E7076" letter-spacing="1">BUILD</text>
+              <text x="292" y="130" font-size="8" fill="#6E7076" letter-spacing="1" text-anchor="end">DROP</text>
+            </svg>
+          </div>
+
+          <!-- Upper well, center gap: Impact hero knob centered on the seam notch's
+               actual dip (x=500, verified from the seam SVG path's bezier control-point
+               symmetry — not the midpoint between the neighboring columns). Gaps to the
+               two neighboring zones are intentionally asymmetric as a result (169px to
+               Tension/Chaos, 55px to the curve box) — this centers Impact with the
+               notch/orb/style-selector/DROP-button column, which is the shared center
+               axis of the whole UI (both pages), per explicit user direction. -->
+          <div class="knob3-wrap" style="left:27.1875rem; top:6.25rem; width:8.125rem;"
+               data-param="impact" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:7rem;height:7rem;"><div class="knob3-value" style="font-size:1.6rem;"><span class="kv-num">50</span></div></div>
+            <span class="knob3-label knob3-label-hero">IMPACT<span class="unit">%</span></span>
+          </div>
+
+          <!-- Lower deck: 10 module macros as a true 2x5 grid, centered ~x430 -->
+          <div class="knob3-wrap" style="left:10.5rem; top:20rem; width:3.75rem;"
+               data-param="filter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">FILTER</span>
+          </div>
+          <div class="knob3-wrap" style="left:17.75rem; top:20rem; width:3.75rem;"
+               data-param="width" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">WIDTH</span>
+          </div>
+          <div class="knob3-wrap" style="left:25rem; top:20rem; width:3.75rem;"
+               data-param="pitch" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">PITCH</span>
+          </div>
+          <div class="knob3-wrap" style="left:32.25rem; top:20rem; width:3.75rem;"
+               data-param="gate" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">GATE</span>
+          </div>
+          <div class="knob3-wrap" style="left:39.5rem; top:20rem; width:3.75rem;"
+               data-param="stutter" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">STUTTER</span>
+          </div>
+          <div class="knob3-wrap" style="left:10.5rem; top:25.9375rem; width:3.75rem;"
+               data-param="delay" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">DELAY</span>
+          </div>
+          <div class="knob3-wrap" style="left:17.75rem; top:25.9375rem; width:3.75rem;"
+               data-param="reverb" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">REVERB</span>
+          </div>
+          <div class="knob3-wrap" style="left:25rem; top:25.9375rem; width:3.75rem;"
+               data-param="distortion" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">DIST</span>
+          </div>
+          <div class="knob3-wrap" style="left:32.25rem; top:25.9375rem; width:3.75rem;"
+               data-param="digital" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">DIGITAL</span>
+          </div>
+          <div class="knob3-wrap" style="left:39.5rem; top:25.9375rem; width:3.75rem;"
+               data-param="noise" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0">
+            <div class="knob3" style="width:3.5rem;height:3.5rem;"><div class="knob3-value" style="font-size:0.85rem;"><span class="kv-num">100</span></div></div>
+            <span class="knob3-label knob3-label-small">NOISE</span>
+          </div>
+
+          <!-- Lower deck: Output — large readout chip, vertically centered in the deck, well clear of the corner -->
+          <div class="bare-readout" style="left:49.375rem; top:20.3125rem; width:10rem;"
+               data-param="output" data-min="-60" data-max="12" data-default="0" data-unit="dB" data-decimals="1" data-step="0.5">
+            <div class="bare-value" style="font-size:1.8rem;"><span class="bv-num">0.0</span><span class="bare-unit">dB</span></div>
+            <div class="bare-chevrons"><div class="chev-mini up" data-dir="1"></div><div class="chev-mini down" data-dir="-1"></div></div>
+            <span class="bare-label">OUTPUT</span>
+          </div>
+        </div></div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="debug-monitor">
+  <div class="debug-label">PARAMETER MONITOR</div>
+  <div class="debug-param" id="debugParam">—</div>
+  <div class="debug-value" id="debugValue">—</div>
+  <div class="debug-normalized" id="debugNormalized">—</div>
+</div>
+
+<script>
+  /* Native app feel */
+  document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+  document.addEventListener("dragstart", (e) => { e.preventDefault(); });
+
+  /* Mock JUCE backend */
+  const paramState = {};
+  window.Juce = {
+    getSliderState: (id) => {
+      if (!(id in paramState)) paramState[id] = 0.5;
+      return {
+        getNormalisedValue: () => paramState[id],
+        setNormalisedValue: (v) => { paramState[id] = v; console.log(`[Juce.SliderState] ${id} -> ${v.toFixed(4)}`); },
+        valueChangedEvent: { addListener: (fn) => console.log(`[Juce] listener added: slider ${id}`) }
+      };
+    },
+    getToggleState: (id) => ({
+      value: false,
+      setValue: (v) => console.log(`[Juce.ToggleState] ${id} -> ${v}`),
+      valueChangedEvent: { addListener: (fn) => console.log(`[Juce] listener added: toggle ${id}`) }
+    }),
+    getComboBoxState: (id) => ({
+      selectedId: 0,
+      setSelectedId: (v) => console.log(`[Juce.ComboBoxState] ${id} -> ${v}`),
+      valueChangedEvent: { addListener: (fn) => console.log(`[Juce] listener added: combo ${id}`) }
+    })
+  };
+
+  function updateDebugMonitor(paramId, displayValue, normalized) {
+    document.getElementById('debugParam').textContent = paramId;
+    document.getElementById('debugValue').textContent = displayValue;
+    document.getElementById('debugNormalized').textContent =
+      (normalized === null || normalized === undefined) ? '' : `${(normalized * 100).toFixed(1)}%`;
+  }
+
+  /* Root-em scaling (no viewport units) */
+  const BASE_W = 1000, BASE_H = 560, BASE_REM = 16;
+  const frame = document.getElementById('pluginFrame');
+  function applyScale(w, h) {
+    let scale = Math.min(w / BASE_W, h / BASE_H);
+    scale = Math.max(0.75, Math.min(1.5, scale));
+    document.documentElement.style.fontSize = (BASE_REM * scale) + 'px';
+  }
+  const ro = new ResizeObserver((entries) => {
+    for (const entry of entries) { const { width, height } = entry.contentRect; applyScale(width, height); }
+  });
+  ro.observe(frame);
+  applyScale(frame.clientWidth, frame.clientHeight);
+
+  /* =========================================================
+     Page navigation (view-state only, not an APVTS parameter)
+     ========================================================= */
+  const pageNavButtons = Array.from(document.querySelectorAll('.page-nav button'));
+  const pageNavIndicator = document.getElementById('pageNavIndicator');
+  const pageMain = document.getElementById('pageMain');
+  const pageAdvanced = document.getElementById('pageAdvanced');
+  function showPage(which) {
+    const isMain = which === 'main';
+    pageMain.classList.toggle('active', isMain);
+    pageAdvanced.classList.toggle('active', !isMain);
+    pageNavButtons.forEach(b => b.classList.toggle('active', b.dataset.page === which));
+    pageNavIndicator.style.transform = isMain ? 'translateX(0)' : 'translateX(100%)';
+  }
+  pageNavButtons.forEach((btn) => btn.addEventListener('click', () => showPage(btn.dataset.page)));
+
+  /* Critically-damped spring integrator (reused from v2-v4) */
+  class Spring {
+    constructor(stiffness, damping, value = 0) { this.k = stiffness; this.d = damping; this.value = value; this.target = value; this.vel = 0; }
+    update(dt) {
+      const force = (this.target - this.value) * this.k - this.vel * this.d;
+      this.vel += force * dt; this.value += this.vel * dt; return this.value;
+    }
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function catmullRom2bezier(points) {
+    const n = points.length;
+    let d = `M ${points[0][0].toFixed(2)} ${points[0][1].toFixed(2)} `;
+    for (let i = 0; i < n; i++) {
+      const p0 = points[(i - 1 + n) % n], p1 = points[i], p2 = points[(i + 1) % n], p3 = points[(i + 2) % n];
+      const cp1x = p1[0] + (p2[0] - p0[0]) / 6, cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const cp2x = p2[0] - (p3[0] - p1[0]) / 6, cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += `C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)} ${cp2x.toFixed(2)} ${cp2y.toFixed(2)} ${p2[0].toFixed(2)} ${p2[1].toFixed(2)} `;
+    }
+    return d + 'Z';
+  }
+
+  /* Demo/DSP-simulated transition state (UI never executes real DSP).
+     Declared here (early) rather than near startDemo/advancePhase below,
+     because redrawCurve()'s initial paint call already reads drop.phase/
+     drop.progress -- declaring it later caused a temporal-dead-zone
+     ReferenceError that silently halted the rest of the script (including
+     orb loop creation and the requestAnimationFrame call at the very end). */
+  const drop = { phase: 'idle', progress: 0, phaseStartTime: 0, phaseDuration: 0, t: 0 };
+
+  /* =========================================================
+     Trigger-mode 3-way pill (Advanced; non-APVTS UI state, still emits a message)
+     ========================================================= */
+  const modePill = document.getElementById('modePill');
+  const modeIndicator = document.getElementById('modeIndicator');
+  const modeButtons = Array.from(modePill.querySelectorAll('button'));
+  modeButtons.forEach((btn, i) => {
+    btn.addEventListener('click', () => {
+      modeButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      modeIndicator.style.transform = `translateX(${i * 100}%)`;
+      console.log(`[UI state] triggerMode -> ${btn.dataset.value}`);
+      updateDebugMonitor('triggerMode (UI state)', btn.dataset.value, null);
+    });
+  });
+
+  /* =========================================================
+     Build length — recessed glow step circles (Main)
+     ========================================================= */
+  const buildLengthSteps = document.getElementById('buildLengthSteps');
+  const buildLengthState = window.Juce.getComboBoxState('buildLength');
+  let currentBuildLengthBars = 4;
+  buildLengthSteps.querySelectorAll('.step-circle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      buildLengthSteps.querySelectorAll('.step-circle').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentBuildLengthBars = parseInt(btn.dataset.value, 10);
+      buildLengthState.setSelectedId(currentBuildLengthBars);
+      updateDebugMonitor('buildLength', `${currentBuildLengthBars} bars`, null);
+    });
+  });
+
+  /* =========================================================
+     Style chevron selector (16 DropStyles) — Main
+     ========================================================= */
+  const STYLES = ["Clean EDM","Big Room","Techno Pressure","Dark Techno","Trap Pull","DnB Rush","Hyper","Cinematic",
+                   "Minimal","Vocal Build","Drum Build","Synth Build","Full Mix","Destroy","Vacuum","Reverse Energy"];
+  let styleIndex = 0;
+  const styleLabel = document.getElementById('styleLabel');
+  const styleState = window.Juce.getComboBoxState('style');
+  function setStyle(i) {
+    styleIndex = (i + STYLES.length) % STYLES.length;
+    styleLabel.textContent = STYLES[styleIndex];
+    styleState.setSelectedId(styleIndex);
+    updateDebugMonitor('style', STYLES[styleIndex], styleIndex / (STYLES.length - 1));
+  }
+  document.getElementById('styleLeft').addEventListener('click', () => setStyle(styleIndex - 1));
+  document.getElementById('styleRight').addEventListener('click', () => setStyle(styleIndex + 1));
+
+  /* =========================================================
+     Generic knob (v5 3D raised cap, blue value arc, centered numeral)
+     ========================================================= */
+  function buildKnobArc(knobEl) {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'knob3-arc');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%'); // explicit, non-auto — belt-and-suspenders alongside the CSS fix above
+    const R = 46, C = 2 * Math.PI * R, VIS = 0.75 * C;
+    function mkCircle(cls) {
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', '50'); c.setAttribute('cy', '50'); c.setAttribute('r', String(R));
+      c.setAttribute('class', cls); c.setAttribute('transform', 'rotate(135 50 50)');
+      return c;
+    }
+    const track = mkCircle('arc-track');
+    track.setAttribute('stroke-dasharray', `${VIS.toFixed(2)} ${C.toFixed(2)}`);
+    const fillC = mkCircle('arc-fill');
+    fillC.setAttribute('stroke-dasharray', `0 ${C.toFixed(2)}`);
+    svg.appendChild(track); svg.appendChild(fillC);
+    knobEl.appendChild(svg);
+    return { fill: fillC, C, VIS };
+  }
+
+  function initKnob3(root) {
+    const min = parseFloat(root.dataset.min), max = parseFloat(root.dataset.max), def = parseFloat(root.dataset.default);
+    const decimals = parseInt(root.dataset.decimals || '0', 10);
+    const paramId = root.dataset.param;
+    const knobDiv = root.querySelector('.knob3');
+    const numEl = root.querySelector('.kv-num');
+    const state = window.Juce.getSliderState(paramId);
+    const arc = buildKnobArc(knobDiv);
+
+    function render(norm) {
+      const value = min + norm * (max - min);
+      numEl.textContent = value.toFixed(decimals);
+      arc.fill.setAttribute('stroke-dasharray', `${(norm * arc.VIS).toFixed(2)} ${arc.C.toFixed(2)}`);
+      return value;
+    }
+    let normalized = (def - min) / (max - min);
+    render(normalized);
+    state.setNormalisedValue(normalized);
+
+    let dragging = false, startY = 0, startNorm = 0;
+    root.addEventListener('mousedown', (e) => { dragging = true; startY = e.clientY; startNorm = normalized; e.preventDefault(); });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      normalized = Math.min(1, Math.max(0, startNorm + (startY - e.clientY) / 150));
+      const v = render(normalized);
+      state.setNormalisedValue(normalized);
+      updateDebugMonitor(paramId, v.toFixed(decimals), normalized);
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    root.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      normalized = Math.min(1, Math.max(0, normalized + (e.deltaY < 0 ? 0.01 : -0.01)));
+      const v = render(normalized);
+      state.setNormalisedValue(normalized);
+      updateDebugMonitor(paramId, v.toFixed(decimals), normalized);
+    }, { passive: false });
+    root.addEventListener('mouseenter', () => {
+      const value = min + normalized * (max - min);
+      updateDebugMonitor(paramId, value.toFixed(decimals), normalized);
+    });
+
+    return { get: () => normalized };
+  }
+
+  const knobRefs = {};
+  document.querySelectorAll('.knob3-wrap').forEach((el) => { knobRefs[el.dataset.param] = initKnob3(el); });
+
+  /* =========================================================
+     Bare numeric readouts (Tension / Chaos / Output) — recessed
+     chip, vertical drag + tiny chevron step buttons.
+     ========================================================= */
+  function initBareReadout(root) {
+    const min = parseFloat(root.dataset.min), max = parseFloat(root.dataset.max), def = parseFloat(root.dataset.default);
+    const decimals = parseInt(root.dataset.decimals || '0', 10);
+    const step = parseFloat(root.dataset.step || '1');
+    const paramId = root.dataset.param;
+    const numEl = root.querySelector('.bv-num');
+    const state = window.Juce.getSliderState(paramId);
+
+    function render(norm) {
+      const value = min + norm * (max - min);
+      numEl.textContent = value.toFixed(decimals);
+      return value;
+    }
+    let normalized = (def - min) / (max - min);
+    render(normalized);
+    state.setNormalisedValue(normalized);
+
+    function commit(norm) {
+      normalized = Math.min(1, Math.max(0, norm));
+      const value = render(normalized);
+      state.setNormalisedValue(normalized);
+      updateDebugMonitor(paramId, value.toFixed(decimals), normalized);
+    }
+
+    let dragging = false, startY = 0, startNorm = 0;
+    root.addEventListener('mousedown', (e) => {
+      if (e.target.classList.contains('chev-mini')) return;
+      dragging = true; startY = e.clientY; startNorm = normalized; e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      commit(startNorm + (startY - e.clientY) / 150);
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+
+    root.querySelectorAll('.chev-mini').forEach((chev) => {
+      chev.addEventListener('click', () => {
+        const dir = parseFloat(chev.dataset.dir);
+        const stepNorm = (step * dir) / (max - min);
+        commit(normalized + stepNorm);
+      });
+    });
+
+    root.addEventListener('mouseenter', () => {
+      const value = min + normalized * (max - min);
+      updateDebugMonitor(paramId, value.toFixed(decimals), normalized);
+    });
+
+    return { get: () => normalized };
+  }
+
+  const bareRefs = {};
+  document.querySelectorAll('.bare-readout[data-param]').forEach((el) => { bareRefs[el.dataset.param] = initBareReadout(el); });
+
+  /* =========================================================
+     Tension curve display (Advanced) — grid + BUILD/DROP axis
+     labels + travelling position dot + derived curve-type label
+     ========================================================= */
+  const curvePath = document.getElementById('curvePath');
+  const curveDot = document.getElementById('curveDot');
+  const curveTypeLabel = document.getElementById('curveTypeLabel');
+  const CURVE_X0 = 8, CURVE_X1 = 188, CURVE_Y0 = 84, CURVE_H = 68;
+
+  function buildCurveGrid() {
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const g = document.getElementById('curveGrid');
+    const baseline = document.createElementNS(svgNS, 'line');
+    baseline.setAttribute('x1', CURVE_X0); baseline.setAttribute('x2', CURVE_X1);
+    baseline.setAttribute('y1', CURVE_Y0); baseline.setAttribute('y2', CURVE_Y0);
+    baseline.setAttribute('stroke', 'rgba(255,255,255,0.09)'); baseline.setAttribute('stroke-width', '1');
+    g.appendChild(baseline);
+    [0, 0.25, 0.5, 0.75, 1].forEach((f) => {
+      const x = CURVE_X0 + f * (CURVE_X1 - CURVE_X0);
+      const tick = document.createElementNS(svgNS, 'line');
+      tick.setAttribute('x1', x.toFixed(1)); tick.setAttribute('x2', x.toFixed(1));
+      tick.setAttribute('y1', (CURVE_Y0 - 6).toFixed(1)); tick.setAttribute('y2', CURVE_Y0);
+      tick.setAttribute('stroke', 'rgba(255,255,255,0.15)'); tick.setAttribute('stroke-width', '1');
+      g.appendChild(tick);
+    });
+  }
+  buildCurveGrid();
+
+  function curveY(x, exponent) { return CURVE_Y0 - Math.pow(x, exponent) * CURVE_H; }
+
+  function redrawCurve() {
+    const tNorm = bareRefs.tension.get();
+    const exponent = 1 + tNorm * 3.2;
+    const pts = [];
+    const N = 24;
+    for (let i = 0; i <= N; i++) {
+      const x = i / N;
+      pts.push([CURVE_X0 + x * (CURVE_X1 - CURVE_X0), curveY(x, exponent)]);
+    }
+    let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)} `;
+    for (let i = 1; i < pts.length; i++) d += `L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)} `;
+    curvePath.setAttribute('d', d);
+
+    curveTypeLabel.textContent = tNorm < 0.33 ? 'GENTLE' : (tNorm < 0.66 ? 'S-CURVE' : 'LATE ACCEL');
+
+    let dotT = 0;
+    if (drop.phase === 'building') dotT = drop.progress;
+    else if (drop.phase === 'peak' || drop.phase === 'vacuum' || drop.phase === 'impact' || drop.phase === 'recovery') dotT = 1;
+    curveDot.setAttribute('cx', (CURVE_X0 + dotT * (CURVE_X1 - CURVE_X0)).toFixed(1));
+    curveDot.setAttribute('cy', curveY(dotT, exponent).toFixed(1));
+  }
+  redrawCurve(); // initial paint; kept in sync thereafter from the animation loop (frame_) below
+
+  /* =========================================================
+     DROP trigger + demo state machine (Main) — build -> peak ->
+     vacuum -> impact -> recovery, tempo-scaled by Build Length.
+     ========================================================= */
+  const triggerBtn = document.getElementById('triggerBtn');
+  const triggerState = window.Juce.getToggleState('trigger');
+  const phaseChip = document.getElementById('phaseChip');
+  const phaseText = phaseChip.querySelector('.phase-text');
+  const progressFill = document.getElementById('progressFill');
+
+  triggerBtn.addEventListener('mousedown', () => triggerBtn.classList.add('pressed'));
+  window.addEventListener('mouseup', () => triggerBtn.classList.remove('pressed'));
+
+  function startDemo() {
+    if (drop.phase !== 'idle' && drop.phase !== 'recovery') return;
+    const durationMap = { 1: 1500, 2: 2200, 4: 3600, 8: 5400, 16: 8200 };
+    drop.phase = 'building';
+    drop.phaseStartTime = performance.now();
+    drop.phaseDuration = durationMap[currentBuildLengthBars] || 3600;
+    triggerBtn.classList.add('armed');
+    triggerState.setValue(true);
+    updateDebugMonitor('trigger', 'ARMED (building)', 1);
+  }
+  triggerBtn.addEventListener('click', startDemo);
+
+  function advancePhase(now) {
+    const p = Math.min(1, (now - drop.phaseStartTime) / drop.phaseDuration);
+    if (drop.phase === 'building') {
+      drop.progress = p;
+      if (p >= 1) { drop.phase = 'peak'; drop.phaseStartTime = now; drop.phaseDuration = 90; }
+    } else if (drop.phase === 'peak') {
+      if (p >= 1) { drop.phase = 'vacuum'; drop.phaseStartTime = now; drop.phaseDuration = 220; }
+    } else if (drop.phase === 'vacuum') {
+      drop.progress = p;
+      if (p >= 1) { drop.phase = 'impact'; drop.phaseStartTime = now; drop.phaseDuration = 260; triggerBtn.classList.remove('armed'); }
+    } else if (drop.phase === 'impact') {
+      drop.progress = p;
+      if (p >= 1) { drop.phase = 'recovery'; drop.phaseStartTime = now; drop.phaseDuration = 800; }
+    } else if (drop.phase === 'recovery') {
+      drop.progress = p;
+      if (p >= 1) { drop.phase = 'idle'; drop.progress = 0; triggerState.setValue(false); }
+    }
+  }
+
+  function updatePhaseChip() {
+    phaseText.textContent = drop.phase.toUpperCase();
+    phaseChip.classList.toggle('live', drop.phase !== 'idle');
+  }
+
+  function updateProgressStrip() {
+    let fillPct = 0;
+    if (drop.phase === 'building') fillPct = drop.progress * 84;
+    else if (drop.phase === 'peak' || drop.phase === 'vacuum' || drop.phase === 'impact') fillPct = 84;
+    else if (drop.phase === 'recovery') fillPct = 84 + drop.progress * 16;
+    progressFill.setAttribute('width', (fillPct / 100 * 200).toFixed(1));
+  }
+
+  /* =========================================================
+     v8: Iridescent soap bubble (re-rendered from v6/v7's liquid blob).
+     The 28-point soft-body physics simulation (point springs + neighbor
+     coupling + idle sloshing + audio-level pokes + soft volume nudge) is
+     COMPLETELY UNCHANGED from v6/v7 — only the RENDERING and the Impact
+     behavior changed. Body fill is now near-transparent (the recessed
+     chamber shows through the center, reading as a thin film rather than
+     a solid ball). Iridescence is 3 layered stroke copies of the SAME
+     deformed path (soft blurred outer band, mid band, crisp rim line),
+     each referencing a rotating multi-stop cyan/magenta/gold/green
+     gradient (gradientTransform rotated a little more each frame, speed
+     scaling with agitation+tension so the film visibly swirls faster
+     toward the drop) — because they reuse the live path string every
+     frame, the color bands track every ripple/squash/bulge, never a
+     static overlay. Two specular highlights (main + smaller secondary)
+     track the actual deformed radius at fixed light-source angles, same
+     technique as before. On Impact: a one-shot spring impulse
+     (popFlashSpring) drives a bright ring flash + a sharp-but-smooth dip
+     in body/film opacity (spring-decayed, never a hard cut) while extra
+     satellite droplets (now tiny bubbles themselves — glassy fill + thin
+     iridescent rim, not solid dots) and a few short torn-film "shred"
+     fragments spray outward under gravity+drag; the body itself still
+     gets the existing outward poke burst + radius-spring overshoot, then
+     the whole membrane reforms and wobbles to rest during Recovery as
+     popFlash decays to 0. Vacuum is unchanged: sucked into a small
+     trembling droplet just before the pop. Still floats inside the same
+     recessed glass chamber as before (#orbWrap::before, CSS, unchanged).
+     Single requestAnimationFrame loop, ~28-point SVG path (3 stroke
+     copies of the same 'd' string, no extra per-point work) — no
+     dedicated physics library.
+     ========================================================= */
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function mixColor(hexA, hexB, t) {
+    const a = hexToRgb(hexA), b = hexToRgb(hexB);
+    const r = Math.round(lerp(a[0], b[0], t));
+    const g = Math.round(lerp(a[1], b[1], t));
+    const bl = Math.round(lerp(a[2], b[2], t));
+    return `rgb(${r},${g},${bl})`;
+  }
+
+  const blobPath = document.getElementById('blobPath');
+  const blobIrisOuter = document.getElementById('blobIrisOuter');
+  const blobIrisMid = document.getElementById('blobIrisMid');
+  const blobIrisRim = document.getElementById('blobIrisRim');
+  const bubbleIrisGradA = document.getElementById('bubbleIrisGradA');
+  const bubbleIrisGradB = document.getElementById('bubbleIrisGradB');
+  const blobGlow = document.getElementById('blobGlow');
+  const blobShadow = document.getElementById('blobShadow');
+  const blobSpecular = document.getElementById('blobSpecular');
+  const blobSpecular2 = document.getElementById('blobSpecular2');
+  const popFlashRing = document.getElementById('popFlashRing');
+  const dropletsLayer = document.getElementById('dropletsLayer');
+  const shredsLayer = document.getElementById('shredsLayer');
+
+  const BLOB_CX = 100, BLOB_CY = 100, BLOB_BASE_R = 56;
+  const BLOB_N = 28;
+  const blobPoints = [];
+  for (let i = 0; i < BLOB_N; i++) {
+    blobPoints.push({ angle: (i / BLOB_N) * Math.PI * 2, radius: BLOB_BASE_R, vel: 0 });
+  }
+  const POINT_K = 70, POINT_D = 9, COUPLING_K = 20;
+
+  function applyPoke(strength) {
+    const centerIdx = Math.floor(Math.random() * BLOB_N);
+    const sign = Math.random() < 0.5 ? -1 : 1;
+    const mag = (7 + Math.random() * 11) * strength * sign;
+    const spread = 4;
+    for (let d = -spread; d <= spread; d++) {
+      const idx = (centerIdx + d + BLOB_N) % BLOB_N;
+      const falloff = Math.cos((d / spread) * (Math.PI / 2));
+      blobPoints[idx].vel += mag * falloff;
+    }
+  }
+
+  // Satellite droplets are now tiny bubbles themselves (glassy fill + thin
+  // iridescent rim) rather than solid dots, matching the reference's small
+  // bubble-like fragments near the rupture.
+  const MAX_DROPLETS = 8;
+  const droplets = [];
+  const dropletEls = [];
+  const svgNSb = 'http://www.w3.org/2000/svg';
+  for (let i = 0; i < MAX_DROPLETS; i++) {
+    const el = document.createElementNS(svgNSb, 'circle');
+    el.setAttribute('fill', 'url(#bubbleGlassGrad)');
+    el.setAttribute('stroke', 'url(#bubbleIrisGradA)');
+    el.setAttribute('stroke-width', '1');
+    el.setAttribute('opacity', '0');
+    dropletsLayer.appendChild(el);
+    dropletEls.push(el);
+    droplets.push({ active: false, x: 0, y: 0, vx: 0, vy: 0, r: 0, life: 0 });
+  }
+  function spawnSplash() {
+    for (let i = 0; i < MAX_DROPLETS; i++) {
+      const angle = (i / MAX_DROPLETS) * Math.PI * 2 + Math.random() * 0.6;
+      const speed = 55 + Math.random() * 55;
+      droplets[i].active = true;
+      droplets[i].x = BLOB_CX + Math.cos(angle) * BLOB_BASE_R * 0.85;
+      droplets[i].y = BLOB_CY + Math.sin(angle) * BLOB_BASE_R * 0.85;
+      droplets[i].vx = Math.cos(angle) * speed;
+      droplets[i].vy = Math.sin(angle) * speed - 40;
+      droplets[i].r = 3 + Math.random() * 3.5;
+      droplets[i].life = 1.0;
+    }
+  }
+
+  // Short torn-film "shred" fragments — a few thin iridescent line segments
+  // that spray out and fade fast, selling the membrane rupture beyond just
+  // the round droplets.
+  const MAX_SHREDS = 3;
+  const shreds = [];
+  const shredEls = [];
+  for (let i = 0; i < MAX_SHREDS; i++) {
+    const el = document.createElementNS(svgNSb, 'line');
+    el.setAttribute('stroke', 'url(#bubbleIrisGradA)');
+    el.setAttribute('stroke-width', '2');
+    el.setAttribute('stroke-linecap', 'round');
+    el.setAttribute('opacity', '0');
+    shredsLayer.appendChild(el);
+    shredEls.push(el);
+    shreds.push({ active: false, x: 0, y: 0, angle: 0, vx: 0, vy: 0, life: 0 });
+  }
+  function spawnShreds() {
+    for (let i = 0; i < MAX_SHREDS; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 45 + Math.random() * 40;
+      shreds[i].active = true;
+      shreds[i].x = BLOB_CX + Math.cos(angle) * BLOB_BASE_R * 0.95;
+      shreds[i].y = BLOB_CY + Math.sin(angle) * BLOB_BASE_R * 0.95;
+      shreds[i].angle = angle;
+      shreds[i].vx = Math.cos(angle) * speed;
+      shreds[i].vy = Math.sin(angle) * speed - 20;
+      shreds[i].life = 1.0;
+    }
+  }
+
+  let nextPokeTime = 0;
+  let lastBlobPhase = 'idle';
+  let irisAngleA = 0, irisAngleB = 0;
+
+  function updateBlob(now, dt, agitation, radiusMul, colorMix, popFlash) {
+    const sloshPhase1 = now * 0.00032, sloshPhase2 = now * 0.00061;
+
+    for (let i = 0; i < BLOB_N; i++) {
+      const p = blobPoints[i];
+      const prev = blobPoints[(i - 1 + BLOB_N) % BLOB_N];
+      const next = blobPoints[(i + 1) % BLOB_N];
+      const sloshBias = agitation * (3.2 * Math.sin(p.angle - sloshPhase1) + 1.6 * Math.sin(2 * p.angle + sloshPhase2 * 1.3));
+      const target = BLOB_BASE_R * radiusMul + sloshBias;
+      const springF = (target - p.radius) * POINT_K - p.vel * POINT_D;
+      const couplingF = (prev.radius + next.radius - 2 * p.radius) * COUPLING_K;
+      p.vel += (springF + couplingF) * dt;
+      p.radius += p.vel * dt;
+    }
+
+    // gentle constant-ish-volume nudge — soft, doesn't erase local squash/bulge asymmetry
+    let avg = 0;
+    for (let i = 0; i < BLOB_N; i++) avg += blobPoints[i].radius;
+    avg /= BLOB_N;
+    const volumeDiff = (BLOB_BASE_R * radiusMul) - avg;
+    for (let i = 0; i < BLOB_N; i++) blobPoints[i].radius += volumeDiff * 0.025;
+
+    // periodic audio-level "pokes" — frequency + strength scale with agitation
+    if (now >= nextPokeTime) {
+      applyPoke(0.4 + agitation * 1.3);
+      const interval = lerp(900, 220, Math.min(1, agitation));
+      nextPokeTime = now + interval * (0.6 + Math.random() * 0.8);
+    }
+
+    const pts = [];
+    for (let i = 0; i < BLOB_N; i++) {
+      const p = blobPoints[i];
+      pts.push([BLOB_CX + Math.cos(p.angle) * p.radius, BLOB_CY + Math.sin(p.angle) * p.radius]);
+    }
+    const d = catmullRom2bezier(pts);
+    blobPath.setAttribute('d', d);
+    blobIrisOuter.setAttribute('d', d);
+    blobIrisMid.setAttribute('d', d);
+    blobIrisRim.setAttribute('d', d);
+
+    // membrane visibly "ruptures" at the pop instant: body fill + iris bands
+    // all dip sharply (but smoothly, driven by the popFlash spring, never a
+    // hard cut), then recover as popFlash decays back to 0.
+    const bodyOpacity = 1 - popFlash * 0.88;
+    blobPath.setAttribute('opacity', bodyOpacity.toFixed(2));
+    const irisFade = 1 - popFlash * 0.7;
+    blobIrisOuter.setAttribute('opacity', (0.22 * irisFade).toFixed(2));
+    blobIrisMid.setAttribute('opacity', (0.5 * irisFade).toFixed(2));
+    blobIrisRim.setAttribute('opacity', (0.85 * irisFade).toFixed(2));
+
+    // slow rotating multi-hue gradients give the film a genuinely "alive"
+    // swirl — speed rises with agitation + tension (colorMix), so it visibly
+    // spins faster as the build approaches the drop.
+    irisAngleA += (14 + agitation * 70 + colorMix * 40) * dt;
+    irisAngleB -= (10 + agitation * 55 + colorMix * 30) * dt;
+    bubbleIrisGradA.setAttribute('gradientTransform', `rotate(${irisAngleA.toFixed(1)} 0.5 0.5)`);
+    bubbleIrisGradB.setAttribute('gradientTransform', `rotate(${irisAngleB.toFixed(1)} 0.5 0.5)`);
+
+    // pop-flash ring: a bright expanding/fading ring right at rupture
+    const bodyR = BLOB_BASE_R * radiusMul;
+    popFlashRing.setAttribute('r', (bodyR * (0.92 + popFlash * 0.7)).toFixed(1));
+    popFlashRing.setAttribute('stroke-width', (popFlash * 4.5).toFixed(1));
+    popFlashRing.setAttribute('opacity', (popFlash * 0.75).toFixed(2));
+
+    // splash droplets (mini bubbles): gravity + drag, merge back into the body
+    // when close enough or expired
+    for (let i = 0; i < MAX_DROPLETS; i++) {
+      const dr = droplets[i];
+      if (!dr.active) { dropletEls[i].setAttribute('opacity', '0'); continue; }
+      dr.vy += 130 * dt;
+      dr.x += dr.vx * dt; dr.y += dr.vy * dt;
+      dr.vx *= 0.986; dr.vy *= 0.992;
+      dr.life -= dt * 0.55;
+      const dist = Math.hypot(dr.x - BLOB_CX, dr.y - BLOB_CY);
+      if (dist < bodyR * 0.9 || dr.life <= 0) {
+        dr.active = false;
+        dropletEls[i].setAttribute('opacity', '0');
+      } else {
+        dropletEls[i].setAttribute('cx', dr.x.toFixed(2));
+        dropletEls[i].setAttribute('cy', dr.y.toFixed(2));
+        dropletEls[i].setAttribute('r', dr.r.toFixed(2));
+        dropletEls[i].setAttribute('opacity', Math.max(0, dr.life).toFixed(2));
+      }
+    }
+
+    // torn-film shred fragments: short-lived, fast-fading line segments
+    for (let i = 0; i < MAX_SHREDS; i++) {
+      const s = shreds[i];
+      if (!s.active) { shredEls[i].setAttribute('opacity', '0'); continue; }
+      s.vy += 80 * dt;
+      s.x += s.vx * dt; s.y += s.vy * dt;
+      s.vx *= 0.97; s.vy *= 0.97;
+      s.life -= dt * 1.6;
+      if (s.life <= 0) {
+        s.active = false;
+        shredEls[i].setAttribute('opacity', '0');
+      } else {
+        const len = 8 * s.life + 3;
+        shredEls[i].setAttribute('x1', s.x.toFixed(2));
+        shredEls[i].setAttribute('y1', s.y.toFixed(2));
+        shredEls[i].setAttribute('x2', (s.x + Math.cos(s.angle) * len).toFixed(2));
+        shredEls[i].setAttribute('y2', (s.y + Math.sin(s.angle) * len).toFixed(2));
+        shredEls[i].setAttribute('opacity', Math.max(0, s.life * 0.8).toFixed(2));
+      }
+    }
+
+    // two specular highlights (main + smaller secondary), each tracking the
+    // ACTUAL deformed radius at its own fixed light-source angle
+    function specAt(angle) {
+      const a = ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      const idxF = (a / (2 * Math.PI)) * BLOB_N;
+      const i0 = Math.floor(idxF) % BLOB_N, i1 = (i0 + 1) % BLOB_N;
+      const tt = idxF - Math.floor(idxF);
+      return lerp(blobPoints[i0].radius, blobPoints[i1].radius, tt);
+    }
+    const specAngle = -0.85, specR = specAt(specAngle), specDist = specR * 0.5;
+    blobSpecular.setAttribute('cx', (BLOB_CX + Math.cos(specAngle) * specDist).toFixed(2));
+    blobSpecular.setAttribute('cy', (BLOB_CY + Math.sin(specAngle) * specDist).toFixed(2));
+    blobSpecular.setAttribute('rx', (specR * 0.26).toFixed(2));
+    blobSpecular.setAttribute('ry', (specR * 0.16).toFixed(2));
+    blobSpecular.setAttribute('opacity', (Math.max(0.15, 0.6 - agitation * 0.25) * irisFade).toFixed(2));
+
+    const specAngle2 = 2.05, specR2 = specAt(specAngle2), specDist2 = specR2 * 0.68;
+    blobSpecular2.setAttribute('cx', (BLOB_CX + Math.cos(specAngle2) * specDist2).toFixed(2));
+    blobSpecular2.setAttribute('cy', (BLOB_CY + Math.sin(specAngle2) * specDist2).toFixed(2));
+    blobSpecular2.setAttribute('rx', (specR2 * 0.13).toFixed(2));
+    blobSpecular2.setAttribute('ry', (specR2 * 0.09).toFixed(2));
+    blobSpecular2.setAttribute('opacity', (Math.max(0.10, 0.4 - agitation * 0.18) * irisFade).toFixed(2));
+
+    // grounding shadow + soft ambient halo breathe with the blob's current size
+    blobShadow.setAttribute('rx', (54 * radiusMul).toFixed(1));
+    blobShadow.setAttribute('opacity', (0.30 + Math.min(1, agitation) * 0.12).toFixed(2));
+    blobGlow.setAttribute('rx', (76 * radiusMul).toFixed(1));
+    blobGlow.setAttribute('ry', (76 * radiusMul).toFixed(1));
+    blobGlow.setAttribute('opacity', Math.min(0.6, 0.14 + colorMix * 0.3 + agitation * 0.15).toFixed(2));
+  }
+
+  const radiusMulSpring = new Spring(120, 14, 1.0);
+  const agitationSpring2 = new Spring(70, 11, 0.15);
+  const colorMixSpring = new Spring(160, 22, 0.0);
+  const popFlashSpring = new Spring(90, 13, 0.0); // one-shot impulse spring: value snapped to 1 at pop, decays smoothly to 0
+
+  let lastFrameTime = null;
+
+  function frame_(now) {
+    if (lastFrameTime === null) lastFrameTime = now;
+    const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
+    drop.t = now;
+    if (drop.phase !== 'idle') advancePhase(now);
+
+    if (drop.phase === 'impact' && lastBlobPhase !== 'impact') {
+      spawnSplash();
+      spawnShreds();
+      popFlashSpring.value = 1.0; popFlashSpring.vel = 0; popFlashSpring.target = 0; // smooth spring-decayed pop, never a hard cut
+      for (let k = 0; k < 6; k++) applyPoke(1.8); // violent splash-out on the main body itself, not just satellites
+    }
+    lastBlobPhase = drop.phase;
+
+    const tensionNorm = bareRefs.tension.get();
+    const intensityNorm = knobRefs.intensity.get();
+
+    let targetAgitation = 0.15, targetRadius = 1.0, targetColor = 0.0;
+
+    if (drop.phase === 'building') {
+      targetAgitation = 0.15 + drop.progress * 0.75 * (0.4 + intensityNorm * 0.6);
+      targetRadius = 1.0 + drop.progress * 0.10;
+      targetColor = drop.progress * tensionNorm;
+    } else if (drop.phase === 'peak') {
+      targetAgitation = 1.0; targetRadius = 1.12; targetColor = 0.9;
+    } else if (drop.phase === 'vacuum') {
+      targetAgitation = lerp(0.5, 0.85, drop.progress); // trembling, not calm
+      targetRadius = lerp(1.12, 0.22, drop.progress);
+      targetColor = lerp(0.9, 0.25, drop.progress);
+    } else if (drop.phase === 'impact') {
+      const burst = drop.progress < 0.3 ? drop.progress / 0.3 : (1 - (drop.progress - 0.3) / 0.7);
+      targetAgitation = 0.9;
+      targetRadius = 1.0 + burst * 1.1;
+      targetColor = Math.max(0, 1.0 - drop.progress * 0.8);
+    } else if (drop.phase === 'recovery') {
+      targetAgitation = lerp(0.55, 0.15, drop.progress);
+      targetRadius = lerp(1.15, 1.0, drop.progress);
+      targetColor = lerp(0.45, 0.0, drop.progress);
+    }
+
+    radiusMulSpring.target = targetRadius;
+    agitationSpring2.target = targetAgitation;
+    colorMixSpring.target = targetColor;
+    radiusMulSpring.update(dt);
+    agitationSpring2.update(dt);
+    colorMixSpring.update(dt);
+    popFlashSpring.update(dt);
+
+    const agitation = Math.max(0, agitationSpring2.value);
+    const radiusMul = Math.max(0.05, radiusMulSpring.value);
+    const colorMix = Math.min(1, Math.max(0, colorMixSpring.value));
+    const popFlash = Math.max(0, Math.min(1, popFlashSpring.value));
+
+    updateBlob(now, dt, agitation, radiusMul, colorMix, popFlash);
+
+    redrawCurve();
+    updatePhaseChip();
+    updateProgressStrip();
+    requestAnimationFrame(frame_);
+  }
+  requestAnimationFrame(frame_);
+  updateDebugMonitor('—', 'hover or drag a control', null);
+</script>
+
+</body>
+</html>

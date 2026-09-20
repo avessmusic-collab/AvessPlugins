@@ -1220,9 +1220,11 @@
       for (let i = 0; i <= M; i++) {
         const t = i / M;
         let e;
-        if (t <= 0.70) e = 1;
-        else if (t <= 0.97) e = Math.pow(10, -(40 / 20) * ((t - 0.70) / 0.27));
-        else e = Math.pow(10, -(40 / 20)) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
+        // Mirrors tailEnvelopeForT()'s pure decaying slope (2026-09-20
+        // second iteration, "it sould be a slope. decaing"): dB-linear
+        // 30dB across the window, cosine landing to exact 0.
+        if (t <= 0.97) e = Math.pow(10, -(30 / 20) * (t / 0.97));
+        else e = Math.pow(10, -(30 / 20)) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
         const px = CURVE_X1 + t * tailW;
         const py = CURVE_Y0 - e * CURVE_H;
         dTail += (i === 0 ? 'M ' : 'L ') + px.toFixed(1) + ' ' + py.toFixed(1) + ' ';

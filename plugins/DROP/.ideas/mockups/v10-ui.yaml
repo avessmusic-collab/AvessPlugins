@@ -903,3 +903,9 @@ tail_curve_on_graph:
     - "Live redraw: the tail knob's render() triggers redrawCurve() (guarded by curveReady until the graph exists); knobRefs.tail.get() feeds the width/visibility."
   dsp_note: "Same round fixed the underlying 'no tail' DSP bug: the Recovery envelope no longer decays across the whole window (double-decay with the tails' own natural decay, 5th compounded-curves instance) - it holds at 1.0 for 70% then fades 40dB dB-linearly; see CHANGELOG."
   validation: "SVG-internal additions only (viewBox coordinates); no layout/geometry changes to any control."
+
+tail_curve_slope_update:
+  date: 2026-09-20
+  reason: "User: 'tail shouldnt have sustain. it sould be a slope. decaing' - same-day follow-up to tail_curve_on_graph."
+  changes:
+    - "Graph TAIL curve shape updated in lockstep with the DSP's final envelope form: pure dB-linear decaying slope (30dB across the window, no hold plateau) + cosine landing. Geometry/width mapping unchanged."

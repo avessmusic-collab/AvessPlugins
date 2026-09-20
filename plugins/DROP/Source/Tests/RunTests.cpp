@@ -4379,81 +4379,70 @@ int main()
     // version 1.0.0.
     //==========================================================================
 
-    std::printf ("\n[POST-1.0] Tail envelope - hold-then-dB-linear-fade (natural ring, guaranteed landing), exact zero at t==1\n");
+    std::printf ("\n[POST-1.0] Tail envelope - pure decaying dB-linear slope (no sustain), gentle 30dB range, exact zero at t==1\n");
     {
-        // DOCUMENTED SUPERSESSION (2026-09-20, user DAW report: "when i
-        // have tail active i get no tail") of the full-window dB-linear
-        // ramp (60dB spread across ALL of Recovery, itself a 2026-09-17
-        // supersession of `(1-t)^2`): the delay/reverb tails already decay
-        // NATURALLY inside their buffers, so a -60dB envelope multiplied
-        // across the whole window DOUBLE-decayed them (5th instance of the
-        // compounded-curves bug class; measured: envelope -7.7dB/100ms vs
-        // the natural decay's ~-0.3dB/100ms - the ring died by ~40% of the
-        // window). The envelope's only real job is the click-free exact-
-        // zero landing; the new shape holds at 1.0 for the first 70% of
-        // the window (natural ring governs) and fades dB-LINEARLY over the
-        // final ~30% (40dB), with the raised-cosine landing to exact 0.
+        // DOCUMENTED SUPERSESSION chain (all 2026-09-20, user-directed):
+        //   (1) -60dB full-window ramp: compounded with the tails' natural
+        //       decay -> inaudible by ~40% of the window ("no tail").
+        //   (2) hold-70%-then-40dB-fade: audible, but the plateau read as
+        //       SUSTAIN ("tail shouldnt have sustain. it sould be a slope.
+        //       decaing").
+        //   (3) CURRENT: decays from the very first sample, dB-linear over
+        //       a GENTLE 30dB across the window - unmistakably a slope,
+        //       still audible deep into the window. Landing unchanged.
         // This block mirrors processSegment()'s tailEnvelopeForT() exactly.
-        constexpr float kTailHoldEndT = 0.70f;
-        constexpr float kTailFadeRangeDb = 40.0f;
+        constexpr float kTailFadeRangeDb = 30.0f;
         constexpr float kTailLandingStartT = 0.97f;
         auto env = [] (float t) -> float
         {
-            if (t <= kTailHoldEndT)
-                return 1.0f;
             if (t <= kTailLandingStartT)
-            {
-                const float fadeX = (t - kTailHoldEndT) / (kTailLandingStartT - kTailHoldEndT);
-                return std::pow (10.0f, -(kTailFadeRangeDb / 20.0f) * fadeX);
-            }
+                return std::pow (10.0f, -(kTailFadeRangeDb / 20.0f) * (t / kTailLandingStartT));
             const float envAtLandingStart = std::pow (10.0f, -(kTailFadeRangeDb / 20.0f));
             const float landingT = (t - kTailLandingStartT) / (1.0f - kTailLandingStartT);
             return envAtLandingStart * 0.5f * (1.0f + std::cos (juce::MathConstants<float>::pi * landingT));
         };
 
-        check (env (0.0f) == 1.0f && env (0.35f) == 1.0f && env (kTailHoldEndT) == 1.0f,
-              "[POST-1.0] tail envelope: FULL (exactly 1.0) through the first 70% of the window - the natural delay/reverb decay governs the audible ring, nothing double-decays it (the pre-fix full-window ramp was already -30dB by mid-window and fails this by construction)");
+        check (env (0.0f) == 1.0f, "tail envelope: exactly full at Recovery's first sample");
+        check (env (0.1f) < 0.999f && env (0.35f) < env (0.1f),
+              "[POST-1.0] tail envelope: DECAYING from the very start - no sustain plateau anywhere (the superseded hold-then-fade shape was exactly 1.0 through 70% of the window and fails this by construction)");
         check (env (1.0f) < 1.0e-6f, "tail envelope: exactly zero at the end of Recovery (the click-free-resettable instant advanceStateMachineTicks() depends on)");
 
-        bool monotonic = true;
+        bool strictlyDecreasing = true;
         float prev = env (0.0f);
-        for (int i = 1; i <= 200; ++i)
+        for (int i = 1; i <= 194; ++i) // up to t=0.97; the landing continues decreasing but with its own cosine shape
         {
             const float v = env ((float) i / 200.0f);
-            if (v > prev + 1.0e-6f) monotonic = false;
+            if (v >= prev) strictlyDecreasing = false;
             prev = v;
         }
-        check (monotonic, "tail envelope: monotonically non-increasing across Recovery");
+        check (strictlyDecreasing, "[POST-1.0] tail envelope: STRICTLY decreasing across the slope section - a continuous decaying slope, never flat");
 
-        // The fade section itself stays decibel-LINEAR (the established
-        // "volume in dB" convention): constant dB slope across
-        // (kTailHoldEndT, kTailLandingStartT].
+        // The slope is decibel-LINEAR across the whole pre-landing window
+        // (the established "volume in dB" convention).
         float minStepDb = 1.0e9f, maxStepDb = -1.0e9f;
         for (int i = 1; i <= 8; ++i)
         {
-            const float ta = kTailHoldEndT + (kTailLandingStartT - kTailHoldEndT) * (float) (i - 1) / 8.0f;
-            const float tb = kTailHoldEndT + (kTailLandingStartT - kTailHoldEndT) * (float) i / 8.0f;
+            const float ta = kTailLandingStartT * (float) (i - 1) / 8.0f;
+            const float tb = kTailLandingStartT * (float) i / 8.0f;
             const float stepDb = 20.0f * std::log10 (juce::jmax (env (ta), 1.0e-8f)) - 20.0f * std::log10 (juce::jmax (env (tb), 1.0e-8f));
             minStepDb = juce::jmin (minStepDb, stepDb);
             maxStepDb = juce::jmax (maxStepDb, stepDb);
         }
-        std::printf ("  fade-section per-slice dB drop: min %.2f dB, max %.2f dB (spread %.2f dB; total 40dB over the final ~30%%)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
+        std::printf ("  per-slice dB drop across the slope: min %.2f dB, max %.2f dB (spread %.2f dB; total 30dB across the window)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
         check (maxStepDb - minStepDb < 0.5f,
-              "[POST-1.0] tail envelope: the closing fade is decibel-linear (constant dB slope across its section) - perceptually even, per the plugin-wide dB-linear convention");
+              "[POST-1.0] tail envelope: the slope is decibel-linear (constant dB drop per slice across the whole window) - perceptually even decay, per the plugin-wide dB-linear convention");
 
-        // C0-continuity at BOTH seams (hold->fade at 0.70, fade->landing at
-        // 0.97). Epsilon 1e-5 in t: the fade section is deliberately steep
-        // in t-space (40dB over 0.27), so a 1e-4 probe already sees ~2e-3
-        // of legitimate slope - the property under test is VALUE agreement
-        // AT the seam, not a slope bound (the per-sample step in real
-        // samples is tiny; see the per-sample-cut test's delta bound).
-        for (float seam : { kTailHoldEndT, kTailLandingStartT })
+        // C0-continuity at the slope->landing seam (0.97). Epsilon 1e-5 in
+        // t: the property under test is VALUE agreement AT the seam, not a
+        // slope bound (the per-sample step in real samples is tiny; see
+        // the per-sample-cut test's delta bound).
         {
+            const float seam = kTailLandingStartT;
             const float justBelow = env (seam - 1.0e-5f);
             const float atSeam = env (seam);
             const float justAbove = env (seam + 1.0e-5f);
             check (std::abs (justBelow - atSeam) < 1.0e-3f && std::abs (justAbove - atSeam) < 1.0e-3f,
-                  "[POST-1.0] tail envelope: C0-continuous at the section seams (no click at the hold/fade/landing joins)");
+                  "[POST-1.0] tail envelope: C0-continuous at the slope/landing seam (no click at the join)");
         }
     }
 
@@ -5115,10 +5104,17 @@ int main()
         const double r50 = rmsAt (0.05), r150 = rmsAt (0.15), r300 = rmsAt (0.30), r500 = rmsAt (0.50), r1200 = rmsAt (1.20);
         std::printf ("  ring RMS after Impact end: +50ms=%.5f +150ms=%.5f +300ms=%.5f +500ms=%.5f +1.2s=%.5f (recovery window ~0.78s)\n",
                      r50, r150, r300, r500, r1200);
-        check (r50 > 1.0e-3 && r150 > 5.0e-4 && r300 > 3.0e-4 && r500 > 2.0e-4,
-              "[POST-1.0] tail audibility: with tail=50% the delay/reverb tails RING THROUGH the Recovery window (+50/+150/+300/+500ms all audible) - the pre-fix full-window envelope had the ring dead by +300ms and fails this by construction; 'tail active' now produces a real tail");
+        // Updated for the pure-slope envelope (2026-09-20 second
+        // iteration, "it sould be a slope. decaing"): audible well into
+        // the window (the -60dB version was dead by +300ms and fails the
+        // r300 floor by construction), AND strictly decaying checkpoint to
+        // checkpoint (the hold version was near-FLAT from +50 to +150ms).
+        check (r50 > 1.0e-3 && r150 > 5.0e-4 && r300 > 2.0e-4,
+              "[POST-1.0] tail audibility: with tail=50% the tails audibly ring well into the Recovery window (+50/+150/+300ms) - 'tail active' produces a real tail");
+        check (r150 < r50 && r300 < r150 && r500 < r300,
+              "[POST-1.0] tail audibility: the ring DECAYS continuously checkpoint-to-checkpoint - a slope, no sustain plateau");
         check (r1200 < 1.0e-4,
-              "[POST-1.0] tail audibility: silent after the Recovery window ends (the closing dB-linear fade + exact-zero landing still guarantee the window boundary)");
+              "[POST-1.0] tail audibility: silent after the Recovery window ends (the dB-linear slope + exact-zero landing still guarantee the window boundary)");
     }
 
     std::printf ("\n[POST-1.0] Knob correctness (2026-09-18 audit) - DRY/WET 0%% is transparent mid-build; OUTPUT scales gain exactly\n");

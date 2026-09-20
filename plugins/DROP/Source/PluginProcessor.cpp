@@ -1117,46 +1117,35 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 // was an audible bug).
 static float tailEnvelopeForT(float recoveryT) noexcept
 {
-    // POST-1.0 (2026-09-20, user DAW report: "when i have tail active i
-    // get no tail"). DOCUMENTED SUPERSESSION of the full-window dB-linear
-    // ramp (60dB spread across ALL of Recovery): the delay/reverb tails
-    // ALREADY decay naturally inside their buffers, so multiplying a
-    // -60dB-across-the-window envelope on top DOUBLE-decayed them - the
-    // 5th instance of this plugin's compounded-curves bug class. Measured
-    // (tail=50%, 0.78s window): the natural decay contributes only
-    // ~-0.3dB/100ms while the envelope alone contributed -7.7dB/100ms -
-    // the ring was inaudible by ~40% of the window, i.e. "tail active,
-    // no tail".
-    //
-    // The envelope's actual JOB is only to guarantee a click-free, exact-
-    // zero landing at the window's end (the Recovery->Idle reset
-    // invariant), NOT to define the decay - the wet content does that
-    // naturally. New shape:
-    //   [0 .. kTailHoldEndT]                : 1.0 (natural ring governs)
-    //   (kTailHoldEndT .. kTailLandingStartT]: dB-LINEAR 0 -> -40dB (the
-    //                                          "volume in dB" fade, over
-    //                                          only the final ~30%)
-    //   (kTailLandingStartT .. 1]           : raised-cosine landing from
-    //                                          -40dB to an EXACT 0.0
-    // The TAIL knob therefore sets how LONG the tail may ring; the fade
-    // only closes the window. TAIL=CUT (~5ms window) keeps its clean
-    // instant-stop character: hold ~3.5ms, then the same fade compressed
-    // into ~1.5ms (~0.6dB/sample at 48kHz - still click-free).
-    constexpr float kTailHoldEndT = 0.70f;
-    constexpr float kTailFadeRangeDb = 40.0f;
+    // POST-1.0 (2026-09-20, user-directed - final form after two same-day
+    // iterations): a PURE DECAYING SLOPE, no sustain plateau.
+    //   Iteration 1 (superseded): -60dB dB-linear across the whole window
+    //     - compounded with the tails' own natural decay (5th instance of
+    //     the compounded-curves class) and measured inaudible by ~40% of
+    //     the window ("when i have tail active i get no tail").
+    //   Iteration 2 (superseded): hold at 1.0 for 70% then fade - fixed
+    //     audibility, but the plateau reads as SUSTAIN ("tail shouldnt
+    //     have sustain. it sould be a slope. decaing").
+    //   Current: decays from the very first sample, dB-LINEARLY (the
+    //     plugin-wide "volume in dB" convention), but over a GENTLE
+    //     kTailFadeRangeDb = 30dB across the window - shallow enough that
+    //     the ring stays audible deep into the window even stacked on the
+    //     natural decay (the -60dB version's failure), steep enough to be
+    //     an unmistakable continuous decay (the hold version's failure).
+    //   (kTailLandingStartT .. 1]: raised-cosine landing from -30dB to an
+    //   EXACT 0.0 - the click-free Recovery->Idle reset invariant.
+    // TAIL=CUT (~5ms window) keeps its clean instant-stop character: the
+    // same shape compressed into 240 samples (~0.13dB/sample) is a fast,
+    // click-free stop.
+    constexpr float kTailFadeRangeDb = 30.0f;
     constexpr float kTailLandingStartT = 0.97f;
     recoveryT = juce::jlimit(0.0f, 1.0f, recoveryT);
-    if (recoveryT <= kTailHoldEndT)
-        return 1.0f;
     if (recoveryT <= kTailLandingStartT)
-    {
-        const float fadeX = (recoveryT - kTailHoldEndT) / (kTailLandingStartT - kTailHoldEndT);
-        return std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * fadeX);
-    }
+        return std::pow(10.0f, -(kTailFadeRangeDb / 20.0f) * (recoveryT / kTailLandingStartT));
     const float envAtLandingStart = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f));
     const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
     // Raised-cosine 1->0 over the landing window, scaled by the (already
-    // -40dB-quiet) level reached at its start - C0-continuous with the
+    // -30dB-quiet) level reached at its start - C0-continuous with the
     // dB-linear branch at the seam, and EXACTLY 0 at recoveryT == 1.
     return envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
 }
