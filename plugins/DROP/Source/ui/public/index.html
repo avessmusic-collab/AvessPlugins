@@ -1285,12 +1285,12 @@
       for (let i = 0; i <= M; i++) {
         const t = i / M;
         let e;
-        // Mirrors tailEnvelopeForT()'s TWO-STAGE slope (2026-09-20 final,
-        // "i cant hear a tail"): gentle -24dB body over 70% of the window,
-        // quick already-quiet -24->-60dB descent, cosine landing to 0.
-        if (t <= 0.70) e = Math.pow(10, -(24 / 20) * (t / 0.70));
-        else if (t <= 0.97) e = Math.pow(10, -(24 + 36 * (t - 0.70) / 0.27) / 20);
-        else e = Math.pow(10, -(60 / 20)) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
+        // Mirrors tailEnvelopeForT()'s SMOOTH ACCELERATING fade
+        // (2026-09-20 final, "make it fade smoothly"): one continuous dB
+        // trajectory 24*t + 36*t^4, cosine landing to exact 0.
+        const sdb = (tt) => 24 * tt + 36 * tt * tt * tt * tt;
+        if (t <= 0.97) e = Math.pow(10, -sdb(t) / 20);
+        else e = Math.pow(10, -sdb(0.97) / 20) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
         const px = CURVE_X1 + t * tailW;
         const py = CURVE_Y0 - e * CURVE_H;
         dTail += (i === 0 ? 'M ' : 'L ') + px.toFixed(1) + ' ' + py.toFixed(1) + ' ';

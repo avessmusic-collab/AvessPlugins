@@ -1166,39 +1166,38 @@ static float tailEnvelopeForT(float recoveryT) noexcept
     // now continues past the knob's nominal length (and past bar markers)
     // all the way down to genuine inaudibility before the landing touches
     // zero. Nothing audible is ever cut.
-    // TWO-STAGE SLOPE (2026-09-20 final same-day iteration, user: "i cant
-    // hear a tail" after the exact-length round). A single 60dB ramp
-    // squeezed into the exact selected window made the fade ~86dB/s at the
-    // 0.70s default - the audible part was over in ~1/4 of the window
-    // (iteration 1's failure re-created). The requirements TOGETHER are:
-    // exact selected length, audibly gradual fade for (most of) that
-    // length, inaudible before the end, click-free exact-zero landing.
-    // Resolution:
-    //   [0 .. kBodyEndT (70%)]  : 0 -> -24dB, dB-linear - the gentle,
-    //                             user-approved "a bit longer" slope
-    //                             character fills the audible BODY of the
-    //                             selected time.
-    //   (70% .. 97%]            : -24 -> -60dB, dB-linear - a quicker but
-    //                             ALREADY-QUIET descent to inaudibility.
-    //   (97% .. 1]              : raised-cosine landing -60dB -> exact 0.
-    // C0-continuous at both seams; strictly decreasing throughout.
-    constexpr float kBodyEndT = 0.70f;
+    // SMOOTH ACCELERATING FADE (2026-09-20, user: "still tail doesnt fade
+    // gradualy to zero db. make it fade smoothly"). DOCUMENTED SUPERSESSION
+    // of the two-stage slope: its fade RATE jumped ~4x at the 70% seam
+    // (24dB over 70% -> 36dB over 27%) - heard as "audible tail, then
+    // suddenly swallowed". The dB trajectory is now ONE smooth function
+    // with a CONTINUOUS derivative everywhere:
+    //     dB(t) = -( kBodyDb * t  +  (kFullDb - kBodyDb) * t^4 )
+    // - initial slope exactly the gentle, user-approved kBodyDb (24dB per
+    //   window): the audible body fades exactly as before early on;
+    // - the t^4 term takes over GRADUALLY (C-infinity, no seam), carrying
+    //   the level to ~-(kFullDb) by the window's end;
+    // - the raised-cosine landing then closes from wherever the smooth
+    //   curve reached at kTailLandingStartT (~-55dB, inaudible) to an
+    //   EXACT 0.0 - the click-free Recovery->Idle reset invariant.
+    // Milestones (dB): t=0.35 -> -8.9, t=0.5 -> -14.3, t=0.7 -> -25.4,
+    // t=0.85 -> -39.2 - one continuous, smoothly accelerating glide.
     constexpr float kBodyDb = 24.0f;
     constexpr float kFullDb = 60.0f;
     constexpr float kTailLandingStartT = 0.97f;
     recoveryT = juce::jlimit(0.0f, 1.0f, recoveryT);
-    if (recoveryT <= kBodyEndT)
-        return std::pow(10.0f, -(kBodyDb / 20.0f) * (recoveryT / kBodyEndT));
-    if (recoveryT <= kTailLandingStartT)
+    auto smoothDb = [] (float t) noexcept
     {
-        const float x = (recoveryT - kBodyEndT) / (kTailLandingStartT - kBodyEndT);
-        return std::pow(10.0f, -(kBodyDb + (kFullDb - kBodyDb) * x) / 20.0f);
-    }
-    const float envAtLandingStart = std::pow(10.0f, -(kFullDb / 20.0f));
+        const float t2 = t * t;
+        return kBodyDb * t + (kFullDb - kBodyDb) * t2 * t2;
+    };
+    if (recoveryT <= kTailLandingStartT)
+        return std::pow(10.0f, -smoothDb(recoveryT) / 20.0f);
+    const float envAtLandingStart = std::pow(10.0f, -smoothDb(kTailLandingStartT) / 20.0f);
     const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
     // Raised-cosine 1->0 over the landing window, scaled by the (already
-    // -60dB-quiet, inaudible) level reached at its start - C0-continuous
-    // with the second slope at the seam, and EXACTLY 0 at recoveryT == 1.
+    // ~-55dB, inaudible) level the smooth curve reached at its start -
+    // C0-continuous at the seam, and EXACTLY 0 at recoveryT == 1.
     return envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
 }
 

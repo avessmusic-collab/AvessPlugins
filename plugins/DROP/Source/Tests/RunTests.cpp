@@ -4398,76 +4398,70 @@ int main()
         //       "a bit longer") - unmistakably a slope,
         //       still audible deep into the window. Landing unchanged.
         // This block mirrors processSegment()'s tailEnvelopeForT() exactly.
-        // TWO-STAGE SLOPE mirror (2026-09-20 final iteration, "i cant hear
-        // a tail" - see tailEnvelopeForT()'s doc comment): gentle -24dB
-        // body over 70% of the window, quick already-quiet -24->-60dB
-        // descent to 97%, cosine landing to exact 0.
-        constexpr float kBodyEndT = 0.70f;
+        // SMOOTH ACCELERATING FADE mirror (2026-09-20 final, "still tail
+        // doesnt fade gradualy to zero db. make it fade smoothly" - see
+        // tailEnvelopeForT()'s doc comment): ONE smooth dB trajectory,
+        // dB(t) = kBodyDb*t + (kFullDb-kBodyDb)*t^4, continuous derivative
+        // everywhere (the superseded two-stage shape jumped its fade rate
+        // ~4x at its 70% seam), cosine landing to exact 0.
         constexpr float kBodyDb = 24.0f;
         constexpr float kFullDb = 60.0f;
         constexpr float kTailLandingStartT = 0.97f;
-        auto env = [] (float t) -> float
+        auto smoothDb = [] (float t) { const float t2 = t * t; return kBodyDb * t + (kFullDb - kBodyDb) * t2 * t2; };
+        auto env = [&] (float t) -> float
         {
-            if (t <= kBodyEndT)
-                return std::pow (10.0f, -(kBodyDb / 20.0f) * (t / kBodyEndT));
             if (t <= kTailLandingStartT)
-            {
-                const float x = (t - kBodyEndT) / (kTailLandingStartT - kBodyEndT);
-                return std::pow (10.0f, -(kBodyDb + (kFullDb - kBodyDb) * x) / 20.0f);
-            }
-            const float envAtLandingStart = std::pow (10.0f, -(kFullDb / 20.0f));
+                return std::pow (10.0f, -smoothDb (t) / 20.0f);
+            const float envAtLandingStart = std::pow (10.0f, -smoothDb (kTailLandingStartT) / 20.0f);
             const float landingT = (t - kTailLandingStartT) / (1.0f - kTailLandingStartT);
             return envAtLandingStart * 0.5f * (1.0f + std::cos (juce::MathConstants<float>::pi * landingT));
         };
 
         check (env (0.0f) == 1.0f, "tail envelope: exactly full at Recovery's first sample");
-        check (env (0.1f) < 0.999f && env (0.35f) < env (0.1f),
-              "[POST-1.0] tail envelope: DECAYING from the very start - no sustain plateau anywhere (the superseded hold-then-fade shape was exactly 1.0 through 70% of the window and fails this by construction)");
         check (env (1.0f) < 1.0e-6f, "tail envelope: exactly zero at the end of Recovery (the click-free-resettable instant advanceStateMachineTicks() depends on)");
 
         bool strictlyDecreasing = true;
         float prev = env (0.0f);
-        for (int i = 1; i <= 194; ++i) // up to t=0.97; the landing continues decreasing but with its own cosine shape
+        for (int i = 1; i <= 194; ++i)
         {
             const float v = env ((float) i / 200.0f);
             if (v >= prev) strictlyDecreasing = false;
             prev = v;
         }
-        check (strictlyDecreasing, "[POST-1.0] tail envelope: STRICTLY decreasing across the slope section - a continuous decaying slope, never flat");
+        check (strictlyDecreasing, "[POST-1.0] tail envelope: STRICTLY decreasing - a continuous decaying fade, never flat");
 
-        // dB-linearity PER SEGMENT (the two-stage shape has two deliberate
-        // slopes; each must be internally constant-dB).
-        auto segmentSpread = [&] (float t0, float t1) -> float
-        {
-            float minStepDb = 1.0e9f, maxStepDb = -1.0e9f;
-            for (int i = 1; i <= 6; ++i)
-            {
-                const float ta = t0 + (t1 - t0) * (float) (i - 1) / 6.0f;
-                const float tb = t0 + (t1 - t0) * (float) i / 6.0f;
-                const float stepDb = 20.0f * std::log10 (juce::jmax (env (ta), 1.0e-8f)) - 20.0f * std::log10 (juce::jmax (env (tb), 1.0e-8f));
-                minStepDb = juce::jmin (minStepDb, stepDb);
-                maxStepDb = juce::jmax (maxStepDb, stepDb);
-            }
-            return maxStepDb - minStepDb;
-        };
-        const float bodySpread = segmentSpread (0.0f, kBodyEndT);
-        const float descentSpread = segmentSpread (kBodyEndT, kTailLandingStartT);
-        std::printf ("  per-slice dB spread: body %.2f dB (24dB over 70%%), descent %.2f dB (36dB over 27%%)\n", bodySpread, descentSpread);
-        check (bodySpread < 0.5f && descentSpread < 0.5f,
-              "[POST-1.0] tail envelope: BOTH stages are decibel-linear internally (gentle -24dB body, quick already-quiet descent) - perceptually even, per the dB-linear convention");
-        check (env (0.35f) > 0.2f && std::abs (20.0f * std::log10 (juce::jmax (env (kBodyEndT), 1.0e-8f)) + 24.0f) < 0.5f,
-              "[POST-1.0] tail envelope: the audible BODY fades only 24dB across 70% of the selected window (mid-body still > 0.2 linear) - the tail is HEARABLE for most of the selected time (the single-60dB-in-window ramp was ~-30dB by mid-window and fails this by construction)");
+        // Gentle start: the initial fade rate is the user-approved 24dB-
+        // per-window body slope, and the mid-body is still clearly audible.
+        const float dbAt01 = -20.0f * std::log10 (env (0.1f));
+        check (std::abs (dbAt01 - 2.4f) < 0.3f && env (0.35f) > 0.2f,
+              "[POST-1.0] tail envelope: gentle 24dB/window initial slope, mid-body still > 0.2 linear - the tail is hearable for most of the selected time");
 
-        // C0-continuity at BOTH internal seams (body/descent at 0.70,
-        // descent/landing at 0.97). Epsilon 1e-5 in t: the property under
-        // test is VALUE agreement AT the seam, not a slope bound.
-        for (float seam : { kBodyEndT, kTailLandingStartT })
+        // THE SMOOTHNESS CONTRACT: the per-slice fade rate may only change
+        // GRADUALLY - adjacent slices' dB drops stay within 1.5x of each
+        // other (the superseded two-stage shape jumped ~4x at its seam and
+        // fails this by construction).
+        float maxRatio = 0.0f;
+        float prevDrop = -1.0f;
+        for (int i = 1; i <= 12; ++i)
         {
+            const float ta = kTailLandingStartT * (float) (i - 1) / 12.0f;
+            const float tb = kTailLandingStartT * (float) i / 12.0f;
+            const float drop = smoothDb (tb) - smoothDb (ta);
+            if (prevDrop > 0.0f) maxRatio = juce::jmax (maxRatio, drop / prevDrop);
+            prevDrop = drop;
+        }
+        std::printf ("  max adjacent-slice fade-rate ratio: %.2fx (two-stage shape's seam jump was ~4x)\n", maxRatio);
+        check (maxRatio < 1.5f,
+              "[POST-1.0] tail envelope: the fade rate changes CONTINUOUSLY (adjacent-slice dB-drop ratio < 1.5x everywhere) - one smooth accelerating glide to silence, no audible kink");
+
+        // C0-continuity at the landing seam.
+        {
+            const float seam = kTailLandingStartT;
             const float justBelow = env (seam - 1.0e-5f);
             const float atSeam = env (seam);
             const float justAbove = env (seam + 1.0e-5f);
             check (std::abs (justBelow - atSeam) < 1.0e-3f && std::abs (justAbove - atSeam) < 1.0e-3f,
-                  "[POST-1.0] tail envelope: C0-continuous at the stage seams (no click at the joins)");
+                  "[POST-1.0] tail envelope: C0-continuous at the landing seam (no click at the join)");
         }
     }
 

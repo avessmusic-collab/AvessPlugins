@@ -1,5 +1,25 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (tail fades on one smooth, continuously accelerating glide)
+
+Stays at 1.0.0. User: "still tail doesnt fade gradualy to zero db. make
+it fade smoothly." Root cause: the two-stage shape's fade RATE jumped
+~4× at its 70% seam (24dB over 70% → 36dB over 27%) — heard as an
+audible tail suddenly getting swallowed.
+
+- **Fix:** the dB trajectory is now ONE smooth function with a
+  continuous derivative everywhere: dB(t) = 24·t + 36·t⁴ — the initial
+  slope is exactly the approved gentle 24dB/window body fade, and the
+  t⁴ term steepens it GRADUALLY (no seam) to ~−55dB by 97%, then the
+  cosine landing closes to exact 0. Milestones: −8.9dB at 35%, −14.3dB
+  at 50%, −25.4dB at 70%, −39dB at 85%.
+- **New smoothness contract in the suite:** adjacent slices' fade rates
+  must stay within 1.5× of each other (measured 1.26× max; the
+  two-stage shape's 4× seam jump fails by construction). Ring
+  measurements equal or fuller at every checkpoint; still exactly the
+  selected length, silent past it. Graph mirror + atlas updated.
+  271 assertions, all passing.
+
 ### Added — 2026-09-20 (hover tooltips on every control)
 
 Stays at 1.0.0. User request: "make so when u hover above the elemts a
