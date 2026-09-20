@@ -361,6 +361,32 @@ phase_5_install_new_versions() {
         echo "Installed AU: $au_dir/$PRODUCT_NAME.component" >> "$LOG_FILE"
     fi
 
+    # Install Standalone (2026-09-20, user-directed: "make so every form of
+    # the app is identical with all the upgrades we made"). The Standalone
+    # was always REBUILT alongside VST3/AU (see the Phase-4 note) but only
+    # ever lived inside build/ - nothing launchable stayed in sync. Every
+    # install now also places the app in ~/Applications, so all three
+    # forms of a plugin are the same build by construction. Guarded on the
+    # artifact existing so plugins without a Standalone format still install.
+    local standalone_dir="$HOME/Applications"
+    local standalone_build="build/plugins/$PLUGIN_NAME/${PLUGIN_NAME}_artefacts/Release/Standalone/$PRODUCT_NAME.app"
+    if [ -d "$standalone_build" ] || [ "$DRY_RUN" = true ]; then
+        info "  - Installing Standalone to $standalone_dir/"
+        if [ "$DRY_RUN" = true ]; then
+            echo "[DRY-RUN] mkdir -p \"$standalone_dir\""
+            echo "[DRY-RUN] rm -rf \"$standalone_dir/$PRODUCT_NAME.app\""
+            echo "[DRY-RUN] cp -R \"$standalone_build\" \"$standalone_dir/\""
+        else
+            mkdir -p "$standalone_dir"
+            rm -rf "$standalone_dir/$PRODUCT_NAME.app"
+            cp -R "$standalone_build" "$standalone_dir/"
+            chmod -R 755 "$standalone_dir/$PRODUCT_NAME.app"
+            echo "Installed Standalone: $standalone_dir/$PRODUCT_NAME.app" >> "$LOG_FILE"
+        fi
+    else
+        info "  - No Standalone artifact for $PLUGIN_NAME (skipping)"
+    fi
+
     success "New versions installed"
 }
 
