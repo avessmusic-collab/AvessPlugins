@@ -401,6 +401,13 @@ void DROPAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     // Stage 3 DSP Phase 3.4.
     impactEngine.prepare(spec);
+    // DEPTH-AUDIT FIX (2026-09-20): the analyzer was the ONE stateful
+    // component never (re)prepared here - its rolling metrics and held
+    // SourceProfile leaked across prepare cycles, feeding slightly
+    // different sourceAwareScalar weights into a re-render (measured
+    // 0.00111 max sample diff between two identical offline renders;
+    // spec requires bit-deterministic offline rendering).
+    audioAnalyzer.prepare(spec);
 
     dryCaptureBuffer.setSize((int) spec.numChannels, (int) spec.maximumBlockSize);
     dryCaptureBuffer.clear();
@@ -769,7 +776,14 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    for (auto channel = totalNumInputChannels; channel < totalNumOutputChannels; ++channel)
+    // DEPTH-AUDIT FIX (2026-09-20, with the dry-capture clamp below): every
+    // per-channel loop in this function is bounded by what the HOST buffer
+    // actually carries, never by the negotiated bus width alone - a
+    // non-compliant caller passing fewer channels previously indexed past
+    // the buffer's channel array (SEGFAULT, found by the depth suite).
+    const int numBufferChannels = buffer.getNumChannels();
+
+    for (auto channel = totalNumInputChannels; channel < juce::jmin(totalNumOutputChannels, numBufferChannels); ++channel)
         buffer.clear(channel, 0, buffer.getNumSamples());
 
     const int numSamples = buffer.getNumSamples();
@@ -779,8 +793,32 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // Pre-chain dry capture (architecture.md Processing Order step 1:
     // "must happen before any module touches the buffer") - used by the
     // final Dry/Wet Mixer stage at the very end of this function.
-    for (int channel = 0; channel < totalNumOutputChannels; ++channel)
+    // DEPTH-AUDIT FIX (2026-09-20): clamped to the channels the HOST
+    // buffer actually carries AND the capture buffer was prepared for. A
+    // compliant host never passes fewer channels than the negotiated bus,
+    // but a non-compliant caller previously drove buffer.getReadPointer()
+    // out of bounds here -> memmove from a garbage/null pointer -> SEGFAULT
+    // (found by the depth suite's mono-buffer test; crash report:
+    // _platform_memmove <- processBlock+176). Defensive clamp; compliant
+    // hosts are byte-identical.
+    const int channelsToCapture = juce::jmin(totalNumOutputChannels,
+                                              buffer.getNumChannels(),
+                                              dryCaptureBuffer.getNumChannels());
+    // DEPTH-AUDIT FIX (2026-09-20): input sanitization AT THE DOOR - a
+    // single NaN/Inf input block previously poisoned the delay/reverb
+    // feedback loops essentially forever (tanh(NaN)==NaN circulates;
+    // measured: still non-finite >4s after one bad block). Hosts and
+    // upstream plugins DO occasionally emit garbage; scrubbing here (bad
+    // sample -> 0) protects every downstream module and the dry capture
+    // in one pass, and costs one isfinite test per sample.
+    for (int channel = 0; channel < channelsToCapture; ++channel)
+    {
+        float* data = buffer.getWritePointer(channel);
+        for (int i = 0; i < numSamples; ++i)
+            if (! std::isfinite(data[i]))
+                data[i] = 0.0f;
         dryCaptureBuffer.copyFrom(channel, 0, buffer, channel, 0, numSamples);
+    }
 
     // Stage 3 DSP Phase 3.5: AudioAnalyzer tap (architecture.md Processing
     // Order step 2: "runs in parallel off the same pre-chain signal... order
@@ -1079,7 +1117,7 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
                 : 1.0f;
             const float gain = 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * t)); // 1 -> 0 raised cosine
 
-            for (int channel = 0; channel < totalNumOutputChannels; ++channel)
+            for (int channel = 0; channel < juce::jmin(totalNumOutputChannels, numBufferChannels); ++channel)
             {
                 auto* data = buffer.getWritePointer(channel);
                 const float dry = dryCaptureBuffer.getSample(channel, i);
@@ -1125,7 +1163,7 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         const float mixAmt = dryWetSmoothed.getNextValue();
         const float gain = outputGainSmoothed.getNextValue();
 
-        for (int channel = 0; channel < totalNumOutputChannels; ++channel)
+        for (int channel = 0; channel < juce::jmin(totalNumOutputChannels, numBufferChannels); ++channel)
         {
             auto* data = buffer.getWritePointer(channel);
             const float dry = dryCaptureBuffer.getSample(channel, i);

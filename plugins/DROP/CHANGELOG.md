@@ -1,5 +1,34 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (in-depth test suite: 3 real engine bugs found and fixed)
+
+Stays at 1.0.0. User: "make more tests, in depth." Eight new depth areas
+(285 assertions total), which immediately caught three real bugs:
+
+1. **SEGFAULT on channel-count mismatch:** every per-channel loop in
+   processBlock() was bounded by the negotiated bus width, not the
+   channels the host buffer actually carries — a 1-channel buffer
+   crashed in the dry-capture memmove. All four loops now clamp
+   defensively (compliant hosts byte-identical).
+2. **NaN/Inf poison was permanent:** one bad input block circulated
+   forever through the delay/reverb feedback (tanh(NaN)==NaN; measured
+   still non-finite >4s later). Input is now sanitized at the door
+   (non-finite → 0, one isfinite per sample) — measured: output never
+   goes non-finite at all.
+3. **Offline renders were NOT deterministic** (spec violation, 0.0015
+   max diff): juce::Reverb's internal parameter smoothers survive
+   reset(), so a re-prepared instance ramped its first impact-reverb
+   differently. ReverbModule::prepare() now placement-reconstructs the
+   inner reverb (and the analyzer, previously never re-prepared, is
+   prepared too). Re-renders are now BIT-IDENTICAL (max diff 0).
+
+New depth coverage: offline determinism (bit-exact), block-size
+invariance under hostile irregular buffers (−25.5dB null), hard tempo
+jump mid-build (finite, completes, no discontinuity), NaN/Inf/denormal
+floods, mono bus full transition, all 16 styles end-to-end (finite,
+bounded, on-time, audible), every-block retrigger spam, and a 6-config
+seeded full-parameter fuzzer. All passing.
+
 ### Fixed/Verified — 2026-09-20 (full VST-grade audit: transport-stop was eating the tail; pluginval max-strictness pass)
 
 Stays at 1.0.0. User: "again i hear no tail. test everything how you

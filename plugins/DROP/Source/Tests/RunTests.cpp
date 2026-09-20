@@ -5460,6 +5460,376 @@ int main()
               "[POST-1.0] DAW reality C: pressing STOP shortly after the drop lets the tail keep ringing out (like any reverb/delay would) - the transport-stop abort no longer fires post-drop (pre-fix it hard-muted the ring ~5ms after stop and fails this by construction)");
     }
 
+    //==========================================================================
+    // [POST-1.0 DEPTH] In-depth robustness suite (2026-09-20, user: "make
+    // more tests, in depth") - the spec's DAW TESTING items plus host-
+    // hostility scenarios that only ever surface in real sessions.
+    //==========================================================================
+
+    std::printf ("\n[POST-1.0 DEPTH] Offline-render determinism - same instance, same seed, bit-identical render\n");
+    {
+        std::vector<int> stateLog; // per-block state of the LAST render (diagnostic)
+        auto renderOnce = [&stateLog] (DROPAudioProcessor& p) -> std::vector<float>
+        {
+            stateLog.clear();
+            constexpr int blockSize = 512;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+            std::vector<float> out;
+            double phase = 0.0;
+            for (int block = 0; block < 500; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float s = 0.4f * (float) std::sin (phase); phase += 0.03;
+                    buf.setSample (0, i, s); buf.setSample (1, i, s);
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+                const float* o = buf.getReadPointer (0);
+                out.insert (out.end(), o, o + blockSize);
+                stateLog.push_back ((int) p.getCurrentDropState());
+            }
+            p.releaseResources();
+            return out;
+        };
+        DROPAudioProcessor p;
+        const auto a = renderOnce (p);
+        const auto b = renderOnce (p); // same instance re-prepared: RNGs reseed at trigger from the stored seed
+        float maxDiff = 0.0f;
+        long firstDiff = -1, lastDiff = -1, diffCount = 0;
+        for (size_t i = 0; i < a.size(); ++i)
+        {
+            const float d = std::abs (a[i] - b[i]);
+            if (d > 0.0f) { if (firstDiff < 0) firstDiff = (long) i; lastDiff = (long) i; ++diffCount; }
+            maxDiff = juce::jmax (maxDiff, d);
+        }
+        std::printf ("  diff span: first=%ld last=%ld count=%ld\n", firstDiff, lastDiff, diffCount);
+        std::printf ("  two successive full renders, max |diff| = %.3g, first differing sample = %ld (of %ld)\n", (double) maxDiff, firstDiff, (long) a.size());
+        if (firstDiff >= 0 && ! stateLog.empty())
+        {
+            const long blk = firstDiff / 512;
+            std::printf ("  state at divergence block %ld: %d (prev: %d %d %d) [Idle=0 Arm=1 Build=2 Peak=3 Impact=4 Rec=5]\n",
+                         blk, blk < (long) stateLog.size() ? stateLog[(size_t) blk] : -1,
+                         blk >= 3 ? stateLog[(size_t) blk - 3] : -1, blk >= 2 ? stateLog[(size_t) blk - 2] : -1, blk >= 1 ? stateLog[(size_t) blk - 1] : -1);
+        }
+        check (maxDiff == 0.0f,
+              "[DEPTH] offline determinism: re-rendering the same instance is BIT-IDENTICAL (spec: 'deterministic offline rendering') - seeds, smoothers and every stateful module reset reproducibly");
+    }
+
+    std::printf ("\n[POST-1.0 DEPTH] Block-size invariance - irregular host buffers vs a fixed reference\n");
+    {
+        auto renderChopped = [] (const std::vector<int>& sizes) -> std::vector<float>
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, 512);
+            p.prepareToPlay (48000.0, 512);
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+            std::vector<float> out;
+            double phase = 0.0;
+            size_t si = 0;
+            bool triggerCleared = false;
+            while (out.size() < 250000)
+            {
+                const int n = sizes[si++ % sizes.size()];
+                juce::AudioBuffer<float> buf (2, n);
+                for (int i = 0; i < n; ++i)
+                {
+                    const float s = 0.4f * (float) std::sin (phase); phase += 0.03;
+                    buf.setSample (0, i, s); buf.setSample (1, i, s);
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (! triggerCleared)
+                {
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+                    triggerCleared = true;
+                }
+                const float* o = buf.getReadPointer (0);
+                out.insert (out.end(), o, o + n);
+            }
+            p.releaseResources();
+            return out;
+        };
+        const auto ref = renderChopped ({ 512 });
+        const auto irr = renderChopped ({ 64, 113, 256, 37, 512, 491 }); // deliberately host-hostile sizes
+        double sumSqDiff = 0.0, sumSqRef = 0.0;
+        const size_t n = juce::jmin (ref.size(), irr.size());
+        for (size_t i = 0; i < n; ++i)
+        {
+            sumSqDiff += (double) (ref[i] - irr[i]) * (double) (ref[i] - irr[i]);
+            sumSqRef += (double) ref[i] * (double) ref[i];
+        }
+        const double diffDb = 10.0 * std::log10 (juce::jmax (sumSqDiff, 1e-30) / juce::jmax (sumSqRef, 1e-30));
+        std::printf ("  irregular-buffer render vs 512-block reference: difference energy %.1f dB below the signal\n", -diffDb);
+        // Bound calibrated to the legitimate block-dependent components:
+        // per-segment smoother targets and the analyzer's per-block
+        // windows shift with buffer boundaries by design (measured
+        // -25.5dB); STATE/timing (drop position, states, curves) are
+        // sample-exact regardless. -20dB still catches any real
+        // segmentation break by an order of magnitude.
+        check (diffDb < -20.0,
+              "[DEPTH] block-size invariance: chopping the SAME timeline into hostile irregular buffers (64/113/256/37/512/491) changes the output by < -20dB total (measured ~-25.5dB; only smoother/analyzer window phases differ - the sample-accurate segmentation holds under real host buffering)");
+    }
+
+    std::printf ("\n[POST-1.0 DEPTH] Tempo change mid-build - latched durations, no glitch, run completes\n");
+    {
+        constexpr int blockSize = 512;
+        constexpr double sr = 48000.0;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (sr, blockSize);
+        p.prepareToPlay (sr, blockSize);
+        TestPlayHead ph;
+        p.setPlayHead (&ph);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.2f);
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+        bool sawImpact = false, backToIdle = false, allFinite = true;
+        float maxStep = 0.0f; float prevSample = 0.0f;
+        double phase = 0.0;
+        int64_t timeline = 0;
+        for (int block = 0; block < 900; ++block)
+        {
+            const double bpm = (block < 120) ? 120.0 : 150.0; // hard tempo jump mid-build
+            const double spq = sr * 60.0 / bpm;
+            const double ppq = (double) timeline / spq; // (host would rescale; a hard remap is the HOSTILE version)
+            ph.info = makePosition (bpm, 4, 4, ppq, std::floor (ppq / 4.0) * 4.0);
+            ph.info.setIsPlaying (true);
+            juce::AudioBuffer<float> buf (2, blockSize);
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const float s = 0.4f * (float) std::sin (phase); phase += 0.03;
+                buf.setSample (0, i, s); buf.setSample (1, i, s);
+            }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+            const float* o = buf.getReadPointer (0);
+            for (int i = 0; i < blockSize; ++i)
+            {
+                if (! std::isfinite (o[i])) allFinite = false;
+                maxStep = juce::jmax (maxStep, std::abs (o[i] - prevSample));
+                prevSample = o[i];
+            }
+            const auto st = p.getCurrentDropState();
+            if (st == drop::DropState::Impact) sawImpact = true;
+            if (sawImpact && st == drop::DropState::Idle) backToIdle = true;
+            timeline += blockSize;
+        }
+        p.releaseResources();
+        std::printf ("  tempo 120->150 mid-build: finite=%s, completed=%s, max adjacent-sample step %.3f\n",
+                     allFinite ? "yes" : "NO", backToIdle ? "yes" : "NO", maxStep);
+        check (allFinite, "[DEPTH] tempo change mid-build: output stays finite through a hard 120->150 BPM jump");
+        check (sawImpact && backToIdle, "[DEPTH] tempo change mid-build: the latched transition still runs to completion (Arming-latched durations, per design)");
+        check (maxStep < 1.5f, "[DEPTH] tempo change mid-build: no full-scale discontinuity at the tempo jump");
+    }
+
+    std::printf ("\n[POST-1.0 DEPTH] Hostile input - NaN/Inf block recovery and denormal flood\n");
+    {
+        constexpr int blockSize = 512;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+        bool recovered = false;
+        int lastNonFiniteBlock = -1;
+        double phase = 0.0;
+        for (int block = 0; block < 700; ++block)
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            for (int i = 0; i < blockSize; ++i)
+            {
+                float s = 0.4f * (float) std::sin (phase); phase += 0.03;
+                if (block == 60) s = (i % 3 == 0) ? std::numeric_limits<float>::quiet_NaN()
+                                                  : std::numeric_limits<float>::infinity(); // one poisoned block mid-build
+                if (block > 400) s = 1.0e-30f; // denormal flood afterwards
+                buf.setSample (0, i, s); buf.setSample (1, i, s);
+            }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+            const float* o = buf.getReadPointer (0);
+            bool finite = true;
+            for (int i = 0; i < blockSize; ++i) if (! std::isfinite (o[i])) { finite = false; break; }
+            if (! finite) lastNonFiniteBlock = block;
+        }
+        recovered = lastNonFiniteBlock >= 0 ? (lastNonFiniteBlock < 60 + 280) : true; // must self-heal within ~3s of the poison
+        std::printf ("  poisoned block at 60; last non-finite output block: %d (recovery deadline 340)\n", lastNonFiniteBlock);
+        check (recovered,
+              "[DEPTH] hostile input: one NaN/Inf input block must not poison the plugin forever - output self-heals to finite within ~3s (delay/reverb feedback paths flush), and a denormal flood stays finite");
+        p.releaseResources();
+    }
+
+    std::printf ("\n[POST-1.0 DEPTH] Mono bus - full transition on a 1-channel buffer\n");
+    {
+        constexpr int blockSize = 512;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+        bool allFinite = true, sawImpact = false;
+        double riserEnergy = 0.0;
+        double phase = 0.0;
+        for (int block = 0; block < 500; ++block)
+        {
+            juce::AudioBuffer<float> buf (1, blockSize); // MONO
+            for (int i = 0; i < blockSize; ++i) { buf.setSample (0, i, 0.3f * (float) std::sin (phase)); phase += 0.03; }
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            if (block == 0)
+                if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+            const float* o = buf.getReadPointer (0);
+            for (int i = 0; i < blockSize; ++i)
+            {
+                if (! std::isfinite (o[i])) allFinite = false;
+                riserEnergy += (double) o[i] * (double) o[i];
+            }
+            if (p.getCurrentDropState() == drop::DropState::Impact) sawImpact = true;
+        }
+        p.releaseResources();
+        check (allFinite && sawImpact && riserEnergy > 0.0,
+              "[DEPTH] mono bus: a full transition on a 1-channel buffer stays finite, reaches Impact, and produces sound (no stereo-only assumptions crash the mono path)");
+    }
+
+    std::printf ("\n[POST-1.0 DEPTH] All 16 styles - full transition smoke (finite, bounded, on-time, audible)\n");
+    {
+        bool allOk = true;
+        for (int styleIdx = 0; styleIdx < 16; ++styleIdx)
+        {
+            constexpr int blockSize = 512;
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            if (auto* prm = p.parameters.getParameter ("style")) prm->setValueNotifyingHost ((float) styleIdx / 15.0f);
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+            bool finite = true, impact = false, idleAgain = false;
+            float peak = 0.0f;
+            double lateBuildEnergy = 0.0;
+            double phase = 0.0;
+            for (int block = 0; block < 600; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float s = 0.3f * (float) std::sin (phase); phase += 0.03;
+                    buf.setSample (0, i, s); buf.setSample (1, i, s);
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+                const float* o = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    if (! std::isfinite (o[i])) finite = false;
+                    peak = juce::jmax (peak, std::abs (o[i]));
+                }
+                const auto st = p.getCurrentDropState();
+                if (st == drop::DropState::Building)
+                    for (int i = 0; i < blockSize; ++i) lateBuildEnergy += (double) o[i] * (double) o[i];
+                if (st == drop::DropState::Impact) impact = true;
+                if (impact && st == drop::DropState::Idle) idleAgain = true;
+            }
+            p.releaseResources();
+            const bool ok = finite && impact && idleAgain && peak < 4.0f && lateBuildEnergy > 1.0e-6;
+            if (! ok)
+            {
+                allOk = false;
+                std::printf ("  style %d FAILED: finite=%d impact=%d idle=%d peak=%.2f buildEnergy=%.2e\n",
+                             styleIdx, finite, impact, idleAgain, peak, lateBuildEnergy);
+            }
+        }
+        check (allOk, "[DEPTH] all 16 styles: every style completes a full transition - finite everywhere, peak bounded (< 4.0), Impact reached, returns to Idle, audible build content");
+    }
+
+    std::printf ("\n[POST-1.0 DEPTH] Retrigger spam - trigger toggled every block, exactly one transition at a time\n");
+    {
+        constexpr int blockSize = 512;
+        DROPAudioProcessor p;
+        p.setRateAndBufferSizeDetails (48000.0, blockSize);
+        p.prepareToPlay (48000.0, blockSize);
+        if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.0f);
+        if (auto* prm = p.parameters.getParameter ("tail")) prm->setValueNotifyingHost (0.0f); // CUT keeps the run compact
+        bool allFinite = true;
+        int impactEntries = 0;
+        auto prevState = drop::DropState::Idle;
+        for (int block = 0; block < 900; ++block)
+        {
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost ((block % 2 == 0) ? 1.0f : 0.0f); // relentless spam
+            juce::AudioBuffer<float> buf (2, blockSize);
+            buf.clear();
+            juce::MidiBuffer midi;
+            p.processBlock (buf, midi);
+            const float* o = buf.getReadPointer (0);
+            for (int i = 0; i < blockSize; ++i) if (! std::isfinite (o[i])) allFinite = false;
+            const auto st = p.getCurrentDropState();
+            if (st == drop::DropState::Impact && prevState != drop::DropState::Impact) ++impactEntries;
+            prevState = st;
+        }
+        p.releaseResources();
+        std::printf ("  900 blocks of every-block trigger spam: %d Impact entries, finite=%s\n", impactEntries, allFinite ? "yes" : "NO");
+        check (allFinite && impactEntries >= 2,
+              "[DEPTH] retrigger spam: hammering the trigger every block never corrupts state or audio - transitions run one at a time, back to back, finite throughout");
+    }
+
+    std::printf ("\n[POST-1.0 DEPTH] Parameter fuzz - 6 seeded random configurations, full transitions\n");
+    {
+        const char* fuzzIds[] = { "style", "intensity", "tension", "chaos", "impact", "filter", "width", "pitch",
+                                  "gate", "stutter", "delay", "reverb", "distortion", "digital", "noise",
+                                  "dryWet", "output", "tail", "noiseTension", "noiseType" };
+        bool allOk = true;
+        std::mt19937 fuzzRng (0xD20BF00Du);
+        std::uniform_real_distribution<float> dist (0.0f, 1.0f);
+        for (int cfg = 0; cfg < 6; ++cfg)
+        {
+            constexpr int blockSize = 512;
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (48000.0, blockSize);
+            p.prepareToPlay (48000.0, blockSize);
+            for (auto* id : fuzzIds)
+                if (auto* prm = p.parameters.getParameter (id)) prm->setValueNotifyingHost (dist (fuzzRng));
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (0.2f); // 2 bars: keeps each config compact
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+            bool finite = true; float peak = 0.0f; bool impact = false;
+            double phase = 0.0;
+            for (int block = 0; block < 1400; ++block)
+            {
+                juce::AudioBuffer<float> buf (2, blockSize);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float s = 0.3f * (float) std::sin (phase); phase += 0.045;
+                    buf.setSample (0, i, s); buf.setSample (1, i, s);
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+                const float* o = buf.getReadPointer (0);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    if (! std::isfinite (o[i])) finite = false;
+                    peak = juce::jmax (peak, std::abs (o[i]));
+                }
+                if (p.getCurrentDropState() == drop::DropState::Impact) impact = true;
+            }
+            p.releaseResources();
+            const bool ok = finite && impact && peak < 6.0f;
+            if (! ok) { allOk = false; std::printf ("  fuzz cfg %d FAILED: finite=%d impact=%d peak=%.2f\n", cfg, finite, impact, peak); }
+        }
+        check (allOk, "[DEPTH] parameter fuzz: 6 seeded random full-parameter configurations all complete transitions with finite, bounded output (< 6.0 peak) - no parameter combination detonates the engine");
+    }
+
     std::printf ("\n[DIAG] Parameters as the HOST sees them (name | automatable | meta | discrete | numSteps)\n");
     {
         DROPAudioProcessor p;

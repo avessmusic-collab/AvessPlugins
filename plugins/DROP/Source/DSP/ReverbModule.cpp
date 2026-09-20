@@ -15,6 +15,8 @@ void ReverbModule::prepare(const juce::dsp::ProcessSpec& spec)
     dryBuffer.setSize((int) juce::jmax(1u, spec.numChannels), (int) juce::jmax(1u, spec.maximumBlockSize));
     wetBuffer.setSize((int) juce::jmax(1u, spec.numChannels), (int) juce::jmax(1u, spec.maximumBlockSize));
 
+    reverb.~Reverb();               // juce::dsp::Reverb is non-copyable: destroy-and-
+    new (&reverb) juce::dsp::Reverb(); // placement-reconstruct for a truly fresh object // DEPTH-AUDIT FIX (2026-09-20): see ImpactEngine::prepare() - smoother state survives reset(); reconstruct for bit-deterministic re-prepares
     reverb.prepare(spec);
 
     sendWeightSmoothed.reset(spec.sampleRate, kWeightSmoothingSeconds);

@@ -1,5 +1,6 @@
 #include "ImpactEngine.h"
 #include <cmath>
+#include <new>
 
 namespace drop
 {
@@ -19,6 +20,14 @@ void ImpactEngine::prepare(const juce::dsp::ProcessSpec& spec)
     const double twoPiFcOverFs = 2.0 * juce::MathConstants<double>::pi * (double) kLowClipCrossoverHz / sampleRate;
     lowClipCoeff = (float) (1.0 - std::exp(-twoPiFcOverFs));
 
+    // DEPTH-AUDIT FIX (2026-09-20, offline-determinism): juce::dsp::Reverb's
+    // internal parameter smoothers survive reset() - a re-prepared instance
+    // therefore rendered its first impact-reverb ramp differently from a
+    // fresh one (measured 0.0015 max diff between two identical offline
+    // renders, diverging exactly at Impact). Reconstructing the object
+    // makes every prepare() bit-identical to a fresh instance.
+    // (shortTailReverb is a drop::ReverbModule; its prepare() performs the
+    // determinism-grade fresh reconstruction of the inner juce Reverb.)
     shortTailReverb.prepare(spec);
 
     reset();
