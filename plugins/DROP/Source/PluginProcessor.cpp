@@ -839,8 +839,24 @@ void DROPAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
     // ------------------------------------------------------------------
     const bool wasAlreadyAborting = transportStopAbortActive;
 
+    // POST-1.0 (2026-09-20 full-audit round, user: "again i hear no
+    // tail"). MEASURED BUG: the abort also fired during Impact/Recovery,
+    // hard-muting the tail ~5ms after a transport stop - and stopping
+    // playback right after the drop is exactly how a producer auditions
+    // one (the engine's tail measured -11.5dB under the music at pure
+    // defaults, clearly audible - the abort was what ate it). The abort's
+    // purpose is killing a STUCK PRE-DROP build (riser ramping with the
+    // music gone); post-drop, the ring-out is finite, envelope-bounded and
+    // self-terminating, and letting it breathe out after stop is what any
+    // delay/reverb plugin does. Abort therefore fires only for the
+    // PRE-DROP states (Arming/Building/Peak).
+    const auto stateAtStopCheck = dropStateMachine.getState();
+    const bool inPreDropState = stateAtStopCheck == drop::DropState::Arming
+                             || stateAtStopCheck == drop::DropState::Building
+                             || stateAtStopCheck == drop::DropState::Peak;
+
     if (!wasAlreadyAborting
-        && dropStateMachine.getState() != drop::DropState::Idle
+        && inPreDropState
         && !musicalClock.isUsingFallbackTransport()
         && !musicalClock.isHostPlaying())
     {

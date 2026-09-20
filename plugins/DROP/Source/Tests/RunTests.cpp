@@ -5353,6 +5353,113 @@ int main()
         }
     }
 
+    std::printf ("\n[POST-1.0] DAW-reality tail check (2026-09-20 'again i hear no tail'): defaults, music through the drop, loop-wrap and transport-stop\n");
+    {
+        // Three renders reproducing how a producer actually auditions a
+        // drop, ALL parameters at their real defaults (nothing pinned):
+        //   A. music keeps playing through and after the drop;
+        //   B. the arrangement LOOPS back one beat after the drop;
+        //   C. the user presses STOP one beat after the drop.
+        // Measured: DROP's own post-drop contribution (out - in).
+        constexpr double sr = 48000.0;
+        constexpr int blockSize = 512;
+        constexpr double bpm = 128.0;
+        const double spq = sr * 60.0 / bpm;
+        const int64_t barSamples = (int64_t) (spq * 4.0);
+
+        auto run = [&] (int scenario) -> std::array<double, 4> // ring residual RMS at +0.1/+0.3/+0.6s after impact end, and music RMS reference
+        {
+            DROPAudioProcessor p;
+            p.setRateAndBufferSizeDetails (sr, blockSize);
+            p.prepareToPlay (sr, blockSize);
+            TestPlayHead ph;
+            p.setPlayHead (&ph);
+            // DEFAULTS ONLY - the exact state a fresh instance has.
+            if (auto* prm = p.parameters.getParameter ("buildLength")) prm->setValueNotifyingHost (2.0f / 5.0f); // 4 bars (only deviation: keeps the render compact; charging/behavior is identical in kind)
+            if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
+
+            int64_t impactEnd = -1, captureStart = -1, eventSample = -1;
+            std::vector<float> residual;
+            double musicSumSq = 0.0; int64_t musicN = 0;
+            double phase = 0.0;
+            const double inc = 2.0 * juce::MathConstants<double>::pi * 220.0 / sr;
+            int64_t timelineSample = 0; // host timeline (wraps on loop)
+            bool stopped = false;
+
+            for (int block = 0; block < 1400; ++block)
+            {
+                const int64_t globalSample = (int64_t) block * blockSize;
+                // Impact ends ~ arming(<=1bar) + 4 bars + vacuum+impact; detect live below.
+                if (impactEnd > 0 && eventSample < 0)
+                    eventSample = impactEnd + (int64_t) spq; // one beat after the drop's window
+                if (eventSample > 0 && globalSample >= eventSample)
+                {
+                    if (scenario == 1 && timelineSample >= eventSample) timelineSample = 0; // loop back to bar 0
+                    if (scenario == 2) stopped = true;
+                }
+
+                const double ppq = (double) timelineSample / spq;
+                ph.info = makePosition (bpm, 4, 4, ppq, std::floor (ppq / 4.0) * 4.0);
+                ph.info.setIsPlaying (! stopped);
+
+                juce::AudioBuffer<float> buf (2, blockSize);
+                std::vector<float> inCopy ((size_t) blockSize);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float sMusic = stopped ? 0.0f : 0.4f * (float) std::sin (phase);
+                    phase += inc;
+                    buf.setSample (0, i, sMusic);
+                    buf.setSample (1, i, sMusic);
+                    inCopy[(size_t) i] = sMusic;
+                }
+                juce::MidiBuffer midi;
+                p.processBlock (buf, midi);
+                if (block == 0)
+                    if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (0.0f);
+
+                if (p.getCurrentDropState() == drop::DropState::Impact) impactEnd = globalSample + blockSize;
+                if (impactEnd > 0 && captureStart < 0) captureStart = globalSample;
+                if (captureStart >= 0)
+                    for (int i = 0; i < blockSize; ++i)
+                        residual.push_back (buf.getSample (0, i) - inCopy[(size_t) i]);
+                if (! stopped) { for (int i = 0; i < blockSize; ++i) { musicSumSq += 0.16 * 0.5; ++musicN; } }
+                timelineSample += blockSize;
+            }
+            p.releaseResources();
+
+            auto rmsAt = [&] (double secs) -> double
+            {
+                if (impactEnd <= 0 || captureStart < 0) return -1.0;
+                const int64_t start = (impactEnd - captureStart) + (int64_t) (secs * sr);
+                const int64_t len = (int64_t) (0.08 * sr);
+                double sumSq = 0.0; int64_t n = 0;
+                for (int64_t i = start; i < start + len && i < (int64_t) residual.size(); ++i, ++n)
+                    sumSq += (double) residual[(size_t) i] * (double) residual[(size_t) i];
+                return n > 0 ? std::sqrt (sumSq / (double) n) : -1.0;
+            };
+            return { rmsAt (0.10), rmsAt (0.30), rmsAt (0.60), 0.4 / std::sqrt (2.0) };
+        };
+
+        const char* names[] = { "A continuous", "B loop-wrap ", "C stop      " };
+        std::array<std::array<double, 4>, 3> results {};
+        for (int sc = 0; sc < 3; ++sc)
+        {
+            results[(size_t) sc] = run (sc);
+            const auto& r = results[(size_t) sc];
+            std::printf ("  %s: ring residual RMS +100ms=%.5f +300ms=%.5f +600ms=%.5f (music RMS %.3f)\n",
+                         names[sc], r[0], r[1], r[2], r[3]);
+        }
+        check (results[0][0] > 5.0e-3,
+              "[POST-1.0] DAW reality A: at PURE DEFAULTS with music playing through, the tail's own contribution is genuinely present after the drop (>= ~-38dB vs the music)");
+        check (results[1][0] > 2.0e-3,
+              "[POST-1.0] DAW reality B: a loop-wrap one beat after the drop does NOT kill the ringing tail");
+        // C's stop lands ~+250ms after Impact's end (the event anchor
+        // latches early in the Impact window), so +300ms is genuinely
+        // POST-STOP: the pre-fix abort measured exactly 0.00000 there.
+        check (results[2][0] > 2.0e-3 && results[2][1] > 2.0e-3,
+              "[POST-1.0] DAW reality C: pressing STOP shortly after the drop lets the tail keep ringing out (like any reverb/delay would) - the transport-stop abort no longer fires post-drop (pre-fix it hard-muted the ring ~5ms after stop and fails this by construction)");
+    }
+
     std::printf ("\n[DIAG] Parameters as the HOST sees them (name | automatable | meta | discrete | numSteps)\n");
     {
         DROPAudioProcessor p;

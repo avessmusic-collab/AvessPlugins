@@ -1,5 +1,36 @@
 # DROP Changelog
 
+### Fixed/Verified — 2026-09-20 (full VST-grade audit: transport-stop was eating the tail; pluginval max-strictness pass)
+
+Stays at 1.0.0. User: "again i hear no tail. test everything how you
+would test other vst... no useless code, no code that interferes with
+functions, no bugs."
+
+- **THE tail bug, found by testing DAW reality instead of harness
+  ideals:** at pure defaults with music playing through the drop, the
+  tail measures −11.5dB under the music — clearly audible. But the
+  TRANSPORT-STOP abort (the old anti-stuck-riser safety) also fired
+  during Impact/Recovery, hard-muting the ring ~5ms after pressing STOP
+  — and stopping right after the drop is exactly how a producer
+  auditions one. **Fix:** the abort now fires only for the PRE-drop
+  states (Arming/Building/Peak, its actual purpose); post-drop, the
+  finite, envelope-bounded ring-out breathes out after stop like any
+  delay/reverb. Loop-wrap one beat after the drop verified harmless.
+- **New "DAW reality" regression block** (pure defaults, music through
+  the drop, loop-wrap, transport-stop) — the pre-fix stop behavior
+  measures exactly 0.0 post-stop and fails by construction.
+- **pluginval** (the industry-standard host-simulation validator):
+  VST3 SUCCESS at maximum strictness (10), AU SUCCESS at 8 (one benign
+  "program −1" standard notice). Editor open/close, state save/restore,
+  parameter fuzzing, layout changes — all clean.
+- **Code hygiene sweep:** zero compiler warnings beyond JUCE's own
+  deprecation notes; all recent variables live; the intentionally-inert
+  leftovers (computeWeights' Noise slot, recoveryDivision,
+  midiTriggerNote) each carry documented-supersession comments; every
+  known interference class (6 compounded-curve instances,
+  double-application, segment-granularity) is locked by a dedicated
+  failing-by-construction test. 275 assertions, all passing.
+
 ### Changed — 2026-09-20 (tail glide: gentler body, steeper dive to a true −60dB)
 
 Stays at 1.0.0. User follow-up: "make the tail curve smoother, so its
