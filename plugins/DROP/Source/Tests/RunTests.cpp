@@ -4398,17 +4398,24 @@ int main()
         //       "a bit longer") - unmistakably a slope,
         //       still audible deep into the window. Landing unchanged.
         // This block mirrors processSegment()'s tailEnvelopeForT() exactly.
-        // 24dB -> 60dB (2026-09-20 "dont cut it instantly" round): the
-        // range grew in EXACT proportion to the x2.5 Recovery-window
-        // extension, so the dB-per-second slope is unchanged - the same
-        // slope simply continues to true inaudibility before the landing.
-        constexpr float kTailFadeRangeDb = 60.0f;
+        // TWO-STAGE SLOPE mirror (2026-09-20 final iteration, "i cant hear
+        // a tail" - see tailEnvelopeForT()'s doc comment): gentle -24dB
+        // body over 70% of the window, quick already-quiet -24->-60dB
+        // descent to 97%, cosine landing to exact 0.
+        constexpr float kBodyEndT = 0.70f;
+        constexpr float kBodyDb = 24.0f;
+        constexpr float kFullDb = 60.0f;
         constexpr float kTailLandingStartT = 0.97f;
         auto env = [] (float t) -> float
         {
+            if (t <= kBodyEndT)
+                return std::pow (10.0f, -(kBodyDb / 20.0f) * (t / kBodyEndT));
             if (t <= kTailLandingStartT)
-                return std::pow (10.0f, -(kTailFadeRangeDb / 20.0f) * (t / kTailLandingStartT));
-            const float envAtLandingStart = std::pow (10.0f, -(kTailFadeRangeDb / 20.0f));
+            {
+                const float x = (t - kBodyEndT) / (kTailLandingStartT - kBodyEndT);
+                return std::pow (10.0f, -(kBodyDb + (kFullDb - kBodyDb) * x) / 20.0f);
+            }
+            const float envAtLandingStart = std::pow (10.0f, -(kFullDb / 20.0f));
             const float landingT = (t - kTailLandingStartT) / (1.0f - kTailLandingStartT);
             return envAtLandingStart * 0.5f * (1.0f + std::cos (juce::MathConstants<float>::pi * landingT));
         };
@@ -4428,32 +4435,39 @@ int main()
         }
         check (strictlyDecreasing, "[POST-1.0] tail envelope: STRICTLY decreasing across the slope section - a continuous decaying slope, never flat");
 
-        // The slope is decibel-LINEAR across the whole pre-landing window
-        // (the established "volume in dB" convention).
-        float minStepDb = 1.0e9f, maxStepDb = -1.0e9f;
-        for (int i = 1; i <= 8; ++i)
+        // dB-linearity PER SEGMENT (the two-stage shape has two deliberate
+        // slopes; each must be internally constant-dB).
+        auto segmentSpread = [&] (float t0, float t1) -> float
         {
-            const float ta = kTailLandingStartT * (float) (i - 1) / 8.0f;
-            const float tb = kTailLandingStartT * (float) i / 8.0f;
-            const float stepDb = 20.0f * std::log10 (juce::jmax (env (ta), 1.0e-8f)) - 20.0f * std::log10 (juce::jmax (env (tb), 1.0e-8f));
-            minStepDb = juce::jmin (minStepDb, stepDb);
-            maxStepDb = juce::jmax (maxStepDb, stepDb);
-        }
-        std::printf ("  per-slice dB drop across the slope: min %.2f dB, max %.2f dB (spread %.2f dB; total 60dB across the (x2.5-extended) window)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
-        check (maxStepDb - minStepDb < 0.5f,
-              "[POST-1.0] tail envelope: the slope is decibel-linear (constant dB drop per slice across the whole window) - perceptually even decay, per the plugin-wide dB-linear convention");
+            float minStepDb = 1.0e9f, maxStepDb = -1.0e9f;
+            for (int i = 1; i <= 6; ++i)
+            {
+                const float ta = t0 + (t1 - t0) * (float) (i - 1) / 6.0f;
+                const float tb = t0 + (t1 - t0) * (float) i / 6.0f;
+                const float stepDb = 20.0f * std::log10 (juce::jmax (env (ta), 1.0e-8f)) - 20.0f * std::log10 (juce::jmax (env (tb), 1.0e-8f));
+                minStepDb = juce::jmin (minStepDb, stepDb);
+                maxStepDb = juce::jmax (maxStepDb, stepDb);
+            }
+            return maxStepDb - minStepDb;
+        };
+        const float bodySpread = segmentSpread (0.0f, kBodyEndT);
+        const float descentSpread = segmentSpread (kBodyEndT, kTailLandingStartT);
+        std::printf ("  per-slice dB spread: body %.2f dB (24dB over 70%%), descent %.2f dB (36dB over 27%%)\n", bodySpread, descentSpread);
+        check (bodySpread < 0.5f && descentSpread < 0.5f,
+              "[POST-1.0] tail envelope: BOTH stages are decibel-linear internally (gentle -24dB body, quick already-quiet descent) - perceptually even, per the dB-linear convention");
+        check (env (0.35f) > 0.2f && std::abs (20.0f * std::log10 (juce::jmax (env (kBodyEndT), 1.0e-8f)) + 24.0f) < 0.5f,
+              "[POST-1.0] tail envelope: the audible BODY fades only 24dB across 70% of the selected window (mid-body still > 0.2 linear) - the tail is HEARABLE for most of the selected time (the single-60dB-in-window ramp was ~-30dB by mid-window and fails this by construction)");
 
-        // C0-continuity at the slope->landing seam (0.97). Epsilon 1e-5 in
-        // t: the property under test is VALUE agreement AT the seam, not a
-        // slope bound (the per-sample step in real samples is tiny; see
-        // the per-sample-cut test's delta bound).
+        // C0-continuity at BOTH internal seams (body/descent at 0.70,
+        // descent/landing at 0.97). Epsilon 1e-5 in t: the property under
+        // test is VALUE agreement AT the seam, not a slope bound.
+        for (float seam : { kBodyEndT, kTailLandingStartT })
         {
-            const float seam = kTailLandingStartT;
             const float justBelow = env (seam - 1.0e-5f);
             const float atSeam = env (seam);
             const float justAbove = env (seam + 1.0e-5f);
             check (std::abs (justBelow - atSeam) < 1.0e-3f && std::abs (justAbove - atSeam) < 1.0e-3f,
-                  "[POST-1.0] tail envelope: C0-continuous at the slope/landing seam (no click at the join)");
+                  "[POST-1.0] tail envelope: C0-continuous at the stage seams (no click at the joins)");
         }
     }
 

@@ -1,5 +1,27 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (tail audible again: two-stage fade within the exact selected window)
+
+Stays at 1.0.0. User report: "i cant hear a tail" — a real regression
+from the exact-length round: keeping the full 60dB fade while shrinking
+the window back to the selected seconds made the slope ~86dB/s at the
+0.70s default; the audible part of the tail was over in ~1/4 of the
+window (iteration 1's failure re-created).
+
+- **Fix — two-stage slope, all requirements at once** (exact selected
+  length + audibly gradual fade + inaudible-before-end + click-free
+  zero landing): the gentle 24dB body-fade fills the first 70% of the
+  window (the tail is clearly hearable for most of the selected time),
+  then a quicker but already-quiet descent to −60dB by 97%, then the
+  cosine landing to exact 0. Both stages dB-linear internally;
+  C0-continuous at both seams.
+- Measured (tail=50%, 0.775s window): +300ms 0.00215 (3.6× the broken
+  round), +500ms 0.00037 (9×), still exactly silent past the selected
+  window. Envelope tests superseded to the two-stage shape (the
+  single-60dB-in-window ramp fails the new hearable-body assertion by
+  construction); graph mirror updated; atlas re-rendered.
+  271 assertions, all passing.
+
 ### Changed — 2026-09-20 (tail = exactly the selected seconds, after the bars)
 
 Stays at 1.0.0. User: "the tail shouldnt be counted in the ammount of
