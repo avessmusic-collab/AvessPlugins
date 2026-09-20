@@ -1,5 +1,40 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (tail was inaudible; TAIL knob in seconds; TAIL curve on the graph)
+
+Stays at 1.0.0 per this repo's factory convention. User report: "when i
+have tail active i get no tail. fix it. and make the knob to show tail in
+seconds. add tail curve to the graph."
+
+- **"Tail active → no tail" — real bug, 5th instance of the
+  compounded-curves class.** **Root cause:** the Recovery envelope was
+  dB-linear across the ENTIRE window (−60dB), multiplied on top of the
+  delay/reverb tails' OWN natural decay. Measured at tail=50% (0.78s
+  window): natural decay ~−0.3dB/100ms, envelope −7.7dB/100ms — the ring
+  was inaudible by ~40% of the window. **Fix:** the envelope's only job
+  is the click-free exact-zero landing, so it now HOLDS at 1.0 for the
+  first 70% of the window (the natural tails ring freely), then fades
+  dB-linearly (40dB) over the final ~30% with the cosine landing to
+  exact 0. Measured after: the ring is audible through the whole window
+  (+150ms: 0.0082 vs 0.0018 pre-fix; +500ms audible vs dead) and still
+  silent past the window's end. TAIL=CUT keeps its ~5ms clean-stop
+  character (hold ~3.5ms + ~1.5ms fade, ~0.6dB/sample — click-free).
+- **TAIL knob now reads in seconds** ("TAIL · 0.78s"), mirroring the
+  exact exponential knob→seconds mapping the DSP uses; still "CUT" at 0%.
+- **TAIL curve added to the graph:** the build curves have always
+  occupied the left ~63% of the graph — the empty right region now hosts
+  the drop divider (the DROP label moved there from the misleading right
+  edge) and a dashed orange tail curve: width proportional to the tail
+  time (up to 4s), shape mirroring the DSP envelope exactly, live-updating
+  as the TAIL knob turns, hidden at CUT.
+- Tests: envelope-shape block superseded (hold/dB-fade/landing,
+  C0 seams, exact zero); post-impact continuity's peak-within-20ms form
+  superseded by a no-blast magnitude bound (the natural reverb bloom
+  peaking tens of ms in is the CORRECT shape now that the envelope no
+  longer suppresses it); new tail-audibility block locks the ring
+  through the window (pre-fix envelope fails it by construction). 264
+  assertions, all passing.
+
 ### Fixed — 2026-09-20 (knob pointer and orange arc now move in exact sync)
 
 Stays at 1.0.0 per this repo's factory convention. User request: "test

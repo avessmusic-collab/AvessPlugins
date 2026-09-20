@@ -462,13 +462,27 @@
         <div class="curve-type-label" id="curveTypeLabel">S-CURVE</div>
         <svg width="100%" height="100%" viewBox="0 0 300 140" preserveAspectRatio="none">
           <g id="curveGrid"></g>
+          <!-- TAIL curve - POST-1.0 (2026-09-20, user-directed: "add tail
+               curve to the graph"). The build curves have always occupied
+               x 8..188 of this 300-wide viewBox; the previously-empty
+               right region (188..292) now hosts the post-drop TAIL: a
+               divider at the drop point, and an accent-orange dashed curve
+               whose WIDTH scales with the tail time (up to 4s) and whose
+               SHAPE mirrors processSegment()'s tailEnvelopeForT() exactly
+               (hold 70%, dB-linear 40dB fade, cosine landing). Hidden at
+               TAIL=CUT. DROP label moved from the right edge to the
+               divider it actually represents. See v10-ui.yaml's
+               `tail_curve_on_graph` amendment. -->
           <path id="curvePathNoise" fill="none" stroke="#8A8F98" stroke-width="1.2"></path>
           <path id="curvePath" fill="none" stroke="#A78BFA" stroke-width="1.4"></path>
+          <line id="curveDropDivider" x1="188" x2="188" y1="14" y2="84" stroke="rgba(232,130,60,0.4)" stroke-width="1" stroke-dasharray="2 2"></line>
+          <path id="curvePathTail" fill="none" stroke="#E8823C" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.9"></path>
           <circle id="curveDot" cx="8" cy="84" r="2.6" fill="#E8823C" style="filter:drop-shadow(0 0 4px rgba(232,130,60,0.75));"></circle>
           <text x="8" y="130" font-size="8" fill="#5A5F68" letter-spacing="1">BUILD</text>
-          <text x="292" y="130" font-size="8" fill="#5A5F68" letter-spacing="1" text-anchor="end">DROP</text>
+          <text x="188" y="130" font-size="8" fill="#5A5F68" letter-spacing="1" text-anchor="middle">DROP</text>
           <text x="8" y="118" font-size="6" fill="#A78BFA" letter-spacing="0.6">— TENSION</text>
           <text x="292" y="118" font-size="6" fill="#8A8F98" letter-spacing="0.6" text-anchor="end">— NOISE</text>
+          <text id="curveTailLabel" x="292" y="130" font-size="6" fill="#E8823C" letter-spacing="0.6" text-anchor="end">— TAIL</text>
         </svg>
       </div>
 
@@ -963,10 +977,17 @@
       if (isTail && value <= 1.0e-4) {
         numEl.textContent = 'CUT';
         if (unitEl) unitEl.textContent = '';
+      } else if (isTail) {
+        // POST-1.0 (2026-09-20, user-directed: "make the knob to show tail
+        // in seconds"): mirrors computeDurationsForNewBuild()'s exact
+        // exponential mapping tailSeconds = 0.15 * (4/0.15)^(v/100).
+        const secs = 0.15 * Math.pow(4.0 / 0.15, value / 100);
+        numEl.textContent = secs < 1 ? secs.toFixed(2) : secs.toFixed(1);
+        if (unitEl) unitEl.textContent = 's';
       } else {
         numEl.textContent = value.toFixed(decimals);
-        if (unitEl && isTail) unitEl.textContent = '%';
       }
+      if (isTail && curveReady) redrawCurve(); // live TAIL curve on the graph (guarded: bareRefs/graph exist only after first redraw)
       arc.fill.setAttribute('stroke-dasharray', `${(norm * arc.VIS).toFixed(2)} ${arc.C.toFixed(2)}`);
       domeInner.style.transform = `rotate(${(-135 + norm * 270).toFixed(1)}deg)`;
       if (ledDots) {
@@ -1033,6 +1054,7 @@
     return { get: () => normalized, setWeightGlow };
   }
 
+  let curveReady = false; // gate for initKnob's tail->redrawCurve trigger: the graph (and bareRefs) exist only after the first full redrawCurve() below
   const knobRefs = {};
   document.querySelectorAll('.knob-wrap').forEach((el) => { knobRefs[el.dataset.param] = initKnob(el); });
 
@@ -1177,6 +1199,38 @@
     let dNoise = `M ${ptsNoise[0][0].toFixed(1)} ${ptsNoise[0][1].toFixed(1)} `;
     for (let i = 1; i < ptsNoise.length; i++) dNoise += `L ${ptsNoise[i][0].toFixed(1)} ${ptsNoise[i][1].toFixed(1)} `;
     curvePathNoise.setAttribute('d', dNoise);
+
+    // TAIL curve (POST-1.0 2026-09-20, "add tail curve to the graph"):
+    // drawn rightward from the drop divider into the graph's right region.
+    // Width = tailSeconds / 4s max (same exponential knob mapping the DSP
+    // uses); shape = tailEnvelopeForT()'s exact hold/dB-fade/landing.
+    // Hidden entirely at TAIL=CUT (the sound stops AT the divider).
+    const tailNorm = knobRefs.tail ? knobRefs.tail.get() : 0;
+    const tailIsCut = tailNorm <= 1.0e-4;
+    const curvePathTail = document.getElementById('curvePathTail');
+    const curveTailLabel = document.getElementById('curveTailLabel');
+    if (tailIsCut) {
+      curvePathTail.setAttribute('d', '');
+      curveTailLabel.setAttribute('opacity', '0');
+    } else {
+      const tailSecs = 0.15 * Math.pow(4.0 / 0.15, tailNorm);
+      const tailW = Math.max(10, (tailSecs / 4.0) * (292 - CURVE_X1));
+      const M = 16;
+      let dTail = '';
+      for (let i = 0; i <= M; i++) {
+        const t = i / M;
+        let e;
+        if (t <= 0.70) e = 1;
+        else if (t <= 0.97) e = Math.pow(10, -(40 / 20) * ((t - 0.70) / 0.27));
+        else e = Math.pow(10, -(40 / 20)) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
+        const px = CURVE_X1 + t * tailW;
+        const py = CURVE_Y0 - e * CURVE_H;
+        dTail += (i === 0 ? 'M ' : 'L ') + px.toFixed(1) + ' ' + py.toFixed(1) + ' ';
+      }
+      curvePathTail.setAttribute('d', dTail);
+      curveTailLabel.setAttribute('opacity', '1');
+    }
+    curveReady = true;
 
     curveTypeLabel.textContent = tNorm < 0.33 ? 'GENTLE' : (tNorm < 0.66 ? 'S-CURVE' : 'LATE ACCEL');
     let dotT = 0;
