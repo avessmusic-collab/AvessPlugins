@@ -1214,18 +1214,21 @@
       curveTailLabel.setAttribute('opacity', '0');
     } else {
       const tailSecs = 0.15 * Math.pow(4.0 / 0.15, tailNorm);
-      const tailW = Math.max(10, (tailSecs / 4.0) * (292 - CURVE_X1));
+      // x2.5 gradual-fade extension (2026-09-20 "dont cut it instantly"):
+      // the actual ring runs 2.5x the knob's nominal seconds; the curve's
+      // width maps that full extent against the 10s maximum ring.
+      const tailW = Math.max(10, Math.min(1, (tailSecs * 2.5) / 10.0) * (292 - CURVE_X1));
       const M = 16;
       let dTail = '';
       for (let i = 0; i <= M; i++) {
         const t = i / M;
         let e;
-        // Mirrors tailEnvelopeForT()'s pure decaying slope (2026-09-20
-        // second iteration, "it sould be a slope. decaing"; 30dB -> 24dB
-        // same day, "a bit longer"): dB-linear across the window, cosine
-        // landing to exact 0.
-        if (t <= 0.97) e = Math.pow(10, -(24 / 20) * (t / 0.97));
-        else e = Math.pow(10, -(24 / 20)) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
+        // Mirrors tailEnvelopeForT()'s pure decaying slope (2026-09-20:
+        // "slope. decaing" -> "a bit longer" -> the x2.5/60dB gradual-fade
+        // extension): dB-linear 60dB across the extended window (same dB/s
+        // slope as the approved 24dB form), cosine landing to exact 0.
+        if (t <= 0.97) e = Math.pow(10, -(60 / 20) * (t / 0.97));
+        else e = Math.pow(10, -(60 / 20)) * 0.5 * (1 + Math.cos(Math.PI * (t - 0.97) / 0.03));
         const px = CURVE_X1 + t * tailW;
         const py = CURVE_Y0 - e * CURVE_H;
         dTail += (i === 0 ? 'M ' : 'L ') + px.toFixed(1) + ' ' + py.toFixed(1) + ' ';

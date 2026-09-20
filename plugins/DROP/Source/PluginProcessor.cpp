@@ -575,6 +575,18 @@ drop::DropStateMachine::Durations DROPAudioProcessor::computeDurationsForNewBuil
     {
         const float tail01 = juce::jlimit(0.0f, 1.0f, tailRaw / 100.0f);
         tailSeconds = kTailMinSeconds * std::pow(kTailMaxSeconds / kTailMinSeconds, (double) tail01);
+        // POST-1.0 (2026-09-20, "MAKE the tail fade away gradualy, dont cut
+        // it instantly. Make the tail continue after the bars maker ends"):
+        // the Recovery STATE runs kTailFadeExtension x the knob's mapped
+        // seconds, and tailEnvelopeForT()'s range grew 24dB -> 60dB in
+        // exact proportion - the fade SLOPE (dB per second) is unchanged
+        // from the approved "a bit longer" tuning, but the same slope now
+        // rings on past the knob's nominal length (and past bar markers)
+        // down to true inaudibility instead of being chopped at -24dB.
+        // The knob/UI keep displaying the nominal seconds (the audible
+        // body of the tail, its first ~24dB); CUT is untouched.
+        static constexpr double kTailFadeExtension = 60.0 / 24.0; // 2.5
+        tailSeconds *= kTailFadeExtension;
         tailCutActiveForBuild = false;
     }
     d.recoverySamples = (int64_t) std::llround(currentSampleRate * tailSeconds);
@@ -1140,7 +1152,20 @@ static float tailEnvelopeForT(float recoveryT) noexcept
     // 30dB -> 24dB, 2026-09-20 same-day user follow-up ("a bit longer"):
     // a ~20% shallower slope keeps the ring audibly present longer
     // within the same window; shape/landing unchanged.
-    constexpr float kTailFadeRangeDb = 24.0f;
+    //
+    // 24dB -> 60dB range + window extended x2.5 (2026-09-20, "MAKE the
+    // tail fade away gradualy, dont cut it instantly. Make the tail
+    // continue after the bars maker ends"): with the tail-ring feedback
+    // now SUSTAINING the content, the old window ended while the ring was
+    // still at an audible -24dB and the landing chopped it - the reported
+    // instant cut. The Recovery window is now kTailFadeExtension (2.5x)
+    // times the knob's mapped seconds (see computeDurationsForNewBuild())
+    // and the range is 60dB - the dB-PER-SECOND SLOPE IS BIT-IDENTICAL to
+    // the version the user approved ("a bit longer"), but the same slope
+    // now continues past the knob's nominal length (and past bar markers)
+    // all the way down to genuine inaudibility before the landing touches
+    // zero. Nothing audible is ever cut.
+    constexpr float kTailFadeRangeDb = 60.0f;
     constexpr float kTailLandingStartT = 0.97f;
     recoveryT = juce::jlimit(0.0f, 1.0f, recoveryT);
     if (recoveryT <= kTailLandingStartT)
@@ -1148,7 +1173,7 @@ static float tailEnvelopeForT(float recoveryT) noexcept
     const float envAtLandingStart = std::pow(10.0f, -(kTailFadeRangeDb / 20.0f));
     const float landingT = (recoveryT - kTailLandingStartT) / (1.0f - kTailLandingStartT);
     // Raised-cosine 1->0 over the landing window, scaled by the (already
-    // -24dB-quiet) level reached at its start - C0-continuous with the
+    // -60dB-quiet, inaudible) level reached at its start - C0-continuous with the
     // dB-linear branch at the seam, and EXACTLY 0 at recoveryT == 1.
     return envAtLandingStart * 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * landingT));
 }

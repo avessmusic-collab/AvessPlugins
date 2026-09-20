@@ -1,5 +1,27 @@
 # DROP Changelog
 
+### Fixed — 2026-09-20 (tail fades away gradually and rings past the bar marker; no end-of-window chop)
+
+Stays at 1.0.0. User report: "MAKE the tail fade away gradualy, dont cut
+it instantly. Make the tail continue after the bars maker ends."
+
+- **Root cause:** with the tail-ring feedback now SUSTAINING the content,
+  the fade envelope reached the end of the Recovery window while the ring
+  was still at an audible −24dB — and the exact-zero landing chopped it.
+- **Fix:** the Recovery window now runs 2.5× the knob's nominal mapped
+  seconds and the envelope's range grew 24dB → 60dB in exact proportion —
+  the dB-per-second SLOPE is bit-identical to the approved "a bit longer"
+  tuning, but the same fade now continues past the knob's nominal length
+  (and past bar markers) all the way to genuine inaudibility before the
+  landing touches zero. Nothing audible is ever cut; CUT (~5ms) is
+  untouched. Knob keeps displaying the nominal seconds (the tail's
+  audible body); the graph's TAIL curve maps the full extended ring.
+- Measured (tail=50%, nominal 0.78s → ring window ~1.94s): still quietly
+  ringing at +1.2s (0.00009 — the pre-extension build measured exactly 0
+  there), genuinely silent by +2.3s. Recovery durations verified ~0.375s
+  at 0.1% and ~10.0s at 100% (×2.5). Tests superseded/extended
+  accordingly. 271 assertions, all passing.
+
 ### Fixed — 2026-09-20 (tail rings through its window: sustained feedback + long recovery reverb)
 
 Stays at 1.0.0. User report: "still the tail cuts way to fast. make it

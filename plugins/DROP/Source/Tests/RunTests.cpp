@@ -3058,10 +3058,17 @@ int main()
         // Block-granularity (256 samples = ~5.3ms @48kHz) measurement
         // tolerance, generously widened for the practical fuzz of
         // "count whole blocks the state machine reports Recovery".
-        check (nearlyEqual (recoveryJustAboveZeroSeconds, 0.15, 0.02),
-              "tail param scales Recovery duration: tail=0.1% (just above the CUT epsilon) -> ~0.15s (kTailMinSeconds, see computeDurationsForNewBuild()) - 'no discontinuity in feel' just above 0%, matching the pre-tail=0%-fix behavior exactly");
-        check (nearlyEqual (recovery100Seconds, 4.0, 0.15),
-              "tail param scales Recovery duration: tail=100% -> ~4.0s (kTailMaxSeconds)");
+        // DOCUMENTED SUPERSESSION (2026-09-20 gradual-fade round, "dont cut
+        // it instantly... continue after the bars maker ends"): Recovery now
+        // runs kTailFadeExtension (2.5x) times the knob's nominal mapped
+        // seconds, with the envelope range grown 24dB -> 60dB in exact
+        // proportion (identical dB/s slope) so the same fade continues to
+        // true inaudibility instead of chopping at -24dB. Expected windows
+        // therefore scale x2.5: ~0.375s at 0.1%, ~10.0s at 100%.
+        check (nearlyEqual (recoveryJustAboveZeroSeconds, 0.376, 0.03),
+              "tail param scales Recovery duration: tail=0.1% -> ~0.375s (kTailMinSeconds x the 2.5 gradual-fade extension; SUPERSEDES the pre-extension ~0.15s expectation)");
+        check (nearlyEqual (recovery100Seconds, 10.0, 0.3),
+              "tail param scales Recovery duration: tail=100% -> ~10.0s (kTailMaxSeconds x the 2.5 gradual-fade extension)");
         check (recovery100Samples > recoveryJustAboveZeroSamples * 10,
               "tail param scales Recovery duration: 100% produces a MUCH longer Recovery than 0.1% (monotonic exponential mapping, not a flat/ignored parameter)");
     }
@@ -3425,7 +3432,7 @@ int main()
         // end-to-end test's default-tail build. ---
         if (auto* prm = p.parameters.getParameter ("trigger")) prm->setValueNotifyingHost (1.0f);
         bool firstBuildBackToIdle = false;
-        for (int block = 0; block < 1700 && ! firstBuildBackToIdle; ++block)
+        for (int block = 0; block < 3200 && ! firstBuildBackToIdle; ++block) // budget widened for the x2.5 gradual-fade Recovery extension (tail=100% -> ~10s)
         {
             juce::AudioBuffer<float> buf (2, blockSize);
             for (int ch = 0; ch < 2; ++ch)
@@ -3463,7 +3470,7 @@ int main()
         std::vector<float> secondBuildBuildingOutput;
         bool sawImpactSecondBuild = false;
         bool secondBuildBackToIdle = false;
-        for (int block = 0; block < 1700 && ! secondBuildBackToIdle; ++block) // same widened budget as the first build above (tail is still 100% for this second build too)
+        for (int block = 0; block < 3200 && ! secondBuildBackToIdle; ++block) // same widened budget as the first build above (tail is still 100% for this second build too)
         {
             juce::AudioBuffer<float> buf (2, blockSize);
             buf.clear();
@@ -4392,7 +4399,11 @@ int main()
         //       "a bit longer") - unmistakably a slope,
         //       still audible deep into the window. Landing unchanged.
         // This block mirrors processSegment()'s tailEnvelopeForT() exactly.
-        constexpr float kTailFadeRangeDb = 24.0f;
+        // 24dB -> 60dB (2026-09-20 "dont cut it instantly" round): the
+        // range grew in EXACT proportion to the x2.5 Recovery-window
+        // extension, so the dB-per-second slope is unchanged - the same
+        // slope simply continues to true inaudibility before the landing.
+        constexpr float kTailFadeRangeDb = 60.0f;
         constexpr float kTailLandingStartT = 0.97f;
         auto env = [] (float t) -> float
         {
@@ -4429,7 +4440,7 @@ int main()
             minStepDb = juce::jmin (minStepDb, stepDb);
             maxStepDb = juce::jmax (maxStepDb, stepDb);
         }
-        std::printf ("  per-slice dB drop across the slope: min %.2f dB, max %.2f dB (spread %.2f dB; total 24dB across the window)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
+        std::printf ("  per-slice dB drop across the slope: min %.2f dB, max %.2f dB (spread %.2f dB; total 60dB across the (x2.5-extended) window)\n", minStepDb, maxStepDb, maxStepDb - minStepDb);
         check (maxStepDb - minStepDb < 0.5f,
               "[POST-1.0] tail envelope: the slope is decibel-linear (constant dB drop per slice across the whole window) - perceptually even decay, per the plugin-wide dB-linear convention");
 
@@ -5062,7 +5073,7 @@ int main()
         std::vector<float> captured;  // everything from first Impact block onward
         int64_t captureStart = -1;
 
-        for (int block = 0; block < 500; ++block)
+        for (int block = 0; block < 700; ++block) // ~7.5s: covers the x2.5-extended ~1.94s Recovery window plus a post-window silence margin
         {
             const int64_t blockStart = (int64_t) block * blockSize;
             juce::AudioBuffer<float> buf (2, blockSize);
@@ -5102,9 +5113,9 @@ int main()
                 sumSq += (double) captured[(size_t) i] * (double) captured[(size_t) i];
             return n > 0 ? std::sqrt (sumSq / (double) n) : 0.0;
         };
-        const double r50 = rmsAt (0.05), r150 = rmsAt (0.15), r300 = rmsAt (0.30), r500 = rmsAt (0.50), r1200 = rmsAt (1.20);
-        std::printf ("  ring RMS after Impact end: +50ms=%.5f +150ms=%.5f +300ms=%.5f +500ms=%.5f +1.2s=%.5f (recovery window ~0.78s)\n",
-                     r50, r150, r300, r500, r1200);
+        const double r50 = rmsAt (0.05), r150 = rmsAt (0.15), r300 = rmsAt (0.30), r500 = rmsAt (0.50), r1200 = rmsAt (1.20), r2300 = rmsAt (2.30);
+        std::printf ("  ring RMS after Impact end: +50ms=%.5f +150ms=%.5f +300ms=%.5f +500ms=%.5f +1.2s=%.5f +2.3s=%.5f (extended recovery window ~1.94s)\n",
+                     r50, r150, r300, r500, r1200, r2300);
         // Updated for the pure-slope envelope (2026-09-20 second
         // iteration, "it sould be a slope. decaing"): audible well into
         // the window (the -60dB version was dead by +300ms and fails the
@@ -5112,10 +5123,12 @@ int main()
         // checkpoint (the hold version was near-FLAT from +50 to +150ms).
         check (r50 > 1.0e-3 && r150 > 5.0e-4 && r300 > 2.0e-4 && r500 > 3.0e-4,
               "[POST-1.0] tail audibility: with tail=50% the tails audibly ring THROUGH the Recovery window (+50/+150/+300/+500ms) - the sustained tail-ring feedback + long recovery reverb decay (2026-09-20 'make it fade slowly') keep the fade governed by the dB-linear envelope; the collapsed-feedback path measured 0.00004 at +500ms and fails by construction");
-        check (r150 < r50 && r300 < r150 && r500 < r300,
+        check (r150 < r50 && r300 < r150 && r500 < r300 && r1200 < r500,
               "[POST-1.0] tail audibility: the ring DECAYS continuously checkpoint-to-checkpoint - a slope, no sustain plateau");
-        check (r1200 < 1.0e-4,
-              "[POST-1.0] tail audibility: silent after the Recovery window ends (the dB-linear slope + exact-zero landing still guarantee the window boundary)");
+        check (r1200 > 1.0e-5,
+              "[POST-1.0] tail audibility (2026-09-20 gradual-fade round): the tail is STILL (quietly) ringing at +1.2s - past the knob's nominal ~0.78s and past bar markers - instead of being chopped at the nominal window's end (the pre-extension build measured 0.00000 here by construction)");
+        check (r2300 < 1.0e-4,
+              "[POST-1.0] tail audibility: genuinely silent after the extended window ends (~1.94s) - the fade completes to inaudibility, then exact zero");
     }
 
     std::printf ("\n[POST-1.0] Riser feeds delay/reverb (2026-09-20: 'make so reverb and delay applys to white noise too')\n");
