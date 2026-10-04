@@ -1,5 +1,98 @@
 # DROP Changelog
 
+### Fixed — 2026-09-30 (VST3 invisible in Ableton: broken codesign seal)
+
+Stays at 1.0.0. User: "vst3 is not installed and there are differences
+between AU and vst3." Files on disk were correct (all three formats
+present, byte-identical embedded UI) — the failure was Ableton's:
+
+- **Root cause:** JUCE 8's CMake post-build step writes
+  `Contents/Resources/moduleinfo.json` into the VST3 bundle AFTER the
+  linker's ad-hoc codesign, breaking the bundle's signature seal.
+  Ableton 12's VST3 scanner verifies the seal on a fresh scan and
+  rejected DROP outright (`PluginScanner.txt`: "Failed to load plugin:
+  a sealed resource is missing or invalid" → "not a plugin"), so the
+  VST3 silently never appeared. It had only ever worked from Ableton's
+  old cached scan; the 2026-09-25 DB clear forced the strict rescan
+  that exposed it. pluginval passes regardless (it never checks seals).
+- **The "AU vs VST3 differences":** the VST3 instance in the open set
+  was the OLD build still loaded in Live's memory (Live was running
+  through the 2026-09-25 uninstall/reinstall), while a freshly added AU
+  was the new build — so the user was genuinely comparing two different
+  builds, and the VST3 never heard any post-Sep-20 fix (including the
+  tail work).
+- **Fixes in scripts/build-and-install.sh (factory-wide):** Phase 5 now
+  re-signs every installed bundle ad-hoc AFTER copying
+  (`codesign --force --deep -s -`); Phase 8 now hard-fails unless
+  `codesign --verify --strict` passes on every installed format; Phase 6
+  refuses to clear Ableton's plugin DB while Live is running (Live
+  rewrites the DB from memory on quit, silently undoing the clear).
+- Verified: all three installed DROP bundles now pass
+  `codesign --verify --deep --strict`.
+
+### Changed — 2026-09-25 (clean reinstall + cross-format identity guarantee)
+
+Stays at 1.0.0. User: "uninstall and install new versions, make au and
+stand alone to be always identical to vst3, tail isnt working."
+
+- **Clean reinstall:** all three installed formats deleted, AU registrar
+  cache killed, Ableton plugin DB cleared, build directory reconfigured
+  from scratch (`--reconfigure`), fresh install of VST3+AU+Standalone.
+  A stale-binary load is no longer possible — the old files no longer
+  exist anywhere on the system.
+- **New Phase 8 in scripts/build-and-install.sh (factory-wide):**
+  "Cross-Format Identity Check" — after every install, the exact bytes
+  of `Source/ui/public/index.html` must be found embedded byte-identical
+  in the installed VST3, AU AND Standalone binaries (hard failure
+  otherwise); non-WebView plugins fall back to an install-timestamp
+  spread check. AU/Standalone can never silently diverge from VST3
+  again.
+- **Tail re-proven on this exact build:** full test suite run post-
+  install — 0 failures across all assertions, including the DAW-reality
+  tail scenarios (transport stop after the drop, looping, NOISE macro
+  fully off, offline-render determinism). Reminder for DAW testing: a
+  FRESH instance defaults to TAIL = 0% = CUT (instant clean cut is the
+  intended default); the tail needs TAIL > 0, and the DELAY/REVERB
+  macros are its only gates (either at 0% silences that half of the
+  wash).
+
+### Changed — 2026-09-24 (1- and 2-bar build lengths removed from the UI)
+
+Stays at 1.0.0. User: "make tesnion default 50%, dry/wet knob too,
+remove choices for 1,2 bar lenghts."
+
+- **Tension and Dry/Wet defaults:** verified already 50% in the APVTS
+  (tension since 1.0.0; dryWet changed 2026-09-18) — no change. The
+  other values seen in an open session are that session's saved state,
+  which always overrides defaults; a fresh instance starts at 50/50.
+- **Build Length:** the 1 and 2 circles are removed from the UI ONLY
+  (`build_length_1_2_removed` amendment in v10-ui.yaml). The APVTS
+  choice list keeps all six entries so saved sessions and automation
+  lanes remain valid; circle position now maps to APVTS index via
+  BUILD_LENGTH_UI_OFFSET (+2). A saved 1/2-bar session still plays
+  correctly and simply highlights no circle.
+
+### Added — 2026-09-24 (double-click reset on the selector chips)
+
+Stays at 1.0.0. User: "add double click to reset knobs and selectors to
+double click and reset." The 15 knobs already had dblclick-reset since
+v10 finalization; the same gesture now covers the selectors (UI-only
+change; index.html and v10-ui.html in lockstep, see the
+`double_click_reset_selectors` amendment in v10-ui.yaml):
+
+- **TENSION / CHAOS / NOISE curve / OUTPUT mini-screens** reset to
+  their defaults (50 / 0 / 0 / 0dB) on double-click, through the same
+  drag-gesture relay calls the chevrons use; double-clicks on a chevron
+  itself are ignored so a rapid double-step is never undone.
+- **STYLE and NOISE TYPE labels** reset to their APVTS defaults
+  (Clean EDM / WHITE) on double-click; the dropdown's open-then-close
+  single-click mechanics leave the menu shut by the time dblclick
+  fires, so the gesture is a pure reset.
+- Build Length circles and the MANUAL/MIDI/AUTO pill intentionally
+  excluded — each segment is itself a direct choice.
+- Also requested: "set noise curve to 0 default" — already shipped
+  2026-09-19 (noiseTension APVTS default 0.0f); verified, no change.
+
 ### Fixed — 2026-09-20 (the tail no longer depends on the NOISE macro)
 
 Stays at 1.0.0. User: "i have active tail and get no tail" (persisting

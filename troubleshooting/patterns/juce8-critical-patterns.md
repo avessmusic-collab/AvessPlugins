@@ -1369,3 +1369,50 @@ See individual issue files for:
 - What didn't work
 - Why the solution works
 - Prevention strategies
+
+## 27. Installed Bundles Must Be Re-Signed - JUCE 8 Breaks Its Own VST3 Seal (ALWAYS REQUIRED)
+
+### ❌ WRONG (plugin silently never appears in Ableton's browser)
+
+```bash
+# Copy the built VST3 as-is and assume it is loadable:
+cp -R build/.../DROP.vst3 ~/Library/Audio/Plug-Ins/VST3/
+# JUCE's CMake post-build helper wrote Contents/Resources/moduleinfo.json
+# into the bundle AFTER the linker's ad-hoc codesign. The seal no longer
+# matches the contents. Ableton 12 verifies the seal on a fresh scan:
+#   PluginScanner.txt: "Failed to load plugin: a sealed resource is
+#   missing or invalid" -> "VST3: not a plugin"
+# The plugin vanishes from the browser with NO user-visible error.
+# pluginval SUCCESS proves nothing here - it never checks signatures.
+# An old cached Ableton scan can mask this for weeks, then any forced
+# rescan (DB clear, Alt-Rescan, Live update) makes the VST3 "disappear".
+```
+
+### ✅ CORRECT
+
+```bash
+# Re-sign ad-hoc AFTER the bundle reaches its installed location, then
+# verify - both are automated in scripts/build-and-install.sh
+# (Phase 5 re-sign + Phase 8 hard-fail verification):
+cp -R build/.../DROP.vst3 ~/Library/Audio/Plug-Ins/VST3/
+codesign --force --deep -s - ~/Library/Audio/Plug-Ins/VST3/DROP.vst3
+codesign --verify --strict  ~/Library/Audio/Plug-Ins/VST3/DROP.vst3  # must exit 0
+# Same for the .component and the Standalone .app.
+```
+
+**Why:** macOS bundle signatures seal every resource file; any file added or
+changed after signing (JUCE 8's `moduleinfo.json` post-build step does exactly
+this) invalidates the seal. Hosts that verify seals (Ableton 12 VST3 scanner)
+reject the bundle outright; hosts/tools that don't (auval registrar path,
+pluginval) keep working — producing "AU works, VST3 missing" confusion.
+
+**Placement/Context:** Every install of every plugin (already automated in
+`scripts/build-and-install.sh`). Related hard rule from the same incident:
+NEVER clear Ableton's plugin database while Live is running — Live rewrites
+the DB from memory on quit, silently undoing the clear and leaving stale
+in-memory plugin instances that mismatch what is on disk (Phase 6 now guards
+this).
+
+**Documented in:** plugins/DROP/CHANGELOG.md (2026-09-30 entry)
+
+---

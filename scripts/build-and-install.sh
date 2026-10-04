@@ -4,7 +4,7 @@ set -e
 # ============================================================================
 # build-and-install.sh - JUCE Plugin Build & Installation Script
 # ============================================================================
-# 7-Phase Pipeline:
+# 8-Phase Pipeline:
 #   1. Pre-flight Validation
 #   2. Parallel Build (VST3 + AU)
 #   3. Extract PRODUCT_NAME
@@ -12,6 +12,7 @@ set -e
 #   5. Install New Versions
 #   6. Clear DAW Caches
 #   7. Verification
+#   8. Cross-Format Identity Check (AU/Standalone must equal VST3's build)
 # ============================================================================
 
 # Color output functions
@@ -344,6 +345,14 @@ phase_5_install_new_versions() {
         mkdir -p "$vst3_dir"
         cp -R "$vst3_build" "$vst3_dir/"
         chmod -R 755 "$vst3_dir/$PRODUCT_NAME.vst3"
+        # Re-seal the bundle (POST DROP 2026-09-30). JUCE's CMake post-build
+        # step writes Contents/Resources/moduleinfo.json into the VST3 AFTER
+        # the linker's ad-hoc codesign, breaking the bundle's signature seal.
+        # Ableton 12's VST3 scanner verifies the seal and rejects the plugin
+        # outright ("Failed to load plugin: a sealed resource is missing or
+        # invalid" -> "not a plugin"), so the plugin silently never appears.
+        # Re-signing ad-hoc after install makes the seal match the bundle.
+        codesign --force --deep -s - "$vst3_dir/$PRODUCT_NAME.vst3" 2>>"$LOG_FILE"
         echo "Installed VST3: $vst3_dir/$PRODUCT_NAME.vst3" >> "$LOG_FILE"
     fi
 
@@ -358,6 +367,8 @@ phase_5_install_new_versions() {
         mkdir -p "$au_dir"
         cp -R "$au_build" "$au_dir/"
         chmod -R 755 "$au_dir/$PRODUCT_NAME.component"
+        # Re-seal (same reason as the VST3 above).
+        codesign --force --deep -s - "$au_dir/$PRODUCT_NAME.component" 2>>"$LOG_FILE"
         echo "Installed AU: $au_dir/$PRODUCT_NAME.component" >> "$LOG_FILE"
     fi
 
@@ -381,6 +392,8 @@ phase_5_install_new_versions() {
             rm -rf "$standalone_dir/$PRODUCT_NAME.app"
             cp -R "$standalone_build" "$standalone_dir/"
             chmod -R 755 "$standalone_dir/$PRODUCT_NAME.app"
+            # Re-seal (same reason as the VST3 above).
+            codesign --force --deep -s - "$standalone_dir/$PRODUCT_NAME.app" 2>>"$LOG_FILE"
             echo "Installed Standalone: $standalone_dir/$PRODUCT_NAME.app" >> "$LOG_FILE"
         fi
     else
@@ -402,9 +415,20 @@ phase_6_clear_daw_caches() {
     local au_cache="$HOME/Library/Caches/AudioUnitCache"
 
     # Clear Ableton plugin database (forces rescan)
+    # POST DROP 2026-09-30: NEVER clear the database while Live is running -
+    # Live holds its plugin DB in memory and rewrites it on quit, so a clear
+    # done under a running Live is silently undone (and the 2026-09-25 DROP
+    # reinstall showed it can leave the DB inconsistent: the VST3 vanished
+    # from the browser while a stale in-memory module kept running). Warn
+    # and skip instead; the new install's changed bundle mtime still
+    # triggers a rescan of that plugin on Live's next launch.
     info "  - Clearing Ableton plugin database..."
     if [ "$DRY_RUN" = true ]; then
         echo "[DRY-RUN] rm -f \"$ableton_prefs\"/*/PluginScanDb.txt"
+    elif pgrep -x "Live" > /dev/null 2>&1; then
+        warning "Ableton Live is RUNNING - skipping its plugin-database clear"
+        warning "Quit Live fully, then re-add the plugin (Alt-click Rescan if it is missing)"
+        echo "SKIPPED Ableton DB clear: Live running" >> "$LOG_FILE"
     else
         if [ -d "$ableton_prefs" ]; then
             rm -f "$ableton_prefs"/*/PluginScanDb.txt 2>/dev/null || true
@@ -521,6 +545,114 @@ phase_7_verification() {
 }
 
 # ============================================================================
+# Phase 8: Cross-Format Identity Check
+# ============================================================================
+# POST DROP 2026-09-25 (user-directed: "make au and stand alone to be always
+# identical to vst3"): prove every installed format carries the SAME build.
+# For WebView plugins the embedded UI page is a strict same-build
+# fingerprint - the exact bytes of Source/ui/public/index.html are baked
+# into each format's binary via juce_add_binary_data, so each installed
+# binary must contain a byte-identical copy of the CURRENT source file.
+# A mismatch in ANY format is a hard failure (that format is a stale build).
+# Plugins without a WebView UI fall back to an install-timestamp spread
+# check only.
+phase_8_format_identity() {
+    echo ""
+    info "Phase 8: Cross-Format Identity Check"
+    echo "Phase 8: Cross-Format Identity Check" >> "$LOG_FILE"
+
+    if [ "$DRY_RUN" = true ]; then
+        info "  - Would verify AU/Standalone embed the same build as VST3"
+        return 0
+    fi
+
+    local ui_src="plugins/$PLUGIN_NAME/Source/ui/public/index.html"
+    local vst3_bin="$HOME/Library/Audio/Plug-Ins/VST3/$PRODUCT_NAME.vst3/Contents/MacOS/$PRODUCT_NAME"
+    local au_bin="$HOME/Library/Audio/Plug-Ins/Components/$PRODUCT_NAME.component/Contents/MacOS/$PRODUCT_NAME"
+    local sa_bin="$HOME/Applications/$PRODUCT_NAME.app/Contents/MacOS/$PRODUCT_NAME"
+
+    if [ ! -f "$ui_src" ]; then
+        info "  - No WebView UI for this plugin - timestamp spread check only"
+        local spread_fail=0
+        local ref_mtime=$(stat -f %m "$vst3_bin" 2>/dev/null || echo 0)
+        for bin in "$au_bin" "$sa_bin"; do
+            [ -f "$bin" ] || continue
+            local m=$(stat -f %m "$bin")
+            local d=$((m > ref_mtime ? m - ref_mtime : ref_mtime - m))
+            if [ "$d" -gt 120 ]; then
+                error "  $(basename "$bin") install time differs from VST3 by ${d}s - stale format"
+                spread_fail=1
+            fi
+        done
+        if [ "$spread_fail" -eq 1 ]; then
+            echo "ERROR: format identity (timestamp spread) failed" >> "$LOG_FILE"
+            exit 1
+        fi
+        success "All installed formats share one install timestamp"
+        return 0
+    fi
+
+    if ! python3 - "$ui_src" "$vst3_bin" "$au_bin" "$sa_bin" << 'PYEOF'
+import hashlib, os, sys
+ui_src, *bins = sys.argv[1:]
+src = open(ui_src, 'rb').read()
+want = hashlib.sha256(src).hexdigest()
+labels = ['VST3', 'AU', 'Standalone']
+fail = False
+print(f"  - Source UI fingerprint: {want[:16]}... ({len(src)} bytes)")
+for label, path in zip(labels, bins):
+    if not os.path.isfile(path):
+        # Standalone is optional for some plugins; VST3/AU absence was
+        # already a Phase 7 hard failure.
+        print(f"  - {label}: not installed (skipped)")
+        continue
+    blob = open(path, 'rb').read()
+    i = blob.find(b'<!DOCTYPE html')
+    if i < 0:
+        print(f"  - {label}: NO embedded UI page found - stale or corrupt build")
+        fail = True
+        continue
+    got = hashlib.sha256(blob[i:i + len(src)]).hexdigest()
+    if got == want:
+        print(f"  - {label}: embedded UI byte-identical to source")
+    else:
+        print(f"  - {label}: EMBEDDED UI DIFFERS FROM SOURCE - stale build installed")
+        fail = True
+sys.exit(1 if fail else 0)
+PYEOF
+    then
+        error "Cross-format identity check FAILED - formats are NOT the same build"
+        echo "ERROR: format identity check failed" >> "$LOG_FILE"
+        exit 1
+    fi
+
+    # Signature-seal verification (POST DROP 2026-09-30): Ableton 12's VST3
+    # scanner rejects any bundle whose codesign seal doesn't verify, so a
+    # broken seal means the plugin silently never appears in the browser.
+    # The Phase-5 re-sign must leave every installed bundle verifiable.
+    info "  - Verifying code-signature seals..."
+    local seal_fail=0
+    for bundle in "$HOME/Library/Audio/Plug-Ins/VST3/$PRODUCT_NAME.vst3" \
+                  "$HOME/Library/Audio/Plug-Ins/Components/$PRODUCT_NAME.component" \
+                  "$HOME/Applications/$PRODUCT_NAME.app"; do
+        [ -e "$bundle" ] || continue
+        if codesign --verify --strict "$bundle" 2>>"$LOG_FILE"; then
+            info "    $(basename "$bundle"): seal OK"
+        else
+            error "    $(basename "$bundle"): SIGNATURE SEAL BROKEN - DAW scanners may reject it"
+            seal_fail=1
+        fi
+    done
+    if [ "$seal_fail" -eq 1 ]; then
+        echo "ERROR: signature seal verification failed" >> "$LOG_FILE"
+        exit 1
+    fi
+
+    success "VST3 / AU / Standalone all embed the identical current build (seals verified)"
+    echo "Format identity: PASS" >> "$LOG_FILE"
+}
+
+# ============================================================================
 # Main execution
 # ============================================================================
 main() {
@@ -567,6 +699,9 @@ main() {
 
     # Phase 7: Verification
     phase_7_verification
+
+    # Phase 8: Cross-Format Identity Check
+    phase_8_format_identity
 
     # Final success message
     echo ""

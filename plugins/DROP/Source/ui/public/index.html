@@ -333,8 +333,13 @@
           <!-- default active circle 4 -> 16, POST-1.0 2026-09-19
                (user-directed "make default 16 bar selected") - mirrors the
                APVTS buildLength default change (index 2 -> 4). -->
-          <button class="step-circle" data-value="1">1</button>
-          <button class="step-circle" data-value="2">2</button>
+          <!-- POST-1.0 2026-09-24 (user-directed: "remove choices for 1,2
+               bar lenghts"): the 1- and 2-bar circles are removed from the
+               UI ONLY - the APVTS choice list keeps all six entries so
+               saved sessions/automation lanes stay valid (the established
+               non-breaking pattern). Circle position i maps to APVTS
+               choice index i+2 in the JS below; a saved session at 1 or 2
+               bars still plays correctly and simply highlights no circle. -->
           <button class="step-circle" data-value="4">4</button>
           <button class="step-circle" data-value="8">8</button>
           <button class="step-circle active" data-value="16">16</button>
@@ -828,10 +833,16 @@
   const buildLengthSteps = document.getElementById('buildLengthSteps');
   const buildLengthState = getComboBoxState('buildLength');
   const BUILD_LENGTH_BARS = [1, 2, 4, 8, 16, 32]; // 32 appended 2026-09-17 with the 6th step circle (kept in lockstep with the APVTS choice list)
+  // POST-1.0 2026-09-24: the 1/2-bar circles were removed from the UI only
+  // (APVTS list untouched above - saved sessions stay valid), so circle
+  // position i now maps to APVTS choice index i + this offset. A host value
+  // of 1 or 2 bars (old session) still drives the DSP and the graph label;
+  // it just highlights no circle.
+  const BUILD_LENGTH_UI_OFFSET = 2;
   let currentBuildLengthBars = 16; // matches the APVTS default (index 4) as of 2026-09-19
   function renderBuildLength(index) {
     currentBuildLengthBars = BUILD_LENGTH_BARS[index];
-    buildLengthSteps.querySelectorAll('.step-circle').forEach((b, i) => b.classList.toggle('active', i === index));
+    buildLengthSteps.querySelectorAll('.step-circle').forEach((b, i) => b.classList.toggle('active', i + BUILD_LENGTH_UI_OFFSET === index));
     // Live bar count on the graph's BUILD region label (2026-09-20: the
     // bars carry only the rise; the tail annex is labeled separately).
     const bl = document.getElementById('curveBuildLabel');
@@ -839,8 +850,8 @@
   }
   buildLengthSteps.querySelectorAll('.step-circle').forEach((btn, index) => {
     btn.addEventListener('click', () => {
-      renderBuildLength(index);
-      buildLengthState.setChoiceIndex(index);
+      renderBuildLength(index + BUILD_LENGTH_UI_OFFSET);
+      buildLengthState.setChoiceIndex(index + BUILD_LENGTH_UI_OFFSET);
     });
   });
   buildLengthState.valueChangedEvent.addListener(() => renderBuildLength(buildLengthState.getChoiceIndex()));
@@ -910,6 +921,12 @@
     });
   }
   attachChoiceDropdown(styleLabel, STYLES, () => styleState.getChoiceIndex(), (i) => setStyle(i));
+  // POST-1.0 (2026-09-24, user-directed: "add double click to reset knobs
+  // and selectors") - double-click the label resets to the APVTS default
+  // (Clean EDM). The two single clicks land as open-then-close (the
+  // suppressReopen toggle above), so by the time dblclick fires the menu
+  // is already shut and this is a pure reset.
+  styleLabel.addEventListener('dblclick', () => { closeChoiceMenu(); setStyle(0); });
 
   /* Hover tooltips (POST-1.0 2026-09-20): every element carrying a
      data-tip attribute shows the shared #uiTooltip chip after a short
@@ -958,6 +975,10 @@
   noiseTypeState.valueChangedEvent.addListener(() => renderNoiseType(noiseTypeState.getChoiceIndex()));
   renderNoiseType(1); // default WHITE (index 1) - POST-1.0 2026-09-18, mirrors the APVTS default change
   attachChoiceDropdown(noiseTypeValue, NOISE_TYPES, () => noiseTypeState.getChoiceIndex(), (i) => setNoiseType(i));
+  // POST-1.0 (2026-09-24): double-click reset to the APVTS default
+  // (WHITE, index 1) - same open-then-close dblclick mechanics as the
+  // Style label above.
+  noiseTypeValue.addEventListener('dblclick', () => { closeChoiceMenu(); setNoiseType(1); });
 
   /* =========================================================
      Neumorphic knob: recessed well + raised dome + rotating
@@ -1159,6 +1180,17 @@
         commit(normalized + (step * dir) / (max - min));
         state.sliderDragEnded();
       });
+    });
+    // POST-1.0 (2026-09-24, user-directed: "add double click to reset
+    // knobs and selectors") - same reset-to-default gesture the knobs
+    // have had since v10; the chevron guard keeps a rapid double-step on
+    // a chevron from also snapping the value back.
+    root.addEventListener('dblclick', (e) => {
+      if (e.target.classList.contains('mchev')) return;
+      e.preventDefault();
+      state.sliderDragStarted();
+      commit((def - min) / (max - min));
+      state.sliderDragEnded();
     });
     state.valueChangedEvent.addListener(() => { normalized = state.getNormalisedValue(); render(normalized); });
 

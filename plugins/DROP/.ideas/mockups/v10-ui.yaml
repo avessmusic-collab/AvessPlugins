@@ -923,3 +923,21 @@ hover_tooltips:
     - "Every control (both pages) carries a data-tip description in producer language: DROP trigger, Build Length circles, Style selector, Intensity, Dry/Wet, progress strip, phase chip, mode pill, Tension/Chaos/NOISE chips, curve graph, NOISE TYPE chip, SYNC chip, Impact hero, the 10 module macros, TAIL knob, OUTPUT screen."
     - "One shared #uiTooltip chip (dark-LCD family, same visual language as .choice-menu): ~500ms hover delay, positioned above the element (below when clipped at the window top), pointer-events none, hidden on mouse-leave and on press so it never obstructs a drag; rem-sized so it follows the proportional scaling."
   validation: "Floating overlay only (z-index 1000); no layout/geometry changes to any control."
+
+double_click_reset_selectors:
+  date: 2026-09-24
+  reason: "User: 'add double click to reset knobs and selectors to double click and reset'. The 15 knobs have had dblclick-reset since v10 finalization; this extends the same gesture to the selector chips."
+  changes:
+    - "Mini-screen value chips (TENSION, CHAOS, NOISE curve, OUTPUT) reset to their data-default on double-click through the same sliderDragStarted/setNormalisedValue/sliderDragEnded gesture the chevrons use; a guard ignores double-clicks landing on a chevron (.mchev) so a rapid double-step is never undone by a reset."
+    - "Choice selector labels STYLE and NOISE TYPE reset to their APVTS defaults (Clean EDM index 0 / WHITE index 1) on double-click, routed through the same setStyle()/setNoiseType() setters the chevrons and dropdowns use. The dropdown's existing open-then-close single-click mechanics (suppressReopen) mean the menu is already shut when dblclick fires, so the gesture is a pure reset."
+    - "Build Length step circles and the MANUAL/MIDI/AUTO mode pill intentionally NOT given reset: every segment is itself a direct choice, and a dblclick reset would fight the click that just selected it."
+  validation: "Event-handler additions only; no layout/geometry changes to any control."
+
+build_length_1_2_removed:
+  date: 2026-09-24
+  reason: "User: 'remove choices for 1,2 bar lenghts'. Very short builds were not musically useful; the circles row now starts at 4 bars."
+  changes:
+    - "The 1- and 2-bar step circles are removed from the UI ONLY; the APVTS buildLength choice list keeps all six entries {1,2,4,8,16,32} so saved sessions and automation lanes remain valid (same non-breaking pattern as every prior DROP parameter-facing change)."
+    - "Circle position i now maps to APVTS choice index i+2 (BUILD_LENGTH_UI_OFFSET) in both the click binding and the active-highlight; the 16-bar default (APVTS index 4) highlights the third of the four remaining circles."
+    - "A saved session at 1 or 2 bars still plays correctly and drives the graph's BUILD - N BARS label; it simply highlights no circle."
+  validation: "Two buttons removed from an auto-flowing row; no geometry changes to any other control."
