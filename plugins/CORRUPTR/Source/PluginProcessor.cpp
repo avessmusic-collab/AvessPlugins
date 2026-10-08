@@ -909,11 +909,10 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
 
     outputLimiter.prepare(spec);
     outputLimiter.reset();
+    outputLimiter.setRatio(1000.0f);   // QA fix 2026-10-08: brickwall stage only — see PluginProcessor.h's outputLimiter comment
+    outputLimiter.setAttack(0.001f);
     outputLimiter.setThreshold(-0.3f);
     outputLimiter.setRelease(50.0f);
-    limiterCeilingPostGain.prepare(spec);
-    limiterCeilingPostGain.setRampDurationSeconds(0.02);
-    limiterCeilingPostGain.setGainDecibels(-0.3f);
 
     //=========================================================================
     // Stage 2 Phase 3.9: XY Pad glide + Oversampling / Quality Engine. See
@@ -1706,6 +1705,27 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
                 newLatencySamples = static_cast<int>(std::round(oversamplers[(size_t) (activeOversamplingFactorIndex - 1)]->getLatencyInSamples()));
             setLatencySamples(newLatencySamples);
 
+            // Ring-Mod carrier oscillator: re-prepare at the new oversampled
+            // rate so its phase-increment math stays correct. QA fix
+            // 2026-10-08: this used to run EVERY block, but
+            // juce::dsp::Oscillator::prepare() calls reset(), which zeroes
+            // the carrier phase — a per-block phase reset producing a
+            // block-rate discontinuity (buzz) in Ring-Mod whenever drive > 0,
+            // with the artifact's character depending on the host's buffer
+            // size. Re-preparing only on an actual factor change keeps the
+            // rate math correct and the phase continuous (the one-off reset
+            // at a factor switch is covered by the same click-safety
+            // tradeoff as the oversampler reset above).
+            if (getSampleRate() > 0.0)
+            {
+                juce::dsp::ProcessSpec ringModSpec;
+                ringModSpec.sampleRate = getSampleRate() * static_cast<double>(activeOversamplingFactor);
+                ringModSpec.maximumBlockSize = 1;
+                ringModSpec.numChannels = 1;
+                for (auto& osc : ringModOsc)
+                    osc.prepare(ringModSpec);
+            }
+
             lastActiveOversamplingFactor = activeOversamplingFactor;
         }
 
@@ -1715,20 +1735,6 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // describe — see "RATE-DEPENDENT INTERNAL STATE" doc comment.
         bitcrushEffectiveHoldSamples = juce::jmax(1, bitcrushHoldSamples * activeOversamplingFactor);
 
-        // Ring-Mod carrier oscillator: re-prepare (cheap, allocation-free —
-        // only updates an internally-cached sample-rate value, does NOT
-        // regenerate the lookup table baked once in prepareToPlay) at the
-        // current oversampled rate every block, so its phase-increment math
-        // is correct regardless of which factor is active this block.
-        if (getSampleRate() > 0.0)
-        {
-            juce::dsp::ProcessSpec ringModSpec;
-            ringModSpec.sampleRate = getSampleRate() * static_cast<double>(activeOversamplingFactor);
-            ringModSpec.maximumBlockSize = 1;
-            ringModSpec.numChannels = 1;
-            for (auto& osc : ringModOsc)
-                osc.prepare(ringModSpec);
-        }
     }
 
     // Input Gain (block-level, via juce::dsp::Gain — built-in 10-20ms ramp)
@@ -2080,15 +2086,14 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             auto* ceilingParam = parameters.getRawParameterValue("limiterCeiling");
             auto* releaseParam = parameters.getRawParameterValue("limiterRelease");
             auto* autoRelParam = parameters.getRawParameterValue("limiterAutoRelease");
-            // juce::dsp::Limiter applies internal makeup gain back to 0 dBFS
-            // (its outputVolume stage), so threshold alone cannot act as a
-            // ceiling. Ableton semantics = threshold AT the ceiling (so the
-            // makeup boost is exactly -ceiling) + a compensating post-gain
-            // of +ceiling dB after the limiter: signal below the ceiling
-            // passes at unity, peaks brickwall exactly at the ceiling.
+            // QA fix 2026-10-08: outputLimiter is now a 1000:1 / 1 µs-attack
+            // Compressor (juce::dsp::Limiter's own second stage, minus its
+            // hidden -10 dBFS 4:1 first stage and makeup gain — see
+            // PluginProcessor.h's outputLimiter comment). Threshold at the
+            // ceiling IS the Ableton semantic directly: unity below, brickwall
+            // at the ceiling, no compensation stage needed anymore.
             const float ceilingDb = juce::jlimit(-20.0f, 0.0f, ceilingParam->load());
             outputLimiter.setThreshold(ceilingDb);
-            limiterCeilingPostGain.setGainDecibels(ceilingDb);
             float releaseMs = juce::jlimit(1.0f, 1000.0f, releaseParam->load());
             if (autoRelParam->load() > 0.5f)
             {
@@ -2149,8 +2154,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             }
         }
 
-        outputLimiter.process(context);
-        limiterCeilingPostGain.process(context); // limiter + ceiling = the final stage everything exits through
+        outputLimiter.process(context); // brickwall at the ceiling = the final stage everything exits through
 
 
     }

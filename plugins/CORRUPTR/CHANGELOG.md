@@ -1,5 +1,45 @@
 # CORRUPTR Changelog
 
+## v1.0.2 — 2026-10-08 (full-effect QA audit)
+
+### Fixed
+- Output limiter secretly compressed everything above -10 dBFS: `juce::dsp::Limiter`
+  contains a FIXED always-on first-stage compressor (threshold -10 dBFS, ratio 4:1,
+  2 ms attack / 200 ms release) plus ~+3.75 dB makeup gain, so any signal hotter than
+  -10 dBFS was squashed 4:1 with program-dependent pumping even in "Transparent" mode —
+  violating the v7 design intent ("signal below the ceiling passes at unity"). Replaced
+  with the Limiter's own second stage alone (`juce::dsp::Compressor`, ratio 1000:1,
+  1 µs attack, threshold = ceiling): genuine unity below the ceiling, brickwall at it,
+  no hidden makeup; the old +ceiling post-gain compensation stage is gone too (it only
+  existed to cancel Limiter's internal makeup). Expect slightly more open dynamics and
+  ~1 dB less loudness on hot material; limiterCeiling/limiterRelease/Auto behave the same.
+- Ring-Mod carrier phase reset every block: the per-block
+  `ringModOsc.prepare()` call (added for oversampling-rate correctness) also zeroes the
+  oscillator phase (`Oscillator::prepare()` calls `reset()`), producing a block-rate
+  carrier discontinuity — buzz whose character depended on the host buffer size —
+  whenever drive > 0. The re-prepare now happens only on an actual oversampling-factor
+  change. Verified: renders at 480-sample vs 4800-sample blocks now match (mean abs
+  diff 0.26 -> 0.0008).
+
+### Added
+- Console QA runner (`CORRUPTR_Tests`, mirrors KICKR's pattern): 62 offline-render
+  checks covering all 12 distortion algorithms (incl. drive-0 neutrality), 6 bitcrush
+  modes + SRR hold, 5 filter types + morph + slope, all 17 glitch modes, feedback-loop
+  safety/decay, 4 quality modes + latency reporting, performance triggers, sequencer
+  gate + mod matrix LFO modulation, and state round-trip.
+  Build: `cmake --build build --target CORRUPTR_Tests`. All 62 pass; pluginval
+  strictness 10 passes.
+
+### Notes (audited, by design / deferred)
+- Feedback at 100% with high drive self-oscillates indefinitely (drive re-amplifies the
+  recirculated signal each pass); it stays bounded by the RMS limiter and decays
+  normally at low drive. Documented as designed behavior.
+- `updateFilterParameters()` would produce NaN coefficients if ever called with
+  sample rate 0 — unreachable in hosts (wrapper always sets SR before processing),
+  found only via a bare-metal test harness.
+- Sequencer snapshot is published with a release store but read with a relaxed load;
+  worst case is a one-block-stale pattern value on ARM. Cosmetic.
+
 ## v1.0.1 — 2026-09-08
 
 ### Fixed

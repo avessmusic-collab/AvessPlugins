@@ -87,3 +87,38 @@ target_compile_definitions(CORRUPTR
         JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
         JUCE_USE_CURL=0
 )
+
+# ---------------------------------------------------------------------------
+# Console QA runner — full-effect offline-render audit (not part of the
+# default build; run:  cmake --build build --target CORRUPTR_Tests)
+# ---------------------------------------------------------------------------
+add_executable(CORRUPTR_Tests EXCLUDE_FROM_ALL
+    Source/Tests/RunTests.cpp
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+)
+target_include_directories(CORRUPTR_Tests PRIVATE Source)
+target_link_libraries(CORRUPTR_Tests
+    PRIVATE
+        CORRUPTR_UIResources
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(CORRUPTR_Tests
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+)

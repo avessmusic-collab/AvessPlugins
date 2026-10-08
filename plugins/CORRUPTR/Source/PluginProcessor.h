@@ -1584,9 +1584,19 @@ private:
     // its own text, "REQUIRED order") — Output Gain, THEN Output Limiter.
     juce::dsp::Gain<float> outputGainDsp;
     juce::dsp::WaveShaper<float> coloredLimiterSaturation; // fixed, gentle, always-on-in-Colored-mode saturation before the limiter (architecture.md #13's recommended MVP approximation for GR-proportional coloring)
-    juce::dsp::Limiter<float> outputLimiter;
+    // QA fix 2026-10-08: was juce::dsp::Limiter, which hides a FIXED
+    // always-on first-stage compressor (threshold -10 dBFS, ratio 4:1,
+    // 200 ms release) plus ~+3.75 dB of makeup gain — so every signal
+    // hotter than -10 dBFS was being squashed 4:1 with audible pumping even
+    // in "Transparent" mode, violating the v7 design intent documented at
+    // the processBlock call site ("signal below the ceiling passes at
+    // unity"). Replaced with Limiter's own SECOND stage alone: a
+    // juce::dsp::Compressor at ratio 1000:1 / 1 µs attack with threshold =
+    // ceiling — true brickwall at the ceiling, genuine unity below it, no
+    // hidden makeup (which also removes the need for the old
+    // limiterCeilingPostGain compensation stage).
+    juce::dsp::Compressor<float> outputLimiter;
     float limiterAutoReleaseSmoothedMs = 300.0f; // v7: auto-release smoothing state
-    juce::dsp::Gain<float> limiterCeilingPostGain; // v7: +ceiling dB after the limiter (see processBlock comment)
     juce::SmoothedValue<float> stereoWidthSmoothed; // audit fix: macroWidth's real M/S width (1.0 = neutral)
     // v9: auto gain balancer state (see processBlock's balancer stage)
     float autoGainDryEnv = 0.0f, autoGainWetEnv = 0.0f;
