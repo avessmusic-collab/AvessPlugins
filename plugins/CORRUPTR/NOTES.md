@@ -2,11 +2,13 @@
 
 ## Status
 - **Current Status:** 📦 Installed
-- **Version:** 1.0.1
+- **Version:** 1.0.2
 - **Type:** Audio Effect (Multi-Distortion/Glitch)
 - **Complexity:** 5.0 (capped) / 19.0 (uncapped raw score) — see `.ideas/plan.md`
 
 ## Lifecycle Timeline
+
+- **2026-10-08:** v1.0.2 installed to system folders (VST3 + AU) — full-effect QA audit: limiter hidden-compressor fix, Ring-Mod carrier phase fix, CORRUPTR_Tests QA suite added
 
 - **2026-09-01:** Creative brief finalized via `/dream` — plugin-ideation skill
 - **2026-09-01 (Stage 0):** Research & Planning complete — DSP architecture documented (14 core components across distortion, glitch, sequencer, mod matrix, macros, feedback routing, oversampling, limiter), complexity assessed (5.0 capped / 19.0 uncapped). Recommendation: split into Wave 1 (MVP-of-MVP) and Wave 2 (full feature set) implementation efforts rather than one continuous phased pass — see `.ideas/plan.md`.
