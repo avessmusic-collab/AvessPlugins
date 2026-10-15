@@ -22,11 +22,16 @@ juce_add_plugin(PRISM
     NEEDS_WEBVIEW2 TRUE         # Windows WebView2 backend; ignored elsewhere
 )
 
-target_sources(PRISM
-    PRIVATE
-        Source/PluginProcessor.cpp
-        Source/PluginEditor.cpp
+# Translation units shared by the plugin and the console test runner.
+set(PRISM_CORE_SOURCES
+    Source/PluginProcessor.cpp
+    Source/PluginEditor.cpp
+    # Stage 2 Phase 2.1 - capture, worker skeleton, snapshot publishing
+    Source/Analysis/AnalysisEngine.cpp
+    Source/Analysis/AnalysisWorker.cpp
 )
+
+target_sources(PRISM PRIVATE ${PRISM_CORE_SOURCES})
 
 target_include_directories(PRISM
     PRIVATE
@@ -65,6 +70,45 @@ target_compile_definitions(PRISM
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
 )
+
+# ---------------------------------------------------------------------------
+# Console test runner (not part of the default build):
+#   cmake --build build --target PRISM_Tests && ./build/plugins/PRISM/PRISM_Tests
+# Optional sanitizers for the stress tests, e.g. configure with
+#   -DPRISM_TEST_SANITIZE=thread   (or address,undefined)
+# ---------------------------------------------------------------------------
+add_executable(PRISM_Tests EXCLUDE_FROM_ALL
+    Source/Tests/RunTests.cpp
+    ${PRISM_CORE_SOURCES}
+)
+target_include_directories(PRISM_Tests PRIVATE Source)
+target_compile_features(PRISM_Tests PRIVATE cxx_std_20)
+target_link_libraries(PRISM_Tests
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(PRISM_Tests
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+)
+if(PRISM_TEST_SANITIZE)
+    target_compile_options(PRISM_Tests PRIVATE -fsanitize=${PRISM_TEST_SANITIZE} -fno-omit-frame-pointer -g)
+    target_link_options(PRISM_Tests PRIVATE -fsanitize=${PRISM_TEST_SANITIZE})
+endif()
 
 # ---------------------------------------------------------------------------
 # WebView UI resources - enabled in Stage 3 (GUI) once

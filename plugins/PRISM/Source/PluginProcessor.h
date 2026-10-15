@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <memory>
 
+#include "Analysis/AnalysisEngine.h"
 #include "Analysis/AnalysisSnapshot.h"
+#include "Analysis/AnalysisWorker.h"
 #include "Analysis/SnapshotMailbox.h"
 #include "Parameters/ParameterIDs.h"
 
@@ -45,11 +47,19 @@ public:
     //==========================================================================
     // Analysis seams (Stage 2 fills these in; Stage 1 stubs keep the API stable
     // for the v8 editor scaffolding).
-    std::shared_ptr<const prism::AnalysisSnapshot> getLatestAnalysisSnapshot() const { return mailbox.fetch(); }
+    // Message thread. Non-blocking (SpinLock-guarded pointer copy). Also records the
+    // fetch heartbeat the worker uses for editor-activity gating (and, later, column acks).
+    std::shared_ptr<const prism::AnalysisSnapshot> getLatestAnalysisSnapshot() const;
     void requestResetAll()        { resetAllEpoch.fetch_add(1, std::memory_order_relaxed); }
     void requestResetIntegrated() { resetIntegratedEpoch.fetch_add(1, std::memory_order_relaxed); }
     void setEditorActive(bool active);
     bool isEditorActive() const   { return editorActiveCount.load(std::memory_order_relaxed) > 0; }
+
+    // Engine/worker introspection (tests, debug stats).
+    prism::AnalysisEngine* getAnalysisEngine() noexcept { return engine.get(); }
+    prism::AnalysisWorker* getAnalysisWorker() noexcept { return worker.get(); }
+    int getEngineRebuildCount() const noexcept { return engineRebuildCount; }
+    std::uint64_t getLastFetchedSequence() const noexcept { return lastFetchedSequence.load(std::memory_order_relaxed); }
 
     // Defaults for the state entries / UI state (used by state init and sanitizer)
     static void applyStateDefaults(juce::ValueTree& state);
@@ -59,10 +69,21 @@ public:
     juce::AudioProcessorValueTreeState apvts;
 
 private:
+    prism::EngineConfig makeEngineConfig(double sampleRate) const;
+    void stopWorker();
+
     prism::SnapshotMailbox mailbox;
     std::atomic<std::uint32_t> resetAllEpoch { 0 };
     std::atomic<std::uint32_t> resetIntegratedEpoch { 0 };
     std::atomic<int> editorActiveCount { 0 };
+    mutable std::atomic<std::uint64_t> lastFetchedSequence { 0 };
+    mutable std::atomic<std::int64_t>  lastFetchTimeMs { 0 };
+    int engineRebuildCount = 0;
+
+    // Declaration order matters: the worker references the engine, mailbox and atomics
+    // above, so it is declared last (destroyed first).
+    std::unique_ptr<prism::AnalysisEngine> engine;
+    std::unique_ptr<prism::AnalysisWorker> worker;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PRISMAudioProcessor)
 };

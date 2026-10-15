@@ -61,7 +61,10 @@ PRISMAudioProcessor::PRISMAudioProcessor()
     applyStateDefaults(apvts.state);
 }
 
-PRISMAudioProcessor::~PRISMAudioProcessor() = default;
+PRISMAudioProcessor::~PRISMAudioProcessor()
+{
+    stopWorker();   // join before the engine/mailbox/atomics the worker references are destroyed
+}
 
 //==============================================================================
 void PRISMAudioProcessor::applyStateDefaults(juce::ValueTree& state)
@@ -103,15 +106,48 @@ void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)
 }
 
 //==============================================================================
+prism::EngineConfig PRISMAudioProcessor::makeEngineConfig(double sampleRate) const
+{
+    prism::EngineConfig cfg;
+    cfg.sampleRate = sampleRate;
+    const int buses = juce::jmin(getBusCount(true), prism::kMaxSources);
+    for (int i = 0; i < buses; ++i)
+        if (auto* bus = getBus(true, i))
+            cfg.busChannels[(size_t) i] = bus->isEnabled() ? bus->getNumberOfChannels() : 0;
+    return cfg;
+}
+
+void PRISMAudioProcessor::stopWorker()
+{
+    if (worker != nullptr)
+        worker->stop();
+}
+
 void PRISMAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Analysis engine is created in Stage 2.
-    juce::ignoreUnused(sampleRate, samplesPerBlock);
+    juce::ignoreUnused(samplesPerBlock);
+
+    // Hosts call prepareToPlay repeatedly: rebuild only when {rate, layout} changed.
+    const auto cfg = makeEngineConfig(sampleRate);
+    if (engine == nullptr || engine->getConfig() != cfg)
+    {
+        stopWorker();
+        worker.reset();   // references the old engine
+        const std::uint64_t base = engine != nullptr ? engine->getLastSequence() : 0;   // keep sequence monotonic across rebuilds
+        engine = std::make_unique<prism::AnalysisEngine>(cfg);
+        engine->setSequenceBase(base);
+        ++engineRebuildCount;
+    }
+
+    if (worker == nullptr)
+        worker = std::make_unique<prism::AnalysisWorker>(*engine, mailbox,
+                                                         prism::WorkerControls { &editorActiveCount, &lastFetchTimeMs });
+    worker->start();
 }
 
 void PRISMAudioProcessor::releaseResources()
 {
-    // Analysis worker is stopped here in Stage 2.
+    stopWorker();   // joins the thread; the engine (and its history/rings) is kept for a same-config prepare
 }
 
 bool PRISMAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -139,16 +175,38 @@ bool PRISMAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) con
 void PRISMAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     // Bit-transparent: the buffer is never written, cleared or resized.
-    // No allocation, no locks. Capture into the analysis ring arrives in Stage 2.
+    // No allocation, no locks, no FFT: read-only capture into the per-source SPSC rings,
+    // lossless sample-peak atomics and the playhead beat queue.
     juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused(buffer, midiMessages);
+    juce::ignoreUnused(midiMessages);
+
+    auto* e = engine.get();
+    const int numSamples = buffer.getNumSamples();
+    if (e == nullptr || numSamples <= 0)
+        return;
+
+    const auto& constBuffer = buffer;   // read pointers only: never marks the buffer as written
+    e->captureBlock(constBuffer.getArrayOfReadPointers(), constBuffer.getNumChannels(), numSamples);
+    e->capturePlayhead(getPlayHead(), numSamples);
 }
 
 //==============================================================================
+std::shared_ptr<const prism::AnalysisSnapshot> PRISMAudioProcessor::getLatestAnalysisSnapshot() const
+{
+    auto p = mailbox.fetch();
+    lastFetchTimeMs.store(prism::steadyNowMs(), std::memory_order_relaxed);
+    if (p != nullptr)
+        lastFetchedSequence.store(p->sequence, std::memory_order_relaxed);
+    return p;
+}
+
 void PRISMAudioProcessor::setEditorActive(bool active)
 {
     if (active)
+    {
+        lastFetchTimeMs.store(prism::steadyNowMs(), std::memory_order_relaxed);   // heartbeat grace on open
         editorActiveCount.fetch_add(1, std::memory_order_relaxed);
+    }
     else if (editorActiveCount.load(std::memory_order_relaxed) > 0)
         editorActiveCount.fetch_sub(1, std::memory_order_relaxed);
 }
