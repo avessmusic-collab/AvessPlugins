@@ -68,6 +68,17 @@ target_link_libraries(PRISM
 # Pattern #1: after target_link_libraries(), before compile definitions.
 juce_generate_juce_header(PRISM)
 
+# Debug-only switches (OFF by default): -DPRISM_FRAME_TIMING=ON logs pushAnalysisFrame timing to stderr,
+# -DPRISM_DEBUG_TONE=ON analyses a synthetic 1 kHz / -12 dBFS stereo sine instead of the input.
+option(PRISM_FRAME_TIMING "PRISM: log editor frame-push timing" OFF)
+option(PRISM_DEBUG_TONE "PRISM: analyse a synthetic test tone (debug only)" OFF)
+if(PRISM_FRAME_TIMING)
+    target_compile_definitions(PRISM PUBLIC PRISM_FRAME_TIMING=1)
+endif()
+if(PRISM_DEBUG_TONE)
+    target_compile_definitions(PRISM PUBLIC PRISM_DEBUG_TONE=1)
+endif()
+
 target_compile_definitions(PRISM
     PUBLIC
         JUCE_WEB_BROWSER=1
@@ -99,6 +110,8 @@ target_link_libraries(PRISM_Tests
         juce::juce_events
         juce::juce_graphics
         juce::juce_gui_basics
+        juce::juce_gui_extra        # editor TU (WebBrowserComponent) is part of the core sources
+        PRISM_UIResources
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
@@ -107,7 +120,7 @@ target_compile_definitions(PRISM_Tests
     PRIVATE
         PRISM_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/fixtures"
     PUBLIC
-        JUCE_WEB_BROWSER=0
+        JUCE_WEB_BROWSER=1
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
 )
@@ -117,14 +130,14 @@ if(PRISM_TEST_SANITIZE)
 endif()
 
 # ---------------------------------------------------------------------------
-# WebView UI resources - enabled in Stage 3 (GUI) once
+# WebView UI resources - enabled in Stage 3 (GUI);
 # Source/ui/public/index.html exists (copied from .ideas/mockups/v8-ui.html).
 # Produces BinaryData::index_html / BinaryData::index_htmlSize.
 # ---------------------------------------------------------------------------
-# juce_add_binary_data(PRISM_UIResources
-#     SOURCES
-#         Source/ui/public/index.html
-# )
-# target_link_libraries(PRISM PRIVATE PRISM_UIResources)
-# set_property(TARGET PRISM_UIResources APPEND PROPERTY LINK_DEPENDS
-#     "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/public/index.html")
+juce_add_binary_data(PRISM_UIResources
+    SOURCES
+        Source/ui/public/index.html
+)
+target_link_libraries(PRISM PRIVATE PRISM_UIResources)
+set_property(TARGET PRISM_UIResources APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/public/index.html")

@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PRISM</title>
+<style>
+/* ===== WebView constraints (REQUIRED) ===== */
+html, body { height: 100%; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  user-select: none; -webkit-user-select: none; cursor: default; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  background: #0a0c0e;
+  color: var(--value);
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, "IBM Plex Mono", monospace;
+}
+/* Tokens (mirrors v2-ui.yaml) */
+:root {
+  --glass: #0a0c0e; --label: #7a8894; --value: #e9e2dc; --value-rgb: 233,226,220; --cyan: #ff7a66; --cyan-rgb: 255,122,102; --violet: #5df2b8; --violet-rgb: 93,242,184; --accent-light: #ffd2c9;
+  --hair: rgba(255,255,255,0.05); --slate-hi: #30363c; --slate-lo: #22272c;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, "IBM Plex Mono", monospace;
+}
+
+/* ===== Stage: fixed 1100x720 px, scaled uniformly to fit window ===== */
+#stage { position: absolute; left: 0; top: 0; width: 1100px; height: 720px; transform-origin: 0 0; }
+#stage > * { position: absolute; }
+
+/* ----- pure glass: the glass fills the whole window (no device body / bezel / strip) ----- */
+#glass { left: 0; top: 0; width: 1100px; height: 720px; z-index: 1; background: #0a0c0e; }
+
+/* ----- instrument panes: 1px frames + corner ticks, corner annotations ----- */
+.pane { z-index: 3; pointer-events: none; border: 1px solid rgba(255,255,255,0.10); }
+.pane::after { content: ""; position: absolute; left: -1px; top: -1px; right: -1px; bottom: -1px; pointer-events: none;
+  background:
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left top / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left top / 1px 9px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right top / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right top / 1px 9px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left bottom / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left bottom / 1px 9px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right bottom / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right bottom / 1px 9px no-repeat; }
+.an { z-index: 4; font-size: 9px; line-height: 11px; letter-spacing: 0.03em; color: rgba(150,165,176,0.62); white-space: nowrap; pointer-events: none; text-shadow: 0 0 4px #0a0c0e, 0 0 2px #0a0c0e; }
+.an b { font-weight: normal; color: rgba(205,220,230,0.85); }
+.hair { background: var(--hair); z-index: 3; }
+.dvd { z-index: 4; touch-action: none; }
+.dvd::before { content: ""; position: absolute; background: transparent; transition: background .15s ease; }
+.dvd::after { content: ""; position: absolute; opacity: 0; transition: opacity .15s ease; background-image: radial-gradient(circle, rgba(255,255,255,0.7) 1.1px, transparent 1.6px); }
+.dh { width: 1012px; height: 12px; cursor: row-resize; }
+.dh::before { left: 0; right: 0; top: 5px; height: 1px; }
+.dh::after { left: 50%; top: 4px; width: 24px; height: 4px; margin-left: -12px; background-size: 8px 4px; background-repeat: repeat-x; }
+.dv { width: 12px; cursor: col-resize; }
+.dv::before { top: 0; bottom: 0; left: 5px; width: 1px; }
+.dv::after { top: 50%; left: 4px; width: 4px; height: 24px; margin-top: -12px; background-size: 4px 8px; background-repeat: repeat-y; }
+.dvd:hover::before, .dvd.drag::before { background: rgba(255,255,255,0.30); }
+.dvd:hover::after, .dvd.drag::after { opacity: 0.85; }
+
+/* ----- readout columns ----- */
+.col { z-index: 4; white-space: nowrap; width: 216px; }
+.lb { font-size: 10px; line-height: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--label); letter-spacing: 0.02em; }
+.big { margin: 1px 0 4px; font-size: 21px; line-height: 26px; color: var(--value); text-shadow: 0 0 14px rgba(var(--value-rgb),0.20); letter-spacing: -0.01em; }
+.sm { font-size: 11px; line-height: 13px; color: var(--value); text-shadow: 0 0 9px rgba(var(--value-rgb),0.14); }
+.sv { text-shadow: 0 0 10px var(--sg); }
+.col i { font-style: normal; color: var(--label); text-shadow: none; }
+.col .warn { color: #ffb4a8; text-shadow: 0 0 10px rgba(255,120,100,0.35); }
+
+#insp { left: 0; top: 0; width: 700px; height: 14px; z-index: 3; font-size: 11px; line-height: 14px; color: var(--label); white-space: nowrap; overflow: hidden; }
+#insp b { font-weight: normal; color: var(--value); }
+#insp .dim { opacity: 0.35; }
+
+/* ----- visualizer regions ----- */
+canvas { display: block; }
+.cvs { z-index: 2; }
+.cap { top: 0; height: 12px; z-index: 3; font-size: 10px; line-height: 12px; color: var(--label); letter-spacing: 0.04em; }
+#spec_cv { cursor: crosshair; }
+
+/* ----- legend + selectors ----- */
+.leg { top: 0; height: 20px; z-index: 5; display: flex; align-items: center; gap: 7px; padding: 0 8px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: opacity .15s ease; }
+#leg0, #leg1 { width: 68px; }
+.leg .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leg:active { background: rgba(255,255,255,0.05); }
+.leg .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.leg .nm { color: var(--c); text-shadow: 0 0 8px var(--c); letter-spacing: 0.03em; }
+.leg.off { opacity: 0.32; }
+.leg.off .dot { box-shadow: none; }
+.sgsel { top: 0; height: 20px; z-index: 5; border-radius: 6px; text-align: center; font-size: 10px; line-height: 20px; color: #55636e; cursor: pointer; transition: color .15s ease, background .15s ease, box-shadow .15s ease; letter-spacing: 0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sgsel.on { color: var(--c); background: rgba(255,255,255,0.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); text-shadow: 0 0 8px var(--c); }
+
+/* ----- v7: fullscreen presentation mode ----- */
+.fsbtn { left: 1055px; top: 684px; width: 24px; height: 20px; z-index: 9; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; opacity: 0.8; transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease, opacity .18s ease, background .15s ease; }
+.fsbtn:hover { background: rgba(255,255,255,0.08); opacity: 1; }
+.fsbtn svg { width: 14px; height: 14px; fill: none; stroke: #8a98a4; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.fsbtn .co { display: none; }
+#stage.fs .fsbtn { left: 1055px; top: 18px; width: 30px; height: 20px; opacity: 0.5; }
+#stage.fs .fsbtn:hover { opacity: 1; }
+#stage.fs .fsbtn .ex { display: none; } #stage.fs .fsbtn .co { display: block; }
+#stage .sb, #stage .foot, #stage .ftp { transition: opacity .18s ease; }
+#stage.fs .sb, #stage.fs .foot:not(#flag), #stage.fs .ftp { opacity: 0; pointer-events: none; }
+#insp { transition: none; }
+#stage.fs #flag { left: 770px; top: 697px; width: 315px; }
+
+/* ----- footer status line ----- */
+.foot { top: 684px; height: 20px; z-index: 5; font-size: 11px; line-height: 20px; color: var(--label); white-space: nowrap; }
+.chip { display: flex; align-items: center; gap: 7px; height: 20px; padding: 0 6px; border-radius: 6px; cursor: pointer; transition: opacity .15s ease; overflow: hidden; }
+.chip:active { background: rgba(255,255,255,0.05); }
+.chip .nm { color: var(--c); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; max-width: 66px; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.chip .cn { color: var(--c); text-shadow: 0 0 8px var(--c); opacity: 0.9; }
+.chip.off { opacity: 0.32; }
+.chip.off .dot { box-shadow: none; }
+.stag { width: 20px; height: 20px; border-radius: 6px; text-align: center; font-size: 10px; line-height: 20px; color: #55636e; cursor: pointer; transition: all .15s ease; }
+.stag.on { color: var(--c); background: rgba(255,255,255,0.11); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18); }
+#f_sep { left: 333px; width: 8px; text-align: center; color: #34404a; }
+#f_stats { left: 351px; width: 220px; color: var(--label); }
+#f_stats b { font-weight: normal; color: #8fa4b0; }
+#f_stats .fz { color: #ffd2a3; text-shadow: 0 0 8px rgba(255,190,120,0.4); }
+#flag { left: 785px; width: 262px; transition: left .18s ease, top .18s ease, width .18s ease, opacity .18s ease; text-align: right; color: #7f9aa6; letter-spacing: 0.02em; }
+#flag i { display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: var(--cyan); vertical-align: 1px; animation: pulse 2.4s ease-in-out infinite; }
+#flag span { animation: pulseT 2.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.25; box-shadow: none; } 50% { opacity: 1; box-shadow: 0 0 8px var(--cyan); } }
+@keyframes pulseT { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+body.rm #flag i, body.rm #flag span { animation: none; }
+#flag.idle i { background: #55636e; animation: none; opacity: 0.7; }
+#flag.idle span { animation: none; opacity: 0.75; }
+
+/* ----- device strip: soft rounded-square buttons ----- */
+/* ----- right control sidebar (instrument column) ----- */
+.plate { z-index: 4; border: 1px solid rgba(255,255,255,0.22); border-radius: 2px; text-align: center; font-size: 15px; line-height: 32px; letter-spacing: 0.5em; text-indent: 0.5em; color: var(--value); text-shadow: 0 0 12px rgba(var(--value-rgb),0.25); pointer-events: none; }
+.kl { z-index: 4; width: 58px; text-align: center; font-size: 9px; line-height: 11px; letter-spacing: 0.08em; color: var(--label); pointer-events: none; }
+.kv { z-index: 4; width: 58px; text-align: center; font-size: 10px; line-height: 12px; color: var(--value); pointer-events: none; }
+.kn { z-index: 5; cursor: ns-resize; touch-action: none; }
+.sbn { z-index: 5; width: 106px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.16); border-radius: 3px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #93a1ac; cursor: pointer; white-space: nowrap; transition: color .15s ease, background .15s ease, border-color .15s ease, opacity .18s ease; }
+.sbn:hover { color: var(--value); border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.04); }
+.sbn:active { background: rgba(255,255,255,0.09); }
+.sbn.on, .sbn.active { color: var(--accent-light); background: rgba(var(--cyan-rgb),0.12); border-color: rgba(var(--cyan-rgb),0.5); }
+.sbn.flash { background: rgba(var(--cyan-rgb),0.25); color: #fff; }
+.sbn.theme { text-transform: none; letter-spacing: 0.02em; }
+
+
+/* ----- popovers: dark glass sheets ----- */
+.pop {
+  z-index: 20; border-radius: 18px; padding: 18px 20px 16px; font-size: 11px; color: var(--label);
+  background: rgba(15,18,21,0.93); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  box-shadow: 0 24px 50px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.07), inset 0 1px 0 rgba(255,255,255,0.07);
+  opacity: 0; visibility: hidden; transform: translateY(8px) scale(0.985); transform-origin: 50% 100%;
+  transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s;
+}
+.pop.open { opacity: 1; visibility: visible; transform: none; transition: opacity .18s ease, transform .18s ease, visibility 0s; }
+#pop_src { left: 485px; top: 541px; width: 360px; height: 134px; transform-origin: 100% 100%; }
+#pop_set { left: 445px; top: 317px; width: 400px; height: 358px; transform-origin: 100% 100%; }
+.pop h4 { margin: 0 0 12px; font-weight: normal; font-size: 11px; letter-spacing: 0.08em; color: var(--label); text-transform: uppercase; }
+.prow { display: flex; align-items: center; height: 28px; }
+.prow > label { width: 104px; flex: none; color: var(--label); }
+.prow .ctl { flex: 1; display: flex; align-items: center; }
+.seg { display: flex; gap: 3px; flex-wrap: wrap; }
+.seg button, .act, .tg {
+  font-family: var(--mono); font-size: 11px; color: #8fa0ab; height: 22px; padding: 0 9px; border: 0; border-radius: 7px; cursor: pointer; outline: none;
+  background: rgba(255,255,255,0.045); transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.seg button:active, .act:active, .tg:active { background: rgba(255,255,255,0.1); }
+.seg button.on, .tg.on { color: var(--accent-light); background: rgba(var(--cyan-rgb),0.12); box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.34); }
+.tlabel { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); margin: 0 0 6px; }
+.seg.themes { width: 100%; }
+.seg.themes button { flex: 1 1 22%; font-size: 10px; padding: 0 5px; white-space: nowrap; }
+.seg.presets { width: 100%; }
+.seg.presets button { flex: 1 0 28%; }
+.sl { display: flex; align-items: center; width: 100%; height: 22px; cursor: pointer; touch-action: none; }
+.sl .tr { position: relative; width: 160px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.1); flex: none; }
+.sl .fl { position: absolute; left: 0; top: 0; height: 3px; border-radius: 2px; background: linear-gradient(90deg, rgba(var(--cyan-rgb),0.4), var(--cyan)); box-shadow: 0 0 8px rgba(var(--cyan-rgb),0.35); }
+.sl .th { position: absolute; top: 50%; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #f5f8fa, #9aa2a9); box-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+.sl .val { width: 78px; margin-left: 12px; text-align: right; color: var(--value); }
+.acts { display: flex; gap: 8px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.act { height: 28px; flex: 1; font-size: 11px; letter-spacing: 0.04em; }
+.act.flash { background: rgba(var(--cyan-rgb),0.2); color: #fff; }
+.srow { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--hair); }
+.srow:last-child { border: 0; margin: 0; padding: 0; }
+.srow .line { display: flex; align-items: center; height: 28px; gap: 8px; }
+input.nm2 { width: 130px; height: 26px; padding: 0 9px; border: 0; border-radius: 7px; background: rgba(255,255,255,0.06); color: var(--value); font-family: var(--mono); font-size: 12px; outline: none; user-select: text; -webkit-user-select: text; cursor: text; }
+input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
+.srow .dotc { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 9px var(--c); flex: none; }
+.srow .sp { flex: 1; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="glass"></div>
+
+  <!-- readout columns (pure text on glass) -->
+  <!-- sidebar markup is injected below -->
+  <div class="leg" id="leg0"><span class="dot"></span><span class="nm" id="lgn0">Ch1</span></div>
+  <div class="leg" id="leg1"><span class="dot"></span><span class="nm" id="lgn1">Ch2</span></div>
+  <div id="insp"></div>
+
+  <!-- hero: dot-matrix spectrum -->
+  <canvas id="spec_ghost" class="cvs" data-w="1012" data-h="172" style="left:44px;top:136px"></canvas>
+  <canvas id="spec_cv" class="cvs" data-w="1012" data-h="172" style="left:44px;top:136px"></canvas>
+
+  <!-- beat waveform strip (rekordbox-style 3-band) -->
+  <div class="cap" id="cap_wf" style="left:44px;width:76px;top:316px">Waveform</div>
+  <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
+  <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
+  <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#ff4b4b">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#ffb84d">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#5df2b8">&#9679;</span> highs</div>
+  <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
+
+  <!-- lower row -->
+  <div class="cap" id="cap_sg" style="left:44px;width:76px">Spectrogram</div>
+  <div class="sgsel" id="sgs0" style="left:124px;width:36px">Ch1</div>
+  <div class="sgsel" id="sgs1" style="left:164px;width:36px">Ch2</div>
+  <div class="sgsel" id="sgo0" style="width:22px" title="Vertical waterfall (frequency across, time down)">V</div><div class="sgsel" id="sgo1" style="width:22px" title="Horizontal scroll (frequency up, time left)">H</div>
+  <div class="cap" id="cap_gn" style="left:386px;width:300px">Vectorscope</div>
+  <div class="cap" id="cap_sc" style="left:706px;width:350px">Scope</div>
+  <canvas id="sg_cv" class="cvs" data-w="322" data-h="160" style="left:44px;top:414px"></canvas>
+  <canvas id="sg_lbl" class="cvs" data-w="322" data-h="160" style="left:44px;top:414px;z-index:3;pointer-events:none"></canvas>
+  <canvas id="gn_cv" class="cvs" data-w="300" data-h="160" style="left:386px;top:414px"></canvas>
+  <canvas id="gn_grid" class="cvs" data-w="300" data-h="160" style="left:386px;top:414px;z-index:3;pointer-events:none"></canvas>
+  <canvas id="sc_cv" class="cvs" data-w="350" data-h="160" style="left:706px;top:414px"></canvas>
+  <canvas id="sc_grid" class="cvs" data-w="350" data-h="160" style="left:706px;top:414px;z-index:3;pointer-events:none"></canvas>
+  <!-- right control sidebar -->
+  <div class="pane sb" style="left:853px;top:15px;width:232px;height:48px"></div>
+  <div class="sb plate" style="left:861px;top:22px;width:216px;height:34px">PRISM</div>
+  <div class="pane sb" style="left:853px;top:62px;width:232px;height:88px"></div>
+  <div class="col sb" style="left:861px;top:68px"><div class="lb">Loudness</div><div class="big" id="r_big0"></div><div class="sm" id="r_a0"></div><div class="sm" id="r_b0"></div></div>
+  <div class="pane sb" style="left:853px;top:149px;width:232px;height:88px"></div>
+  <div class="col sb" style="left:861px;top:155px"><div class="lb">True Peak</div><div class="big" id="r_big1"></div><div class="sm" id="r_a1"></div><div class="sm" id="r_b1"></div></div>
+  <div class="pane sb" style="left:853px;top:236px;width:232px;height:88px"></div>
+  <div class="col sb" style="left:861px;top:242px"><div class="lb">Stereo</div><div class="big" id="r_big2"></div><div class="sm" id="r_a2"></div><div class="sm" id="r_b2"></div></div>
+  <div class="pane sb" style="left:853px;top:323px;width:232px;height:136px"></div>
+  <canvas id="meter_cv" class="sb" data-w="230" data-h="134" style="left:854px;top:324px;z-index:3"></canvas>
+  <div class="pane sb" style="left:853px;top:458px;width:232px;height:94px"></div>
+  <canvas id="kb0" class="sb kn" data-w="40" data-h="40" style="left:862px;top:467px"></canvas><div class="sb kl" style="left:853px;top:512px">SMTH</div><div class="sb kv" id="kv0" style="left:853px;top:525px"></div>
+  <canvas id="kb1" class="sb kn" data-w="40" data-h="40" style="left:920px;top:467px"></canvas><div class="sb kl" style="left:911px;top:512px">TILT</div><div class="sb kv" id="kv1" style="left:911px;top:525px"></div>
+  <canvas id="kb2" class="sb kn" data-w="40" data-h="40" style="left:978px;top:467px"></canvas><div class="sb kl" style="left:969px;top:512px">GLOW</div><div class="sb kv" id="kv2" style="left:969px;top:525px"></div>
+  <canvas id="kb3" class="sb kn" data-w="40" data-h="40" style="left:1036px;top:467px"></canvas><div class="sb kl" style="left:1027px;top:512px">SPD</div><div class="sb kv" id="kv3" style="left:1027px;top:525px"></div>
+  <div class="pane sb" style="left:853px;top:551px;width:232px;height:132px"></div>
+  <div class="sb sbn" id="btn_freeze" style="left:863px;top:565px">Freeze</div><div class="sb sbn" id="btn_reset" style="left:971px;top:565px">Reset</div>
+  <div class="sb sbn" id="btn_reset_i" style="left:863px;top:601px">Reset I</div><div class="sb sbn theme" id="btn_theme" style="left:971px;top:601px" title="Color theme (click to cycle)">Coral/Mint</div>
+  <div class="sb sbn" id="btn_src" style="left:863px;top:637px">Sources</div><div class="sb sbn" id="btn_set" style="left:971px;top:637px">Settings</div>
+  <div class="pane ftp" style="left:15px;top:682px;width:1070px;height:23px"></div>
+
+  <div class="pane" id="pn_spec"></div><div class="pane" id="pn_wf"></div><div class="pane" id="pn_sg"></div><div class="pane" id="pn_gn"></div><div class="pane" id="pn_sc"></div>
+  <div class="an" id="an_spec_l"></div><div class="an" id="an_spec_r"></div><div class="an" id="an_wf_l"></div><div class="an" id="an_sg_l"></div><div class="an" id="an_gn_l"></div><div class="an" id="an_gn_r"></div><div class="an" id="an_sc_r"></div>
+  <!-- drag-to-resize dividers (hairlines at rest; brighten + grip on pointer-over/drag) -->
+  <div class="dvd dh" id="dh1" data-axis="rows" style="left:44px;top:132px"></div>
+  <div class="dvd dh" id="dh2" data-axis="rows" style="left:44px;top:384px"></div>
+  <div class="dvd dv" id="dv1" data-axis="cols" style="left:361px;top:394px"></div>
+  <div class="dvd dv" id="dv2" data-axis="cols" style="left:681px;top:394px"></div>
+  
+  <!-- footer status line -->
+  <div class="foot chip" id="chip0" style="left:23px;width:124px"><span class="nm" id="chn0">Ch1</span><span class="dot"></span><span class="cn" id="chc0">coral</span></div>
+  <div class="foot stag" id="solo0" style="left:151px" title="Solo">S</div>
+  <div class="foot chip" id="chip1" style="left:175px;width:124px"><span class="nm" id="chn1">Ch2</span><span class="dot"></span><span class="cn" id="chc1">mint</span></div>
+  <div class="foot stag" id="solo1" style="left:303px" title="Solo">S</div>
+  <div class="foot" id="f_sep">|</div>
+  <div class="foot" id="f_stats"></div>
+  <div class="foot idle" id="flag"><i></i><span id="flag_t">NO DATA &mdash; waiting for audio</span></div>
+  <div class="fsbtn" id="fsbtn" title="Fullscreen presentation (F)"><svg class="ex" viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4.5 4.5M2.5 13.5L7 9"/></svg><svg class="co" viewBox="0 0 16 16"><path d="M13.5 6.5h-4v-4M2.5 9.5h4v4M9.5 6.5l4-4M6.5 9.5l-4 4"/></svg></div>
+
+
+  <!-- device strip -->
+  <!-- popovers -->
+  <div class="pop" id="pop_src"></div>
+  <div class="pop" id="pop_set"></div>
+</div>
+
+<script src="prism-init.js"></script>
+<script>
+/* PRISM production UI (v8). Data enters ONLY through receiveAnalysisFrame(); parameters through the JUCE event bridge. */
+(function () {
+'use strict';
+
+/* ---------- Required WebView behaviour ---------- */
+document.addEventListener("contextmenu", function (e) { e.preventDefault(); return false; });
+
+
+/* ---------- JUCE event bridge (JS -> C++ via emitEvent, C++ -> JS via addEventListener) ---------- */
+var booting = true;   // true until first layout/seed is done: nothing is posted to the host while booting
+var syncing = false;  // true while applying a value that came FROM the host: must never be echoed back
+var backend = (window.__JUCE__ && window.__JUCE__.backend) || null;
+function emit(evt, payload) {
+  try { if (backend && backend.emitEvent) { backend.emitEvent(evt, payload); return true; } } catch (err) { /* fall through */ }
+  return false;
+}
+var Bridge = {
+  gesture: function (id, phase) {   // prismParam {id, gesture:'begin'|'end'}: brackets a continuous edit
+    if (booting || syncing) return;
+    emit('prismParam', { id: id, gesture: phase });
+  },
+  post: function (id, value) {
+    if (booting || syncing) return;
+    if (!emit('prismParam', { id: id, value: value })) console.log('[PRISM -> host unavailable] ' + id + ' = ' + JSON.stringify(value));
+  }
+};
+
+var $ = function (id) { return document.getElementById(id); };
+var TAU = Math.PI * 2;
+var clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
+var DPR = Math.min(2, window.devicePixelRatio || 1);
+
+/* ---------- State ---------- */
+var P = { fft_size: 4096, window: 'hann', smoothing: 35, spectrum_tilt: 4.5, display_range: -90, spectrogram_speed: 1,
+          peak_decay: 12, sg_src: 0, wf_src: 0, color_theme: 'Coral/Mint', freeze: false, analysis_mode: 'combined', preset: 'Studio', reduced_motion: false, glow_intensity: 55 };
+var THEMES = [
+  { name: 'Coral/Mint',   c1: ['coral', '#ff7a66'],    c2: ['mint', '#5df2b8'],   neutral: '#e9e2dc', light: '#ffd2c9', band: ['#ff4b4b', '#ffb84d', '#5df2b8'] },
+  { name: 'Cyan/Violet',  c1: ['cyan', '#00e5ff'],     c2: ['violet', '#b388ff'], neutral: '#d3e7ee', light: '#bff4ff', band: ['#8b62ff', '#d85ad0', '#00e5ff'] },
+  { name: 'Amber/Cyan',   c1: ['amber', '#ffb84d'],    c2: ['cyan', '#00e5ff'],   neutral: '#eae2d2', light: '#ffe2b0', band: ['#ff6b2e', '#ffd24d', '#19e6ff'] },
+  { name: 'Magenta/Blue', c1: ['magenta', '#ff55d9'],  c2: ['blue', '#5b94ff'],   neutral: '#d6e2f2', light: '#ffc2f2', band: ['#ff3fc4', '#9a6bff', '#4fa0ff'] },
+  { name: 'Green/Ice',    c1: ['phosphor', '#6dee7a'], c2: ['ice', '#9fd9ff'],    neutral: '#d5e3ea', light: '#c4f7c9', band: ['#36b866', '#7dff8a', '#bfe6ff'] },
+  { name: 'Gold/Violet',  c1: ['gold', '#f5c242'],     c2: ['violet', '#a583ff'], neutral: '#ebe3d3', light: '#ffe7a8', band: ['#d99a1e', '#fff0d0', '#a583ff'] },
+  { name: 'Ice/Steel',    c1: ['ice', '#e4f2ff'],      c2: ['steel', '#6a94bf'],  neutral: '#bfc7cf', light: '#ffffff', band: ['#5f86b3', '#aab4bf', '#f4faff'] }
+];
+function hexRgb(c) { return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]; }
+var CNAMES = ['', ''];   // theme colour names for the footer chips
+function themeByName(n) { for (var i = 0; i < THEMES.length; i++) if (THEMES[i].name === n) return THEMES[i]; return THEMES[0]; }
+function setColorNames(t) { CNAMES = [t.c1[0], t.c2[0]]; }
+setColorNames(THEMES[0]);
+var SRC = [
+  { name: 'Ch1', color: '#ff7a66', rgb: [255, 122, 102], visible: true, solo: false },
+  { name: 'Ch2', color: '#5df2b8', rgb: [93, 242, 184], visible: true, solo: false }
+];
+function effVisible(i) { var any = SRC[0].solo || SRC[1].solo; return any ? SRC[i].solo : SRC[i].visible; }
+
+var PRESETS = {
+  'Studio':      { smoothing: 35, spectrum_tilt: 4.5, spectrogram_speed: 1,   peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: 'hann' },
+  'Minimal':     { smoothing: 25, spectrum_tilt: 0,   spectrogram_speed: 1,   peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: 'hann' },
+  'Neon':        { smoothing: 45, spectrum_tilt: 3,   spectrogram_speed: 1.5, peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: 'hann' },
+  'Ambient':     { smoothing: 80, spectrum_tilt: 3,   spectrogram_speed: 0.5, peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: 'hann' },
+  'Scientific':  { smoothing: 15, spectrum_tilt: 0,   spectrogram_speed: 1,   peak_decay: 8,  glow_intensity: 0,   fft_size: 16384, window: 'blackmanHarris' },
+  'Performance': { smoothing: 20, spectrum_tilt: 4.5, spectrogram_speed: 2.5, peak_decay: 30, glow_intensity: 70,  fft_size: 2048,  window: 'hann' }
+};
+
+
+/* ---------- Analysis data store (filled ONLY by receiveAnalysisFrame; no generator) ---------- */
+var D = {
+  lastAt: 0, hasData: false, live: false, fs: 0, bpm: null,
+  spec: [null, null],      // latest spectrum targets, dBFS, N log-spaced points 20 Hz..20 kHz
+  sgRow: [null, null],     // optional raw spectrogram row (else the smoothed spectrum is used)
+  gonio: [null, null],     // interleaved L,R sample pairs
+  scope: [null, null],     // time-domain window (any length >= 0.02*fs + 800)
+  wfQ: [[], []],           // pending waveform columns [bass, mids, highs, flag] (flag 0 none, 1 beat, 2 bar)
+  loud: null,              // { M, S, I, LRA }  (null members = not available)
+  peaks: [], stereo: []    // peaks[i] = { sp, tp } max since reset (dB); stereo[i] = { corr, width, bal }
+};
+var dispSt = [null, null];   // smoothed stereo readouts actually displayed
+function isNum(v) { return typeof v === 'number' && isFinite(v); }
+function isLive() { return D.live && D.hasData && (performance.now() - D.lastAt) < 1000; }
+function f32(a) {   // accepts base64 string (little-endian float32), plain number array, or typed array
+  if (!a) return null;
+  if (typeof a === 'string') {
+    var bin = atob(a), u = new Uint8Array(bin.length), i;
+    for (i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return new Float32Array(u.buffer, 0, bin.length >> 2);
+  }
+  if (ArrayBuffer.isView(a)) return a;
+  return Float32Array.from(a);
+}
+function fitTo(arr, n) {   // linear resample to n points
+  if (!arr || arr.length === n) return arr;
+  var out = new Float32Array(n), m = arr.length, i;
+  if (m < 2) { out.fill(m ? arr[0] : -100); return out; }
+  for (i = 0; i < n; i++) { var p = i / (n - 1) * (m - 1), i0 = Math.floor(p), i1 = Math.min(m - 1, i0 + 1), fr = p - i0; out[i] = arr[i0] * (1 - fr) + arr[i1] * fr; }
+  return out;
+}
+/* ============================================================================
+   receiveAnalysisFrame(frame): THE seam between the processor's immutable
+   analysis snapshots and the renderer. Called by the C++ editor timer through
+   the 'prismFrame' event (~60 Hz). Every field is optional; a missing field
+   leaves that module in its idle state. Float arrays may be base64 strings.
+   {
+     sampleRate: 48000, live: true, bpm: 124 | null,
+     spectrum:    [Float[N=640] ch1, Float[640] ch2]   // dBFS, log 20 Hz..20 kHz (resampled if length differs)
+     spectrogram: [Float[640] | null, ...]              // optional un-smoothed rows (else spectrum is used)
+     waveform:    [Float[4*n] ch1, Float[4*n] ch2]      // n NEW columns since last frame: bass,mids,highs (0..1), flag
+     gonio:       [Float[2k] ch1, Float[2k] ch2]        // interleaved L,R in -1..1
+     scope:       [Float[len] ch1, Float[len] ch2]      // time-domain samples in -1..1
+     meters: { loudness: {M,S,I,LRA}, peaks: [{sp,tp},{sp,tp}], stereo: [{corr,width,bal},{...}] }
+   }
+   ============================================================================ */
+function receiveAnalysisFrame(fr) {
+  if (!fr || typeof fr !== 'object') return;
+  D.lastAt = performance.now(); D.hasData = true; D.live = fr.live !== false;
+  if (isNum(fr.sampleRate) && fr.sampleRate > 0) D.fs = fr.sampleRate;
+  D.bpm = isNum(fr.bpm) && fr.bpm > 0 ? fr.bpm : null;   // optional host/analysis tempo; shown as dashes when absent
+  var s, a;
+  for (s = 0; s < 2; s++) {
+    a = fr.spectrum ? f32(fr.spectrum[s]) : null; D.spec[s] = a ? fitTo(a, N) : null;
+    a = fr.spectrogram ? f32(fr.spectrogram[s]) : null; D.sgRow[s] = a ? fitTo(a, N) : null;
+    D.gonio[s] = fr.gonio ? f32(fr.gonio[s]) : null;
+    D.scope[s] = fr.scope ? f32(fr.scope[s]) : null;
+    a = fr.waveform ? f32(fr.waveform[s]) : null;
+    if (a) { var q = D.wfQ[s]; for (var k = 0; k + 3 < a.length; k += 4) q.push([a[k], a[k + 1], a[k + 2], a[k + 3]]); while (q.length > 64) q.shift(); }
+  }
+  var m = fr.meters;
+  if (m) { D.loud = m.loudness || null; D.peaks = m.peaks || []; D.stereo = m.stereo || []; }
+}
+window.receiveAnalysisFrame = receiveAnalysisFrame;
+
+var hooks = {};
+function on(id, fn) { (hooks[id] = hooks[id] || []).push(fn); }
+function setParam(id, val, silent) {
+  P[id] = val; if (!silent) Bridge.post(id, val);
+  var h = hooks[id]; if (h) for (var i = 0; i < h.length; i++) h[i](val);
+}
+
+/* ---------- Canvases ---------- */
+var cv = {};
+['meter_cv', 'kb0', 'kb1', 'kb2', 'kb3', 'spec_ghost', 'spec_cv', 'wf_cv', 'sg_cv', 'sg_lbl', 'gn_cv', 'gn_grid', 'sc_cv', 'sc_grid'].forEach(function (id) {
+  var el = $(id), w = +el.dataset.w, h = +el.dataset.h;
+  el.width = Math.round(w * DPR); el.height = Math.round(h * DPR); el.style.width = w + 'px'; el.style.height = h + 'px';
+  var g = el.getContext('2d'); g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cv[id] = { el: el, g: g, w: w, h: h };
+});
+var MONO = '"SF Mono", ui-monospace, Menlo, Consolas, monospace';
+var GLASS = '#0a0c0e';
+
+function setCv(id, w, h, left, top) {
+  var o = cv[id], el = o.el;
+  if (w !== o.w || h !== o.h) { o.w = w; o.h = h; el.width = Math.round(w * DPR); el.height = Math.round(h * DPR); el.style.width = w + 'px'; el.style.height = h + 'px'; o.g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  if (left != null) el.style.left = left + 'px';
+  if (top != null) el.style.top = top + 'px';
+}
+function fitStage() {
+  var s = Math.min(window.innerWidth / 1100, window.innerHeight / 720), st = $('stage');
+  st.style.transform = 'translate(' + ((window.innerWidth - 1100 * s) / 2) + 'px,' + ((window.innerHeight - 720 * s) / 2) + 'px) scale(' + s + ')';
+  stageScale = s;
+}
+var stageScale = 1;
+
+/* ---------- Frequency model ---------- */
+var N = 640, FMIN = 20, FMAX = 20000, OCTS = Math.log2(FMAX / FMIN), BPO = (N - 1) / OCTS;
+var freqs = new Float32Array(N), octs = new Float32Array(N), tiltOff = new Float32Array(N);
+for (var i = 0; i < N; i++) { octs[i] = OCTS * i / (N - 1); freqs[i] = FMIN * Math.pow(2, octs[i]); }
+function updateTilt() { for (var i = 0; i < N; i++) tiltOff[i] = P.spectrum_tilt * (octs[i] - Math.log2(1000 / FMIN)); }
+
+function Spec() { this.sm = new Float32Array(N).fill(-100); this.peak = new Float32Array(N).fill(-100); this.hold = new Float32Array(N); this.dom = 0; }
+var specs = [new Spec(), new Spec()];
+var domT = 0;
+
+/* Smoothing / peak-hold are display-side (per yaml mapping: attack 5 + 0.6*v ms, release 30 + 8*v ms).
+   With no live data the targets fall to the -100 dB floor, so the curves decay to an honest empty state. */
+function updateSpectra(dt) {
+  var aT = (5 + P.smoothing * 0.6) / 1000, rT = (30 + P.smoothing * 8) / 1000; if (P.reduced_motion) rT *= 1.6;
+  var ca = 1 - Math.exp(-dt / aT), cr = 1 - Math.exp(-dt / rT), decay = P.peak_decay, live = isLive();
+  for (var s = 0; s < 2; s++) {
+    var sp = specs[s], src = live ? D.spec[s] : null;
+    for (var i = 0; i < N; i++) {
+      var tgt = (src && src[i] > -100) ? src[i] : -100;
+      var cur = sp.sm[i]; cur += (tgt - cur) * (tgt > cur ? ca : cr); sp.sm[i] = cur;
+      if (cur >= sp.peak[i]) { sp.peak[i] = cur; sp.hold[i] = 1.2; } else if (sp.hold[i] > 0) sp.hold[i] -= dt; else sp.peak[i] = Math.max(cur, sp.peak[i] - decay * dt);
+    }
+  }
+  domT -= dt;
+  if (domT <= 0) { domT = 0.12; for (var q = 0; q < 2; q++) { var best = -1000, bi = 0; for (var j = 0; j < N; j++) { if (freqs[j] < 30) continue; if (specs[q].sm[j] > best) { best = specs[q].sm[j]; bi = j; } } specs[q].dom = bi; } }
+}
+
+/* ---------- Notes ---------- */
+var NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+function noteOf(f) { var x = 69 + 12 * Math.log2(f / 440), r = Math.round(x); return { name: NOTES[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1), cents: Math.round((x - r) * 100) }; }
+/* ================= v2: SMOOTH SPECTRAL CURVES ================= */
+var SPX = { pw: 980, T: 6, ph: 152 };
+function lighten(rgb, k) { return [Math.round(rgb[0] + (255 - rgb[0]) * k), Math.round(rgb[1] + (255 - rgb[1]) * k), Math.round(rgb[2] + (255 - rgb[2]) * k)]; }
+function xOfF(f) { return Math.log2(f / FMIN) / OCTS * SPX.pw; }
+function yOf(db) { var lo = P.display_range; return SPX.T + (-clamp(db, lo, 0)) / (-lo) * SPX.ph; }
+function drawSpecGrid() {
+  var o = cv.spec_ghost, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  var lo = P.display_range, step = lo / 3;
+  g.font = '10px ' + MONO; g.textBaseline = 'middle'; g.textAlign = 'left'; g.lineWidth = 1;
+  // engineering graph paper: 10 dB horizontal rules (every 30 dB stronger), decade + 2..9 vertical rules
+  for (var d = 0; d >= lo; d -= 10) { var yy = Math.round(yOf(d)) + 0.5; g.strokeStyle = d === 0 ? 'rgba(255,255,255,0.10)' : (d % 30 === 0 ? 'rgba(255,255,255,0.055)' : 'rgba(255,255,255,0.028)'); g.beginPath(); g.moveTo(0, yy); g.lineTo(SPX.pw, yy); g.stroke(); }
+  for (var k = 0; k <= 3; k++) {
+    var db = k * step, y = Math.round(yOf(db)) + 0.5;
+    if (k > 0) { g.strokeStyle = 'rgba(255,255,255,0.05)'; g.beginPath(); g.moveTo(0, y); g.lineTo(SPX.pw, y); g.stroke(); }
+    g.fillStyle = 'rgba(122,136,148,0.55)'; g.fillText(String(Math.round(db)), SPX.pw + 8, clamp(y, 7, SPX.T + SPX.ph - 6));
+  }
+  [10, 100, 1000, 10000].forEach(function (dec) {
+    for (var m = 1; m <= 9; m++) {
+      var f = m * dec; if (f < 20 || f > 20000) continue;
+      var x = Math.round(xOfF(f)) + 0.5; g.strokeStyle = m === 1 ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.026)';
+      g.beginPath(); g.moveTo(x, SPX.T); g.lineTo(x, SPX.T + SPX.ph); g.stroke();
+    }
+  });
+  g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(122,136,148,0.7)';
+  [[20, '20'], [100, '100'], [1000, '1k'], [10000, '10k'], [20000, '20k']].forEach(function (m) {
+    var x = xOfF(m[0]); g.textAlign = m[0] === 20 ? 'left' : (m[0] === 20000 ? 'right' : 'center');
+    g.fillText(m[1], clamp(x, m[0] === 20 ? 5 : 0, SPX.pw), SPX.T + SPX.ph + 13);
+  });
+  g.textAlign = 'left'; g.fillStyle = 'rgba(122,136,148,0.4)'; g.fillText('dbfs', SPX.pw + 8, SPX.T + SPX.ph + 13);
+}
+var hovIdx = -1, needRedraw = true;
+function curvePath(arr, tilt) {
+  var p = new Path2D(), x, y;
+  for (var i = 0; i < N; i++) { x = i / (N - 1) * SPX.pw; y = yOf(arr[i] + (tilt ? tilt[i] : 0)); if (i) p.lineTo(x, y); else p.moveTo(x, y); }
+  return p;
+}
+function drawSpectrum() {
+  var o = cv.spec_cv, g = o.g, gl = P.glow_intensity / 100, bottom = SPX.T + SPX.ph, order = [1, 0], paths = [null, null], i, s;
+  g.clearRect(0, 0, o.w, o.h); g.lineJoin = 'round'; g.lineCap = 'round';
+  for (i = 0; i < 2; i++) { s = order[i]; if (effVisible(s)) paths[s] = curvePath(specs[s].sm, tiltOff); }
+  // 1. translucent vertical-gradient fills (source-over, low alpha: no invented third colour)
+  for (i = 0; i < 2; i++) {
+    s = order[i]; if (!paths[s]) continue; var rgb = SRC[s].rgb.join(','), f = new Path2D(paths[s]);
+    f.lineTo(SPX.pw, bottom); f.lineTo(0, bottom); f.closePath();
+    var gr = g.createLinearGradient(0, SPX.T, 0, bottom); gr.addColorStop(0, 'rgba(' + rgb + ',0.28)'); gr.addColorStop(0.5, 'rgba(' + rgb + ',0.10)'); gr.addColorStop(1, 'rgba(' + rgb + ',0.01)');
+    g.fillStyle = gr; g.fill(f);
+  }
+  // 2. thin falling peak-hold traces
+  for (i = 0; i < 2; i++) {
+    s = order[i]; if (!paths[s]) continue; g.strokeStyle = 'rgba(' + lighten(SRC[s].rgb, 0.45).join(',') + ',0.5)'; g.lineWidth = 1; g.stroke(curvePath(specs[s].peak, tiltOff));
+  }
+  // 3. glowing strokes on top (Ch1 last = on top), each in its own source colour
+  for (i = 0; i < 2; i++) {
+    s = order[i]; if (!paths[s]) continue; var c = SRC[s].rgb.join(',');
+    g.shadowColor = 'rgba(' + c + ',0.55)'; g.shadowBlur = gl > 0 ? 2 + 9 * gl : 0; g.lineWidth = 1.7; g.strokeStyle = 'rgb(' + c + ')'; g.stroke(paths[s]); g.shadowBlur = 0;
+  }
+  if (!isLive()) { g.font = '11px ' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(122,136,148,0.55)'; g.fillText(D.hasData && (performance.now() - D.lastAt) < 1000 ? 'No signal' : 'No data \u2014 waiting for audio', SPX.pw / 2, SPX.T + SPX.ph / 2); g.textAlign = 'left'; g.textBaseline = 'alphabetic'; }
+  // hover: crosshair + rings
+  if (hovIdx >= 0) {
+    var hx = Math.round(hovIdx / (N - 1) * SPX.pw) + 0.5;
+    g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = 1; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(hx, SPX.T); g.lineTo(hx, bottom); g.stroke(); g.setLineDash([]);
+    for (s = 0; s < 2; s++) { if (!paths[s]) continue; g.beginPath(); g.arc(hx, yOf(specs[s].sm[hovIdx] + tiltOff[hovIdx]), 3.5, 0, TAU); g.lineWidth = 1.5; g.strokeStyle = SRC[s].color; g.stroke(); g.fillStyle = 'rgba(10,12,14,0.8)'; g.fill(); }
+  }
+}
+function applyGlow() { /* glow is read per frame from P.glow_intensity */ }
+function shortName(i) { return SRC[i].name; }
+function tint(i, txt) { return '<span class="sv" style="color:' + SRC[i].color + ';--sg:rgba(' + SRC[i].rgb.join(',') + ',0.35)">' + txt + '</span>'; }
+function kv(l, v, u, si) { return '<i>' + l + '</i> ' + (si === undefined ? v + u : tint(si, v + u)); }
+function updateInsp() {
+  var idx, tag, h, s, best = -1000;
+  if (hovIdx >= 0) { idx = hovIdx; tag = 'CUR'; }
+  else { idx = 0; for (var q = 0; q < 2; q++) { if (!effVisible(q)) continue; var d = specs[q].dom, v = specs[q].sm[d]; if (v > best) { best = v; idx = d; } } tag = 'DOM'; if (best < -99.5) { $('insp').innerHTML = '<i>' + tag + '</i> <b>---</b>'; return; } }
+  var f = freqs[idx], nt = noteOf(f), fs = f >= 1000 ? (f / 1000).toFixed(2) + 'khz' : f.toFixed(2) + 'hz';
+  h = '<i>' + tag + '</i> <b>' + fs + '</b>  <i>' + nt.name + '</i> <b>' + (nt.cents >= 0 ? '+' : '') + nt.cents + 'c</b>';
+  for (s = 0; s < 2; s++) {
+    var raw = specs[s].sm[idx];
+    h += '  <span' + (effVisible(s) ? '' : ' class="dim"') + '>' + tint(s, SRC[s].name + ' ' + (raw < -99.5 ? '---' : raw.toFixed(2)) + 'dbfs') + '</span>';
+  }
+  $('insp').innerHTML = h;
+}
+(function () {
+  var el = cv.spec_cv.el;
+  function idxAt(e) { var r = el.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * cv.spec_cv.w; return (x >= 0 && x <= SPX.pw) ? Math.round(x / SPX.pw * (N - 1)) : -1; }
+  el.addEventListener('pointermove', function (e) { hovIdx = idxAt(e); needRedraw = true; if (P.freeze) { drawSpectrum(); updateInsp(); } });
+  el.addEventListener('pointerleave', function () { hovIdx = -1; needRedraw = true; if (P.freeze) { drawSpectrum(); updateInsp(); } });
+})();
+
+/* ================= SPECTROGRAM (vertical waterfall; history kept as INTENSITY so a theme change can retint it) ================= */
+var SGW = 322, SGH = 160, sgOff = null, sgCtx = null, sgW = 0, sgH = 0, sgAcc = 0, sgInt = null;
+var sgOrient = 'v';   // UI state 'v' | 'h' (spectrogram_orientation); V = vertical waterfall, H = horizontal scroll (freq bottom->top, time right->left)
+var SG_PPS = 36;   // waterfall scroll speed (CSS px of time per second) at speed 1.0
+var colLo = null, colHi = null, colFi = null, colRGB = null, prevCol = null, curCol = null, blurCol = null;
+function sgCols() {   // one index per DEVICE pixel on the log frequency axis. V: x = freq (left 20 Hz). H: y = freq (bottom 20 Hz)
+  var fN = sgOrient === 'h' ? sgH : sgW;
+  colLo = new Uint16Array(fN); colHi = new Uint16Array(fN); colFi = new Float32Array(fN); colRGB = [];
+  prevCol = null; curCol = new Float32Array(fN); blurCol = new Float32Array(fN);
+  for (var x = 0; x < fN; x++) {
+    var pL = x / fN, pR = (x + 1) / fN; if (sgOrient === 'h') { var t0 = pL; pL = 1 - pR; pR = 1 - t0; }
+    var pc = (pL + pR) / 2;
+    colFi[x] = pc * (N - 1); colLo[x] = Math.max(0, Math.floor(pL * (N - 1))); colHi[x] = Math.min(N - 1, Math.ceil(pR * (N - 1)));
+    colRGB[x] = bandRGB(pc);
+  }
+}
+function sgPixel(d, o, t, c) {
+  var lift = clamp((t - 0.9) / 0.1, 0, 1) * 0.6;
+  d[o] = Math.min(255, 10 * (1 - t) + c[0] * t * 1.08 + 255 * lift * t);
+  d[o + 1] = Math.min(255, 12 * (1 - t) + c[1] * t * 1.08 + 255 * lift * t);
+  d[o + 2] = Math.min(255, 14 * (1 - t) + c[2] * t * 1.08 + 255 * lift * t);
+  d[o + 3] = 255;
+}
+function sgRecolor() {   // re-render the whole history from the stored intensities (theme change / resize)
+  if (!sgCtx || !sgInt) return;
+  var img = sgCtx.createImageData(sgW, sgH), d = img.data, x, y;
+  var hz = sgOrient === 'h';
+  for (y = 0; y < sgH; y++) for (x = 0; x < sgW; x++) sgPixel(d, (y * sgW + x) * 4, Math.min(1, sgInt[y * sgW + x] / 255), colRGB[hz ? y : x]);
+  sgCtx.putImageData(img, 0, 0);
+}
+function sgInit() {
+  sgW = Math.round(SGW * DPR); sgH = Math.round(SGH * DPR);
+  sgOff = document.createElement('canvas'); sgOff.width = sgW; sgOff.height = sgH; sgCtx = sgOff.getContext('2d'); sgCtx.fillStyle = GLASS; sgCtx.fillRect(0, 0, sgW, sgH);
+  sgInt = new Uint8Array(sgW * sgH); sgCols();
+}
+function sgClear() { if (!sgOff) { sgInit(); return; } sgInt.fill(0); sgCtx.fillStyle = GLASS; sgCtx.fillRect(0, 0, sgW, sgH); prevCol = null; }
+function sgSetOrient(o, fromHost) {   // reproject the stored history (no clearing): transpose + flip so freq/time map correctly
+  o = o === 'h' ? 'h' : 'v'; if (o === sgOrient) return; sgOrient = o; UI.sgo = o; applySources();
+  if (sgOff && sgInt) {
+    var W = sgW, H = sgH, old = sgInt, X, Y; sgInt = new Uint8Array(W * H);
+    for (Y = 0; Y < H; Y++) { var ox = Math.min(W - 1, Math.max(0, Math.floor(W * (1 - (Y + 0.5) / H)))); for (X = 0; X < W; X++) { var oy = Math.min(H - 1, Math.max(0, Math.floor(H * (1 - (X + 0.5) / W)))); sgInt[Y * W + X] = old[oy * W + ox]; } }
+    sgCols(); sgRecolor();
+  } else sgCols();
+  drawSgLabels(); if (sgOff && !booting) drawSpectrogram();
+  if (!fromHost) postUi();
+}
+function sgResize() {   // live resize: keep (stretch) the existing history
+  if (!sgOff) { sgInit(); return; }
+  var nw = Math.round(SGW * DPR), nh = Math.round(SGH * DPR); if (nw === sgW && nh === sgH) return;
+  var ow = sgW, oh = sgH, old = sgInt, x, y; sgW = nw; sgH = nh;
+  sgInt = new Uint8Array(sgW * sgH);
+  for (y = 0; y < sgH; y++) { var oy = Math.min(oh - 1, Math.floor(y * oh / sgH)); for (x = 0; x < sgW; x++) sgInt[y * sgW + x] = old[oy * ow + Math.min(ow - 1, Math.floor(x * ow / sgW))]; }
+  sgOff = document.createElement('canvas'); sgOff.width = sgW; sgOff.height = sgH; sgCtx = sgOff.getContext('2d');
+  sgCols(); sgRecolor();
+}
+function colDb(x, sm) {
+  var lo = colLo[x], hi = colHi[x], i, v;
+  if (hi - lo >= 2) { var m = -200, a = 0; for (i = lo; i <= hi; i++) { v = sm[i]; if (v > m) m = v; a += v; } return 0.5 * m + 0.5 * a / (hi - lo + 1); }
+  var f = colFi[x], i0 = Math.floor(f), fr = f - i0, i1 = Math.min(N - 1, i0 + 1);
+  return sm[i0] * (1 - fr) + sm[i1] * fr;   // spectrogram intensity is UNTILTED (tilt is a spectrum-curve visual only)
+}
+/* Frequency-band colour (theme-derived trio): continuous low -> mid -> high along the log frequency axis (20 Hz .. 20 kHz) */
+var BAND = { low: hexRgb(THEMES[0].band[0]), mid: hexRgb(THEMES[0].band[1]), high: hexRgb(THEMES[0].band[2]) };   // retinted by applyTheme()
+function bandRGB(p) {
+  var a, b, u; if (p < 0.5) { a = BAND.low; b = BAND.mid; u = p / 0.5; } else { a = BAND.mid; b = BAND.high; u = (p - 0.5) / 0.5; }
+  u = u * u * (3 - 2 * u);   // smoothstep: soft blend across band boundaries
+  return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+}
+function sgStep(dt) {
+  var vert = sgOrient !== 'h', tdim = vert ? sgH : sgW, fN = vert ? sgW : sgH;
+  sgAcc += SG_PPS * P.spectrogram_speed * dt * DPR; var n = Math.floor(sgAcc); if (n < 1) return; sgAcc -= n; n = Math.min(n, tdim);
+  var y0;
+  if (vert) { sgCtx.drawImage(sgOff, 0, n); sgInt.copyWithin(n * sgW, 0, (sgH - n) * sgW); }   // V: history scrolls DOWN (newest on top)
+  else { sgCtx.drawImage(sgOff, -n, 0); for (y0 = 0; y0 < sgH; y0++) sgInt.copyWithin(y0 * sgW, y0 * sgW + n, (y0 + 1) * sgW); }   // H: history scrolls LEFT (newest at right)
+  var s = P.sg_src, sm = (isLive() && D.sgRow[s]) ? D.sgRow[s] : specs[s].sm, x, k, lo = P.display_range, floorDb = lo * 0.7, span = -6 - floorDb;
+  for (x = 0; x < fN; x++) curCol[x] = colDb(x, sm);
+  for (x = 0; x < fN; x++) { var a0 = curCol[x > 0 ? x - 1 : x], a2 = curCol[x < fN - 1 ? x + 1 : x]; blurCol[x] = 0.25 * a0 + 0.5 * curCol[x] + 0.25 * a2; }   // smoothing along the frequency axis: no blocks
+  if (!prevCol) prevCol = new Float32Array(blurCol);
+  var img = vert ? sgCtx.createImageData(sgW, n) : sgCtx.createImageData(n, sgH), d = img.data;
+  for (k = 0; k < n; k++) {
+    var u = (k + 1) / n, tIdx = vert ? n - 1 - k : k;   // temporal interpolation between frames; newest row on top (V) / right (H)
+    for (x = 0; x < fN; x++) {
+      var db = prevCol[x] + (blurCol[x] - prevCol[x]) * u, t = clamp((db - floorDb) / span, 0, 1);
+      t = Math.pow(t, 1.7);   // perceptual curve, deep black floor
+      if (vert) sgInt[tIdx * sgW + x] = Math.round(t * 255); else sgInt[x * sgW + (sgW - n + k)] = Math.round(t * 255);
+      sgPixel(d, (vert ? (tIdx * sgW + x) : (x * n + tIdx)) * 4, t, colRGB[x]);
+    }
+  }
+  prevCol.set(blurCol);
+  sgCtx.putImageData(img, vert ? 0 : sgW - n, 0);
+}
+function drawSpectrogram() { var o = cv.sg_cv, g = o.g; g.imageSmoothingEnabled = true; g.drawImage(sgOff, 0, 0, o.w, o.h); }
+
+function drawSgLabelsH() {
+  var o = cv.sg_lbl, g = o.g; g.clearRect(0, 0, o.w, o.h); g.font = '9px ' + MONO;
+  var yOfF = function (f) { return Math.round((1 - Math.log2(f / FMIN) / OCTS) * o.h); };
+  [10, 100, 1000, 10000].forEach(function (dec) { for (var m2 = 2; m2 <= 9; m2++) { var f2 = m2 * dec; if (f2 < 20 || f2 > 20000) continue; g.fillStyle = 'rgba(255,255,255,0.028)'; g.fillRect(0, yOfF(f2), o.w - 14, 1); } });
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  [[100, '100'], [1000, '1k'], [10000, '10k']].forEach(function (m) { var y = yOfF(m[0]); g.fillStyle = 'rgba(255,255,255,0.07)'; g.fillRect(0, y, o.w, 1); g.fillStyle = 'rgba(190,205,215,0.55)'; g.fillText(m[1], 5, y + 7); });
+  g.fillStyle = 'rgba(190,205,215,0.55)'; g.textBaseline = 'alphabetic'; g.fillText('20', 5, o.h - 14);
+  var pps = SG_PPS * P.spectrogram_speed, step = (o.w / pps) > 7 ? 2 : 1; g.textAlign = 'center';
+  g.fillStyle = 'rgba(190,205,215,0.5)'; g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4); g.textAlign = 'center';
+  for (var t = step; t * pps < o.w - 40; t += step) { var x = Math.round(o.w - t * pps) + 0.5; g.fillStyle = 'rgba(255,255,255,0.14)'; g.fillRect(x, o.h - 14, 1, 5); g.fillStyle = 'rgba(190,205,215,0.5)'; g.fillText('-' + t + 's', x, o.h - 3); }
+}
+function drawSgLabels() {
+  if (sgOrient === 'h') { drawSgLabelsH(); return; }
+  var o = cv.sg_lbl, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  g.font = '9px ' + MONO; g.textBaseline = 'alphabetic';
+  // frequency axis (horizontal, log 20 Hz -> 20 kHz): matches the spectrum analyzer above
+  [10, 100, 1000, 10000].forEach(function (dec) { for (var m2 = 2; m2 <= 9; m2++) { var f2 = m2 * dec; if (f2 < 20 || f2 > 20000) continue; var xm = Math.round(Math.log2(f2 / FMIN) / OCTS * o.w); g.fillStyle = 'rgba(255,255,255,0.028)'; g.fillRect(xm, 0, 1, o.h - 14); } });
+  [[100, '100'], [1000, '1k'], [10000, '10k']].forEach(function (m) {
+    var x = Math.round(Math.log2(m[0] / FMIN) / OCTS * o.w); g.fillStyle = 'rgba(255,255,255,0.07)'; g.fillRect(x, 0, 1, o.h - 14);
+    g.textAlign = 'center'; g.fillStyle = 'rgba(190,205,215,0.55)'; g.fillText(m[1], x, o.h - 4);
+  });
+  g.fillStyle = 'rgba(190,205,215,0.55)'; g.textAlign = 'left'; g.fillText('20', 4, o.h - 4); g.textAlign = 'right'; if (o.w >= 270) g.fillText('20k', o.w - 4, o.h - 4);
+  // time axis (vertical, newest at top, history flows down) on the right side
+  var pps = SG_PPS * P.spectrogram_speed, step = (o.h / pps) > 6 ? 2 : 1;
+  g.textBaseline = 'middle'; g.textAlign = 'right'; g.fillStyle = 'rgba(190,205,215,0.5)'; g.fillText('now', o.w - 6, 8);
+  for (var t = step; t * pps < o.h - 22; t += step) { var y = Math.round(t * pps) + 0.5; g.fillStyle = 'rgba(255,255,255,0.14)'; g.fillRect(o.w - 5, y, 5, 1); g.fillStyle = 'rgba(190,205,215,0.5)'; g.fillText('-' + t + 's', o.w - 8, y); }
+}
+
+/* ================= VECTORSCOPE + SCOPE ================= */
+/* ================= VECTORSCOPE + SCOPE (fed by D.gonio / D.scope) ================= */
+var GN = { cx: 150, cy: 80, R: 78 };
+function drawGonio() {
+  var o = cv.gn_cv, g = o.g, cx = GN.cx, cy = GN.cy, Rr = GN.R, live = isLive();
+  g.globalCompositeOperation = 'source-over'; g.fillStyle = P.reduced_motion ? GLASS : 'rgba(10,12,14,0.13)'; g.fillRect(0, 0, o.w, o.h);
+  g.globalCompositeOperation = 'lighter';
+  for (var s = 0; s < 2; s++) {
+    var data = D.gonio[s]; if (!live || !data || !effVisible(s)) continue;
+    g.fillStyle = 'rgba(' + SRC[s].rgb.join(',') + ',' + (0.3 + 0.16 * P.glow_intensity / 100).toFixed(2) + ')';
+    for (var k = 0; k + 1 < data.length; k += 2) {
+      var L = data[k], Rv = data[k + 1], m = (L + Rv) * 0.7071, sd = (Rv - L) * 0.7071;   // 45 deg rotated M/S; S = R-L so hard-left plots upper-left (L label), hard-right upper-right
+      var x = cx + sd * Rr * 0.95, y = cy - m * Rr * 0.95, dx = x - cx, dy = y - cy, dl = Math.sqrt(dx * dx + dy * dy);
+      if (dl > Rr) { x = cx + dx / dl * Rr; y = cy + dy / dl * Rr; }
+      g.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
+    }
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+function drawGnGrid() {
+  var o = cv.gn_grid, g = o.g, cx = GN.cx, cy = GN.cy, Rr = GN.R; g.clearRect(0, 0, o.w, o.h);
+  g.lineWidth = 1;
+  [1, 0.75, 0.5, 0.25].forEach(function (k, i) { g.strokeStyle = i === 0 ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.05)'; g.beginPath(); g.arc(cx, cy, Rr * k, 0, TAU); g.stroke(); });
+  g.strokeStyle = 'rgba(255,255,255,0.06)'; g.beginPath(); g.moveTo(cx - Rr, cy + 0.5); g.lineTo(cx + Rr, cy + 0.5); g.moveTo(cx + 0.5, cy - Rr); g.lineTo(cx + 0.5, cy + Rr); g.stroke();
+  g.setLineDash([2, 4]); var d = Rr * 0.7071; g.beginPath(); g.moveTo(cx - d, cy - d); g.lineTo(cx + d, cy + d); g.moveTo(cx + d, cy - d); g.lineTo(cx - d, cy + d); g.stroke(); g.setLineDash([]);
+  g.font = '9px ' + MONO; g.fillStyle = 'rgba(122,136,148,0.75)'; g.textBaseline = 'middle'; g.textAlign = 'center';
+  g.fillText('M', cx, cy - Rr + 11); g.fillText('-M', cx, cy + Rr - 11); g.fillText('S', cx + Rr - 11, cy); g.fillText('S', cx - Rr + 11, cy);
+  g.fillText('L', cx - d + 12, cy - d + 5); g.fillText('R', cx + d - 12, cy - d + 5);
+}
+var SCP = { L: 30, T: 12, pw: 312, ph: 126 };
+function drawScope() {
+  var o = cv.sc_cv, g = o.g, live = isLive();
+  g.globalCompositeOperation = 'source-over'; g.fillStyle = P.reduced_motion ? GLASS : 'rgba(10,12,14,0.26)'; g.fillRect(0, 0, o.w, o.h);
+  g.globalCompositeOperation = 'lighter'; g.lineJoin = 'round';
+  var cy = SCP.T + SCP.ph / 2, gl = P.glow_intensity / 100, fs = D.fs || 48000;
+  for (var s = 0; s < 2; s++) {
+    var buf = D.scope[s]; if (!live || !buf || buf.length < 64 || !effVisible(s)) continue;
+    var span = Math.min(Math.round(0.02 * fs), buf.length - 1);   // 10 divisions x 2 ms
+    var trig = 0, lim = Math.min(800, buf.length - span - 2);
+    for (var q = 1; q < lim; q++) if (buf[q - 1] < 0 && buf[q] >= 0 && buf[q + 12] > buf[q]) { trig = q; break; }
+    g.beginPath();
+    for (var j = 0; j < SCP.pw; j++) { var v = buf[Math.min(buf.length - 1, trig + Math.round(j / (SCP.pw - 1) * span))], y = cy - clamp(v, -1, 1) * SCP.ph / 2 * 0.96, x = SCP.L + j; if (j) g.lineTo(x, y); else g.moveTo(x, y); }
+    var rgb = SRC[s].rgb.join(',');
+    g.lineWidth = 4; g.strokeStyle = 'rgba(' + rgb + ',' + (gl * 0.10).toFixed(3) + ')'; g.stroke();
+    g.lineWidth = 1.2; g.strokeStyle = 'rgba(' + rgb + ',0.88)'; g.stroke();
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+function drawScGrid() {
+  var o = cv.sc_grid, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  g.lineWidth = 1; g.font = '9px ' + MONO; g.textBaseline = 'middle'; g.textAlign = 'left';
+  for (var i = 0; i <= 20; i++) { var x = Math.round(SCP.L + i * SCP.pw / 20) + 0.5; g.strokeStyle = i % 10 === 0 ? 'rgba(255,255,255,0.08)' : (i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.022)'); g.beginPath(); g.moveTo(x, SCP.T); g.lineTo(x, SCP.T + SCP.ph); g.stroke(); }
+  for (var j = -4; j <= 4; j++) {   // horizontal rules every 0.25 FS
+    var v = j / 4, yy = Math.round(SCP.T + SCP.ph / 2 - v * SCP.ph / 2) + 0.5; g.strokeStyle = j === 0 ? 'rgba(255,255,255,0.11)' : (j % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.022)');
+    g.beginPath(); g.moveTo(SCP.L, yy); g.lineTo(SCP.L + SCP.pw, yy); g.stroke();
+  }
+  [[1, '+1'], [0.5, '.5'], [0, '0'], [-0.5, '-.5'], [-1, '-1']].forEach(function (a) {
+    var y = Math.round(SCP.T + SCP.ph / 2 - a[0] * SCP.ph / 2) + 0.5; g.fillStyle = 'rgba(122,136,148,0.7)'; g.fillText(a[1], 6, y);
+  });
+  g.textAlign = 'right'; g.fillStyle = 'rgba(122,136,148,0.6)'; g.textBaseline = 'alphabetic'; g.fillText('2ms/div', SCP.L + SCP.pw, o.h - 6);
+}
+/* ================= READOUTS (measured values only; unavailable -> dashes, never fabricated) ================= */
+function resetMetersLocal(all) {   // optimistic local clear; the processor is the source of truth and the next frame confirms it
+  if (D.loud) D.loud = { M: D.loud.M, S: D.loud.S, I: null, LRA: 0 };
+  if (all) { D.peaks = []; specs.forEach(function (s) { s.peak.set(s.sm); }); }
+}
+function updateMeters(dt) {   // light smoothing of the stereo readouts toward the host values
+  var live = isLive(), a = 1 - Math.exp(-dt / 0.12);
+  for (var s = 0; s < 2; s++) {
+    var t = live ? D.stereo[s] : null;
+    if (!t || !isNum(t.corr)) { dispSt[s] = null; continue; }
+    var w = isNum(t.width) ? t.width : 0, b = isNum(t.bal) ? t.bal : 0, c = dispSt[s];
+    if (!c) dispSt[s] = { corr: t.corr, width: w, bal: b };
+    else { c.corr += (t.corr - c.corr) * a; c.width += (w - c.width) * a; c.bal += (b - c.bal) * a; }
+  }
+}
+function paintAnnot() {   // corner annotations: live parameter / measured values only
+  var sg = function (v) { return (v >= 0 ? '+' : '') + v.toFixed(2); };
+  $('an_spec_l').innerHTML = 'FFT <b>' + P.fft_size + '</b>  WIN <b>' + (P.window === 'hann' ? 'hann' : 'blkhrr') + '</b>  RES <b>' + (D.fs ? (D.fs / P.fft_size).toFixed(2) + 'hz' : '---') + '</b>';
+  $('an_spec_r').innerHTML = 'SMTH <b>' + Math.round(P.smoothing) + '%</b>  TILT <b>' + P.spectrum_tilt.toFixed(1) + '</b>  RNG <b>' + P.display_range + '</b>';
+  $('an_wf_l').innerHTML = 'BPM <b>' + (D.bpm ? D.bpm.toFixed(2).replace(/\.?0+$/, '') : '---') + '</b>  SPAN <b>' + Math.round(cv.wf_cv.w / WF.pps) + 's</b>';
+  $('an_sg_l').innerHTML = 'SPD <b>' + P.spectrogram_speed.toFixed(2) + 'x</b>';
+  $('an_gn_l').innerHTML = 'CORR <b>' + (dispSt[0] ? sg(dispSt[0].corr) : '---.--') + '</b>';
+  $('an_gn_r').innerHTML = 'ROT <b>45&deg;</b>';
+  $('an_sc_r').innerHTML = 'TRIG <b>+0</b>  SPAN <b>20ms</b>';
+}
+function paintReadouts() {
+  paintAnnot();
+  var live = isLive(), dash = '---.--';
+  var f2 = function (v) { return isNum(v) ? (v < 0 ? '-' : '') + Math.abs(v).toFixed(2) : dash; };
+  var sg = function (v) { return (v >= 0 ? '+' : '-') + Math.abs(v).toFixed(2); };
+  var pv = function (v) { return isNum(v) && v > -98 ? v : null; };
+  var nm = function (i) { return tint(i, shortName(i)); };
+  var Ld = D.loud || {}, Mv = live ? Ld.M : null, Sv = live ? Ld.S : null, Iv = Ld.I;
+  $('r_big0').innerHTML = '<span>' + f2(Iv) + '</span>lufs';
+  $('r_a0').innerHTML = kv('M:', f2(Mv), 'lufs') + '  ' + kv('S:', f2(Sv), 'lufs');
+  $('r_b0').innerHTML = kv('LRA:', isNum(Ld.LRA) ? f2(Ld.LRA) : '---.--', 'lu') + '  ' + (isNum(Iv) ? kv('vs -14:', sg(Iv + 14), 'lu') : '<i>vs -14: ---.--lu</i>');
+  var p0 = D.peaks[0] || {}, p1 = D.peaks[1] || {}, tp0 = pv(p0.tp), sp0 = pv(p0.sp), tp1 = pv(p1.tp), sp1 = pv(p1.sp);
+  $('r_big1').innerHTML = tint(0, (tp0 === null ? dash : f2(tp0)) + ' db');
+  $('r_a1').innerHTML = nm(0) + ' ' + kv('SP:', sp0 === null ? dash : f2(sp0), ' db', 0);
+  $('r_b1').innerHTML = nm(1) + ' ' + kv('TP:', tp1 === null ? dash : f2(tp1), ' db', 1) + ' ' + kv('SP:', sp1 === null ? dash : f2(sp1), ' db', 1);
+  var s0 = dispSt[0], s1 = dispSt[1];
+  $('r_big2').innerHTML = '<span>' + (s0 ? sg(s0.corr) : dash) + '</span>corr';
+  $('r_a2').innerHTML = kv('WIDTH:', s0 ? clamp(s0.width, 0, 100).toFixed(2) : dash, '%') + '  ' + kv('BAL:', s0 ? sg(s0.bal) : dash, 'db');
+  $('r_b2').innerHTML = nm(1) + ' ' + kv('CORR:', s1 ? sg(s1.corr) : dash, '', 1) + ' ' + kv('W:', s1 ? clamp(s1.width, 0, 100).toFixed(1) : '--.-', '%', 1);
+}
+var fpsShown = 60, fpsCount = 0, fpsT = 0;
+function paintStats() {
+  $('f_stats').innerHTML = (P.freeze ? '<span class="fz">FROZEN</span>' : '<b>' + fpsShown + 'fps</b>') + '  &nbsp;SMP: <b>' + (D.fs ? D.fs : '---') + '</b>&nbsp; FFT: <b>' + P.fft_size + '</b>';
+}
+/* data-driven status flag: LIVE (frames arriving, signal present) / NO SIGNAL (frames arriving, input silent) / NO DATA (no frames) */
+var flagState = '';
+function updateFlag() {
+  var st = isLive() ? 'live' : ((D.hasData && (performance.now() - D.lastAt) < 1000) ? 'silent' : 'idle');
+  if (st === flagState) return; flagState = st;
+  var el = $('flag'); el.className = 'foot ' + (st === 'live' ? 'live' : 'idle');
+  $('flag_t').textContent = st === 'live' ? 'LIVE' : (st === 'silent' ? 'NO SIGNAL' : 'NO DATA — waiting for audio');
+  paintStats(); paintReadouts(); needRedraw = true;
+}
+
+/* ================= v2: SOURCES (footer chips + popover) ================= */
+function colorName(i) { return CNAMES[i]; }
+function applySources() {
+  for (var i = 0; i < 2; i++) {
+    var chip = $('chip' + i), leg = $('leg' + i), sgs = $('sgs' + i); chip.style.setProperty('--c', SRC[i].color); leg.style.setProperty('--c', SRC[i].color); sgs.style.setProperty('--c', SRC[i].color); $('solo' + i).style.setProperty('--c', SRC[i].color);
+    chip.classList.toggle('off', !effVisible(i)); leg.classList.toggle('off', !effVisible(i)); $('chn' + i).textContent = shortName(i); $('lgn' + i).textContent = SRC[i].name; $('chc' + i).textContent = colorName(i);
+    sgs.textContent = SRC[i].name; sgs.classList.toggle('on', P.sg_src === i); var sgo = $('sgo' + i); if (sgo) { sgo.style.setProperty('--c', SRC[0].color); sgo.classList.toggle('on', sgOrient === (i ? 'h' : 'v')); }
+    var wfs = $('wfs' + i); wfs.style.setProperty('--c', SRC[i].color); wfs.textContent = SRC[i].name; wfs.classList.toggle('on', P.wf_src === i);
+    $('solo' + i).classList.toggle('on', SRC[i].solo); var sdot = $('sd' + i); if (sdot) sdot.style.setProperty('--c', SRC[i].color);
+    var pv = $('pv' + i), ps = $('ps' + i); if (pv) { pv.classList.toggle('on', SRC[i].visible); ps.classList.toggle('on', SRC[i].solo); }
+  }
+  needRedraw = true;
+}
+[0, 1].forEach(function (i) {
+  function tv() { SRC[i].visible = !SRC[i].visible; Bridge.post('src' + (i + 1) + '_visible', SRC[i].visible); applySources(); }
+  $('chip' + i).addEventListener('click', tv); $('leg' + i).addEventListener('click', tv);
+  $('sgo' + i).addEventListener('click', function () { sgSetOrient(i ? 'h' : 'v'); });
+  $('sgs' + i).addEventListener('click', function () { P.sg_src = i; applySources(); sgClear(); });
+  $('wfs' + i).addEventListener('click', function () { P.wf_src = i; applySources(); wfInit(); });
+  $('solo' + i).addEventListener('click', function () { SRC[i].solo = !SRC[i].solo; Bridge.post('src' + (i + 1) + '_solo', SRC[i].solo); applySources(); });
+});
+
+(function buildSrcPop() {
+  var h = '<h4>Sources</h4>';
+  for (var i = 0; i < 2; i++) {
+    h += '<div class="srow" id="srow' + i + '"><div class="line"><i class="dotc" id="sd' + i + '"></i><input class="nm2" id="sn' + i + '" maxlength="10" spellcheck="false" value="' + SRC[i].name + '" />' +
+      '<span class="sp"></span><button class="tg" id="pv' + i + '">Visible</button><button class="tg" id="ps' + i + '">Solo</button></div></div>';
+  }
+  $('pop_src').innerHTML = h;
+  for (var j = 0; j < 2; j++) (function (i) {
+    var inp = $('sn' + i);
+    inp.addEventListener('input', function () { SRC[i].name = inp.value || ('Ch' + (i + 1)); Bridge.post('src' + (i + 1) + '_name', SRC[i].name); applySources(); });
+    inp.addEventListener('keydown', function (e) { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); });
+    $('pv' + i).addEventListener('click', function () { SRC[i].visible = !SRC[i].visible; Bridge.post('src' + (i + 1) + '_visible', SRC[i].visible); applySources(); });
+    $('ps' + i).addEventListener('click', function () { SRC[i].solo = !SRC[i].solo; Bridge.post('src' + (i + 1) + '_solo', SRC[i].solo); applySources(); });
+  })(j);
+  applySources();
+})();
+
+/* ================= v2: SETTINGS POPOVER ================= */
+/* one shared value <-> normalised mapper for sliders and knobs (cfg: min, max, log, step) */
+function normOf(cfg, v) { return cfg.log ? Math.log(v / cfg.min) / Math.log(cfg.max / cfg.min) : (v - cfg.min) / (cfg.max - cfg.min); }
+function valueOf(cfg, n) { n = clamp(n, 0, 1); var v = cfg.log ? cfg.min * Math.pow(cfg.max / cfg.min, n) : cfg.min + n * (cfg.max - cfg.min); if (cfg.step) v = Math.round(v / cfg.step) * cfg.step; return clamp(v, cfg.min, cfg.max); }
+/* gesture protocol: begin on pointerdown, value events while dragging, end on release (host automation gesture) */
+function gestureOf(id) {
+  var open = false;
+  return { begin: function () { if (!open) { open = true; Bridge.gesture(id, 'begin'); } }, end: function () { if (open) { open = false; Bridge.gesture(id, 'end'); } } };
+}
+function Slider(host, cfg) {
+  var tr = host.querySelector('.tr'), fl = host.querySelector('.fl'), th = host.querySelector('.th'), val = host.querySelector('.val'), drag = false;
+  var gs = gestureOf(cfg.id);
+  function norm() { return normOf(cfg, P[cfg.id]); }
+  function fromNorm(n) { return valueOf(cfg, n); }
+  function refresh() { var n = norm() * 100; fl.style.width = n + '%'; th.style.left = n + '%'; val.textContent = cfg.fmt(P[cfg.id]); }
+  function fromEvent(e) { var r = tr.getBoundingClientRect(); setParam(cfg.id, fromNorm((e.clientX - r.left) / r.width)); }
+  host.addEventListener('pointerdown', function (e) { drag = true; host.setPointerCapture(e.pointerId); gs.begin(); fromEvent(e); });
+  host.addEventListener('pointermove', function (e) { if (drag) fromEvent(e); });
+  host.addEventListener('pointerup', function () { drag = false; gs.end(); });
+  host.addEventListener('pointercancel', function () { drag = false; gs.end(); });
+  host.addEventListener('dblclick', function () { gs.begin(); setParam(cfg.id, cfg.def); gs.end(); });
+  on(cfg.id, refresh); refresh();
+}
+function segHtml(id, items) { return '<div class="seg" id="' + id + '">' + items.map(function (it) { return '<button data-v="' + it[0] + '">' + it[1] + '</button>'; }).join('') + '</div>'; }
+function slHtml(id) { return '<div class="sl" id="' + id + '"><div class="tr"><div class="fl"></div><div class="th"></div></div><div class="val"></div></div>'; }
+(function buildSetPop() {
+  var rows = '<h4>Settings</h4>' +
+    '<div class="tlabel">Theme</div><div class="seg themes" id="sg_theme">' + THEMES.map(function (t) { return '<button data-v="' + t.name + '">' + t.name + '</button>'; }).join('') + '</div>' +
+    '<div class="prow" style="height:14px"></div>' +
+    '<div class="prow"><div class="ctl">' + '<div class="seg presets" id="sg_preset">' + Object.keys(PRESETS).map(function (n) { return '<button data-v="' + n + '">' + n + '</button>'; }).join('') + '</div></div></div>' +
+    '<div class="prow" style="height:20px"></div>' +
+    '<div class="prow"><label>FFT size</label><div class="ctl">' + segHtml('sg_fft', [[1024, '1k'], [2048, '2k'], [4096, '4k'], [8192, '8k'], [16384, '16k']]) + '</div></div>' +
+    '<div class="prow"><label>Window</label><div class="ctl">' + segHtml('sg_win', [['hann', 'Hann'], ['blackmanHarris', 'Blackman-H']]) + '</div></div>' +
+    '<div class="prow"><label>Analysis</label><div class="ctl">' + segHtml('sg_mode', [['leftRight', 'L/R'], ['midSide', 'M/S'], ['combined', 'Comb']]) + '</div></div>' +
+    '<div class="prow"><label>Range</label><div class="ctl">' + segHtml('sg_rng', [[-48, '-48'], [-60, '-60'], [-72, '-72'], [-90, '-90']]) + '</div></div>' +
+    '<div class="prow"><label>Peak decay</label><div class="ctl">' + slHtml('sl_decay') + '</div></div>' +
+    '<div class="prow"><label>Reduced motion</label><div class="ctl"><button class="tg" id="tg_rm">Off</button></div></div>';
+  $('pop_set').innerHTML = rows;
+  $('pop_set').style.padding = '16px 20px 16px';
+  function bindSeg(id, param, parse) {
+    var items = $(id).children;
+    function refresh() { for (var i = 0; i < items.length; i++) items[i].classList.toggle('on', parse(items[i].dataset.v) === P[param]); }
+    for (var i = 0; i < items.length; i++) items[i].addEventListener('click', function () { setParam(param, parse(this.dataset.v)); });
+    on(param, refresh); refresh();
+  }
+  var num = function (v) { return +v; }, str = function (v) { return v; };
+  bindSeg('sg_theme', 'color_theme', str); bindSeg('sg_preset', 'preset', str); bindSeg('sg_fft', 'fft_size', num); bindSeg('sg_win', 'window', str); bindSeg('sg_mode', 'analysis_mode', str); bindSeg('sg_rng', 'display_range', num);
+  Slider($('sl_decay'), { id: 'peak_decay', min: 3, max: 60, def: 12, step: 1, fmt: function (v) { return Math.round(v) + 'db/s'; } });
+  $('tg_rm').addEventListener('click', function () { setParam('reduced_motion', !P.reduced_motion); });
+  on('reduced_motion', function (v) { $('tg_rm').classList.toggle('on', v); $('tg_rm').textContent = v ? 'On' : 'Off'; document.body.classList.toggle('rm', v); });
+  $('btn_freeze').addEventListener('click', function () { setParam('freeze', !P.freeze); });
+  on('freeze', function (v) { $('btn_freeze').classList.toggle('on', v); $('btn_freeze').textContent = v ? 'Frozen' : 'Freeze'; needRedraw = true; paintStats(); });
+  function momentary(id, evt, also) { $(id).addEventListener('click', function () { var b = this; Bridge.post(evt, true); also(); b.classList.add('flash'); setTimeout(function () { b.classList.remove('flash'); }, 180); }); }
+  momentary('btn_reset', 'reset_all', function () { resetMetersLocal(true); });
+  momentary('btn_reset_i', 'reset_integrated', function () { resetMetersLocal(false); });
+  $('btn_theme').addEventListener('click', function () { var i = 0; for (var k = 0; k < THEMES.length; k++) if (THEMES[k].name === P.color_theme) i = k; setParam('color_theme', THEMES[(i + 1) % THEMES.length].name); });
+  on('color_theme', function (n) { $('btn_theme').textContent = n; });
+  on('preset', function (n) { if (syncing) return; var p = PRESETS[n]; if (!p) return; Object.keys(p).forEach(function (k) { setParam(k, p[k]); }); });
+})();
+
+/* ================= v2: POPOVER OPEN/CLOSE ================= */
+(function () {
+  var pairs = [['btn_src', 'pop_src'], ['btn_set', 'pop_set']];
+  function closeAll(except) { pairs.forEach(function (p) { if (p[1] !== except) { $(p[1]).classList.remove('open'); $(p[0]).classList.remove('active'); } }); }
+  pairs.forEach(function (p) {
+    $(p[0]).addEventListener('click', function (e) { e.stopPropagation(); closeAll(p[1]); var o = $(p[1]).classList.toggle('open'); $(p[0]).classList.toggle('active', o); });
+    $(p[1]).addEventListener('click', function (e) { e.stopPropagation(); });
+  });
+  document.addEventListener('click', function () { closeAll(null); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { closeAll(null); if (UI.fullscreen) setFullscreen(false); }
+    if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target && e.target.tagName === 'INPUT')) setFullscreen(!UI.fullscreen);
+    if (e.code === 'Space') { e.preventDefault(); setParam('freeze', !P.freeze); }
+  });
+})();
+
+/* ================= v5: COLOR THEMES ================= */
+function setBandTrio(b) {
+  BAND.low = hexRgb(b[0]); BAND.mid = hexRgb(b[1]); BAND.high = hexRgb(b[2]); WF.c = b.slice();
+  for (var i = 0; i < 3; i++) { var e = document.getElementById('bd' + i); if (e) e.style.color = b[i]; }
+  if (colRGB && colRGB.length) for (var x = 0; x < colRGB.length; x++) colRGB[x] = bandRGB(colFi[x] / (N - 1));
+}
+function applyTheme(name) {
+  var t = themeByName(name), r = document.documentElement.style, c1 = hexRgb(t.c1[1]), c2 = hexRgb(t.c2[1]), nv = hexRgb(t.neutral);
+  setColorNames(t);
+  setBandTrio(t.band);
+  r.setProperty('--cyan', t.c1[1]); r.setProperty('--cyan-rgb', c1.join(',')); r.setProperty('--violet', t.c2[1]); r.setProperty('--violet-rgb', c2.join(','));
+  r.setProperty('--accent-light', t.light); r.setProperty('--value', t.neutral); r.setProperty('--value-rgb', nv.join(','));
+  SRC[0].color = t.c1[1]; SRC[0].rgb = c1; SRC[1].color = t.c2[1]; SRC[1].rgb = c2;   // channel colours derive solely from the theme
+  applySources(); needRedraw = true;
+  if (!booting) {   // single repaint pass: retint stored histories once, then draw each module once
+    if (sgOff) sgRecolor();
+    if (wfOff) wfRedraw();
+    [cv.gn_cv, cv.sc_cv].forEach(function (o) { o.g.globalCompositeOperation = 'source-over'; o.g.fillStyle = GLASS; o.g.fillRect(0, 0, o.w, o.h); });
+    meterVal = meterTarget();
+    if (sgOff) drawSpectrogram();
+    if (wfOff) drawWaveform();
+    drawSpectrum(); drawMeter(0.016); updateInsp(); paintReadouts();
+  }
+}
+on('color_theme', function (n) { applyTheme(n); KNOBS.forEach(function (k) { k.draw(); }); });
+/* ================= REKORDBOX-STYLE 3-BAND BEAT WAVEFORM (fed by D.wfQ columns) ================= */
+var WF = { pps: 1012 / 12, c: THEMES[0].band.slice() };   // 12 s window = 84.33 data columns/s; band trio follows the colour theme
+var wfOff = null, wfCtx = null, wfTmp = null, wfTctx = null, wfW = 0, wfH = 0, wfAcc = 0, wfDataPos = 0, wfHist = null;
+var WF_ZERO = [0, 0, 0, 0], wfCur = [WF_ZERO, WF_ZERO];
+function wfColumn(g, x, c, flag) {
+  var mid = wfH / 2, A = mid * 0.94;
+  if (flag) { g.fillStyle = flag >= 2 ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)'; g.fillRect(x, 0, 1, wfH); }
+  var h0 = A * clamp(c[0], 0, 1), h1 = A * 0.8 * clamp(c[1], 0, 1), h2 = A * 0.52 * clamp(c[2], 0, 1);
+  g.fillStyle = WF.c[0]; g.globalAlpha = 0.92; g.fillRect(x, mid - h0, 1, 2 * h0);
+  g.fillStyle = WF.c[1]; g.globalAlpha = 0.95; g.fillRect(x, mid - h1, 1, 2 * h1);
+  g.fillStyle = WF.c[2]; g.globalAlpha = 1;    g.fillRect(x, mid - h2, 1, 2 * h2);
+  g.globalAlpha = 1;
+}
+function wfAlloc() {
+  wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d');
+  wfTmp = document.createElement('canvas'); wfTmp.width = wfW; wfTmp.height = wfH; wfTctx = wfTmp.getContext('2d');
+}
+function wfRedraw() {   // re-render the whole strip from stored columns (theme change / resize)
+  if (!wfCtx || !wfHist) return;
+  wfCtx.clearRect(0, 0, wfW, wfH);
+  for (var x = 0; x < wfW; x++) { var o = x * 4; if (wfHist[o] > 0 || wfHist[o + 1] > 0 || wfHist[o + 2] > 0 || wfHist[o + 3] > 0) wfColumn(wfCtx, x, [wfHist[o], wfHist[o + 1], wfHist[o + 2]], wfHist[o + 3]); }
+}
+function wfInit() {   // empty strip (also used when the Ch1/Ch2 selector changes: other-source history is not available)
+  wfW = Math.round(cv.wf_cv.w * DPR); wfH = Math.round(cv.wf_cv.h * DPR);
+  wfAlloc(); wfHist = new Float32Array(wfW * 4); wfDataPos = 0; wfCur = [WF_ZERO, WF_ZERO];
+  D.wfQ[0].length = 0; D.wfQ[1].length = 0;
+}
+function wfResize() {
+  if (!wfOff) return;
+  var nw = Math.round(cv.wf_cv.w * DPR), nh = Math.round(cv.wf_cv.h * DPR); if (nw === wfW && nh === wfH) return;
+  var ow = wfW, old = wfHist; wfW = nw; wfH = nh; wfHist = new Float32Array(wfW * 4);
+  for (var x = 0; x < wfW; x++) { var ox = Math.min(ow - 1, Math.floor(x * ow / wfW)) * 4; for (var j = 0; j < 4; j++) wfHist[x * 4 + j] = old[ox + j]; }
+  wfAlloc(); wfRedraw();
+}
+function wfAdvanceData() {   // pull the next data column for both sources (kept in lockstep)
+  var live = isLive();
+  for (var s = 0; s < 2; s++) {
+    var c = D.wfQ[s].shift();
+    if (c) wfCur[s] = c; else wfCur[s] = live ? [wfCur[s][0], wfCur[s][1], wfCur[s][2], 0] : WF_ZERO;   // hold last on jitter, zero when idle
+  }
+}
+function wfStep(dt) {
+  wfAcc += WF.pps * dt * DPR; var n = Math.floor(wfAcc); if (n < 1) return; wfAcc -= n; n = Math.min(n, wfW);
+  wfTctx.clearRect(0, 0, wfW, wfH); wfTctx.drawImage(wfOff, -n, 0);
+  wfCtx.clearRect(0, 0, wfW, wfH); wfCtx.drawImage(wfTmp, 0, 0);
+  wfHist.copyWithin(0, n * 4);
+  for (var k = 0; k < n; k++) {
+    var fresh = false; wfDataPos += 1 / DPR; if (wfDataPos >= 1) { wfDataPos -= 1; wfAdvanceData(); fresh = true; }
+    var c = wfCur[P.wf_src], flag = fresh ? c[3] : 0, x = wfW - n + k, o = x * 4;
+    wfColumn(wfCtx, x, c, flag); wfHist[o] = c[0]; wfHist[o + 1] = c[1]; wfHist[o + 2] = c[2]; wfHist[o + 3] = flag;
+  }
+}
+function drawWaveform() {
+  var o = cv.wf_cv, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  g.fillStyle = 'rgba(255,255,255,0.05)'; g.fillRect(0, Math.round(o.h / 2), o.w, 1);
+  g.drawImage(wfOff, 0, 0, o.w, o.h);
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(o.w - 1, 0, 1, o.h);
+  g.font = '9px ' + MONO; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(190,205,215,0.5)';
+  g.textAlign = 'left'; g.fillText('-' + Math.round(o.w / WF.pps) + 's', 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
+}
+
+/* ================= v8: TILED PANE LAYOUT (drag-to-resize on shared borders) + FULLSCREEN ================= */
+var LAYOUT_DEF = { rows: [226, 70, 302], cols: [296, 266, 272] };      // ui_state defaults: canvas heights / widths in base units
+var MINS = { spec: 120, wf: 40, low: 100, pane: 180, sg: 224 }, ROW_TOTAL = 598, COL_TOTAL = 834, HDR = 22;
+var GEO_N = { X0: 15, W: 838, Y0: 15, Yb: 683 }, GEO_F = { X0: 15, W: 1070, Y0: 15, Yb: 695 };
+var geo = { X0: 15, W: 838, Y0: 15, Yb: 683 }, LS = { rs: 1, cs: 1 };
+var UI = { rows: LAYOUT_DEF.rows.slice(), cols: LAYOUT_DEF.cols.slice(), fullscreen: false, sgo: 'v' };
+function setTop(id, t) { $(id).style.top = t + 'px'; }
+function setLeft(id, l) { $(id).style.left = l + 'px'; }
+function applyLayout() {
+  var X0 = Math.round(geo.X0), MW = Math.round(geo.W), Y0 = Math.round(geo.Y0), Yb = Math.round(geo.Yb);
+  var rowTotal = (Yb - Y0) - 3 * HDR - 4, colTotal = MW - 4; LS.rs = rowTotal / ROW_TOTAL; LS.cs = colTotal / COL_TOTAL;
+  var Hs = Math.round(UI.rows[0] * LS.rs), Hw = Math.round(UI.rows[1] * LS.rs), Hl = rowTotal - Hs - Hw;
+  var W1 = Math.round(UI.cols[0] * LS.cs), W2 = Math.round(UI.cols[1] * LS.cs), W3 = colTotal - W1 - W2;
+  // panes tile flush: shared 1px borders (pane i+1 starts on the last border line of pane i)
+  var bS = HDR + Hs + 2, bW = HDR + Hw + 2, bL = HDR + Hl + 2, yS = Y0, yW = yS + bS - 1, yL = yW + bW - 1;
+  var cS = yS + 1 + HDR, cW = yW + 1 + HDR, cL = yL + 1 + HDR, cwFull = MW - 2;
+  var xP1 = X0, xP2 = xP1 + W1 + 1, xP3 = xP2 + W2 + 1, g;
+  // ---- spectrum pane (header: legend + inspector)
+  SPX.pw = cwFull - 32; SPX.ph = Hs - 20;
+  setCv('spec_ghost', cwFull, Hs, X0 + 1, cS); setCv('spec_cv', cwFull, Hs, X0 + 1, cS); drawSpecGrid();
+  setLeft('leg0', X0 + 5); setTop('leg0', yS + 2); setLeft('leg1', X0 + 77); setTop('leg1', yS + 2);
+  setLeft('insp', X0 + 154); setTop('insp', yS + 5); $('insp').style.width = Math.max(120, MW - 170) + 'px';
+  // ---- waveform pane
+  setLeft('cap_wf', X0 + 9); setTop('cap_wf', yW + 6); setLeft('wfs0', X0 + 80); setTop('wfs0', yW + 2); setLeft('wfs1', X0 + 120); setTop('wfs1', yW + 2);
+  setLeft('cap_wfleg', X0 + MW - 9 - 200); setTop('cap_wfleg', yW + 6);
+  setCv('wf_cv', cwFull, Hw, X0 + 1, cW); wfResize();
+  // ---- lower row panes
+  setLeft('cap_sg', xP1 + 9); setTop('cap_sg', yL + 6); setLeft('sgs0', xP1 + 88); setTop('sgs0', yL + 2); setLeft('sgs1', xP1 + 128); setTop('sgs1', yL + 2); setLeft('sgo0', xP1 + W1 - 50); setTop('sgo0', yL + 2); setLeft('sgo1', xP1 + W1 - 25); setTop('sgo1', yL + 2);
+  setLeft('cap_gn', xP2 + 9); setTop('cap_gn', yL + 6); setLeft('cap_sc', xP3 + 9); setTop('cap_sc', yL + 6);
+  SGW = W1; SGH = Hl; setCv('sg_cv', W1, Hl, xP1 + 1, cL); setCv('sg_lbl', W1, Hl, xP1 + 1, cL); sgResize(); drawSgLabels();
+  setCv('gn_cv', W2, Hl, xP2 + 1, cL); setCv('gn_grid', W2, Hl, xP2 + 1, cL);
+  GN.cx = W2 / 2; GN.cy = Hl / 2; GN.R = Math.max(30, Math.floor(Math.min(W2, Hl) / 2) - 2);
+  g = cv.gn_cv.g; g.globalCompositeOperation = 'source-over'; g.fillStyle = GLASS; g.fillRect(0, 0, W2, Hl); drawGnGrid();
+  setCv('sc_cv', W3, Hl, xP3 + 1, cL); setCv('sc_grid', W3, Hl, xP3 + 1, cL);
+  SCP.pw = W3 - 38; SCP.ph = Hl - 34; g = cv.sc_cv.g; g.globalCompositeOperation = 'source-over'; g.fillStyle = GLASS; g.fillRect(0, 0, W3, Hl); drawScGrid();
+  // ---- pane frames + corner annotations
+  function pane(id, l, t, w, hh) { var e = $(id); e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.height = hh + 'px'; }
+  function an(id, l, t, w, al) { var e = $(id); e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.textAlign = al; }
+  pane('pn_spec', X0, yS, MW, bS); pane('pn_wf', X0, yW, MW, bW); pane('pn_sg', xP1, yL, W1 + 2, bL); pane('pn_gn', xP2, yL, W2 + 2, bL); pane('pn_sc', xP3, yL, W3 + 2, bL);
+  an('an_spec_l', X0 + 10, cS + 6, 320, 'left'); an('an_spec_r', X0 + 1 + SPX.pw - 9 - 300, cS + 6, 300, 'right');
+  an('an_wf_l', X0 + 172, yW + 6, 170, 'left'); an('an_sg_l', xP1 + 9, cL + 5, 140, 'left');
+  an('an_gn_l', xP2 + 10, cL + 6, 140, 'left'); an('an_gn_r', xP2 + W2 - 8 - 140, cL + 6, 140, 'right'); an('an_sc_r', xP3 + W3 - 8 - 220, cL + 5, 220, 'right');
+  // ---- dividers sit on the shared borders
+  ['dh1', 'dh2'].forEach(function (i) { setLeft(i, X0); $(i).style.width = MW + 'px'; });
+  setTop('dh1', yW - 5); setTop('dh2', yL - 5);
+  setLeft('dv1', xP2 - 5); setLeft('dv2', xP3 - 5);
+  ['dv1', 'dv2'].forEach(function (i) { setTop(i, yL); $(i).style.height = bL + 'px'; });
+  needRedraw = true;
+  if (!booting) { if (sgOff) drawSpectrogram(); if (wfOff) drawWaveform(); drawSpectrum(); }
+}
+function postUi() {
+  if (booting) return; var st = { row_splits: UI.rows.slice(), lower_col_splits: UI.cols.slice(), fullscreen: !!UI.fullscreen, spectrogram_orientation: sgOrient };
+  if (!emit('prismUiState', st)) console.log('[PRISM -> host unavailable] ui_state ' + JSON.stringify(st));
+}
+var fsTween = 0;
+function setFullscreen(on, instant, quiet) {
+  UI.fullscreen = !!on; $('stage').classList.toggle('fs', UI.fullscreen); document.body.classList.toggle('fsmode', UI.fullscreen);
+  document.dispatchEvent(new Event('click'));   // close any open popover
+  var to = UI.fullscreen ? GEO_F : GEO_N, from = { X0: geo.X0, W: geo.W, Y0: geo.Y0, Yb: geo.Yb };
+  if (fsTween) cancelAnimationFrame(fsTween);
+  if (instant || booting || P.reduced_motion) { geo.X0 = to.X0; geo.W = to.W; geo.Y0 = to.Y0; geo.Yb = to.Yb; applyLayout(); if (!quiet) postUi(); return; }
+  var t0 = performance.now();
+  (function step(now) {
+    var u = Math.min(1, (now - t0) / 190), e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    geo.X0 = from.X0 + (to.X0 - from.X0) * e; geo.W = from.W + (to.W - from.W) * e; geo.Y0 = from.Y0 + (to.Y0 - from.Y0) * e; geo.Yb = from.Yb + (to.Yb - from.Yb) * e;
+    applyLayout();
+    if (u < 1) fsTween = requestAnimationFrame(step); else { fsTween = 0; postUi(); }
+  })(t0);
+}
+$('fsbtn').addEventListener('click', function (e) { e.stopPropagation(); setFullscreen(!UI.fullscreen); });
+var DRAG = null;
+function dragStart(id) { DRAG = { id: id, rows: UI.rows.slice(), cols: UI.cols.slice() }; $(id).classList.add('drag'); }
+function dragMove(dPx) {
+  if (!DRAG) return; var r = DRAG.rows, c = DRAG.cols, id = DRAG.id, v, d = id.charAt(1) === 'h' ? dPx / LS.rs : dPx / LS.cs;   // px -> base-layout units (works in fullscreen too)
+  if (id === 'dh1') {          // spectrum | (waveform + lower): lower row absorbs; waveform shrinks only when needed
+    var Hs = clamp(r[0] + d, MINS.spec, ROW_TOTAL - MINS.wf - MINS.low), rem = ROW_TOTAL - Hs, Hw = Math.max(MINS.wf, Math.min(r[1], rem - MINS.low));
+    UI.rows = [Hs, Hw, rem - Hw];
+  } else if (id === 'dh2') {   // waveform | lower row
+    var Hw2 = clamp(r[1] + d, MINS.wf, ROW_TOTAL - r[0] - MINS.low); UI.rows = [r[0], Hw2, ROW_TOTAL - r[0] - Hw2];
+  } else if (id === 'dv1') {   // spectrogram | vectorscope (scope fixed)
+    v = clamp(c[0] + d, MINS.sg, c[0] + c[1] - MINS.pane); UI.cols = [v, c[0] + c[1] - v, c[2]];
+  } else if (id === 'dv2') {   // vectorscope | scope (spectrogram fixed)
+    v = clamp(c[1] + d, MINS.pane, c[1] + c[2] - MINS.pane); UI.cols = [c[0], v, c[1] + c[2] - v];
+  }
+  applyLayout();
+}
+function dragEnd() { if (!DRAG) return; $(DRAG.id).classList.remove('drag'); DRAG = null; postUi(); }
+['dh1', 'dh2', 'dv1', 'dv2'].forEach(function (id) {
+  var el = $(id), vert = el.classList.contains('dh'), p0 = 0;
+  el.addEventListener('pointerdown', function (e) { el.setPointerCapture(e.pointerId); p0 = vert ? e.clientY : e.clientX; dragStart(id); e.preventDefault(); });
+  el.addEventListener('pointermove', function (e) { if (DRAG && DRAG.id === id) dragMove(((vert ? e.clientY : e.clientX) - p0) / stageScale); });
+  el.addEventListener('pointerup', dragEnd); el.addEventListener('pointercancel', dragEnd);
+  el.addEventListener('dblclick', function () {   // reset that axis to the default split
+    if (vert) UI.rows = LAYOUT_DEF.rows.slice(); else UI.cols = LAYOUT_DEF.cols.slice();
+    applyLayout(); postUi();
+  });
+});
+/* ================= HOST -> UI: parameter seeding + sync ================= */
+function applyRemoteParam(id, val) {
+  var m = /^src([12])_(visible|solo|name)$/.exec(id);
+  syncing = true;
+  try {
+    if (m) {
+      var i = +m[1] - 1;
+      if (m[2] === 'visible') SRC[i].visible = !!val;
+      else if (m[2] === 'solo') SRC[i].solo = !!val;
+      else { SRC[i].name = String(val); var inp = $('sn' + i); if (inp && document.activeElement !== inp) inp.value = SRC[i].name; }
+      applySources();
+    } else if (P.hasOwnProperty(id) && id !== 'sg_src' && id !== 'wf_src') {
+      setParam(id, val, true);
+    }
+  } finally { syncing = false; }
+}
+function applyInitPayload(p) {   // p = { id: value, ... } from window.__PRISM_INIT_PARAMS or the 'prismInit' event
+  if (!p) return;
+  var order = ['color_theme', 'reduced_motion'], k;   // theme first so tints are right
+  order.forEach(function (id) { if (p[id] !== undefined) applyRemoteParam(id, p[id]); });
+  for (k in p) if (p.hasOwnProperty(k) && order.indexOf(k) < 0) applyRemoteParam(k, p[k]);
+}
+function numOr(v, d) { v = +v; return isFinite(v) ? v : d; }
+function sanitizeRows(a) {   // clamp to documented minimums + fixed total (ROW_TOTAL); corrupt state falls back to defaults
+  var x = clamp(numOr(a[0], LAYOUT_DEF.rows[0]), MINS.spec, ROW_TOTAL - MINS.wf - MINS.low);
+  var y = clamp(numOr(a[1], LAYOUT_DEF.rows[1]), MINS.wf, ROW_TOTAL - x - MINS.low);
+  return [x, y, ROW_TOTAL - x - y];
+}
+function sanitizeCols(a) {   // spectrogram min 224, others 180, fixed total (COL_TOTAL)
+  var x = clamp(numOr(a[0], LAYOUT_DEF.cols[0]), MINS.sg, COL_TOTAL - 2 * MINS.pane);
+  var y = clamp(numOr(a[1], LAYOUT_DEF.cols[1]), MINS.pane, COL_TOTAL - x - MINS.pane);
+  return [x, y, COL_TOTAL - x - y];
+}
+function applyInitUi(iu) {
+  if (!iu) return;
+  if (iu.row_splits && iu.row_splits.length === 3) UI.rows = sanitizeRows(iu.row_splits);
+  if (iu.lower_col_splits && iu.lower_col_splits.length === 3) UI.cols = sanitizeCols(iu.lower_col_splits);
+  if (iu.fullscreen !== undefined && !!iu.fullscreen !== !!UI.fullscreen) setFullscreen(!!iu.fullscreen, true, true);   // real path, both directions, never echoed back
+  if (iu.spectrogram_orientation) sgSetOrient(iu.spectrogram_orientation, true);   // UI state, not a parameter
+}
+window.receiveParameterUpdate = applyRemoteParam;
+
+/* ================= v2: param hooks ================= */
+on('fft_size', function () { needRedraw = true; paintReadouts(); paintStats(); });
+on('window', function () { needRedraw = true; paintReadouts(); });
+on('display_range', function () { drawSpecGrid(); needRedraw = true; });
+on('spectrum_tilt', function () { updateTilt(); needRedraw = true; });
+on('spectrogram_speed', function () { drawSgLabels(); });
+on('glow_intensity', function () { needRedraw = true; });
+
+/* ================= v8: SIDEBAR KNOBS + NEEDLE METER ================= */
+var KNOBS = [
+  { id: 'smoothing', cv: 'kb0', val: 'kv0', min: 0, max: 100, def: 35, step: 1, fmt: function (v) { return Math.round(v) + '%'; } },
+  { id: 'spectrum_tilt', cv: 'kb1', val: 'kv1', min: 0, max: 4.5, def: 0, step: 0.1, fmt: function (v) { return v.toFixed(1); } },
+  { id: 'glow_intensity', cv: 'kb2', val: 'kv2', min: 0, max: 100, def: 55, step: 1, fmt: function (v) { return Math.round(v) + '%'; } },
+  { id: 'spectrogram_speed', cv: 'kb3', val: 'kv3', min: 0.25, max: 4, def: 1, log: true, step: 0.01, fmt: function (v) { return v.toFixed(2) + 'x'; } }
+];
+KNOBS.forEach(function (k) {
+  var o = cv[k.cv], g = o.g, el = o.el, drag = false, y0 = 0, n0 = 0;
+  var gs = gestureOf(k.id);
+  function norm() { return normOf(k, P[k.id]); }
+  function fromNorm(n) { return valueOf(k, n); }
+  function draw() {
+    var n = norm(), a0 = 135 * Math.PI / 180, a1 = (135 + 270 * n) * Math.PI / 180, cx = 20, cy = 20, col = SRC[0].color;
+    g.clearRect(0, 0, 40, 40); g.lineCap = 'round';
+    g.lineWidth = 2.5; g.strokeStyle = 'rgba(255,255,255,0.14)'; g.beginPath(); g.arc(cx, cy, 16, a0, 405 * Math.PI / 180); g.stroke();
+    if (n > 0.001) { g.strokeStyle = col; g.shadowColor = col; g.shadowBlur = 5; g.beginPath(); g.arc(cx, cy, 16, a0, a1); g.stroke(); g.shadowBlur = 0; }
+    g.beginPath(); g.arc(cx, cy, 11.5, 0, TAU); g.fillStyle = '#12161a'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.18)'; g.stroke();
+    g.lineWidth = 1.8; g.strokeStyle = 'rgba(235,242,246,0.92)'; g.beginPath(); g.moveTo(cx + Math.cos(a1) * 3.5, cy + Math.sin(a1) * 3.5); g.lineTo(cx + Math.cos(a1) * 10, cy + Math.sin(a1) * 10); g.stroke();
+    $(k.val).textContent = k.fmt(P[k.id]);
+  }
+  k.draw = draw; k.nudge = function (dyPx) { setParam(k.id, fromNorm(norm() + dyPx / 170)); }; on(k.id, draw);
+  el.addEventListener('pointerdown', function (e) { drag = true; el.setPointerCapture(e.pointerId); y0 = e.clientY; n0 = norm(); gs.begin(); e.preventDefault(); });
+  el.addEventListener('pointermove', function (e) { if (drag) setParam(k.id, fromNorm(n0 + (y0 - e.clientY) / (170 * stageScale))); });
+  el.addEventListener('pointerup', function () { drag = false; gs.end(); });
+  el.addEventListener('pointercancel', function () { drag = false; gs.end(); });
+  el.addEventListener('dblclick', function () { gs.begin(); setParam(k.id, k.def); gs.end(); });
+  el.addEventListener('wheel', function (e) { e.preventDefault(); gs.begin(); setParam(k.id, fromNorm(norm() - Math.sign(e.deltaY) * 0.03)); gs.end(); }, { passive: false });
+  draw();
+});
+var meterVal = -40;
+function meterTarget() { return (isLive() && D.loud && isNum(D.loud.M)) ? D.loud.M : -40; }
+function drawMeter(dt) {   // analog-style needle meter: momentary LUFS from the host, theme-tinted, rests at -40 when no data
+  var o = cv.meter_cv, g = o.g, cx = o.w / 2, cy = o.h - 14, R = 98, accent = SRC[0].color, PI = Math.PI, have = isLive() && D.loud && isNum(D.loud.M);
+  meterVal += (meterTarget() - meterVal) * (1 - Math.exp(-dt / 0.16));
+  function ang(v) { return -PI / 2 + (-55 + (clamp(v, -40, 0) + 40) / 40 * 110) * PI / 180; }
+  g.clearRect(0, 0, o.w, o.h); g.lineCap = 'butt';
+  g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.20)'; g.beginPath(); g.arc(cx, cy, R, ang(-40), ang(0)); g.stroke();
+  g.lineWidth = 3; g.strokeStyle = accent; g.globalAlpha = 0.85; g.beginPath(); g.arc(cx, cy, R - 6, ang(-14), ang(0)); g.stroke(); g.globalAlpha = 1;
+  g.font = '9px ' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (var v = -40; v <= 0; v += 2) {
+    var a = ang(v), major = v % 10 === 0, r1 = R, r2 = R - (major ? 9 : (v % 5 === 0 ? 6 : 3.5));
+    g.strokeStyle = major ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.24)'; g.lineWidth = major ? 1.2 : 1;
+    g.beginPath(); g.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); g.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2); g.stroke();
+    if (major) { g.fillStyle = 'rgba(150,165,176,0.75)'; g.fillText(String(v), cx + Math.cos(a) * (R + 11), cy + Math.sin(a) * (R + 11)); }
+  }
+  var na = ang(meterVal);
+  g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(na) * (R - 3), cy + Math.sin(na) * (R - 3)); g.stroke();
+  g.strokeStyle = accent; g.shadowColor = accent; g.shadowBlur = 6; g.lineWidth = 1.6; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(na) * (R - 3), cy + Math.sin(na) * (R - 3)); g.stroke(); g.shadowBlur = 0;
+  g.beginPath(); g.arc(cx, cy, 4, 0, TAU); g.fillStyle = '#12161a'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = accent; g.stroke();
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(150,165,176,0.7)'; g.fillText('LUFS-M', 8, 14);
+  g.textAlign = 'right'; g.fillStyle = 'rgba(210,225,235,0.9)'; g.fillText(have ? (D.loud.M >= 0 ? '' : '-') + Math.abs(D.loud.M).toFixed(2) : '---.--', o.w - 8, 14);
+}
+
+/* ================= Main loop ================= */
+var last = performance.now(), frame = 0;
+function loop(now) {
+  var dt = Math.min(0.05, (now - last) / 1000); last = now; frame++;
+  fpsCount++; fpsT += dt; if (fpsT >= 0.5) { fpsShown = Math.min(60, Math.round(fpsCount / fpsT)); fpsCount = 0; fpsT = 0; paintStats(); }
+  updateFlag();
+  if (!P.freeze) {
+    if (P.reduced_motion && (frame & 1)) { requestAnimationFrame(loop); return; }
+    updateSpectra(dt); sgStep(dt); wfStep(dt); drawSpectrogram(); drawWaveform(); drawSpectrum(); drawGonio(); drawScope(); updateMeters(dt); drawMeter(dt);
+    if ((frame % 4) === 0) { paintReadouts(); updateInsp(); }
+  } else if (needRedraw) { drawSpectrum(); updateInsp(); }
+  needRedraw = false; requestAnimationFrame(loop);
+}
+
+/* ================= Boot ================= */
+updateTilt(); drawSpecGrid(); drawGnGrid(); drawScGrid(); drawSgLabels(); sgInit();
+applyInitUi(window.__PRISM_INIT_UI);          // layout splits + fullscreen, serialized by the host (prism-init.js)
+applyInitPayload(window.__PRISM_INIT_PARAMS); // parameter values + source names, seeded before first paint (never posted back)
+applyLayout(); if (UI.fullscreen) setFullscreen(true, true);
+KNOBS.forEach(function (k) { k.draw(); }); drawMeter(0.016);
+wfInit(); drawWaveform(); paintStats(); paintReadouts(); updateInsp(); updateFlag();
+window.addEventListener('resize', fitStage); fitStage();
+if (backend && backend.addEventListener) {
+  backend.addEventListener('prismFrame', receiveAnalysisFrame);
+  backend.addEventListener('prismParamSync', function (e) { if (e) applyRemoteParam(e.id, e.value); });
+  backend.addEventListener('prismInit', function (e) { if (!e) return; applyInitPayload(e.params); if (e.ui) { applyInitUi(e.ui); applyLayout(); } });
+}
+booting = false;
+emit('prismReady', {});   // host answers with 'prismInit' (full resync) - covers any listener/ordering race
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
