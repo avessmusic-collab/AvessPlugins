@@ -930,14 +930,21 @@ on('color_theme', function (n) { applyTheme(n); KNOBS.forEach(function (k) { k.d
 var WF = { pps: 1012 / 12, c: THEMES[0].band.slice() };   // 12 s window = 84.33 data columns/s; band trio follows the colour theme
 var wfOff = null, wfCtx = null, wfTmp = null, wfTctx = null, wfW = 0, wfH = 0, wfAcc = 0, wfDataPos = 0, wfHist = null;
 var WF_ZERO = [0, 0, 0, 0], wfCur = [WF_ZERO, WF_ZERO];
-function wfColumn(g, x, c, flag) {
-  var mid = wfH / 2, A = mid * 0.94;
-  if (flag) { g.fillStyle = flag >= 2 ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)'; g.fillRect(x, 0, 1, wfH); }
-  var h0 = A * clamp(c[0], 0, 1), h1 = A * 0.8 * clamp(c[1], 0, 1), h2 = A * 0.52 * clamp(c[2], 0, 1);
-  g.fillStyle = WF.c[0]; g.globalAlpha = 0.92; g.fillRect(x, mid - h0, 1, 2 * h0);
-  g.fillStyle = WF.c[1]; g.globalAlpha = 0.95; g.fillRect(x, mid - h1, 1, 2 * h1);
-  g.fillStyle = WF.c[2]; g.globalAlpha = 1;    g.fillRect(x, mid - h2, 1, 2 * h2);
+function wfDrawBands(g, x, mid, h0, h1, h2) {
+  /* slick strip: translucent band fills + a bright 1 device-px envelope cap (top and bottom) per band.
+     Order = bass (tallest, back) -> mids -> highs (front). Bands below ~1px are skipped. */
+  var hs = [h0, h1, h2], al = [0.42, 0.55, 0.78], i, h;
+  for (i = 0; i < 3; i++) {
+    h = hs[i]; if (h < 0.75) continue;
+    g.fillStyle = WF.c[i]; g.globalAlpha = al[i]; g.fillRect(x, mid - h, 1, 2 * h);
+    g.globalAlpha = 1; g.fillRect(x, mid - h, 1, 1); g.fillRect(x, mid + h - 1, 1, 1);
+  }
   g.globalAlpha = 1;
+}
+function wfColumn(g, x, c, flag) {
+  var mid = wfH / 2, A = mid * 0.82;   // max band height ~82% of the half-lane (was 94%): never butts the edges
+  if (flag) { g.fillStyle = flag >= 2 ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)'; g.fillRect(x, 0, 1, wfH); }
+  wfDrawBands(g, x, mid, A * clamp(c[0], 0, 1), A * 0.8 * clamp(c[1], 0, 1), A * 0.52 * clamp(c[2], 0, 1));
 }
 function wfAlloc() {
   wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d');
@@ -975,6 +982,7 @@ function wfStep(dt) {
   for (var k = 0; k < n; k++) {
     var fresh = false; wfDataPos += 1 / DPR; if (wfDataPos >= 1) { wfDataPos -= 1; wfAdvanceData(); fresh = true; }
     var c = wfCur[P.wf_src], flag = fresh ? c[3] : 0, x = wfW - n + k, o = x * 4;
+    if (fresh && DPR >= 2) c = [0, 0, 0, flag];   // 1 device-px gap before each data column (beat/bar ticks live in the gap)
     wfColumn(wfCtx, x, c, flag); wfHist[o] = c[0]; wfHist[o + 1] = c[1]; wfHist[o + 2] = c[2]; wfHist[o + 3] = flag;
   }
 }

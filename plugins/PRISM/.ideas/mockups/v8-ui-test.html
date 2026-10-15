@@ -926,15 +926,25 @@ function wfBands(t, s, o) {
     o[2] = Math.min(1, 0.12 + 0.3 * ae * duck + 0.08 * Math.random()) * (0.85 + Math.random() * 0.3);
   }
 }
-function wfColumn(g, x, tw) {
-  var mid = wfH / 2, A = mid * 0.94, bi = Math.floor(tw / WF_BEAT());
-  if (bi !== wfLastBeat) { wfLastBeat = bi; g.fillStyle = (bi % 4 === 0) ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)'; g.fillRect(x, 0, 1, wfH); }
-  wfBands(tw, P.wf_src, bandOut);
-  var h0 = A * bandOut[0], h1 = A * 0.8 * bandOut[1], h2 = A * 0.52 * bandOut[2];
-  g.fillStyle = WF.c[0];   g.globalAlpha = 0.92; g.fillRect(x, mid - h0, 1, 2 * h0);
-  g.fillStyle = WF.c[1]; g.globalAlpha = 0.95; g.fillRect(x, mid - h1, 1, 2 * h1);
-  g.fillStyle = WF.c[2]; g.globalAlpha = 1;    g.fillRect(x, mid - h2, 1, 2 * h2);
+function wfDrawBands(g, x, mid, h0, h1, h2) {
+  /* slick strip: translucent band fills + a bright 1 device-px envelope cap (top and bottom) per band.
+     Order = bass (tallest, back) -> mids -> highs (front). Bands below ~1px are skipped. */
+  var hs = [h0, h1, h2], al = [0.42, 0.55, 0.78], i, h;
+  for (i = 0; i < 3; i++) {
+    h = hs[i]; if (h < 0.75) continue;
+    g.fillStyle = WF.c[i]; g.globalAlpha = al[i]; g.fillRect(x, mid - h, 1, 2 * h);
+    g.globalAlpha = 1; g.fillRect(x, mid - h, 1, 1); g.fillRect(x, mid + h - 1, 1, 1);
+  }
   g.globalAlpha = 1;
+}
+var wfLastCol = -1;
+function wfColumn(g, x, tw) {
+  var mid = wfH / 2, A = mid * 0.82, bi = Math.floor(tw / WF_BEAT());   // max band height ~82% of the half-lane
+  if (bi !== wfLastBeat) { wfLastBeat = bi; g.fillStyle = (bi % 4 === 0) ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)'; g.fillRect(x, 0, 1, wfH); }
+  var ci = Math.floor(tw * WF.pps), gap = ci !== wfLastCol; wfLastCol = ci;
+  if (gap && DPR >= 2) return;   // 1 device-px gap before each data column (columns read as discrete, Rekordbox-like)
+  wfBands(tw, P.wf_src, bandOut);
+  wfDrawBands(g, x, mid, A * bandOut[0], A * 0.8 * bandOut[1], A * 0.52 * bandOut[2]);
 }
 function WF_BEAT() { return BEAT; }
 function wfInit() {
