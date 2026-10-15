@@ -155,3 +155,8 @@ Do these in a real host (build with the default OFF debug flags; the installed V
 - [ ] 1-hour soak with playback: Activity Monitor shows flat memory for the host and the WebContent process.
 - [ ] CPU of the WebKit GPU/WebContent helper processes stays low at 60 Hz (gate: WebView < 25% of one core; if exceeded, enable the gonio/scope 30 Hz decimation hook, kDecimateGonioScopeTo30Hz in PluginEditor.cpp - the page already holds the last arrays).
 - [ ] Windows only: WebView2 runtime present, user-data folder writable.
+
+### Layout / waveform notes (post-1.0.0 refinement)
+- Vertical order is now: readout columns -> **waveform** -> **spectrum** -> lower row. `ui_row_splits` keeps its positional meaning `[spectrum, waveform, lower]` (heights), so old saved states restore exactly; only the stacking changed. Divider `dh1` = waveform|spectrum, `dh2` = spectrum|lower. Minimums unchanged (waveform 40, spectrum 120, lower 100).
+- Waveform span 3s / 6s / 12s (default 6s), click the `SPAN` chip to cycle; persisted as `ui_waveform_span` (3|6|12, invalid -> 6) and sent as `waveform_span` in prismUiState / `__PRISM_INIT_UI`. Switching span clears the strip.
+- [ ] Manual: confirm in a host that the span choice, the new stacking and the divider drags persist across project reload.

@@ -4169,7 +4169,7 @@ static void test_stage3_multi_instance_and_project_reload()
         b.prepareToPlay(48000.0, 480);
 
         setChoice(a, "color_theme", 3);  a.apvts.state.setProperty(uiRowSplits, "300,60,238", nullptr);
-        a.apvts.state.setProperty(src1Name, "Kick", nullptr);  a.apvts.state.setProperty(uiWidth, 880, nullptr);
+        a.apvts.state.setProperty(src1Name, "Kick", nullptr);  a.apvts.state.setProperty(uiWaveformSpan, 3, nullptr);  a.apvts.state.setProperty(uiWidth, 880, nullptr);
         setChoice(b, "color_theme", 5);  b.apvts.state.setProperty(uiSgOrientation, "h", nullptr);
         b.apvts.state.setProperty(uiWidth, 770, nullptr);
 
@@ -4210,6 +4210,9 @@ static void test_stage3_multi_instance_and_project_reload()
         check(choiceIndex(c, "color_theme") == 3, "reload: theme restored");
         check(c.apvts.state.getProperty(uiRowSplits).toString() == "300,60,238", "reload: splits restored");
         check(c.apvts.state.getProperty(src1Name).toString() == "Kick", "reload: source name restored");
+        check((int) c.apvts.state.getProperty(uiWaveformSpan) == 3, "reload: waveform span restored");
+        { juce::ValueTree t("T"); t.setProperty(uiWaveformSpan, 9, nullptr); PRISMAudioProcessor::sanitizeState(t);
+          check((int) t.getProperty(uiWaveformSpan) == 6, "waveform span sanitizer: invalid -> 6"); }
         check(ec->getWidth() == 880 && ec->getHeight() == (int) std::lround(880.0 * 36.0 / 55.0), "reload: editor size restored at 55:36");
 
         // state replaced while the editor is OPEN (host recalls a project): editor must follow without a crash
