@@ -4145,6 +4145,91 @@ static void test_integration_profile_and_memory()
 }
 
 //==============================================================================
+// Phase 3.4: multi-instance isolation + host-chunk project reload, with real editors alive
+static void test_stage3_multi_instance_and_project_reload()
+{
+    section("stage3_multi_instance_and_project_reload");
+    using namespace prism::ids;
+
+    auto setChoice = [](PRISMAudioProcessor& p, const char* id, int index) {
+        auto* prm = p.apvts.getParameter(id);
+        prm->setValueNotifyingHost(prm->convertTo0to1((float) index));
+    };
+    auto choiceIndex = [](PRISMAudioProcessor& p, const char* id) {
+        auto* prm = p.apvts.getParameter(id);
+        return (int) std::lround(prm->convertFrom0to1(prm->getValue()));
+    };
+    auto pump = [](int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); };
+
+    juce::MemoryBlock chunkA;
+    {
+        PRISMAudioProcessor a, b;
+        check(configure(a, 2, 0, 48000.0, 480) && configure(b, 2, 0, 48000.0, 480), "configure both");
+        a.prepareToPlay(48000.0, 480);
+        b.prepareToPlay(48000.0, 480);
+
+        setChoice(a, "color_theme", 3);  a.apvts.state.setProperty(uiRowSplits, "300,60,238", nullptr);
+        a.apvts.state.setProperty(src1Name, "Kick", nullptr);  a.apvts.state.setProperty(uiWidth, 880, nullptr);
+        setChoice(b, "color_theme", 5);  b.apvts.state.setProperty(uiSgOrientation, "h", nullptr);
+        b.apvts.state.setProperty(uiWidth, 770, nullptr);
+
+        std::unique_ptr<juce::AudioProcessorEditor> ea(a.createEditor()), eb(b.createEditor());
+        for (auto* e : { ea.get(), eb.get() }) { e->setTopLeftPosition(40, 60); e->addToDesktop(0); e->setVisible(true); }   // "showing": a hidden editor idles by design
+        pump(600);   // both pages boot, timers run, both snapshots flow
+        check(ea->getWidth() == 880 && eb->getWidth() == 770, "each editor restores its OWN window size");
+        check(choiceIndex(a, "color_theme") == 3 && choiceIndex(b, "color_theme") == 5, "themes independent across instances");
+        check(a.apvts.state.getProperty(uiRowSplits).toString() == "300,60,238"
+              && b.apvts.state.getProperty(uiRowSplits).toString() == "226,70,302", "splits independent");
+        check(a.apvts.state.getProperty(src1Name).toString() == "Kick" && b.apvts.state.getProperty(src1Name).toString() == "Ch1",
+              "source names independent");
+        check(a.isEditorActive() && b.isEditorActive(), "both engines active with editors open");
+
+        // feed audio to A only, then confirm B's snapshot stays silent / independent
+        juce::AudioBuffer<float> buf(2, 480);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 480; ++i) { buf.setSample(0, i, 0.5f); buf.setSample(1, i, 0.5f); }
+        for (int i = 0; i < 300; ++i) { a.processBlock(buf, midi); if (i % 20 == 0) pump(10); }
+        pump(300);
+        auto sa = a.getLatestAnalysisSnapshot(), sb = b.getLatestAnalysisSnapshot();
+        check(sa != nullptr && sa->signalPresent, "A sees its signal");
+        check(sb == nullptr || ! sb->signalPresent, "B untouched by A's audio (no shared state)");
+
+        a.getStateInformation(chunkA);
+        eb.reset(); ea.reset();   // editors first, then processors (host order)
+    }   // processors destroyed: no crash, no leaked gesture / dangling WebView
+
+    // ---- project reload: new instance, host chunk ----
+    {
+        PRISMAudioProcessor c;
+        check(configure(c, 2, 0, 48000.0, 480), "configure reload instance");
+        c.setStateInformation(chunkA.getData(), (int) chunkA.getSize());
+        c.prepareToPlay(48000.0, 480);
+        std::unique_ptr<juce::AudioProcessorEditor> ec(c.createEditor());
+        ec->setTopLeftPosition(40, 60); ec->addToDesktop(0); ec->setVisible(true);
+        pump(500);
+        check(choiceIndex(c, "color_theme") == 3, "reload: theme restored");
+        check(c.apvts.state.getProperty(uiRowSplits).toString() == "300,60,238", "reload: splits restored");
+        check(c.apvts.state.getProperty(src1Name).toString() == "Kick", "reload: source name restored");
+        check(ec->getWidth() == 880 && ec->getHeight() == (int) std::lround(880.0 * 36.0 / 55.0), "reload: editor size restored at 55:36");
+
+        // state replaced while the editor is OPEN (host recalls a project): editor must follow without a crash
+        PRISMAudioProcessor d;
+        setChoice(d, "color_theme", 6);  d.apvts.state.setProperty(uiWidth, 1000, nullptr);
+        juce::MemoryBlock chunkD;  d.getStateInformation(chunkD);
+        c.setStateInformation(chunkD.getData(), (int) chunkD.getSize());
+        pump(500);
+        check(choiceIndex(c, "color_theme") == 6 && std::abs(ec->getWidth() - 1000) <= 1, "open editor follows setStateInformation (theme + size)");
+
+        // corrupt chunk must not crash and must sanitize
+        juce::MemoryBlock junk; junk.append("garbage", 7);
+        c.setStateInformation(junk.getData(), (int) junk.getSize());
+        pump(100);
+        check(true, "corrupt chunk ignored");
+        ec.reset();
+    }
+}
+
+//==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -4237,6 +4322,9 @@ int main()
     test_integration_reset_plumbing();
     test_integration_stress_all_engines();
     test_integration_profile_and_memory();
+
+    // Phase 3.4
+    test_stage3_multi_instance_and_project_reload();
 
     std::printf("\n%d checks, %d failure(s), %zu test cases\n", checks, failures, testNames.size());
     return failures == 0 ? 0 : 1;

@@ -72,6 +72,10 @@ juce_generate_juce_header(PRISM)
 # -DPRISM_DEBUG_TONE=ON analyses a synthetic 1 kHz / -12 dBFS stereo sine instead of the input.
 option(PRISM_FRAME_TIMING "PRISM: log editor frame-push timing" OFF)
 option(PRISM_DEBUG_TONE "PRISM: analyse a synthetic test tone (debug only)" OFF)
+option(PRISM_DEBUG_CONTROL "PRISM: execute JS from $PRISM_DEBUG_JS_FILE (debug only)" OFF)
+if(PRISM_DEBUG_CONTROL)
+    target_compile_definitions(PRISM PUBLIC PRISM_DEBUG_CONTROL=1)
+endif()
 if(PRISM_FRAME_TIMING)
     target_compile_definitions(PRISM PUBLIC PRISM_FRAME_TIMING=1)
 endif()
@@ -123,6 +127,7 @@ target_compile_definitions(PRISM_Tests
         JUCE_WEB_BROWSER=1
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
+        JUCE_MODAL_LOOPS_PERMITTED=1
 )
 if(PRISM_TEST_SANITIZE)
     target_compile_options(PRISM_Tests PRIVATE -fsanitize=${PRISM_TEST_SANITIZE} -fno-omit-frame-pointer -g)

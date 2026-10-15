@@ -122,3 +122,36 @@ v8 layout recap: edge-to-edge black screen, five flush 1px-bordered panes (the s
 | src2_solo | Bool | false |
 
 State entries: `src1_name` ("Ch1"), `src2_name` ("Ch2"). Events: `reset_all`, `reset_integrated`, `prismUiState`.
+
+---
+
+## 10. Manual test checklist (user) - Stage 3 complete, remaining human-only items
+
+Automated / harness-verified in Stage 3 (no action needed): idle boot, live data flow (debug tone: 1 kHz peak, LUFS/TP/corr values), reset_integrated clears I + LRA only, freeze/parameter round trip via the page bridge, sanitized restore of corrupt saved state, multi-instance isolation (two processors + editors in one process), host-chunk project reload including recall while the editor is open, editor open/close lifecycle, 463 console checks.
+
+Do these in a real host (build with the default OFF debug flags; the installed VST3/AU already are):
+
+**A. DAW matrix** - for each: Ableton Live 12 (VST3 and AU), Logic Pro (AU), Reaper (VST3), plus the Standalone.
+- [ ] Plugin scans, instantiates, editor opens with the full UI (not blank) on first open.
+- [ ] Audio flows through unchanged (null test vs bypass: bit-identical).
+- [ ] Footer shows LIVE with audio, NO SIGNAL on silence, NO DATA shortly after the editor tab is hidden.
+- [ ] Sidechain input (Ch2) lights up when a sidechain is routed; spectrum/waveform/scope/vectorscope show both sources.
+- [ ] Close and reopen the editor 10 times: no crash, CPU does not creep, no zombie window.
+- [ ] Two PRISM instances in one project: different theme/splits/names stay independent after save + reload.
+
+**B. Parameters and automation**
+- [ ] Turn each of SMTH / TILT / GLOW / SPD (drag, wheel, double-click reset): the host's parameter list moves; one undo step per drag.
+- [ ] Record automation on freeze, color_theme, smoothing: playback moves the UI controls; no jitter/echo while writing.
+- [ ] Save project, reload, confirm theme, names, splits, orientation, fullscreen, window size all restored.
+- [ ] Host preset recall while the editor is open updates the UI; choosing a PRISM preset in the page sets the bundle once, a host-driven preset change does not re-apply it.
+
+**C. Interaction**
+- [ ] Space toggles freeze, F toggles fullscreen, Esc leaves it; none of them fire while typing in a source-name field.
+- [ ] RESET clears integrated LUFS, LRA and max peaks; RESET I clears integrated LUFS + LRA only.
+- [ ] Drag all four pane dividers, double-click to reset an axis; resize the window (aspect locked 55:36, min 770x504).
+- [ ] Retina and non-Retina displays: text and canvases are sharp; move the window between displays.
+
+**D. Soak / performance (in the DAW)**
+- [ ] 1-hour soak with playback: Activity Monitor shows flat memory for the host and the WebContent process.
+- [ ] CPU of the WebKit GPU/WebContent helper processes stays low at 60 Hz (gate: WebView < 25% of one core; if exceeded, enable the gonio/scope 30 Hz decimation hook, kDecimateGonioScopeTo30Hz in PluginEditor.cpp - the page already holds the last arrays).
+- [ ] Windows only: WebView2 runtime present, user-data folder writable.

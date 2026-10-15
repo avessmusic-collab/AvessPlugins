@@ -49,6 +49,12 @@
 #include "Analysis/AnalysisSnapshot.h"   // prism::AnalysisSnapshot (moved here in Stage 1)
 
 // Optional per-frame timing log (Phase 3.3 throughput gate). OFF by default.
+// Debug-only remote control: when ON, the timer executes JS read from the file named by $PRISM_DEBUG_JS_FILE
+// (deleted after reading) and prints the result to stderr. OFF by default; never ship ON.
+#ifndef PRISM_DEBUG_CONTROL
+ #define PRISM_DEBUG_CONTROL 0
+#endif
+
 #ifndef PRISM_FRAME_TIMING
  #define PRISM_FRAME_TIMING 0
 #endif

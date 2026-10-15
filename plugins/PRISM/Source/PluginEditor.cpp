@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 namespace
 {
@@ -486,6 +487,38 @@ void PRISMAudioProcessorEditor::flushParameterChanges()
 
 void PRISMAudioProcessorEditor::timerCallback()
 {
+   #if PRISM_DEBUG_CONTROL
+    if (webView != nullptr)
+        if (const char* path = std::getenv ("PRISM_DEBUG_JS_FILE"))
+        {
+            juce::File f (path);
+            if (f.existsAsFile())
+            {
+                const auto js = f.loadFileAsString();
+                f.deleteFile();
+                if (js.startsWith ("//DUMP"))   // print host-side truth: parameter values, ui state, latest snapshot meters
+                {
+                    const auto snap = processorRef.getLatestAnalysisSnapshot();
+                    std::fprintf (stderr, "PRISM_DUMP params=%s ui=%s snap=%s\n",
+                        juce::JSON::toString (buildInitParams(), true).replaceCharacters ("\n\r\t", "   ").toRawUTF8(),
+                        juce::JSON::toString (buildInitUi(), true).replaceCharacters ("\n\r\t", "   ").toRawUTF8(),
+                        snap == nullptr ? "null" : (juce::String ("seq=") + juce::String ((juce::int64) snap->sequence)
+                            + " M=" + juce::String (snap->momentaryLufs) + " I=" + juce::String (snap->integratedLufs)
+                            + " LRA=" + juce::String (snap->loudnessRange)
+                            + " TPmax=" + juce::String (snap->sources[0].truePeakMaxDb) + " SPmax=" + juce::String (snap->sources[0].samplePeakMaxDb)).toRawUTF8());
+                    std::fflush (stderr);
+                }
+                else if (js.isNotEmpty())
+                    webView->evaluateJavascript (js, [] (juce::WebBrowserComponent::EvaluationResult r)
+                    {
+                        if (auto* v = r.getResult()) std::fprintf (stderr, "PRISM_JS_RESULT %s\n", juce::JSON::toString (*v, true).toRawUTF8());
+                        else                         std::fprintf (stderr, "PRISM_JS_ERROR\n");
+                        std::fflush (stderr);
+                    });
+            }
+        }
+   #endif
+
     if (! pageReady || webView == nullptr)
         return;   // JS has not registered listeners yet; dirty flags are kept for the prismInit resync
 

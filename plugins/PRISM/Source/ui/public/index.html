@@ -385,8 +385,10 @@ function receiveAnalysisFrame(fr) {
   for (s = 0; s < 2; s++) {
     a = fr.spectrum ? f32(fr.spectrum[s]) : null; D.spec[s] = a ? fitTo(a, N) : null;
     a = fr.spectrogram ? f32(fr.spectrogram[s]) : null; D.sgRow[s] = a ? fitTo(a, N) : null;
-    D.gonio[s] = fr.gonio ? f32(fr.gonio[s]) : null;
-    D.scope[s] = fr.scope ? f32(fr.scope[s]) : null;
+    /* Last-array hold: a frame that OMITS gonio/scope entirely (host-side decimation to 30 Hz, risk R2 lever) keeps the
+       previous arrays; a frame that carries the key but null for a source clears that source. */
+    if (fr.gonio !== undefined) D.gonio[s] = fr.gonio ? f32(fr.gonio[s]) : null;
+    if (fr.scope !== undefined) D.scope[s] = fr.scope ? f32(fr.scope[s]) : null;
     a = fr.waveform ? f32(fr.waveform[s]) : null;
     if (a) { var q = D.wfQ[s]; for (var k = 0; k + 3 < a.length; k += 4) q.push([a[k], a[k + 1], a[k + 2], a[k + 3]]); while (q.length > 64) q.shift(); }
   }
