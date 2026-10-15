@@ -1,0 +1,84 @@
+# ============================================================================
+# PRISM - WebView CMake configuration (generated from finalized mockup v7)
+# ============================================================================
+# This is a REFERENCE/SNIPPET for plugins/PRISM/CMakeLists.txt (Stage 1 creates the
+# base file, Stage 3 merges the WebView parts). Do NOT add project() or
+# add_subdirectory(JUCE) here - the root CMakeLists.txt owns those.
+# ============================================================================
+
+# ---- 1. Plugin target: WebView flags (merge into the juce_add_plugin() call) ----
+#
+# juce_add_plugin(PRISM
+#     COMPANY_NAME "PluginFreedom"
+#     PLUGIN_MANUFACTURER_CODE Plgf
+#     PLUGIN_CODE Prsm
+#     FORMATS VST3 AU Standalone
+#     PRODUCT_NAME "PRISM"
+#     IS_SYNTH FALSE
+#     NEEDS_MIDI_INPUT FALSE
+#     NEEDS_MIDI_OUTPUT FALSE
+#     NEEDS_WEB_BROWSER TRUE          # JUCE 8 WebBrowserComponent
+#     NEEDS_WEBVIEW2 TRUE             # Windows: WebView2 (Edge) backend; ignored elsewhere
+# )
+#
+# Buses (Stage 2, in PluginProcessor): main stereo in/out + 1 stereo sidechain input.
+
+# ---- 2. Sources (Stage 1/2 add the rest) ----
+# target_sources(PRISM PRIVATE
+#     Source/PluginProcessor.cpp
+#     Source/PluginEditor.cpp
+# )
+
+# ---- 3. Embed the UI (BinaryData::index_html) ----
+# Stage 3 copies .ideas/mockups/v7-ui.html -> Source/ui/public/index.html.
+# The page is fully self-contained (inline CSS/JS, no network fonts, no external
+# scripts). It also requests /prism-init.js, which is generated at runtime by the
+# resource provider (NOT embedded). The JUCE frontend library (js/juce/index.js)
+# is not required: the page talks to window.__JUCE__.backend directly.
+juce_add_binary_data(PRISM_UIResources
+    SOURCES
+        Source/ui/public/index.html
+)
+
+target_link_libraries(PRISM
+    PRIVATE
+        PRISM_UIResources
+        juce::juce_gui_extra            # WebBrowserComponent
+        juce::juce_dsp                  # juce::dsp::FFT (Stage 2)
+        juce::juce_audio_utils
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# ---- 4. WebView compile definitions ----
+target_compile_definitions(PRISM
+    PUBLIC
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+)
+
+# ---- 5. Platform notes ----
+if(WIN32)
+    # WebView2 runtime backend. Static-link the loader so no WebView2Loader.dll has to ship.
+    target_compile_definitions(PRISM PUBLIC JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1)
+elseif(APPLE)
+    # WKWebView (WebKit) - nothing to configure.
+elseif(UNIX)
+    # Linux: WebKit2GTK must be installed (not a v1 target).
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(WEBKIT2 REQUIRED webkit2gtk-4.1)
+    target_link_libraries(PRISM PRIVATE ${WEBKIT2_LIBRARIES})
+    target_include_directories(PRISM PRIVATE ${WEBKIT2_INCLUDE_DIRS})
+endif()
+
+# Rebuild the embedded UI when the HTML changes
+set_property(TARGET PRISM_UIResources APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/ui/public/index.html")
+
+# ============================================================================
+# BinaryData identifiers produced by the block above (used in getResource()):
+#   Source/ui/public/index.html -> BinaryData::index_html / BinaryData::index_htmlSize
+# ============================================================================

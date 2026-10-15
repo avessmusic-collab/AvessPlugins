@@ -1,0 +1,242 @@
+# v3 UI Design Specification
+# Plugin: PRISM (multi-source audio visualizer / analyzer, bit-transparent passthrough)
+# Aesthetic lineage: v3 - screen-first device redesign from user reference image (v2 dot-matrix spectrum + center knob dropped per user feedback); v1 Studio Hardware chassis dropped.
+# Coordinates: absolute window pixels (origin top-left). Fixed px sizing, NO viewport units.
+# Stage is scaled uniformly to fit the window (resizable, aspect 55:36).
+
+window:
+  width: 1100
+  height: 720
+  resizable: true
+  min_width: 770
+  min_height: 504
+  aspect_ratio: "55:36"
+  edge_padding: 15
+
+tokens:
+  page:
+    background: "radial-gradient(ellipse at 50% 38%, #1a1d21 0%, #141619 62%, #101215 100%)"
+  device_body:
+    rect: { x: 16, y: 16, width: 1068, height: 688 }
+    radius: 26
+    gradient: "linear-gradient(180deg, #333a41 0%, #2a3036 40%, #22272c 100%)"
+    shadow: "0 34px 70px rgba(0,0,0,.55), 0 10px 22px rgba(0,0,0,.45)"
+  glass:
+    rect: { x: 16, y: 16, width: 1068, height: 604 }
+    radius: "26 26 0 0"
+    background: "linear-gradient(180deg, #1b2127 0%, #13181c 17%, #0e1114 42%, #0e1114 100%)"
+    base: "#0e1114"
+    reflection: "curved ellipse highlight (alpha .05 -> .016) + slow 18s soft diagonal sweep (disabled in reduced motion)"
+  typography:
+    family: '"SF Mono", ui-monospace, Menlo, Consolas, "IBM Plex Mono", monospace'   # local stack, no network fonts
+    label:   { size: 12, color: "#7a8894" }
+    value_big: { size: 22, color: "#d3e7ee", glow: "0 0 14px rgba(190,225,240,.20)" }   # neutral cyan-white = shared/global values
+    value_small: { size: 12, color: "#d3e7ee" }
+    per_source_value: "tinted in the owning source color (inline) with 0.35-alpha text-shadow"
+    caption: { size: 10, color: "#7a8894", letter_spacing: "0.04em" }
+    axis:    { size: 10, color: "rgba(122,136,148,.65)" }
+    case: "mixed-case labels, lower-case units, 4-decimal precision (e.g. -12.2700db style)"
+  sources:
+    - { slot: 1, name: "MAIN",      color: "#00e5ff", rgb: [0, 229, 255],   token: cyan }
+    - { slot: 2, name: "SIDECHAIN", color: "#b388ff", rgb: [179, 136, 255], token: violet }
+  source_extras:
+    swatch_palette: ["#00e5ff", "#b388ff", "#ff6f61", "#ffb347", "#5df2b5", "#ff4fd8"]
+    overlap_rule: "both fills first at low alpha (source-over), then both strokes on top; NO additive blend / no third color"
+  hairline: "#ffffff0d"          # 1px rules between glass regions
+  device_strip:
+    rect: { x: 16, y: 620, width: 1068, height: 84 }
+    gradient: "linear-gradient(180deg, #2a3036, #22272c)"
+    top_edge: "1px rgba(0,0,0,.5) + 1px rgba(255,255,255,.055)"
+  soft_button: { size: 60, radius: 17, face: "linear-gradient(180deg, #1c2126, #14181c)", icon_stroke: "#5c6a75", icon_active: "#00e5ff" }
+  wordmark: { text: "PRISM", size: 12, letter_spacing: "0.55em", color: "#566470", position: { x: 450, y: 652, width: 200, height: 16 } }
+  popover: { background: "rgba(15,18,21,.93)", blur_px: 16, radius: 18, transition_ms: 180, hidden_by_default: true }
+  motion: "calm; ease 150-200ms for popovers only; visualizers animate continuously; no bloom"
+
+layout:
+  type: screen-first-device
+  glass_share: "604 / 688 of device height (88%); chrome = one 84px bottom strip"
+  sections:
+    - { id: readout_loudness,   x: 44,  y: 32,  width: 253, height: 82 }
+    - { id: readout_true_peak,  x: 297, y: 32,  width: 253, height: 82 }
+    - { id: readout_stereo,     x: 550, y: 32,  width: 253, height: 82 }
+    - { id: readout_engine,     x: 803, y: 32,  width: 253, height: 82 }
+    - { id: legend,             x: 44,  y: 116, width: 212,  height: 20 }
+    - { id: inspector_line,     x: 272, y: 118, width: 784,  height: 14 }
+    - { id: spectrum,           x: 44,  y: 136, width: 1012, height: 252 }
+    - { id: caption_spectrogram, x: 44,  y: 398, width: 76,  height: 12 }
+    - { id: spectrogram_source_selector, x: 124, y: 394, width: 80, height: 20 }
+    - { id: caption_vectorscope, x: 388, y: 398, width: 324, height: 12 }
+    - { id: caption_scope,       x: 732, y: 398, width: 324, height: 12 }
+    - { id: spectrogram,        x: 44,  y: 414, width: 324, height: 160 }
+    - { id: vectorscope,        x: 388, y: 414, width: 324, height: 160 }
+    - { id: oscilloscope,       x: 732, y: 414, width: 324, height: 160 }
+    - { id: status_line,        x: 44,  y: 588, width: 1012, height: 20 }
+    - { id: sources_popover,    x: 44,  y: 372, width: 360, height: 240, overlay: true, default_visible: false }
+    - { id: settings_popover,   x: 656, y: 150, width: 400, height: 462, overlay: true, default_visible: false }
+  rules:
+    - { x: 377, y: 398, width: 1,    height: 176 }
+    - { x: 721, y: 398, width: 1,    height: 176 }
+    - { x: 44,  y: 582, width: 1012, height: 1 }
+
+modules:
+  - id: readouts
+    desc: "four text columns directly on glass, no boxes. Label (muted) / big value / two small lines. Shared values (LUFS, corr/width/balance, engine) neutral cyan-white; per-source values tinted in source color"
+    columns:
+      - { id: loudness,  label: "Loudness",  big: "I LUFS", lines: ["M, S", "LRA, I vs -14 target"] }
+      - { id: true_peak, label: "True Peak", big: "MAIN dBTP (max since reset), tinted MAIN color", lines: ["main SP (tinted)", "side TP + SP (tinted violet)"] }
+      - { id: stereo,    label: "Stereo",    big: "MAIN CORR", lines: ["WIDTH, BAL (neutral)", "side CORR, W (tinted violet)"] }
+      - { id: engine,    label: "Engine",    big: "FFT size", lines: ["WIN, SR", "RES Hz/bin, SPAN ms"] }
+  - id: spectrum
+    style: "smooth curves"
+    plot: { left: 0, top: 6, width: 980, height: 232, freq_axis: "log 20 Hz - 20 kHz; labels 20 100 1k 10k 20k", db_axis: "gutter labels at right: 0, -30, -60, -90 (4 stops across display_range)", curve_points: 640 }
+    grid: "delicate hairlines (alpha .03-.09), horizontal per dB stop, vertical at decade/half-decade freqs"
+    layers_in_order:
+      - "per-source translucent vertical-gradient fill (alpha .28 -> .10 @50% -> .01), source-over, SIDECHAIN then MAIN"
+      - "per-source thin falling peak-hold trace (source lightened 45%, alpha .5, 1px)"
+      - "per-source anti-aliased 1.7px stroke, soft glow shadowBlur 2 + 9*glow (restrained), MAIN drawn last (on top)"
+      - "hover: dashed crosshair + ring markers on each visible curve"
+    inspector: "DOM peak when idle, CUR when hovering; freq / note / cents neutral, per-source dBFS tinted in source color; true untilted dBFS (tilt is visual only, pivot 1 kHz)"
+    legend:
+      id: legend
+      desc: "persistent clickable '[dot] MAIN' (cyan) and '[dot] SIDECHAIN' (violet) at spectrum top-left; toggles visibility; dimmed to 32% when hidden; mirrors source colors/names"
+      positions: { main: { x: 44, y: 116, width: 84, height: 20 }, sidechain: { x: 132, y: 116, width: 124, height: 20 } }
+  - id: spectrogram
+    desc: "scrolling, log freq bottom-to-top, 48 px/s * speed, single-source intensity ramp (black -> source color -> white lift, gamma 2.1) of the selected source; MAIN default; MAIN / SC selector in caption; tiny axis labels"
+  - id: vectorscope
+    desc: "Lissajous dot cloud with persistence (fade .17), 45 deg rotated M/S, rings at 0.5/1.0, centre (162,80) radius 68"
+  - id: oscilloscope
+    desc: "thin glowing line, fading trail (.26), rising-zero trigger, 2 ms/div, +/-1 FS grid"
+  - id: status_line
+    elements:
+      - { id: src1_chip, kind: toggle, text: "MAIN [dot] cyan", dims_when_hidden: true, tint: source }
+      - { id: src1_solo_tag, kind: toggle, text: "S" }
+      - { id: src2_chip, kind: toggle, text: "SIDECHAIN [dot] violet", dims_when_hidden: true }
+      - { id: src2_solo_tag, kind: toggle, text: "S" }
+      - { id: stats, kind: text, text: "| 60fps  SMP: 48000  FFT: 4096 (shows FROZEN when frozen)" }
+      - { id: demo_flag, kind: text, text: "DEMO SIGNAL - simulated data", note: "pulsing dot; mockup only, removed in production" }
+  - id: device_strip
+    elements: [ sources_button, wordmark, settings_button ]
+    note: "center smoothing knob removed in v3; smoothing lives in the Settings popover"
+  - id: sources_popover
+    rows_per_source: "color dot, rename field (max 12), Visible, Solo; 6 color swatches"
+  - id: settings_popover
+    rows: "preset chips (6), FFT size, window, analysis mode, display range, smoothing slider, spectrogram speed slider, peak decay slider, tilt slider, glow slider, reduced motion toggle, FREEZE + RESET + RESET I actions"
+
+controls:
+  - id: sources_button
+    type: button
+    ui_only: true
+    label: "Sources"
+    icon: sliders
+    position: { x: 60, y: 632 }
+    size: { width: 60, height: 60 }
+  - id: settings_button
+    type: button
+    ui_only: true
+    label: "Settings"
+    icon: gear
+    position: { x: 980, y: 632 }
+    size: { width: 60, height: 60 }
+  - id: src1_chip_toggle
+    type: toggle
+    label: "MAIN"
+    parameter: src1_visible
+    default: true
+    position: { x: 44, y: 588 }
+    size: { width: 108, height: 20 }
+  - id: src1_solo_toggle
+    type: toggle
+    label: "S"
+    parameter: src1_solo
+    default: false
+    position: { x: 156, y: 588 }
+    size: { width: 20, height: 20 }
+  - id: src2_chip_toggle
+    type: toggle
+    label: "SIDECHAIN"
+    parameter: src2_visible
+    default: true
+    position: { x: 192, y: 588 }
+    size: { width: 150, height: 20 }
+  - id: src2_solo_toggle
+    type: toggle
+    label: "S"
+    parameter: src2_solo
+    default: false
+    position: { x: 346, y: 588 }
+    size: { width: 20, height: 20 }
+
+  - { id: legend_main_toggle, type: toggle, label: "MAIN", parameter: src1_visible, default: true, position: { x: 44, y: 116 }, size: { width: 84, height: 20 } }
+  - { id: legend_side_toggle, type: toggle, label: "SIDECHAIN", parameter: src2_visible, default: true, position: { x: 132, y: 116 }, size: { width: 124, height: 20 } }
+  - { id: spectrogram_src_main, type: toggle, widget: segmented, label: "MAIN", ui_only: true, default: true,  position: { x: 124, y: 394 }, size: { width: 44, height: 20 } }
+  - { id: spectrogram_src_sc,   type: toggle, widget: segmented, label: "SC",   ui_only: true, default: false, position: { x: 172, y: 394 }, size: { width: 32, height: 20 } }
+
+# Controls inside popovers (overlay; validated independently of the main surface)
+settings_controls:
+  - { id: preset_selector,    type: combo, widget: chips,      parameter: preset,            options: [Studio, Minimal, Neon, Ambient, Scientific, Performance], default: Studio }
+  - { id: fft_size_selector,  type: combo, widget: segmented,  parameter: fft_size,          options: [1024, 2048, 4096, 8192, 16384], default: 4096 }
+  - { id: window_selector,    type: combo, widget: segmented,  parameter: window,            options: [hann, blackmanHarris], default: hann }
+  - { id: analysis_mode_selector, type: combo, widget: segmented, parameter: analysis_mode,  options: [leftRight, midSide, combined], default: combined }
+  - { id: display_range_selector, type: combo, widget: segmented, parameter: display_range,  options: [-48, -60, -72, -90], default: -90 }
+  - { id: smoothing_slider,   type: slider, parameter: smoothing, range: [0.0, 100.0], default: 35.0, unit: "%" }
+  - { id: speed_slider,       type: slider, parameter: spectrogram_speed, range: [0.25, 4.0], default: 1.0, skew: log }
+  - { id: decay_slider,       type: slider, parameter: peak_decay,        range: [3.0, 60.0], default: 12.0 }
+  - { id: tilt_slider,        type: slider, parameter: spectrum_tilt,     range: [0.0, 4.5],  default: 0.0 }
+  - { id: glow_slider,        type: slider, parameter: glow_intensity,    range: [0, 100],    default: 55 }
+  - { id: reduced_motion_toggle, type: toggle, parameter: reduced_motion, default: false }
+  - { id: freeze_action,      type: toggle, parameter: freeze,            default: false, note: "also bound to Spacebar" }
+  - { id: reset_action,       type: button, action: reset_all, momentary: true }
+  - { id: reset_integrated_action, type: button, label: "RESET I", action: reset_integrated, momentary: true }
+sources_popover_controls:
+  - { id: src1_name_field, parameter: src1_name }
+  - { id: src1_color_swatches, parameter: src1_color }
+  - { id: src2_name_field, parameter: src2_name }
+  - { id: src2_color_swatches, parameter: src2_color }
+
+# Complete parameter list (20 params, ids unchanged from v1/v2).
+parameters:
+  - { id: fft_size,          brief_name: fftSize,          type: choice, storage: apvts, options: [1024, 2048, 4096, 8192, 16384], default: 4096, ui: fft_size_selector }
+  - { id: window,            brief_name: window,           type: choice, storage: apvts, options: [hann, blackmanHarris], default: hann, ui: window_selector }
+  - { id: smoothing,         brief_name: smoothing,        type: float,  storage: apvts, range: [0.0, 100.0], default: 35.0, units: "%", ui: smoothing_slider,
+      mapping: "attack 5 + 0.6*v ms, release 30 + 8*v ms" }
+  - { id: spectrum_tilt,     brief_name: spectrumTilt,     type: float,  storage: apvts, range: [0.0, 4.5], default: 0.0, units: "dB/oct", ui: tilt_slider, note: "visual only, pivot 1 kHz; readouts stay true dBFS" }
+  - { id: display_range,     brief_name: displayRange,     type: choice, storage: apvts, options: [-48, -60, -72, -90], default: -90, units: "dBFS lower bound (top fixed at 0)", ui: display_range_selector }
+  - { id: spectrogram_speed, brief_name: spectrogramSpeed, type: float,  storage: apvts, range: [0.25, 4.0], default: 1.0, units: "x", skew: log, ui: speed_slider }
+  - { id: peak_decay,        brief_name: peakDecay,        type: float,  storage: apvts, range: [3.0, 60.0], default: 12.0, units: "dB/s", ui: decay_slider }
+  - { id: freeze,            brief_name: freeze,           type: bool,   storage: apvts, default: false, ui: freeze_action }
+  - { id: analysis_mode,     brief_name: analysisMode,     type: choice, storage: apvts, options: [leftRight, midSide, combined], default: combined, ui: analysis_mode_selector }
+  - { id: preset,            brief_name: preset,           type: choice, storage: apvts, options: [Studio, Minimal, Neon, Ambient, Scientific, Performance], default: Studio, ui: preset_selector,
+      note: "applies a bundle of the parameters above; selecting does not lock them" }
+  - { id: reduced_motion,    brief_name: reducedMotion,    type: bool,   storage: apvts, default: false, ui: reduced_motion_toggle }
+  - { id: glow_intensity,    brief_name: glowIntensity,    type: float,  storage: apvts, range: [0.0, 100.0], default: 55.0, units: "%", ui: glow_slider }
+  - { id: src1_visible,      brief_name: "source[0].visible", type: bool, storage: apvts, default: true,  ui: src1_chip_toggle }
+  - { id: src1_solo,         brief_name: "source[0].solo",    type: bool, storage: apvts, default: false, ui: src1_solo_toggle }
+  - { id: src2_visible,      brief_name: "source[1].visible", type: bool, storage: apvts, default: true,  ui: src2_chip_toggle }
+  - { id: src2_solo,         brief_name: "source[1].solo",    type: bool, storage: apvts, default: false, ui: src2_solo_toggle }
+  - { id: src1_name,         brief_name: "source[0].name",    type: string, storage: state, default: "MAIN",      ui: src1_name_field }
+  - { id: src1_color,        brief_name: "source[0].color",   type: color,  storage: state, default: "#00e5ff",   ui: src1_color_swatches }
+  - { id: src2_name,         brief_name: "source[1].name",    type: string, storage: state, default: "SIDECHAIN", ui: src2_name_field }
+  - { id: src2_color,        brief_name: "source[1].color",   type: color,  storage: state, default: "#b388ff",   ui: src2_color_swatches }
+
+presets:
+  Studio:      { smoothing: 35, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: hann }
+  Minimal:     { smoothing: 25, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: hann }
+  Neon:        { smoothing: 45, spectrum_tilt: 3.0, spectrogram_speed: 1.5,  peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: hann }
+  Ambient:     { smoothing: 80, spectrum_tilt: 3.0, spectrogram_speed: 0.5,  peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: hann }
+  Scientific:  { smoothing: 15, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 8,  glow_intensity: 0,   fft_size: 16384, window: blackmanHarris }
+  Performance: { smoothing: 20, spectrum_tilt: 4.5, spectrogram_speed: 2.5,  peak_decay: 30, glow_intensity: 70,  fft_size: 2048,  window: hann }
+
+webview_bridge:
+  js_to_cpp_event: "prismParam {id, value}"       # window.__JUCE__.backend.emitEvent, console.log fallback
+  momentary_actions: [reset_all, reset_integrated]
+  note: "reset_integrated wired to RESET I in Settings; reset_all wired to RESET"
+  cpp_to_js_streams: [spectrum_snapshot, spectrogram_columns, goniometer_samples, scope_window, loudness, peaks, stereo]
+
+webview_constraints:
+  viewport_units: none
+  html_body_height: "100%"
+  user_select: none
+  context_menu: disabled
+  hover_states: "highlight only; no hover-dependent information"
+  self_contained: true
+  network_fonts: none

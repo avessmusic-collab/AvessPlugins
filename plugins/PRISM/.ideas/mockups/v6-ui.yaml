@@ -1,0 +1,288 @@
+# v6 UI Design Specification
+# Lineage: v6 = v5 + frequency-band-colored spectrogram + rekordbox-style 3-band beat waveform strip (band colors now theme-derived per user; one trio per theme).
+# Lineage: v5 = v4 + live color_theme selector exposing all 7 explored palettes; default Coral/Mint.
+# Engine metrics column removed per user (FFT/window stay in Settings; SMP + FFT stay in the footer status line).
+# (v4 included: sources renamed CHANNEL 1 / CHANNEL 2; peak readouts in plain 'db' with exactly 2 decimals.)
+version: 6
+# v6 refinements (in place): spectrogram: MiniMeters-grade rendering; vectorscope enlarged per user.
+# Plugin: PRISM (multi-source audio visualizer / analyzer, bit-transparent passthrough)
+# Aesthetic lineage: v4 = v3 layout + user-selected coral/mint palette from variant exploration (variant A).
+# v3 lineage: screen-first device redesign from user reference image (v2 dot-matrix spectrum + center knob dropped per user feedback); v1 Studio Hardware chassis dropped.
+# Coordinates: absolute window pixels (origin top-left). Fixed px sizing, NO viewport units.
+# Stage is scaled uniformly to fit the window (resizable, aspect 55:36).
+
+window:
+  width: 1100
+  height: 720
+  resizable: true
+  min_width: 770
+  min_height: 504
+  aspect_ratio: "55:36"
+  edge_padding: 15
+
+tokens:
+  page:
+    background: "radial-gradient(ellipse at 50% 38%, #1a1d21 0%, #141619 62%, #101215 100%)"
+  device_body:
+    rect: { x: 16, y: 16, width: 1068, height: 688 }
+    radius: 26
+    gradient: "linear-gradient(180deg, #333a41 0%, #2a3036 40%, #22272c 100%)"
+    shadow: "0 34px 70px rgba(0,0,0,.55), 0 10px 22px rgba(0,0,0,.45)"
+  glass:
+    rect: { x: 16, y: 16, width: 1068, height: 604 }
+    radius: "26 26 0 0"
+    background: "linear-gradient(180deg, #1b2127 0%, #13181c 17%, #0e1114 42%, #0e1114 100%)"
+    base: "#0e1114"
+    reflection: "curved ellipse highlight (alpha .05 -> .016) + slow 18s soft diagonal sweep (disabled in reduced motion)"
+  typography:
+    family: '"SF Mono", ui-monospace, Menlo, Consolas, "IBM Plex Mono", monospace'   # local stack, no network fonts
+    label:   { size: 12, color: "#7a8894" }
+    value_big: { size: 22, color: "#e9e2dc", glow: "0 0 14px rgba(233,226,220,.20)" }   # neutral warm near-white = shared/global values
+    value_small: { size: 12, color: "#e9e2dc" }
+    per_source_value: "tinted in the owning source color (inline) with 0.35-alpha text-shadow"
+    caption: { size: 10, color: "#7a8894", letter_spacing: "0.04em" }
+    axis:    { size: 10, color: "rgba(122,136,148,.65)" }
+    case: "mixed-case labels, lower-case units"
+    number_format: "GLOBAL RULE: every numeric readout in the UI shows AT MOST 2 decimal places (LUFS M/S/I/LRA, true/sample peak, corr/width/balance, inspector freq and dBFS, slider values, footer stats). Integers stay integers; no readout shows 3+ decimals."
+  sources:
+    - { slot: 1, name: "CHANNEL 1", color: "#ff7a66", rgb: [255, 122, 102], token: coral }
+    - { slot: 2, name: "CHANNEL 2", color: "#5df2b8", rgb: [93, 242, 184],  token: mint }
+  accent:
+    ui_accent: "#ff7a66"          # coral: active icon, toggles, slider fill, demo dot, segmented-on
+    accent_light: "#ffd2c9"       # text on active toggles / segmented
+    accent_fills: "rgba(255,122,102,.12) toggle bg, .34 inset ring, .40 slider fill start"
+  neutral:
+    value: "#e9e2dc"              # warm near-white for shared/global values
+    glow: "rgba(233,226,220,.20)"
+  spectrogram_ramp: "THEME-DERIVED band trio (tokens.themes.list[*].band_colors = [low, mid, high]) blended low -> mid -> high along the log frequency axis (smoothstep, no hard stripes); amplitude drives brightness (floor 0.7 x display_range -> true black, gamma 1.7, white-hot lift only above 90%); plots the selected channel (CH 1 default)"
+  themes:
+    parameter: color_theme
+    default: "Coral/Mint"
+    band_colors_rule: "Each theme carries ONE low/mid/high trio used by BOTH the spectrogram hue ramp and the 3-band beat waveform (bass=low, mids=mid, highs=high). Switching a theme retints both modules instantly: spectrogram history and waveform history are re-rendered, and the waveform legend dots update live."
+    switching: "instant, no reload: CSS variables (--cyan/--cyan-rgb = CH 1 + UI accent, --violet/--violet-rgb = CH 2, --accent-light, --value/--value-rgb = shared-value neutral) + canvas palette lookup from SRC[i].rgb; spectrogram history is re-rendered so it retints immediately"
+    swatch_override_rule: "A theme sets BOTH channel colors. Picking a swatch in the Sources popover overrides that single channel until the theme is changed again; changing theme resets both channels to the theme colors. Overrides do not change the UI accent (accent = theme CH 1)."
+    swatch_order: "[CH 1 theme color, CH 2 theme color, then 4 extras]"
+    list:
+      - { name: "Coral/Mint",   ch1: ["coral", "#ff7a66"],    ch2: ["mint", "#5df2b8"],   neutral: "#e9e2dc", accent_light: "#ffd2c9", extras: [["cyan", "#00e5ff"], ["violet", "#b388ff"], ["amber", "#ffb347"], ["magenta", "#ff4fd8"]], band_colors: ["#ff4b4b", "#ffb84d", "#5df2b8"] }
+      - { name: "Cyan/Violet",  ch1: ["cyan", "#00e5ff"],     ch2: ["violet", "#b388ff"], neutral: "#d3e7ee", accent_light: "#bff4ff", extras: [["coral", "#ff7a66"], ["amber", "#ffb347"], ["mint", "#5df2b8"], ["magenta", "#ff4fd8"]], band_colors: ["#8b62ff", "#d85ad0", "#00e5ff"] }
+      - { name: "Amber/Cyan",   ch1: ["amber", "#ffb84d"],    ch2: ["cyan", "#00e5ff"],   neutral: "#eae2d2", accent_light: "#ffe2b0", extras: [["violet", "#b388ff"], ["coral", "#ff7a66"], ["mint", "#5df2b8"], ["magenta", "#ff4fd8"]], band_colors: ["#ff6b2e", "#ffd24d", "#19e6ff"] }
+      - { name: "Magenta/Blue", ch1: ["magenta", "#ff55d9"],  ch2: ["blue", "#5b94ff"],   neutral: "#d6e2f2", accent_light: "#ffc2f2", extras: [["cyan", "#00e5ff"], ["mint", "#5df2b8"], ["amber", "#ffb347"], ["violet", "#b388ff"]], band_colors: ["#ff3fc4", "#9a6bff", "#4fa0ff"] }
+      - { name: "Green/Ice",    ch1: ["phosphor", "#6dee7a"], ch2: ["ice", "#9fd9ff"],    neutral: "#d5e3ea", accent_light: "#c4f7c9", extras: [["coral", "#ff7a66"], ["amber", "#ffb347"], ["violet", "#b388ff"], ["magenta", "#ff4fd8"]], band_colors: ["#36b866", "#7dff8a", "#bfe6ff"] }
+      - { name: "Gold/Violet",  ch1: ["gold", "#f5c242"],     ch2: ["violet", "#a583ff"], neutral: "#ebe3d3", accent_light: "#ffe7a8", extras: [["coral", "#ff7a66"], ["mint", "#5df2b8"], ["cyan", "#00e5ff"], ["magenta", "#ff4fd8"]], band_colors: ["#d99a1e", "#fff0d0", "#a583ff"] }
+      - { name: "Ice/Steel",    ch1: ["ice", "#e4f2ff"],      ch2: ["steel", "#6a94bf"],  neutral: "#bfc7cf", accent_light: "#ffffff", extras: [["coral", "#ff7a66"], ["mint", "#5df2b8"], ["amber", "#ffb347"], ["violet", "#b388ff"]], band_colors: ["#5f86b3", "#aab4bf", "#f4faff"] }
+  source_extras:
+    swatch_palette: ["#ff7a66", "#5df2b8", "#00e5ff", "#b388ff", "#ffb347", "#ff4fd8"]   # order: coral, mint, cyan, violet, amber, magenta
+    overlap_rule: "both fills first at low alpha (source-over), then both strokes on top; NO additive blend / no third color"
+  hairline: "#ffffff0d"          # 1px rules between glass regions
+  device_strip:
+    rect: { x: 16, y: 620, width: 1068, height: 84 }
+    gradient: "linear-gradient(180deg, #2a3036, #22272c)"
+    top_edge: "1px rgba(0,0,0,.5) + 1px rgba(255,255,255,.055)"
+  soft_button: { size: 60, radius: 17, face: "linear-gradient(180deg, #1c2126, #14181c)", icon_stroke: "#5c6a75", icon_active: "#ff7a66" }
+  wordmark: { text: "PRISM", size: 12, letter_spacing: "0.55em", color: "#566470", position: { x: 450, y: 652, width: 200, height: 16 } }
+  popover: { background: "rgba(15,18,21,.93)", blur_px: 16, radius: 18, transition_ms: 180, hidden_by_default: true }
+  motion: "calm; ease 150-200ms for popovers only; visualizers animate continuously; no bloom"
+
+layout:
+  type: screen-first-device
+  glass_share: "604 / 688 of device height (88%); chrome = one 84px bottom strip"
+  sections:
+    - { id: readout_loudness,   x: 44,  y: 32,  width: 330, height: 82 }
+    - { id: readout_true_peak,  x: 381, y: 32,  width: 330, height: 82 }
+    - { id: readout_stereo,     x: 718, y: 32,  width: 330, height: 82 }
+    - { id: legend,             x: 44,  y: 116, width: 228,  height: 20 }
+    - { id: inspector_line,     x: 284, y: 118, width: 772,  height: 14 }
+    - { id: spectrum,           x: 44,  y: 136, width: 1012, height: 172 }
+    - { id: caption_waveform,   x: 44,  y: 316, width: 76,  height: 12 }
+    - { id: waveform_source_selector, x: 124, y: 312, width: 92, height: 20 }
+    - { id: waveform_band_legend, x: 856, y: 316, width: 200, height: 12 }
+    - { id: waveform,           x: 44,  y: 334, width: 1012, height: 54 }
+    - { id: caption_spectrogram, x: 44,  y: 396, width: 76,  height: 12 }
+    - { id: spectrogram_source_selector, x: 124, y: 392, width: 92, height: 20 }
+    - { id: caption_vectorscope, x: 386, y: 396, width: 300, height: 12 }
+    - { id: caption_scope,       x: 706, y: 396, width: 350, height: 12 }
+    - { id: spectrogram,        x: 44,  y: 414, width: 322, height: 160 }
+    - { id: vectorscope,        x: 386, y: 414, width: 300, height: 160 }
+    - { id: oscilloscope,       x: 706, y: 414, width: 350, height: 160 }
+    - { id: status_line,        x: 44,  y: 588, width: 1012, height: 20 }
+    - { id: sources_popover,    x: 44,  y: 372, width: 360, height: 240, overlay: true, default_visible: false }
+    - { id: settings_popover,   x: 656, y: 104, width: 400, height: 508, overlay: true, default_visible: false }
+  rules:
+    - { x: 376, y: 396, width: 1,    height: 178 }
+    - { x: 696, y: 396, width: 1,    height: 178 }
+    - { x: 44,  y: 582, width: 1012, height: 1 }
+
+modules:
+  - id: readouts
+    desc: "three evenly spaced text columns (x 44 / 381 / 718, 330 wide) directly on glass, no boxes. Label (muted) / big value / two small lines. Shared values (LUFS, corr/width/balance) neutral warm near-white; per-source values tinted in source color"
+    columns:
+      - { id: loudness,  label: "Loudness",  big: "I LUFS", lines: ["M, S", "LRA, I vs -14 target"] }
+      - { id: true_peak, label: "True Peak", big: "CH 1 true peak, max since reset, tinted CH 1 coral; format -1.27 db (unit plain db, exactly 2 decimals)", lines: ["ch 1 SP (tinted, 2 decimals, db)", "ch 2 TP + SP (tinted mint, 2 decimals, db)"] }
+      - { id: stereo,    label: "Stereo",    big: "CH 1 CORR", lines: ["WIDTH, BAL (neutral)", "ch 2 CORR, W (tinted mint)"] }
+  - id: spectrum
+    style: "smooth curves"
+    plot: { left: 0, top: 6, width: 980, height: 152, freq_axis: "log 20 Hz - 20 kHz; labels 20 100 1k 10k 20k", db_axis: "gutter labels at right: 0, -30, -60, -90 (4 stops across display_range)", curve_points: 640 }
+    grid: "delicate hairlines (alpha .03-.09), horizontal per dB stop, vertical at decade/half-decade freqs"
+    layers_in_order:
+      - "per-source translucent vertical-gradient fill (alpha .28 -> .10 @50% -> .01), source-over, CH 2 then CH 1"
+      - "per-source thin falling peak-hold trace (source lightened 45%, alpha .5, 1px)"
+      - "per-source anti-aliased 1.7px stroke, soft glow shadowBlur 2 + 9*glow (restrained), CH 1 drawn last (on top)"
+      - "hover: dashed crosshair + ring markers on each visible curve"
+    inspector: "DOM peak when idle, CUR when hovering; freq / note / cents neutral, per-source dBFS tinted in source color; true untilted dBFS (tilt is visual only, pivot 1 kHz)"
+    legend:
+      id: legend
+      desc: "persistent clickable '[dot] CHANNEL 1' (coral) and '[dot] CHANNEL 2' (mint) at spectrum top-left; toggles visibility; dimmed to 32% when hidden; mirrors source colors/names"
+      positions: { ch1: { x: 44, y: 116, width: 112, height: 20 }, ch2: { x: 160, y: 116, width: 112, height: 20 } }
+  - id: waveform
+    style: "rekordbox-style 3-band beat waveform strip"
+    geometry: "full glass width 1012x54 at (44,334); mirrored amplitude about the center line"
+    history: "last 12 s scrolling right-to-left (84.3 px/s); 'now' playhead at the right edge; faint beat ticks, brighter every 4th beat (bar)"
+    bands: "BASS = theme low trio color, drawn first and tallest; MIDS = theme mid color layered at 0.80 height; HIGHS = theme high color layered on top at 0.52 height"
+    colors_theme_derived: "band colors follow color_theme (one trio per theme); legend dots retint live; labels stay bass / mids / highs"
+    caption: "Waveform + CH 1 / CH 2 selector (UI-only, like the spectrogram's) + right-aligned band legend (bass / mids / highs dots)"
+    demo_signal: "CH 1: kick transient columns in red every beat with bass-line body, steady amber mid energy with clap hits on beats 2 and 4, green hat sparkle on off-beats, 8-bar phrase with a breakdown bar; CH 2: low bass, amber arp pulses on 16ths ducked by the kick, light green top"
+  - id: spectrogram
+    desc: "MiniMeters-grade rendering, 322x160: one row per DEVICE pixel on the log frequency axis (top = 20 kHz), vertical 3-tap smoothing + max/mean bin blend (no row blocks), 1-device-pixel columns with temporal interpolation between frames (no smearing), perceptual brightness curve (floor at 0.7 x display_range -> true black, gamma 1.7, ceiling -6 dB), slight white-hot lift only above 90% intensity. Hue is the theme-derived low -> mid -> high band ramp (smoothstep blend), amplitude drives brightness. Scrolls 48 px/s * speed; plots selected channel (CH 1 default); CH 1 / CH 2 selector in caption; tiny axis labels"
+  - id: vectorscope
+    desc: "ENLARGED per user: 300x160 pane, near-square plot ~156px across (centre (150,80), radius 78), dominant pane of the lower row. Lissajous dot cloud, 900 samples/frame at stride 3, 1.5px dots, persistence fade .13, 45 deg rotated M/S, rings at .25/.5/.75/1.0, labels M / -M / S / L / R drawn inside the ring"
+  - id: oscilloscope
+    desc: "350x160 pane, thin glowing line, fading trail (.26), rising-zero trigger, 2 ms/div, +/-1 FS grid (plot 312x126)"
+  - id: status_line
+    elements:
+      - { id: src1_chip, kind: toggle, text: "CH 1 [dot] coral", dims_when_hidden: true, tint: source }
+      - { id: src1_solo_tag, kind: toggle, text: "S" }
+      - { id: src2_chip, kind: toggle, text: "CH 2 [dot] mint", dims_when_hidden: true }
+      - { id: src2_solo_tag, kind: toggle, text: "S" }
+      - { id: stats, kind: text, text: "| 60fps  SMP: 48000  FFT: 4096 (shows FROZEN when frozen)" }
+      - { id: demo_flag, kind: text, text: "DEMO SIGNAL - simulated data", note: "pulsing dot; mockup only, removed in production" }
+  - id: device_strip
+    elements: [ sources_button, wordmark, settings_button ]
+    note: "center smoothing knob removed in v3; smoothing lives in the Settings popover"
+  - id: sources_popover
+    rows_per_source: "color dot, rename field (max 12), Visible, Solo; 6 color swatches"
+  - id: settings_popover
+    rows: "THEME chips (7, top, above presets; 4 + 3 grid), preset chips (6), FFT size, window, analysis mode, display range, smoothing slider, spectrogram speed slider, peak decay slider, tilt slider, glow slider, reduced motion toggle, FREEZE + RESET + RESET I actions"
+
+controls:
+  - id: sources_button
+    type: button
+    ui_only: true
+    label: "Sources"
+    icon: sliders
+    position: { x: 60, y: 632 }
+    size: { width: 60, height: 60 }
+  - id: settings_button
+    type: button
+    ui_only: true
+    label: "Settings"
+    icon: gear
+    position: { x: 980, y: 632 }
+    size: { width: 60, height: 60 }
+  - id: src1_chip_toggle
+    type: toggle
+    label: "CH 1"
+    parameter: src1_visible
+    default: true
+    position: { x: 44, y: 588 }
+    size: { width: 136, height: 20 }
+  - id: src1_solo_toggle
+    type: toggle
+    label: "S"
+    parameter: src1_solo
+    default: false
+    position: { x: 184, y: 588 }
+    size: { width: 20, height: 20 }
+  - id: src2_chip_toggle
+    type: toggle
+    label: "CH 2"
+    parameter: src2_visible
+    default: true
+    position: { x: 216, y: 588 }
+    size: { width: 136, height: 20 }
+  - id: src2_solo_toggle
+    type: toggle
+    label: "S"
+    parameter: src2_solo
+    default: false
+    position: { x: 356, y: 588 }
+    size: { width: 20, height: 20 }
+
+  - { id: legend_main_toggle, type: toggle, label: "CHANNEL 1", parameter: src1_visible, default: true, position: { x: 44, y: 116 }, size: { width: 112, height: 20 } }
+  - { id: legend_side_toggle, type: toggle, label: "CHANNEL 2", parameter: src2_visible, default: true, position: { x: 160, y: 116 }, size: { width: 112, height: 20 } }
+  - { id: spectrogram_src_ch1, type: toggle, widget: segmented, label: "CH 1", ui_only: true, default: true,  position: { x: 124, y: 392 }, size: { width: 44, height: 20 } }
+  - { id: waveform_src_ch1, type: toggle, widget: segmented, label: "CH 1", ui_only: true, default: true,  position: { x: 124, y: 312 }, size: { width: 44, height: 20 } }
+  - { id: waveform_src_ch2, type: toggle, widget: segmented, label: "CH 2", ui_only: true, default: false, position: { x: 172, y: 312 }, size: { width: 44, height: 20 } }
+  - { id: spectrogram_src_ch2,   type: toggle, widget: segmented, label: "CH 2", ui_only: true, default: false, position: { x: 172, y: 392 }, size: { width: 44, height: 20 } }
+
+# Controls inside popovers (overlay; validated independently of the main surface)
+settings_controls:
+  - { id: theme_selector,     type: combo, widget: chips,      parameter: color_theme,       options: ["Coral/Mint", "Cyan/Violet", "Amber/Cyan", "Magenta/Blue", "Green/Ice", "Gold/Violet", "Ice/Steel"], default: "Coral/Mint" }
+  - { id: preset_selector,    type: combo, widget: chips,      parameter: preset,            options: [Studio, Minimal, Neon, Ambient, Scientific, Performance], default: Studio }
+  - { id: fft_size_selector,  type: combo, widget: segmented,  parameter: fft_size,          options: [1024, 2048, 4096, 8192, 16384], default: 4096 }
+  - { id: window_selector,    type: combo, widget: segmented,  parameter: window,            options: [hann, blackmanHarris], default: hann }
+  - { id: analysis_mode_selector, type: combo, widget: segmented, parameter: analysis_mode,  options: [leftRight, midSide, combined], default: combined }
+  - { id: display_range_selector, type: combo, widget: segmented, parameter: display_range,  options: [-48, -60, -72, -90], default: -90 }
+  - { id: smoothing_slider,   type: slider, parameter: smoothing, range: [0.0, 100.0], default: 35.0, unit: "%" }
+  - { id: speed_slider,       type: slider, parameter: spectrogram_speed, range: [0.25, 4.0], default: 1.0, skew: log }
+  - { id: decay_slider,       type: slider, parameter: peak_decay,        range: [3.0, 60.0], default: 12.0 }
+  - { id: tilt_slider,        type: slider, parameter: spectrum_tilt,     range: [0.0, 4.5],  default: 0.0 }
+  - { id: glow_slider,        type: slider, parameter: glow_intensity,    range: [0, 100],    default: 55 }
+  - { id: reduced_motion_toggle, type: toggle, parameter: reduced_motion, default: false }
+  - { id: freeze_action,      type: toggle, parameter: freeze,            default: false, note: "also bound to Spacebar" }
+  - { id: reset_action,       type: button, action: reset_all, momentary: true }
+  - { id: reset_integrated_action, type: button, label: "RESET I", action: reset_integrated, momentary: true }
+sources_popover_controls:
+  - { id: src1_name_field, parameter: src1_name }
+  - { id: src1_color_swatches, parameter: src1_color }
+  - { id: src2_name_field, parameter: src2_name }
+  - { id: src2_color_swatches, parameter: src2_color }
+
+# Complete parameter list (21 params; v5 adds color_theme, all other ids unchanged).
+parameters:
+  - { id: fft_size,          brief_name: fftSize,          type: choice, storage: apvts, options: [1024, 2048, 4096, 8192, 16384], default: 4096, ui: fft_size_selector }
+  - { id: window,            brief_name: window,           type: choice, storage: apvts, options: [hann, blackmanHarris], default: hann, ui: window_selector }
+  - { id: smoothing,         brief_name: smoothing,        type: float,  storage: apvts, range: [0.0, 100.0], default: 35.0, units: "%", ui: smoothing_slider,
+      mapping: "attack 5 + 0.6*v ms, release 30 + 8*v ms" }
+  - { id: spectrum_tilt,     brief_name: spectrumTilt,     type: float,  storage: apvts, range: [0.0, 4.5], default: 0.0, units: "dB/oct", ui: tilt_slider, note: "visual only, pivot 1 kHz; readouts stay true dBFS" }
+  - { id: display_range,     brief_name: displayRange,     type: choice, storage: apvts, options: [-48, -60, -72, -90], default: -90, units: "dBFS lower bound (top fixed at 0)", ui: display_range_selector }
+  - { id: spectrogram_speed, brief_name: spectrogramSpeed, type: float,  storage: apvts, range: [0.25, 4.0], default: 1.0, units: "x", skew: log, ui: speed_slider }
+  - { id: peak_decay,        brief_name: peakDecay,        type: float,  storage: apvts, range: [3.0, 60.0], default: 12.0, units: "dB/s", ui: decay_slider }
+  - { id: freeze,            brief_name: freeze,           type: bool,   storage: apvts, default: false, ui: freeze_action }
+  - { id: analysis_mode,     brief_name: analysisMode,     type: choice, storage: apvts, options: [leftRight, midSide, combined], default: combined, ui: analysis_mode_selector }
+  - { id: color_theme,       brief_name: colorTheme,       type: choice, storage: apvts, options: ["Coral/Mint", "Cyan/Violet", "Amber/Cyan", "Magenta/Blue", "Green/Ice", "Gold/Violet", "Ice/Steel"], default: "Coral/Mint", ui: theme_selector,
+      note: "sets both channel colors + UI accent + neutral; resets per-channel swatch overrides; posts via prismParam like every parameter" }
+  - { id: preset,            brief_name: preset,           type: choice, storage: apvts, options: [Studio, Minimal, Neon, Ambient, Scientific, Performance], default: Studio, ui: preset_selector,
+      note: "applies a bundle of the parameters above; selecting does not lock them" }
+  - { id: reduced_motion,    brief_name: reducedMotion,    type: bool,   storage: apvts, default: false, ui: reduced_motion_toggle }
+  - { id: glow_intensity,    brief_name: glowIntensity,    type: float,  storage: apvts, range: [0.0, 100.0], default: 55.0, units: "%", ui: glow_slider }
+  - { id: src1_visible,      brief_name: "source[0].visible", type: bool, storage: apvts, default: true,  ui: src1_chip_toggle }
+  - { id: src1_solo,         brief_name: "source[0].solo",    type: bool, storage: apvts, default: false, ui: src1_solo_toggle }
+  - { id: src2_visible,      brief_name: "source[1].visible", type: bool, storage: apvts, default: true,  ui: src2_chip_toggle }
+  - { id: src2_solo,         brief_name: "source[1].solo",    type: bool, storage: apvts, default: false, ui: src2_solo_toggle }
+  - { id: src1_name,         brief_name: "source[0].name",    type: string, storage: state, default: "CHANNEL 1", ui: src1_name_field }
+  - { id: src1_color,        brief_name: "source[0].color",   type: color,  storage: state, default: "#ff7a66",   ui: src1_color_swatches }
+  - { id: src2_name,         brief_name: "source[1].name",    type: string, storage: state, default: "CHANNEL 2", ui: src2_name_field }
+  - { id: src2_color,        brief_name: "source[1].color",   type: color,  storage: state, default: "#5df2b8",   ui: src2_color_swatches }
+
+presets:
+  Studio:      { smoothing: 35, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: hann }
+  Minimal:     { smoothing: 25, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: hann }
+  Neon:        { smoothing: 45, spectrum_tilt: 3.0, spectrogram_speed: 1.5,  peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: hann }
+  Ambient:     { smoothing: 80, spectrum_tilt: 3.0, spectrogram_speed: 0.5,  peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: hann }
+  Scientific:  { smoothing: 15, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 8,  glow_intensity: 0,   fft_size: 16384, window: blackmanHarris }
+  Performance: { smoothing: 20, spectrum_tilt: 4.5, spectrogram_speed: 2.5,  peak_decay: 30, glow_intensity: 70,  fft_size: 2048,  window: hann }
+
+webview_bridge:
+  js_to_cpp_event: "prismParam {id, value}"       # window.__JUCE__.backend.emitEvent, console.log fallback
+  momentary_actions: [reset_all, reset_integrated]
+  note: "peak readouts (true peak + sample peak) use unit 'db' and exactly 2 decimals; every other readout is also capped at 2 decimals (see global rule). reset_integrated wired to RESET I in Settings; reset_all wired to RESET"
+  cpp_to_js_streams: [spectrum_snapshot, spectrogram_columns, goniometer_samples, scope_window, loudness, peaks, stereo]
+
+webview_constraints:
+  viewport_units: none
+  html_body_height: "100%"
+  user_select: none
+  context_menu: disabled
+  hover_states: "highlight only; no hover-dependent information"
+  self_contained: true
+  network_fonts: none

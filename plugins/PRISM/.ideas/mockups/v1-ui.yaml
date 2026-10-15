@@ -1,0 +1,390 @@
+# v1 UI Design Specification
+# Plugin: PRISM  (multi-source audio visualizer / analyzer, bit-transparent passthrough)
+# Aesthetic base: studio-hardware-001 (chassis)  +  PRISM luminous per-source data layer (screens)
+# Coordinates: absolute window pixels (origin top-left). Fixed px sizing, NO viewport units.
+# Control-spec convention follows ui-yaml-template.yaml (rotary-knob / button / combo-box / toggle / linear-slider).
+
+window:
+  width: 1100
+  height: 700
+  resizable: true              # stage scales uniformly (min 0.4x); layout is fixed-px, aspect 11:7
+  min_width: 770
+  min_height: 490
+  aspect_ratio: "11:7"
+  edge_padding: 15             # controls and panels never closer than 15px to window edge
+  mounting_holes:              # decorative rack-ear holes, inside the 15px margin
+    diameter: 9
+    positions: [[3,3],[1088,3],[3,688],[1088,688],[3,345],[1088,345]]
+
+colors:
+  chassis:
+    background: "#1a1a1a"
+    background_stripe: "#1e1e1e"      # repeating-linear-gradient(0deg, #1a1a1a, #1e1e1e 1px, #1a1a1a 2px)
+    surface: "#1e1e1e"
+    border: "#0a0a0a"
+    shadow_inset: "0 2px 4px rgba(0,0,0,0.8) inset"
+    gold_primary: "#ffc864"           # labels, pointers, seven-segment readouts (chassis only)
+    gold_secondary: "#e6b050"
+    gold_muted: "#8a7a58"
+    led_green: "#44ff44"
+    led_yellow: "#ffff44"
+    led_red: "#ff4444"
+  screen:                              # recessed glass displays
+    background: "#0d0d10"
+    bezel: "#050506"
+    grid_minor: "rgba(255,255,255,0.05)"
+    grid_major: "rgba(255,255,255,0.10)"
+    axis_text: "rgba(165,175,195,0.60)"
+    glass_highlight: "linear-gradient(135deg, rgba(255,255,255,0.04), transparent 34%)"
+  sources:                             # luminous colors live ONLY on screens + source chips
+    - { slot: 1, name: "MAIN",      color: "#00e5ff", token: cyan }
+    - { slot: 2, name: "SIDECHAIN", color: "#b388ff", token: violet }
+  sources_reserved:                    # future v2 slots (up to 8-16)
+    - { slot: 3, token: coral,   color: "#ff6f61" }
+    - { slot: 4, token: amber,   color: "#ffb347" }
+    - { slot: 5, token: mint,    color: "#5df2b5" }
+    - { slot: 6, token: magenta, color: "#ff4fd8" }
+  curve:
+    fill_gradient: "rgba(src,0.42) -> rgba(src,0.16) @50% -> rgba(src,0.015)"
+    line_width: 1.5
+    glow_blur_px: "3 + 11 * glowIntensity"      # subtle; capped, no bloom
+    peak_hold_trace: "source lightened 45%, alpha 0.5, 1px"
+    trails: "0..5 prior frames at alpha 0.10 -> 0.03, scaled by glowIntensity; off in reducedMotion"
+    compositing: "lighter (additive) so overlapping sources blend"
+  meters:
+    peak_thresholds_dbfs: { green_max: -12, yellow_max: -3, red_above: -3 }
+    lufs_thresholds: { green_max: -14, yellow_max: -8, red_above: -8 }
+    correlation: { red_below: -0.4, yellow_below: 0.1, green_above: 0.1 }
+    true_peak_digit_red_above_dbtp: -1.0
+
+typography:
+  title:  { family: "Impact, 'Arial Black', sans-serif", size: 28, weight: 900, letter_spacing: "0.05em", color: "#ffc864" }
+  label:  { family: "'Arial Narrow', 'Helvetica Neue Condensed', Arial, sans-serif", size: 11, weight: 700, transform: uppercase, letter_spacing: "0.07em", color: "#ffc864" }
+  tag:    { family: "'Arial Narrow', Arial, sans-serif", size: 9, transform: uppercase, letter_spacing: "0.06em", color: "#e6b050" }
+  axis:   { family: "'Arial Narrow', Arial, sans-serif", size: 9, color: "rgba(165,175,195,0.60)" }
+  readout:
+    style: seven-segment                # inline SVG, 14x20 viewBox cell, ghost segments at 8% opacity, subtle drop-shadow glow
+    sizes: { large: 24, medium: 18, small: 14, tiny: 13 }
+    glyphs: "0-9 - space A b C d E F G H I L n o P r S t U #  (decimal point per cell)"
+    colors: { default: "#ffc864", main: "#00e5ff", sidechain: "#b388ff", warn: "#ff4444" }
+
+layout:
+  type: custom-rack
+  density: "8-14px gaps, 15px window margin"
+  decor: "brushed horizontal metal, grooved header dividers, 6 rack mounting holes, no hover states"
+  sections:
+    - { id: top_bar,         x: 15,  y: 15,  width: 1070, height: 44  }
+    - { id: spectrum,        x: 15,  y: 69,  width: 790,  height: 310 }
+    - { id: spectrogram,     x: 15,  y: 389, width: 254,  height: 160 }
+    - { id: vectorscope,     x: 283, y: 389, width: 254,  height: 160 }
+    - { id: oscilloscope,    x: 551, y: 389, width: 254,  height: 160 }
+    - { id: loudness,        x: 815, y: 69,  width: 270,  height: 190 }
+    - { id: peak_meters,     x: 815, y: 269, width: 270,  height: 150 }
+    - { id: correlation,     x: 815, y: 429, width: 270,  height: 120 }
+    - { id: source_manager,  x: 15,  y: 559, width: 390,  height: 126 }
+    - { id: analysis_engine, x: 415, y: 559, width: 670,  height: 126 }
+    - { id: settings_popover, x: 745, y: 65,  width: 340,  height: 236, overlay: true, default_visible: false }
+
+modules:
+  - id: top_bar
+    elements:
+      - { id: logo,        kind: svg,  desc: "prism triangle, gold outline, white-gold beam in, cyan + violet beams out" }
+      - { id: title,       kind: text, text: "PRISM", font: title }
+      - { id: subtitle,    kind: text, text: "MULTI-SOURCE SPECTRUM ANALYZER" }
+      - { id: demo_flag,   kind: led+text, text: "DEMO SIGNAL / simulated data - not a measurement", note: "mockup only; removed in production" }
+      - { id: preset_combo,  kind: control, ref: preset_selector }
+      - { id: freeze_button, kind: control, ref: freeze_button }
+      - { id: reset_button,  kind: control, ref: reset_button }
+      - { id: settings_button, kind: control, ref: settings_button }
+  - id: spectrum
+    title: "SPECTRUM ANALYZER"
+    screen: { x: 23, y: 99, width: 774, height: 272 }
+    plot: { left: 40, top: 12, width: 720, height: 240, freq_axis: "log 20 Hz - 20 kHz", amp_axis: "dBFS, 0 down to displayRange" }
+    grid_freq_hz: [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
+    grid_db_step: "10 dB (6 dB when range = -48)"
+    curve_points: 640
+    elements:
+      - { id: per_source_curve,  desc: "translucent gradient fill + glow line + soft trails, additive blend" }
+      - { id: peak_hold_trace,   desc: "thin lightened trace, 1.2 s hold then peakDecay dB/s" }
+      - { id: dominant_marker,   desc: "triangle + frequency label above highest peak per source" }
+      - { id: secondary_curve,   desc: "dashed R (L/R mode) or S (M/S mode) curve" }
+      - { id: legend,            desc: "source chips top-right; dimmed when hidden" }
+      - { id: info_line,         desc: "mode / window / FFT / tilt-is-visual disclaimer, top-left" }
+      - { id: hover_crosshair,   desc: "dashed gold crosshair + ring markers on each visible curve" }
+      - id: header_readouts
+        desc: "seven-segment inspector; shows DOM (dominant peak) when idle, CUR when hovering"
+        fields: [ { id: hv_freq, digits: 6, unit: "Hz | kHz" }, { id: hv_note, digits: 3, extra: "cents" }, { id: hv_main, digits: 5, unit: dBFS, color: main }, { id: hv_sc, digits: 5, unit: dBFS, color: sidechain } ]
+  - id: spectrogram
+    title: "SPECTROGRAM"
+    screen: { x: 23, y: 415, width: 238, height: 126 }
+    plot: { left: 30, top: 6, width: 202, height: 104, freq_axis: "log 20 Hz (bottom) - 20 kHz (top)", time_axis: "scrolls left, 'now' at right edge" }
+    palette: "per-source luminance ramp (black -> source color -> white lift above 78% intensity), additive across visible sources"
+    intensity_range_db: "displayRange floor .. -10 dBFS, gamma 1.35"
+    speed_px_per_sec: "40 * spectrogramSpeed"
+    legend: "-90 .. -10 gradient bar in header"
+  - id: vectorscope
+    title: "VECTORSCOPE / GONIO"
+    screen: { x: 291, y: 415, width: 238, height: 126 }
+    plot: { center: [119, 66], radius: 54, rotation: "45 deg (M vertical, S horizontal)", guides: "rings at 0.5 / 1.0, L-R diagonals dashed" }
+    persistence: "frame fade alpha 0.20 (off in reducedMotion), additive per-source Lissajous"
+  - id: oscilloscope
+    title: "OSCILLOSCOPE"
+    screen: { x: 559, y: 415, width: 238, height: 126 }
+    plot: { left: 24, top: 8, width: 206, height: 102, time: "20 ms window, 2 ms/div", amp: "+/-1.0 FS", trigger: "rising zero crossing with confirm slope" }
+    trail: "frame fade alpha 0.28 (off in reducedMotion)"
+  - id: loudness
+    title: "LOUDNESS BS.1770"
+    source: main
+    readouts:
+      - { id: lufs_m,   label: "MOMENTARY",  unit: LUFS, window: "400 ms" }
+      - { id: lufs_s,   label: "SHORT-TERM", unit: LUFS, window: "3 s" }
+      - { id: lufs_i,   label: "INTEGRATED", unit: LUFS, gating: "absolute + relative per BS.1770-5" }
+      - { id: lufs_lra, label: "RANGE",      unit: LU }
+    led_bar: { range_lufs: [-40, 0], segments: 41, target_tick_lufs: -14 }
+    elements: [ reset_integrated_button, target_delta_text ]
+  - id: peak_meters
+    title: "TRUE PEAK / SAMPLE PEAK"
+    per_source_rows: [ { tag: dBTP, led_segments: 22, range_dbfs: [-48, 0], digits: 5 }, { tag: dBFS, led_segments: 22, range_dbfs: [-48, 0], digits: 5 } ]
+    behavior: "LED = instantaneous (24 dB/s fall) + hold marker (peakDecay); digits = max since reset; TP never below SP"
+  - id: correlation
+    title: "CORRELATION / WIDTH"
+    per_source_rows: [ { bar: "25-segment centre-zero, -1..+1", corr_digits: 4, width_digits: 2, unit: "%" } ]
+    width_convention: "S_rms / (M_rms + S_rms) * 100"
+    silence_handling: "reads 0.00 correlation, 0 % width"
+  - id: source_manager
+    title: "SOURCE MANAGER"
+    rows: 2
+    row_elements: [ color_swatch, name, visibility_toggle_led, solo_toggle_led, mini_peak_meter_16seg ]
+    footer: "2 / 8 slots - v1.0 main + sidechain bus"
+    unselected_row_opacity: 0.45
+  - id: analysis_engine
+    title: "ANALYSIS ENGINE"
+    elements:
+      - { id: fft_size_selector, kind: control }
+      - { id: v_res,  desc: "bin width readout, fs / fftSize, Hz/bin" }
+      - { id: v_span, desc: "analysis window span, fftSize / fs, ms" }
+      - { id: knobs, kind: control_group, ids: [smoothing_knob, tilt_knob, speed_knob, decay_knob] }
+
+controls:
+  # ---------------- top bar ----------------
+  - id: preset_selector
+    type: combo-box
+    label: "Preset"
+    parameter: preset
+    options: [Studio, Minimal, Neon, Ambient, Scientific, Performance]
+    default: Studio
+    position: { x: 627, y: 23 }
+    size: { width: 180, height: 28 }
+  - id: freeze_button
+    type: toggle
+    label: "Freeze"
+    parameter: freeze
+    led_color: "#ffff44"
+    default: false
+    position: { x: 827, y: 23 }
+    size: { width: 92, height: 28 }
+  - id: reset_button
+    type: button
+    label: "Reset"
+    action: reset_all                   # resets integrated LUFS, LRA, peak holds, numeric peak maxima
+    momentary: true
+    position: { x: 929, y: 23 }
+    size: { width: 76, height: 28 }
+  - id: settings_button
+    type: toggle                        # UI-only (opens popover); compact icon, 28x28 exception to 60x24 button rule
+    label: "Settings"
+    ui_only: true
+    position: { x: 1039, y: 23 }
+    size: { width: 28, height: 28 }
+  # ---------------- loudness ----------------
+  - id: reset_integrated_button
+    type: button
+    label: "Reset I"
+    action: reset_integrated
+    momentary: true
+    position: { x: 827, y: 227 }
+    size: { width: 90, height: 24 }
+  # ---------------- source manager ----------------
+  - id: src1_visible_toggle
+    type: toggle
+    label: "Vis"
+    parameter: src1_visible
+    led_color: "#44ff44"
+    default: true
+    position: { x: 139, y: 592 }
+    size: { width: 60, height: 24 }
+  - id: src1_solo_toggle
+    type: toggle
+    label: "Solo"
+    parameter: src1_solo
+    led_color: "#ffff44"
+    default: false
+    position: { x: 211, y: 592 }
+    size: { width: 60, height: 24 }
+  - id: src2_visible_toggle
+    type: toggle
+    label: "Vis"
+    parameter: src2_visible
+    led_color: "#44ff44"
+    default: true
+    position: { x: 139, y: 630 }
+    size: { width: 60, height: 24 }
+  - id: src2_solo_toggle
+    type: toggle
+    label: "Solo"
+    parameter: src2_solo
+    led_color: "#ffff44"
+    default: false
+    position: { x: 211, y: 630 }
+    size: { width: 60, height: 24 }
+  # ---------------- analysis engine ----------------
+  - id: fft_size_selector
+    type: combo-box                     # rendered as 5-segment LED button row
+    widget: segmented-led
+    label: "FFT size"
+    parameter: fft_size
+    options: [1024, 2048, 4096, 8192, 16384]
+    default: 4096
+    position: { x: 427, y: 601 }
+    size: { width: 192, height: 26 }    # 5 x 36 + 4 x 3 gap
+  - id: smoothing_knob
+    type: rotary-knob
+    label: "Smoothing"
+    parameter: smoothing
+    range: [0.0, 100.0]
+    unit: "%"
+    default: 35.0
+    decimals: 0
+    readout: seven-segment
+    position: { x: 669, y: 601 }
+    size: { width: 48, height: 48, diameter: 48 }
+  - id: tilt_knob
+    type: rotary-knob
+    label: "Tilt"
+    parameter: spectrum_tilt
+    range: [0.0, 4.5]
+    unit: "dB/oct"
+    default: 0.0
+    decimals: 1
+    readout: seven-segment
+    position: { x: 777, y: 601 }
+    size: { width: 48, height: 48, diameter: 48 }
+  - id: speed_knob
+    type: rotary-knob
+    label: "Spectrogram speed"
+    parameter: spectrogram_speed
+    range: [0.25, 4.0]
+    unit: "x"
+    default: 1.0
+    decimals: 2
+    skew: log
+    readout: seven-segment
+    position: { x: 885, y: 601 }
+    size: { width: 48, height: 48, diameter: 48 }
+  - id: decay_knob
+    type: rotary-knob
+    label: "Peak decay"
+    parameter: peak_decay
+    range: [3.0, 60.0]
+    unit: "dB/s"
+    default: 12.0
+    decimals: 0
+    readout: seven-segment
+    position: { x: 993, y: 601 }
+    size: { width: 48, height: 48, diameter: 48 }
+
+# Controls inside the settings popover (overlay; layout-validated independently of the main surface)
+settings_controls:
+  - id: window_selector
+    type: combo-box
+    widget: segmented-led
+    parameter: window
+    options: [hann, blackmanHarris]
+    default: hann
+    position: { x: 853, y: 99 }
+    size: { width: 192, height: 24 }
+  - id: analysis_mode_selector
+    type: combo-box
+    widget: segmented-led
+    parameter: analysis_mode
+    options: [leftRight, midSide, combined]
+    default: combined
+    position: { x: 853, y: 135 }
+    size: { width: 220, height: 24 }
+  - id: display_range_selector
+    type: combo-box
+    widget: segmented-led
+    parameter: display_range
+    options: [-48, -60, -72, -90]
+    default: -90
+    position: { x: 853, y: 171 }
+    size: { width: 218, height: 24 }
+  - id: glow_slider
+    type: linear-slider
+    parameter: glow_intensity
+    range: [0, 100]
+    unit: "%"
+    default: 55
+    position: { x: 853, y: 209 }
+    size: { width: 150, height: 20 }
+  - id: reduced_motion_toggle
+    type: toggle
+    parameter: reduced_motion
+    led_color: "#44ff44"
+    default: false
+    position: { x: 853, y: 243 }
+    size: { width: 24, height: 24 }
+
+# Complete parameter list. snake_case ids follow factory convention; `brief_name` is the creative-brief camelCase alias.
+# Controls marked storage: state live in ValueTree state (non-automatable) rather than APVTS float/choice/bool.
+parameters:
+  - { id: fft_size,          brief_name: fftSize,          type: choice, storage: apvts, options: [1024, 2048, 4096, 8192, 16384], default: 4096, ui: seg_fft }
+  - { id: window,            brief_name: window,           type: choice, storage: apvts, options: [hann, blackmanHarris], default: hann, ui: window_selector }
+  - { id: smoothing,         brief_name: smoothing,        type: float,  storage: apvts, range: [0.0, 100.0], default: 35.0, units: "%", ui: smoothing_knob,
+      mapping: "attack 5 + 0.6*v ms, release 30 + 8*v ms (replaces smoothingAttack/Release for v1 UI)" }
+  - { id: spectrum_tilt,     brief_name: spectrumTilt,     type: float,  storage: apvts, range: [0.0, 4.5], default: 0.0, units: "dB/oct", ui: tilt_knob, note: "visual only, pivot 1 kHz; readouts stay true dBFS" }
+  - { id: display_range,     brief_name: displayRange,     type: choice, storage: apvts, options: [-48, -60, -72, -90], default: -90, units: "dBFS lower bound (top fixed at 0)", ui: display_range_selector }
+  - { id: spectrogram_speed, brief_name: spectrogramSpeed, type: float,  storage: apvts, range: [0.25, 4.0], default: 1.0, units: "x", skew: log, ui: speed_knob }
+  - { id: peak_decay,        brief_name: peakDecay,        type: float,  storage: apvts, range: [3.0, 60.0], default: 12.0, units: "dB/s", ui: decay_knob }
+  - { id: freeze,            brief_name: freeze,           type: bool,   storage: apvts, default: false, ui: freeze_button }
+  - { id: analysis_mode,     brief_name: analysisMode,     type: choice, storage: apvts, options: [leftRight, midSide, combined], default: combined, ui: analysis_mode_selector }
+  - { id: preset,            brief_name: preset,           type: choice, storage: apvts, options: [Studio, Minimal, Neon, Ambient, Scientific, Performance], default: Studio, ui: preset_selector,
+      note: "applies a bundle of the parameters above; selecting does not lock them" }
+  - { id: reduced_motion,    brief_name: reducedMotion,    type: bool,   storage: apvts, default: false, ui: reduced_motion_toggle }
+  - { id: glow_intensity,    brief_name: glowIntensity,    type: float,  storage: apvts, range: [0.0, 100.0], default: 55.0, units: "%", ui: glow_slider }
+  - { id: src1_visible,      brief_name: "source[0].visible", type: bool, storage: apvts, default: true,  ui: src1_visible_toggle }
+  - { id: src1_solo,         brief_name: "source[0].solo",    type: bool, storage: apvts, default: false, ui: src1_solo_toggle }
+  - { id: src2_visible,      brief_name: "source[1].visible", type: bool, storage: apvts, default: true,  ui: src2_visible_toggle }
+  - { id: src2_solo,         brief_name: "source[1].solo",    type: bool, storage: apvts, default: false, ui: src2_solo_toggle }
+  - { id: src1_name,         brief_name: "source[0].name",    type: string, storage: state, default: "MAIN",      ui: "(rename planned; read-only in v1 mockup)" }
+  - { id: src1_color,        brief_name: "source[0].color",   type: color,  storage: state, default: "#00e5ff",   ui: "(color picker planned; swatch in source manager)" }
+  - { id: src2_name,         brief_name: "source[1].name",    type: string, storage: state, default: "SIDECHAIN", ui: "(rename planned; read-only in v1 mockup)" }
+  - { id: src2_color,        brief_name: "source[1].color",   type: color,  storage: state, default: "#b388ff",   ui: "(color picker planned; swatch in source manager)" }
+
+presets:
+  Studio:      { smoothing: 35, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: hann }
+  Minimal:     { smoothing: 25, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: hann }
+  Neon:        { smoothing: 45, spectrum_tilt: 3.0, spectrogram_speed: 1.5,  peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: hann }
+  Ambient:     { smoothing: 80, spectrum_tilt: 3.0, spectrogram_speed: 0.5,  peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: hann }
+  Scientific:  { smoothing: 15, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 8,  glow_intensity: 0,   fft_size: 16384, window: blackmanHarris }
+  Performance: { smoothing: 20, spectrum_tilt: 4.5, spectrogram_speed: 2.5,  peak_decay: 30, glow_intensity: 70,  fft_size: 2048,  window: hann }
+
+webview_bridge:
+  js_to_cpp_event: "prismParam {id, value}"       # mockup stub: window.__JUCE__.backend.emitEvent, console.log fallback
+  momentary_actions: [reset_all, reset_integrated]
+  cpp_to_js_streams:                              # to be produced by the analysis worker; demo generator replaces them in the mockup
+    - spectrum_snapshot   # per source, log-resampled 640 points + peak-hold
+    - spectrogram_columns
+    - goniometer_samples
+    - scope_window
+    - loudness { M, S, I, LRA }
+    - peaks { samplePeak, truePeak } per source
+    - stereo { correlation, widthPct } per source
+
+webview_constraints:
+  viewport_units: none
+  html_body_height: "100%"
+  user_select: none
+  context_menu: disabled
+  hover_states: none            # hardware-authentic; :active press feedback only
+  self_contained: true

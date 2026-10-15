@@ -1,0 +1,293 @@
+# v8 UI Design Specification
+# Lineage: v8 = full restyle to user's scientific-instrument reference (tiled bordered panes, right control sidebar w/ needle meter + knobs, edge-to-edge); 7-theme system retained.
+# + spectrogram orientation choice (V/H, UI state) per user.
+# Bug-fix pass (metrics audit + review): goniometer L/R convention fixed, spectrogram untilted, name fallback Ch1/Ch2, seeded UI state sanitised, shared knob/slider mapper, gesture begin/end protocol, lowercase 'dbfs', width may read 100.0.
+# v8 styling draws on user's scientific-instrument reference (bordered panes, corner annotations, finer grids).
+# v8 = v7 + windowed mode restyled to fullscreen glass idiom per user (bezel + device strip removed; the glass IS the window). The earlier corner-overlay buttons are superseded by the sidebar buttons.
+# (v7: draggable module resizing, fullscreen presentation mode, Ch1/Ch2 names, color swatches removed, spectrogram = vertical waterfall)
+# (v6: frequency-band-colored spectrogram + rekordbox-style 3-band beat waveform strip, band colors theme-derived; v5: live color_theme selector, 7 palettes, default Coral/Mint; v4: Ch names + 2-decimal db peaks)
+version: 8
+finalized: true
+finalized_date: 2026-10-15
+# Plugin: PRISM (multi-source audio visualizer / analyzer, bit-transparent passthrough)
+# Coordinates: absolute window pixels (origin top-left). Fixed px sizing, NO viewport units.
+# Stage is scaled uniformly to fit the window (resizable, aspect 55:36). Validation note: panes tile FLUSH with shared 1px borders, so adjacent panes overlap by exactly 1px by design.
+
+window:
+  width: 1100
+  height: 720
+  resizable: true
+  min_width: 770
+  min_height: 504
+  aspect_ratio: "55:36"
+  edge_padding: 15
+
+tokens:
+  page:
+    background: "#0a0c0e"      # the glass IS the window: edge-to-edge black instrument screen (no device body, bezel, strip, drop shadow, reflection)
+  screen:
+    base: "#0a0c0e"
+    frame: "1px rgba(255,255,255,.10) pane borders with 9px corner ticks rgba(255,255,255,.36); panes tile flush with shared borders"
+    grid: "engineering graph paper: 10 dB horizontal rules, decade + 2..9 vertical rules, 20-division scope grid; alpha .022-.10"
+    annotations: "9px muted monospace corner stats (live values), at most 2 decimals"
+  typography:
+    family: '"SF Mono", ui-monospace, Menlo, Consolas, "IBM Plex Mono", monospace'   # local stack, no network fonts
+    label:   { size: 12, color: "#7a8894" }
+    value_big: { size: 22, color: "#e9e2dc", glow: "0 0 14px rgba(233,226,220,.20)" }   # neutral warm near-white = shared/global values
+    value_small: { size: 12, color: "#e9e2dc" }
+    per_source_value: "tinted in the owning source color (inline) with 0.35-alpha text-shadow"
+    caption: { size: 10, color: "#7a8894", letter_spacing: "0.04em" }
+    axis:    { size: 10, color: "rgba(122,136,148,.65)" }
+    case: "mixed-case labels, lower-case units"
+    number_format: "GLOBAL RULE: every numeric readout in the UI shows AT MOST 2 decimal places (LUFS M/S/I/LRA, true/sample peak, corr/width/balance, inspector freq and dBFS, slider values, footer stats). Integers stay integers; no readout shows 3+ decimals."
+  sources:
+    - { slot: 1, name: "Ch1", color: "#ff7a66", rgb: [255, 122, 102], token: coral }
+    - { slot: 2, name: "Ch2", color: "#5df2b8", rgb: [93, 242, 184],  token: mint }
+  accent:
+    ui_accent: "#ff7a66"          # coral: active icon, toggles, slider fill, demo dot, segmented-on
+    accent_light: "#ffd2c9"       # text on active toggles / segmented
+    accent_fills: "rgba(255,122,102,.12) toggle bg, .34 inset ring, .40 slider fill start"
+  neutral:
+    value: "#e9e2dc"              # warm near-white for shared/global values
+    glow: "rgba(233,226,220,.20)"
+  spectrogram_ramp: "THEME-DERIVED band trio (tokens.themes.list[*].band_colors = [low, mid, high]) blended low -> mid -> high along the log frequency axis (smoothstep, no hard stripes); amplitude drives brightness (floor 0.7 x display_range -> true black, gamma 1.7, white-hot lift only above 90%); plots the selected channel (Ch1 default)"
+  themes:
+    parameter: color_theme
+    default: "Coral/Mint"
+    band_colors_rule: "Each theme carries ONE low/mid/high trio used by BOTH the spectrogram hue ramp and the 3-band beat waveform (bass=low, mids=mid, highs=high). Switching a theme retints both modules instantly: spectrogram history and waveform history are re-rendered, and the waveform legend dots update live."
+    switching: "instant, no reload: CSS variables (--cyan/--cyan-rgb = Ch1 + UI accent, --violet/--violet-rgb = Ch2, --accent-light, --value/--value-rgb = shared-value neutral) + canvas palette lookup from SRC[i].rgb; spectrogram history is re-rendered so it retints immediately"
+    channel_color_rule: "Channel colors derive SOLELY from color_theme (Ch1 = theme ch1, Ch2 = theme ch2). There are no per-channel color pickers/swatches and no color state entries; the Sources popover shows a non-interactive color dot per channel."
+    list:
+      - { name: "Coral/Mint",   ch1: ["coral", "#ff7a66"],    ch2: ["mint", "#5df2b8"],   neutral: "#e9e2dc", accent_light: "#ffd2c9", band_colors: ["#ff4b4b", "#ffb84d", "#5df2b8"] }
+      - { name: "Cyan/Violet",  ch1: ["cyan", "#00e5ff"],     ch2: ["violet", "#b388ff"], neutral: "#d3e7ee", accent_light: "#bff4ff", band_colors: ["#8b62ff", "#d85ad0", "#00e5ff"] }
+      - { name: "Amber/Cyan",   ch1: ["amber", "#ffb84d"],    ch2: ["cyan", "#00e5ff"],   neutral: "#eae2d2", accent_light: "#ffe2b0", band_colors: ["#ff6b2e", "#ffd24d", "#19e6ff"] }
+      - { name: "Magenta/Blue", ch1: ["magenta", "#ff55d9"],  ch2: ["blue", "#5b94ff"],   neutral: "#d6e2f2", accent_light: "#ffc2f2", band_colors: ["#ff3fc4", "#9a6bff", "#4fa0ff"] }
+      - { name: "Green/Ice",    ch1: ["phosphor", "#6dee7a"], ch2: ["ice", "#9fd9ff"],    neutral: "#d5e3ea", accent_light: "#c4f7c9", band_colors: ["#36b866", "#7dff8a", "#bfe6ff"] }
+      - { name: "Gold/Violet",  ch1: ["gold", "#f5c242"],     ch2: ["violet", "#a583ff"], neutral: "#ebe3d3", accent_light: "#ffe7a8", band_colors: ["#d99a1e", "#fff0d0", "#a583ff"] }
+      - { name: "Ice/Steel",    ch1: ["ice", "#e4f2ff"],      ch2: ["steel", "#6a94bf"],  neutral: "#bfc7cf", accent_light: "#ffffff", band_colors: ["#5f86b3", "#aab4bf", "#f4faff"] }
+    overlap_rule: "both fills first at low alpha (source-over), then both strokes on top; NO additive blend / no third color"
+  hairline: "#ffffff0d"          # 1px rules between glass regions
+  sidebar_button: { size: [106, 28], border: "1px rgba(255,255,255,.16)", radius: 3, label: "10px uppercase, letter-spacing .08em", on_state: "accent text + accent .12 fill + accent .5 border" }
+  knob: { diameter: 40, track: "270 deg arc from 135 deg, rgba(255,255,255,.14)", value_arc: "theme Ch1 color + soft glow", pointer: "light line", value_label: "10px neutral below, 9px caption above", interaction: "vertical drag, wheel, double-click resets to default" }
+  needle_meter: { source: "momentary LUFS (LUFS-M)", scale: "-40 .. 0, 110 deg sweep, ticks every 2 LU (5 and 10 emphasized), labels -40/-30/-20/-10/0", zone: "-14 .. 0 in theme Ch1 color", needle: "theme Ch1 color, soft glow, 160 ms ballistics", readout: "numeric LUFS-M top-right" }
+  nameplate: { text: "PRISM", size: 15, letter_spacing: "0.5em", border: "1px rgba(255,255,255,.22)" }
+  popover: { background: "rgba(15,18,21,.93)", blur_px: 16, radius: 18, transition_ms: 180, hidden_by_default: true }
+  motion: "calm; ease 150-200ms for popovers only; visualizers animate continuously; no bloom"
+
+layout:
+  type: instrument-screen
+  screen: { x: 15, y: 15, width: 1070, height: 690, note: "15px margin on every side (controls stay >= 15px from the window edge)" }
+  panes: "tiled flush; header band 22px per pane (caption + selectors / legend + inspector), canvas below; shared 1px borders"
+  sections:
+    # ---- main grid (left of the sidebar): default row split 226 / 70 / 302, lower columns 296 / 266 / 272 (canvas px)
+    - { id: pane_spectrum,    x: 15,  y: 15,  width: 838, height: 250 }
+    - { id: pane_waveform,    x: 15,  y: 264, width: 838, height: 94  }
+    - { id: pane_spectrogram, x: 15,  y: 357, width: 298, height: 326 }
+    - { id: pane_vectorscope, x: 312, y: 357, width: 268, height: 326 }
+    - { id: pane_scope,       x: 579, y: 357, width: 274, height: 326 }
+    # ---- right control sidebar (x 853..1085)
+    - { id: sidebar_nameplate, x: 853, y: 15,  width: 232, height: 48  }
+    - { id: sidebar_loudness,  x: 853, y: 62,  width: 232, height: 88  }
+    - { id: sidebar_true_peak, x: 853, y: 149, width: 232, height: 88  }
+    - { id: sidebar_stereo,    x: 853, y: 236, width: 232, height: 88  }
+    - { id: sidebar_meter,     x: 853, y: 323, width: 232, height: 136 }
+    - { id: sidebar_knobs,     x: 853, y: 458, width: 232, height: 94  }
+    - { id: sidebar_buttons,   x: 853, y: 551, width: 232, height: 132 }
+    # ---- footer status rail
+    - { id: footer_rail,       x: 15,  y: 682, width: 1070, height: 23 }
+    - { id: sources_popover,   x: 485, y: 541, width: 360, height: 134, overlay: true, default_visible: false }
+    - { id: settings_popover,  x: 445, y: 317, width: 400, height: 358, overlay: true, default_visible: false }
+  header_elements:
+    spectrum: { legend: "Ch1 / Ch2 clickable chips at pane left (x 20, 92)", inspector: "DOM/CUR freq / note / per-source dBFS at x 169, tinted per source" }
+    waveform: { caption: "Waveform + Ch1/Ch2 selector at left; BPM/SPAN annotation; bass/mids/highs legend dots right-aligned" }
+    spectrogram: { caption: "Spectrogram + Ch1/Ch2 selector" }
+    vectorscope: { caption: "Vectorscope" }
+    scope: { caption: "Scope" }
+  corner_annotations:        # 9px muted monospace, live values, <= 2 decimals; inside the canvas corners
+    spectrum_top_left: "FFT <size> WIN <hann|blkhrr> RES <hz/bin>"
+    spectrum_top_right: "SMTH <n>% TILT <n.n> RNG <db>"
+    waveform_header: "BPM 124 SPAN <s>"
+    spectrogram_top_left: "SPD <x.xx>x"
+    vectorscope_top_left: "CORR <+-n.nn>"
+    vectorscope_top_right: "ROT 45 deg"
+    scope_top_right: "TRIG +0 SPAN 20ms"
+
+resizable_layout:
+  default_layout: "= the 'layout.sections' geometry above (canvas rows 226 / 70 / 302; lower canvas columns 296 / 266 / 272)"
+  row_axis:
+    total: 598                       # spectrum + waveform + lower-row CANVAS heights always sum to 598 px (grid 668 px minus 3 x 22 header minus 4 border px)
+    min: { spectrum: 120, waveform: 40, lower_row: 100 }
+    dividers:
+      - { id: dh1, between: "spectrum | waveform+lower", on: "shared border", drag: "up/down; the lower row absorbs the change (waveform shrinks only after lower_row hits its minimum)" }
+      - { id: dh2, between: "waveform | lower row",      on: "shared border", drag: "up/down; lower row absorbs" }
+  column_axis:
+    total: 834                       # three lower CANVAS widths (sum) = grid width 838 minus 4 border px
+    min_each: 180
+    min_spectrogram: 224            # raised so the header (caption + Ch1/Ch2 + V/H toggle) never overlaps; vectorscope and scope keep 180
+    dividers:
+      - { id: dv1, between: "spectrogram | vectorscope", on: "shared border", drag: "left/right; scope width fixed" }
+      - { id: dv2, between: "vectorscope | scope",        on: "shared border", drag: "left/right; spectrogram width fixed" }
+  affordance: "the pane borders ARE the dividers: on pointer-over or drag the shared border brightens and a grip glyph appears; cursor row-resize / col-resize. Pointer affordance only, no information."
+  reset: "double-click a divider: horizontal dividers reset the row split, vertical dividers reset the column split, to the defaults above"
+  reflow: "all canvases, headers, selectors, annotations, axis labels, legends and dividers re-render live during the drag; the vectorscope stays a centered near-square (radius = min(w,h)/2 - 2) inside its pane; spectrogram/waveform history is stretched, not lost"
+  ui_state:
+    row_splits: [226, 70, 302]       # default; serialized UI state like window size
+    lower_col_splits: [296, 266, 272]
+    fullscreen: false
+    spectrogram_orientation: "v"       # "v" | "h"; default "v"; UI state, NOT a parameter
+    bridge_event: "prismUiState {row_splits, lower_col_splits, fullscreen, spectrogram_orientation} (JS -> C++ on drag end / double-click / fullscreen toggle); host may seed via window.__PRISM_INIT_UI"
+  fullscreen:
+    activation: "footer expand button (bottom-right of the footer rail) or key F; exit via the same button (moves to the top-right corner, faded), Esc or F"
+    behaviour: "ONLY the visualizer grid remains: the right sidebar and the footer rail fade out (180 ms) and the pane grid tweens (190 ms, instant with reduced_motion) to the full screen: x 15, width 1070, y 15..695 (row total 610, column total 1066). Legend + inspector stay in the spectrum header; the DEMO flag stays bottom-right; module drag-resizing keeps working (splits scale proportionally); popovers and sidebar controls are unreachable while active."
+    scope: "in the real plugin this fills the host window/editor bounds, NOT OS fullscreen"
+    state: "ui_state.fullscreen (default false); not a parameter"
+
+meter_definitions:
+  correlation: "non-mean-removed normalised cross-correlation  sum(l*r) / sqrt(sum(l^2) * sum(r^2)); silence -> 0"
+  width: "100 * sqrt(Es) / (sqrt(Es) + sqrt(Em)) from M/S RMS (M=(L+R)/sqrt2, S=(L-R)/sqrt2); mono -> 0, anti-phase -> 100, hard-pan -> 50; may display 100.0"
+  balance: "10 * log10(sum(R^2) / sum(L^2)) db; positive = right-heavy"
+  loudness: "LUFS-M window 400 ms, LUFS-S window 3 s, LUFS-I gated per ITU-R BS.1770-5 / EBU R128 (absolute -70 LUFS + relative -10 LU gates), LRA per EBU TECH 3342"
+  true_peak: "per BS.1770-5 oversampling (>= 4x); invariant TP >= SP is the DSP's responsibility, not the UI's"
+  display_casing: "units and dB labels are lowercase everywhere (db, dbfs, dbtp not used, lufs, lu, hz)"
+  ui_state_seeding: "host-seeded ui_state is clamped to resizable_layout minimums/totals before use; fullscreen is applied through the same code path as the toggle (true and false)"
+
+modules:
+  - id: sidebar
+    desc: "bordered control column on the right edge, top to bottom: PRISM nameplate (bordered), Loudness / True Peak / Stereo readout cells, needle meter pane, four instrument knobs, button grid. Same 2-decimal rule and per-source tinting as before: shared values neutral, Ch1/Ch2 values tinted in their theme colors"
+    cells:
+      - { id: nameplate, desc: "bordered title block 'PRISM'" }
+      - { id: loudness,  label: "Loudness",  big: "I LUFS", lines: ["M, S", "LRA, I vs -14 target"] }
+      - { id: true_peak, label: "True Peak", big: "Ch1 true peak, max since reset, tinted Ch1; format -1.27 db (unit plain db, exactly 2 decimals)", lines: ["Ch1 SP (tinted, 2 decimals, db)", "Ch2 TP + SP (tinted, 2 decimals, db)"] }
+      - { id: stereo,    label: "Stereo",    big: "Ch1 CORR", lines: ["WIDTH, BAL (neutral)", "Ch2 CORR, W (tinted Ch2)"] }
+      - { id: needle_meter, desc: "analog-style needle meter, momentary LUFS, clean vector, theme-tinted (see tokens.needle_meter)" }
+      - { id: knobs, desc: "compact knobs bound to smoothing, spectrum_tilt, glow_intensity, spectrogram_speed; monospace value under each" }
+      - { id: buttons, desc: "FREEZE, RESET, RESET I, THEME (shows + cycles the color theme), SOURCES, SETTINGS" }
+  - id: spectrum
+    style: "smooth curves"
+    plot: { left: 0, top: 6, width: "canvas width - 32", height: "canvas height - 20", freq_axis: "log 20 Hz - 20 kHz; labels 20 100 1k 10k 20k", db_axis: "gutter labels at right: 4 stops across display_range", curve_points: 640 }
+    grid: "engineering graph paper: 10 dB horizontal rules (every 30 dB stronger), decade + 2..9 vertical rules"
+    layers_in_order:
+      - "per-source translucent vertical-gradient fill (alpha .28 -> .10 @50% -> .01), source-over, Ch2 then Ch1"
+      - "per-source thin falling peak-hold trace (source lightened 45%, alpha .5, 1px)"
+      - "per-source anti-aliased 1.7px stroke, soft glow shadowBlur 2 + 9*glow (restrained), Ch1 drawn last (on top)"
+      - "hover: dashed crosshair + ring markers on each visible curve"
+    inspector: "inside the spectrum header: DOM peak when idle, CUR when hovering; freq / note / cents neutral, per-source dBFS tinted in source color; true untilted dBFS (tilt is visual only, pivot 1 kHz)"
+    legend: "persistent clickable '[dot] Ch1' and '[dot] Ch2' chips in the spectrum header; toggle visibility; dimmed to 32% when hidden"
+  - id: waveform
+    style: "rekordbox-style 3-band beat waveform strip"
+    geometry: "full pane width, mirrored amplitude about the center line"
+    history: "scrolling right-to-left, 84.3 px/s (about 12-13 s visible); 'now' playhead at the right edge; faint beat ticks, brighter every 4th beat (bar)"
+    bands: "BASS = theme low trio color, drawn first and tallest; MIDS = theme mid color layered at 0.80 height; HIGHS = theme high color layered on top at 0.52 height"
+    colors_theme_derived: "band colors follow color_theme (one trio per theme); legend dots retint live; labels stay bass / mids / highs"
+    demo_signal: "Ch1: kick transient columns every beat with bass-line body, steady mid energy with clap hits on beats 2 and 4, hat sparkle on off-beats, 8-bar phrase with a breakdown bar; Ch2: low bass, arp pulses on 16ths ducked by the kick, light highs"
+  - id: spectrogram
+    desc: "Spectrogram INTENSITY IS UNTILTED (spectrum_tilt affects only the spectrum curve; inspector values are also untilted). ORIENTATION CHOICE (UI state ui_state.spectrogram_orientation, default 'v'; V/H segmented toggle right-aligned in the pane header next to the Ch1/Ch2 selector). V = vertical waterfall (described below). H = horizontal scroll: frequency bottom->top (log, 20 Hz bottom), time scrolls right->left with newest at the right edge, same per-pixel quality / brightness curve / theme band ramp (now running bottom->top); freq ticks and guides on the left side, time markers (now, -2s, ...) along the bottom. Switching reprojects the stored history (axes swapped + flipped), never clears it. VERTICAL WATERFALL, MiniMeters orientation: frequency HORIZONTAL (log, 20 Hz left -> 20 kHz right, aligned with the spectrum above); time VERTICAL, newest row at the TOP, history scrolls DOWN (36 px/s * speed). One column per DEVICE pixel (bin max/mean blend + 3-tap horizontal smoothing), 1-device-pixel rows with temporal interpolation between frames, perceptual brightness curve (floor 0.7 x display_range -> true black, gamma 1.7, ceiling -6 dB), white-hot lift only above 90%. Hue = theme-derived low -> mid -> high band ramp left -> right (smoothstep). Axis labels: frequency ticks along the bottom with faint guides (decades + 2..9), time labels (now, -2s, ...) down the right side. Plots the selected source (Ch1 default); history is stretched on resize and re-rendered on theme change"
+  - id: vectorscope
+    desc: "Convention: hard-left -> upper-LEFT diagonal (labelled L), hard-right -> upper-right (R), mono -> straight up (M), anti-phase -> horizontal (S); x = (R-L)/sqrt2, y = (L+R)/sqrt2. Lissajous dot cloud with persistence (fade .13), 900 samples/frame at stride 3, 1.5px dots, 45 deg rotated M/S, rings at .25/.5/.75/1.0, labels M / -M / S / L / R inside the ring; centered near-square plot, radius = min(w,h)/2 - 2"
+  - id: oscilloscope
+    desc: "thin glowing line, fading trail (.26), rising-zero trigger, 2 ms/div, +/-1 FS grid with 20 vertical divisions and 0.25 FS horizontal rules"
+  - id: status_line
+    desc: "slim bordered footer rail"
+    elements:
+      - { id: src1_chip, kind: toggle, text: "Ch1 [dot] <theme color name>", dims_when_hidden: true, tint: source }
+      - { id: src1_solo_tag, kind: toggle, text: "S" }
+      - { id: src2_chip, kind: toggle, text: "Ch2 [dot] <theme color name>", dims_when_hidden: true }
+      - { id: src2_solo_tag, kind: toggle, text: "S" }
+      - { id: stats, kind: text, text: "| 60fps  SMP: 48000  FFT: 4096 (shows FROZEN when frozen)" }
+      - { id: demo_flag, kind: text, text: "DEMO SIGNAL - simulated data", note: "pulsing dot; mockup only, removed in production" }
+      - { id: fullscreen_button, kind: control, ref: fullscreen_button }
+  - id: sources_popover
+    rows_per_source: "non-interactive color dot (current theme color), rename field (max 10 chars), Visible, Solo; no color swatches"
+  - id: settings_popover
+    rows: "THEME chips (7, 4 + 3 grid), preset chips (6), FFT size, window, analysis mode, display range, peak decay slider, reduced motion toggle. (Smoothing, tilt, glow and spectrogram speed live on the sidebar knobs; FREEZE / RESET / RESET I on the sidebar buttons.)"
+
+controls:
+  # ---- sidebar knobs (bind to existing parameters)
+  - { id: smoothing_knob, type: slider, widget: rotary-knob, label: "SMTH", parameter: smoothing, range: [0.0, 100.0], default: 35.0, unit: "%", position: { x: 862, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
+  - { id: tilt_knob,      type: slider, widget: rotary-knob, label: "TILT", parameter: spectrum_tilt, range: [0.0, 4.5], default: 0.0, unit: "dB/oct", position: { x: 920, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
+  - { id: glow_knob,      type: slider, widget: rotary-knob, label: "GLOW", parameter: glow_intensity, range: [0, 100], default: 55, unit: "%", position: { x: 978, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
+  - { id: speed_knob,     type: slider, widget: rotary-knob, label: "SPD",  parameter: spectrogram_speed, range: [0.25, 4.0], default: 1.0, skew: log, unit: "x", position: { x: 1036, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
+  # ---- sidebar buttons
+  - { id: freeze_button,   type: toggle, label: "Freeze", parameter: freeze, default: false, note: "also bound to Spacebar", position: { x: 863, y: 565 }, size: { width: 106, height: 28 } }
+  - { id: reset_button,    type: button, label: "Reset", action: reset_all, momentary: true, position: { x: 971, y: 565 }, size: { width: 106, height: 28 } }
+  - { id: reset_integrated_button, type: button, label: "Reset I", action: reset_integrated, momentary: true, position: { x: 863, y: 601 }, size: { width: 106, height: 28 } }
+  - { id: theme_button,    type: button, label: "Theme", parameter: color_theme, note: "shows the current theme name; click cycles to the next of the 7 themes", position: { x: 971, y: 601 }, size: { width: 106, height: 28 } }
+  - { id: sources_button,  type: button, ui_only: true, label: "Sources", opens: sources_popover, position: { x: 863, y: 637 }, size: { width: 106, height: 28 } }
+  - { id: settings_button, type: button, ui_only: true, label: "Settings", opens: settings_popover, position: { x: 971, y: 637 }, size: { width: 106, height: 28 } }
+  # ---- spectrum header legend + selectors
+  - { id: legend_ch1_toggle, type: toggle, label: "Ch1", parameter: src1_visible, default: true, position: { x: 20, y: 17 }, size: { width: 68, height: 20 } }
+  - { id: legend_ch2_toggle, type: toggle, label: "Ch2", parameter: src2_visible, default: true, position: { x: 92, y: 17 }, size: { width: 68, height: 20 } }
+  - { id: waveform_src_ch1, type: toggle, widget: segmented, label: "Ch1", ui_only: true, default: true,  position: { x: 95, y: 266 }, size: { width: 36, height: 20 } }
+  - { id: waveform_src_ch2, type: toggle, widget: segmented, label: "Ch2", ui_only: true, default: false, position: { x: 135, y: 266 }, size: { width: 36, height: 20 } }
+  - { id: spectrogram_orient_v, type: toggle, widget: segmented, label: "V", ui_only: true, default: true,  position: { x: 260, y: 359 }, size: { width: 22, height: 20 } }
+  - { id: spectrogram_orient_h, type: toggle, widget: segmented, label: "H", ui_only: true, default: false, position: { x: 285, y: 359 }, size: { width: 22, height: 20 } }
+  - { id: spectrogram_src_ch1, type: toggle, widget: segmented, label: "Ch1", ui_only: true, default: true,  position: { x: 103, y: 359 }, size: { width: 36, height: 20 } }
+  - { id: spectrogram_src_ch2, type: toggle, widget: segmented, label: "Ch2", ui_only: true, default: false, position: { x: 143, y: 359 }, size: { width: 36, height: 20 } }
+  # ---- footer rail
+  - { id: src1_chip_toggle, type: toggle, label: "Ch1", parameter: src1_visible, default: true, position: { x: 23, y: 684 }, size: { width: 124, height: 20 } }
+  - { id: src1_solo_toggle, type: toggle, label: "S", parameter: src1_solo, default: false, position: { x: 151, y: 684 }, size: { width: 20, height: 20 } }
+  - { id: src2_chip_toggle, type: toggle, label: "Ch2", parameter: src2_visible, default: true, position: { x: 175, y: 684 }, size: { width: 124, height: 20 } }
+  - { id: src2_solo_toggle, type: toggle, label: "S", parameter: src2_solo, default: false, position: { x: 303, y: 684 }, size: { width: 20, height: 20 } }
+  - { id: fullscreen_button, type: toggle, ui_only: true, label: "expand", icon: expand-arrows, shortcut: "F", default: false, position: { x: 1055, y: 684 }, size: { width: 24, height: 20 }, note: "Esc/F also exits; in fullscreen the same button moves to the top-right (x 1055, y 18, 30x20, faded)" }
+
+# Controls inside popovers (overlay; validated independently of the main surface)
+settings_controls:
+  - { id: theme_selector,     type: combo, widget: chips,      parameter: color_theme,       options: ["Coral/Mint", "Cyan/Violet", "Amber/Cyan", "Magenta/Blue", "Green/Ice", "Gold/Violet", "Ice/Steel"], default: "Coral/Mint" }
+  - { id: preset_selector,    type: combo, widget: chips,      parameter: preset,            options: [Studio, Minimal, Neon, Ambient, Scientific, Performance], default: Studio }
+  - { id: fft_size_selector,  type: combo, widget: segmented,  parameter: fft_size,          options: [1024, 2048, 4096, 8192, 16384], default: 4096 }
+  - { id: window_selector,    type: combo, widget: segmented,  parameter: window,            options: [hann, blackmanHarris], default: hann }
+  - { id: analysis_mode_selector, type: combo, widget: segmented, parameter: analysis_mode,  options: [leftRight, midSide, combined], default: combined }
+  - { id: display_range_selector, type: combo, widget: segmented, parameter: display_range,  options: [-48, -60, -72, -90], default: -90 }
+  - { id: decay_slider,       type: slider, parameter: peak_decay,        range: [3.0, 60.0], default: 12.0 }
+  - { id: reduced_motion_toggle, type: toggle, parameter: reduced_motion, default: false }
+sources_popover_controls:
+  - { id: src1_name_field, parameter: src1_name }
+  - { id: src2_name_field, parameter: src2_name }
+
+parameters:
+  - { id: fft_size,          brief_name: fftSize,          type: choice, storage: apvts, options: [1024, 2048, 4096, 8192, 16384], default: 4096, ui: fft_size_selector }
+  - { id: window,            brief_name: window,           type: choice, storage: apvts, options: [hann, blackmanHarris], default: hann, ui: window_selector }
+  - { id: smoothing,         brief_name: smoothing,        type: float,  storage: apvts, range: [0.0, 100.0], default: 35.0, units: "%", ui: smoothing_knob,
+      mapping: "attack 5 + 0.6*v ms, release 30 + 8*v ms" }
+  - { id: spectrum_tilt,     brief_name: spectrumTilt,     type: float,  storage: apvts, range: [0.0, 4.5], default: 0.0, units: "dB/oct", ui: tilt_knob, note: "visual only, pivot 1 kHz; readouts stay true dBFS" }
+  - { id: display_range,     brief_name: displayRange,     type: choice, storage: apvts, options: [-48, -60, -72, -90], default: -90, units: "dBFS lower bound (top fixed at 0)", ui: display_range_selector }
+  - { id: spectrogram_speed, brief_name: spectrogramSpeed, type: float,  storage: apvts, range: [0.25, 4.0], default: 1.0, units: "x", skew: log, ui: speed_knob }
+  - { id: peak_decay,        brief_name: peakDecay,        type: float,  storage: apvts, range: [3.0, 60.0], default: 12.0, units: "dB/s", ui: decay_slider }
+  - { id: freeze,            brief_name: freeze,           type: bool,   storage: apvts, default: false, ui: freeze_button }
+  - { id: analysis_mode,     brief_name: analysisMode,     type: choice, storage: apvts, options: [leftRight, midSide, combined], default: combined, ui: analysis_mode_selector }
+  - { id: color_theme,       brief_name: colorTheme,       type: choice, storage: apvts, options: ["Coral/Mint", "Cyan/Violet", "Amber/Cyan", "Magenta/Blue", "Green/Ice", "Gold/Violet", "Ice/Steel"], default: "Coral/Mint", ui: theme_selector,
+      note: "sets both source colors + UI accent + neutral; derives both channel colors; posts via prismParam like every parameter" }
+  - { id: preset,            brief_name: preset,           type: choice, storage: apvts, options: [Studio, Minimal, Neon, Ambient, Scientific, Performance], default: Studio, ui: preset_selector,
+      note: "applies a bundle of the parameters above; selecting does not lock them" }
+  - { id: reduced_motion,    brief_name: reducedMotion,    type: bool,   storage: apvts, default: false, ui: reduced_motion_toggle }
+  - { id: glow_intensity,    brief_name: glowIntensity,    type: float,  storage: apvts, range: [0.0, 100.0], default: 55.0, units: "%", ui: glow_knob }
+  - { id: src1_visible,      brief_name: "source[0].visible", type: bool, storage: apvts, default: true,  ui: src1_chip_toggle }
+  - { id: src1_solo,         brief_name: "source[0].solo",    type: bool, storage: apvts, default: false, ui: src1_solo_toggle }
+  - { id: src2_visible,      brief_name: "source[1].visible", type: bool, storage: apvts, default: true,  ui: src2_chip_toggle }
+  - { id: src2_solo,         brief_name: "source[1].solo",    type: bool, storage: apvts, default: false, ui: src2_solo_toggle }
+  - { id: src1_name,         brief_name: "source[0].name",    type: string, storage: state, default: "Ch1", ui: src1_name_field }
+  - { id: src2_name,         brief_name: "source[1].name",    type: string, storage: state, default: "Ch2", ui: src2_name_field }
+
+presets:
+  Studio:      { smoothing: 35, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: hann }
+  Minimal:     { smoothing: 25, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: hann }
+  Neon:        { smoothing: 45, spectrum_tilt: 3.0, spectrogram_speed: 1.5,  peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: hann }
+  Ambient:     { smoothing: 80, spectrum_tilt: 3.0, spectrogram_speed: 0.5,  peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: hann }
+  Scientific:  { smoothing: 15, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 8,  glow_intensity: 0,   fft_size: 16384, window: blackmanHarris }
+  Performance: { smoothing: 20, spectrum_tilt: 4.5, spectrogram_speed: 2.5,  peak_decay: 30, glow_intensity: 70,  fft_size: 2048,  window: hann }
+
+webview_bridge:
+  gesture_protocol: "every parameter control (sidebar knobs, popover sliders) posts prismParam {id, gesture:'begin'} on pointer-down, value events {id, value} during the drag, and {id, gesture:'end'} on release/cancel, so the host records one automation gesture. Wheel and double-click-reset fire begin + value + end together."
+  js_to_cpp_event: "prismParam {id, value}"       # window.__JUCE__.backend.emitEvent, console.log fallback
+  momentary_actions: [reset_all, reset_integrated]
+  note: "peak readouts (true peak + sample peak) use unit 'db' and exactly 2 decimals; every other readout is also capped at 2 decimals (see global rule). reset_integrated wired to the sidebar RESET I button; reset_all to RESET"
+  cpp_to_js_streams: [spectrum_snapshot, spectrogram_columns, goniometer_samples, scope_window, loudness, peaks, stereo]
+
+webview_constraints:
+  viewport_units: none
+  html_body_height: "100%"
+  user_select: none
+  context_menu: disabled
+  hover_states: "highlight only; no hover-dependent information"
+  self_contained: true
+  network_fonts: none
