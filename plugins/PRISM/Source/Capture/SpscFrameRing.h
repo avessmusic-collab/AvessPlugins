@@ -46,6 +46,7 @@ namespace prism
             readIdx.store(0, std::memory_order_relaxed);
             overruns.store(0, std::memory_order_relaxed);
             dropped.store(0, std::memory_order_relaxed);
+            lastDropPos.store(0, std::memory_order_relaxed);
         }
 
         int  getNumChannels() const noexcept { return channels; }
@@ -69,8 +70,9 @@ namespace prism
 
             if (n > capacity || capacity - used < n)
             {
-                overruns.fetch_add(1, std::memory_order_relaxed);
                 dropped.fetch_add(n, std::memory_order_relaxed);
+                lastDropPos.store(w, std::memory_order_relaxed);        // stream position of the discontinuity
+                overruns.fetch_add(1, std::memory_order_release);       // publishes lastDropPos to the reader
                 return false;
             }
 
@@ -121,7 +123,10 @@ namespace prism
             return (int) n;
         }
 
-        std::uint64_t getOverrunCount() const noexcept  { return overruns.load(std::memory_order_relaxed); }
+        // Acquire-load of the counter pairs with the release in write(): getLastDropPos() is then current.
+        std::uint64_t getOverrunCount() const noexcept  { return overruns.load(std::memory_order_acquire); }
+        // Stream position (frames written so far) at the most recent drop.
+        std::uint64_t getLastDropPos() const noexcept   { return lastDropPos.load(std::memory_order_relaxed); }
         std::uint64_t getDroppedFrames() const noexcept { return dropped.load(std::memory_order_relaxed); }
         std::uint64_t getTotalWritten() const noexcept  { return writeIdx.load(std::memory_order_acquire); }
         std::uint64_t getTotalRead() const noexcept     { return readIdx.load(std::memory_order_acquire); }
@@ -135,5 +140,6 @@ namespace prism
         alignas(64) std::atomic<std::uint64_t> readIdx { 0 };
         alignas(64) std::atomic<std::uint64_t> overruns { 0 };
         std::atomic<std::uint64_t> dropped { 0 };
+        std::atomic<std::uint64_t> lastDropPos { 0 };
     };
 } // namespace prism

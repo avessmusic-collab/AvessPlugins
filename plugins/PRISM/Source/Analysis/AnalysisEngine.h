@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "AnalysisSnapshot.h"
+#include "LoudnessMeter.h"
 #include "SourceRegistry.h"
 #include "SpectrumEngine.h"
 #include "StereoMetrics.h"
@@ -47,6 +48,7 @@ namespace prism
         // FFT hops only run while enabled (the worker enables them while the editor is active).
         void setSpectrumEnabled(bool e) noexcept { spectrumEnabled.store(e, std::memory_order_relaxed); }
         SpectrumEngine& getSpectrum() noexcept { return spectrum; }
+        LoudnessMeter& getLoudness(int source) noexcept { return sources[(size_t) source].loudness; }
         // Call before the worker starts. Baselines the epochs: resets requested earlier are not re-applied.
         void attachControls(const ExternalControls& c) noexcept;
 
@@ -106,6 +108,10 @@ namespace prism
             std::uint64_t lastOverrunSeen = 0;
             std::uint64_t gapEvents = 0;
             StereoMetrics stereo;
+            LoudnessMeter loudness;
+            std::uint64_t lastOverrunLoud = 0;
+            bool pendingGap = false;
+            std::uint64_t pendingGapPos = 0;
             std::uint64_t framesSinceLoud = std::uint64_t(1) << 62;   // frames since |x| > -90 dBFS
         };
 
@@ -129,7 +135,7 @@ namespace prism
         std::int64_t lastBeatNumber = INT64_MIN;
 
         // worker-private
-        std::array<float, kDrainChunk> scratchL {}, scratchR {};
+        std::array<float, kDrainChunk> scratchL {}, scratchR {}, loudL {}, loudR {};
         std::array<BeatEvent, kBeatLogSize> beatLog {};
         std::uint64_t beatsSeen = 0;
         bool newFrames = false;

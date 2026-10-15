@@ -1,0 +1,325 @@
+{
+  "description": "Golden loudness values for PRISM_Tests (test: loudness_golden_fixtures). Reference = libebur128 (via ffmpeg's ebur128 filter) with pyloudnorm as an integrated-loudness cross-check. The test SKIPs with a printed notice while 'values' is empty; once the generator below has been run, the test compares PRISM's integrated loudness and LRA against these values (+-0.05 LU integrated, +-0.1 LU LRA).",
+  "how_to_generate": "From plugins/PRISM/Source/Tests/fixtures: save the 'generator' string to gen_golden.py (python3 -m pip install numpy scipy pyloudnorm; ffmpeg must be on PATH), then run: python3 gen_golden.py loudness_golden.json   -- it rewrites this file in place, filling 'values'.",
+  "tolerances": {
+    "integrated_lu": 0.05,
+    "lra_lu": 0.1
+  },
+  "generator": "import json, re, subprocess, sys, tempfile, os\nimport numpy as np\nimport scipy.io.wavfile as wf\nimport pyloudnorm as pyln\n\npath = sys.argv[1]\nspec = json.load(open(path))\n\ndef render(sig):\n    fs = sig['fs']\n    chans = sig['channels']\n    blocks = []\n    n0 = 0\n    for seg in sig['segments']:\n        n = int(round(seg['seconds'] * fs))\n        t = (np.arange(n) + n0) / fs\n        if seg.get('level_dbfs_peak') is None:\n            x = np.zeros(n)\n        else:\n            x = 10 ** (seg['level_dbfs_peak'] / 20.0) * np.sin(2 * np.pi * seg['freq_hz'] * t)\n        b = np.zeros((n, chans))\n        for c, name in enumerate('LR'[:chans]):\n            if name in seg['channels']:\n                b[:, c] = x\n        blocks.append(b)\n        n0 += n\n    return np.concatenate(blocks)\n\ndef ffmpeg_ebur128(wav):\n    p = subprocess.run(['ffmpeg', '-nostats', '-hide_banner', '-i', wav, '-filter_complex', 'ebur128', '-f', 'null', '-'], capture_output=True, text=True)\n    tail = p.stderr.split('Summary:')[-1]\n    i = float(re.search(r'I:\\s+(-?[0-9.]+) LUFS', tail).group(1))\n    lra = float(re.search(r'LRA:\\s+(-?[0-9.]+) LU', tail).group(1))\n    return i, lra\n\nvalues = {}\nfor sig in spec['signals']:\n    data = render(sig)\n    with tempfile.TemporaryDirectory() as d:\n        wav = os.path.join(d, 'x.wav')\n        wf.write(wav, sig['fs'], data.astype(np.float32))\n        i, lra = ffmpeg_ebur128(wav)\n    meter = pyln.Meter(sig['fs'])\n    i_py = float(meter.integrated_loudness(data))\n    values[sig['name']] = {'integrated': i, 'lra': lra, 'integrated_pyloudnorm': i_py}\n    print(sig['name'], values[sig['name']])\n\nspec['values'] = values\njson.dump(spec, open(path, 'w'), indent=2)\n",
+  "signals": [
+    {
+      "name": "sine997_stereo_48k",
+      "fs": 48000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "sine997_stereo_44k1",
+      "fs": 44100,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "sine997_stereo_96k",
+      "fs": 96000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "sine997_stereo_192k",
+      "fs": 192000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 15,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "sine997_left_only_48k",
+      "fs": 48000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "L"
+        }
+      ]
+    },
+    {
+      "name": "sine997_mono_48k",
+      "fs": 48000,
+      "channels": 1,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -23,
+          "channels": "L"
+        }
+      ]
+    },
+    {
+      "name": "stepped_levels_48k",
+      "fs": 48000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 10,
+          "freq_hz": 997,
+          "level_dbfs_peak": -50,
+          "channels": "LR"
+        },
+        {
+          "seconds": 10,
+          "freq_hz": 997,
+          "level_dbfs_peak": -30,
+          "channels": "LR"
+        },
+        {
+          "seconds": 10,
+          "freq_hz": 997,
+          "level_dbfs_peak": -45,
+          "channels": "LR"
+        },
+        {
+          "seconds": 10,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "silence_gaps_48k",
+      "fs": 48000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 10,
+          "freq_hz": 997,
+          "level_dbfs_peak": -25,
+          "channels": "LR"
+        },
+        {
+          "seconds": 5,
+          "freq_hz": 997,
+          "level_dbfs_peak": null,
+          "channels": "LR"
+        },
+        {
+          "seconds": 10,
+          "freq_hz": 997,
+          "level_dbfs_peak": -25,
+          "channels": "LR"
+        },
+        {
+          "seconds": 5,
+          "freq_hz": 997,
+          "level_dbfs_peak": null,
+          "channels": "LR"
+        },
+        {
+          "seconds": 10,
+          "freq_hz": 997,
+          "level_dbfs_peak": -35,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "band_tones_44k1",
+      "fs": 44100,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 10,
+          "freq_hz": 100,
+          "level_dbfs_peak": -24,
+          "channels": "LR"
+        },
+        {
+          "seconds": 10,
+          "freq_hz": 3000,
+          "level_dbfs_peak": -24,
+          "channels": "LR"
+        },
+        {
+          "seconds": 10,
+          "freq_hz": 8000,
+          "level_dbfs_peak": -24,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "absolute_gate_96k",
+      "fs": 96000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -95,
+          "channels": "LR"
+        },
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -26,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "relative_gate_96k",
+      "fs": 96000,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        },
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -40,
+          "channels": "LR"
+        },
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        }
+      ]
+    },
+    {
+      "name": "lra_five_levels_44k1",
+      "fs": 44100,
+      "channels": 2,
+      "segments": [
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -50,
+          "channels": "LR"
+        },
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -35,
+          "channels": "LR"
+        },
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -20,
+          "channels": "LR"
+        },
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -35,
+          "channels": "LR"
+        },
+        {
+          "seconds": 20,
+          "freq_hz": 997,
+          "level_dbfs_peak": -50,
+          "channels": "LR"
+        }
+      ]
+    }
+  ],
+  "values": {
+    "sine997_stereo_48k": {
+      "integrated": -20.0,
+      "lra": 0.0,
+      "integrated_pyloudnorm": -20.041399151743217
+    },
+    "sine997_stereo_44k1": {
+      "integrated": -20.0,
+      "lra": 0.0,
+      "integrated_pyloudnorm": -20.04212243774383
+    },
+    "sine997_stereo_96k": {
+      "integrated": -20.0,
+      "lra": 0.0,
+      "integrated_pyloudnorm": -20.03846451804242
+    },
+    "sine997_stereo_192k": {
+      "integrated": -20.0,
+      "lra": 0.0,
+      "integrated_pyloudnorm": -20.037730609250858
+    },
+    "sine997_left_only_48k": {
+      "integrated": -23.0,
+      "lra": 0.0,
+      "integrated_pyloudnorm": -23.05169910838303
+    },
+    "sine997_mono_48k": {
+      "integrated": -26.0,
+      "lra": 0.0,
+      "integrated_pyloudnorm": -26.05169910838303
+    },
+    "stepped_levels_48k": {
+      "integrated": -22.7,
+      "lra": 25.0,
+      "integrated_pyloudnorm": -22.720745338128403
+    },
+    "silence_gaps_48k": {
+      "integrated": -26.6,
+      "lra": 10.3,
+      "integrated_pyloudnorm": -26.640700873830692
+    },
+    "band_tones_44k1": {
+      "integrated": -21.9,
+      "lra": 5.2,
+      "integrated_pyloudnorm": -21.932853037353844
+    },
+    "absolute_gate_96k": {
+      "integrated": -26.1,
+      "lra": 1.8,
+      "integrated_pyloudnorm": -26.071157971598343
+    },
+    "relative_gate_96k": {
+      "integrated": -20.1,
+      "lra": 20.0,
+      "integrated_pyloudnorm": -20.070833771012563
+    },
+    "lra_five_levels_44k1": {
+      "integrated": -24.5,
+      "lra": 15.0,
+      "integrated_pyloudnorm": -24.54071749102423
+    }
+  }
+}

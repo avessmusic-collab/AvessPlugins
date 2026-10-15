@@ -31,6 +31,8 @@ set(PRISM_CORE_SOURCES
     Source/Analysis/AnalysisWorker.cpp
     # Stage 2 Phase 2.3 - spectrum engine
     Source/Analysis/SpectrumEngine.cpp
+    # Stage 2 Phase 2.4 - loudness (K-weighting, gated M/S/I, LRA)
+    Source/Analysis/LoudnessMeter.cpp
 )
 
 target_sources(PRISM PRIVATE ${PRISM_CORE_SOURCES})
@@ -102,6 +104,8 @@ target_link_libraries(PRISM_Tests
         juce::juce_recommended_warning_flags
 )
 target_compile_definitions(PRISM_Tests
+    PRIVATE
+        PRISM_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Source/Tests/fixtures"
     PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0

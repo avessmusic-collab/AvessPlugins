@@ -45,7 +45,7 @@ All ids are case-sensitive and must be used verbatim in `ParameterIDs.h`, the AP
 ### spectrum_tilt
 - **Type:** Float
 - **Range:** 0.0 to 4.5 dB/oct
-- **Default:** 0.0
+- **Default:** 4.5 *(amended 2026-10-15 per user: match FabFilter Pro-Q 4's analyzer default — 4.5 dB/oct perceptual slope around the 1 kHz pivot; was 0.0)*
 - **Skew Factor:** linear
 - **UI Control:** Sidebar rotary knob "TILT" (0.1 step, label `x.x`). No longer in the Settings popover.
 - **DSP Usage:** Visual-only spectral tilt around a 1 kHz pivot. Inspector/readout values stay true, un-tilted dBFS.
@@ -158,7 +158,7 @@ All ids are case-sensitive and must be used verbatim in `ParameterIDs.h`, the AP
 
 | Preset | smoothing | spectrum_tilt | spectrogram_speed | peak_decay | glow_intensity | fft_size | window |
 |--------|-----------|---------------|-------------------|------------|----------------|----------|--------|
-| Studio (default) | 35 | 0.0 | 1.0 | 12 | 55 | 4096 | hann |
+| Studio (default) | 35 | 4.5 | 1.0 | 12 | 55 | 4096 | hann |
 | Minimal | 25 | 0.0 | 1.0 | 20 | 0 | 4096 | hann |
 | Neon | 45 | 3.0 | 1.5 | 10 | 100 | 4096 | hann |
 | Ambient | 80 | 3.0 | 0.5 | 6 | 75 | 8192 | hann |

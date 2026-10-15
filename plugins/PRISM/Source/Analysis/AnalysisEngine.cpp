@@ -17,6 +17,7 @@ namespace prism
             s.ring.prepare(registry[i].numChannels, ringLog2Capacity);
             s.history.prepare(registry[i].numChannels);
             s.stereo.prepare(config.sampleRate);
+            s.loudness.prepare(config.sampleRate, registry[i].numChannels);
         }
         spectrum.prepare(config.sampleRate);
     }
@@ -188,11 +189,20 @@ namespace prism
                     auto& st = sources[(size_t) registry.getActiveIndex(k)];
                     st.samplePeak.exchange(0.0f, std::memory_order_relaxed);
                     st.samplePeakMaxLin = 0.0f;
+                    st.loudness.resetIntegrated();   // reset_all also clears I + LRA (TP/SP maxima: SP here, TP in 2.5)
                 }
             }
         }
         if (controls.resetIntegratedEpoch != nullptr)
-            seenResetIntegrated = controls.resetIntegratedEpoch->load(std::memory_order_relaxed);
+        {
+            const auto e = controls.resetIntegratedEpoch->load(std::memory_order_relaxed);
+            if (e != seenResetIntegrated)
+            {
+                seenResetIntegrated = e;
+                for (int k = 0; k < registry.getActiveCount(); ++k)
+                    sources[(size_t) registry.getActiveIndex(k)].loudness.resetIntegrated();   // I + LRA only
+            }
+        }
 
         for (int k = 0; k < registry.getActiveCount(); ++k)
         {
@@ -206,8 +216,40 @@ namespace prism
                 if (got <= 0)
                     break;
                 const float* const src[2] = { dst[0], dst[1] };
+                const std::uint64_t chunkStart = st.history.framesSeen();
                 st.history.push(src, got);
                 newFrames = true;
+
+                // Loudness (always on, editor open or not) on the sanitised frames. A ring overrun is a
+                // stream discontinuity at ring position lastDropPos: filter state + in-flight block are
+                // discarded exactly there (see LoudnessMeter::notifyGap).
+                {
+                    const std::uint64_t ov = st.ring.getOverrunCount();
+                    if (ov != st.lastOverrunLoud)
+                    {
+                        st.lastOverrunLoud = ov;
+                        st.pendingGap = true;
+                        st.pendingGapPos = st.ring.getLastDropPos();
+                    }
+                    st.history.copyAbsolute(0, chunkStart, got, loudL.data());
+                    st.history.copyAbsolute(1, chunkStart, got, loudR.data());
+                    int split = got;
+                    bool doGap = false;
+                    if (st.pendingGap && st.pendingGapPos < chunkStart + (std::uint64_t) got)
+                    {
+                        split = st.pendingGapPos > chunkStart ? (int) (st.pendingGapPos - chunkStart) : 0;
+                        doGap = true;
+                        st.pendingGap = false;
+                    }
+                    if (split > 0)
+                        st.loudness.process(loudL.data(), loudR.data(), split);
+                    if (doGap)
+                    {
+                        st.loudness.notifyGap();
+                        if (split < got)
+                            st.loudness.process(loudL.data() + split, loudR.data() + split, got - split);
+                    }
+                }
 
                 // Worker-side metering on the SANITISED frames just pushed (two contiguous segments per channel).
                 const bool stereoSrc = registry[registry.getActiveIndex(k)].numChannels == 2;
@@ -281,6 +323,14 @@ namespace prism
             snap->signalPresent = snap->signalPresent || st.framesSinceLoud < holdFrames;
 
             spectrum.publish(idx, out);
+
+            if (idx == 0)   // global loudness fields = source 0 (main input); NaN until available, never 0
+            {
+                snap->momentaryLufs  = st.loudness.momentaryLufs();
+                snap->shortTermLufs  = st.loudness.shortTermLufs();
+                snap->integratedLufs = st.loudness.integratedLufs();
+                snap->loudnessRange  = st.loudness.loudnessRange();
+            }
 
             out.hasStereo = info.numChannels == 2;
             if (out.hasStereo)

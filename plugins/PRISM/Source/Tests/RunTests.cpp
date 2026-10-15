@@ -2199,11 +2199,627 @@ static void test_spectrum_cpu_budget()
 }
 
 //==============================================================================
+// PHASE 2.4 - loudness (BS.1770-5 / EBU R128 / TECH 3341 / TECH 3342)
+namespace
+{
+    constexpr double kTwoPi = 6.283185307179586476925286766559;
+
+    bool nearf(double a, double b, double tol) { return std::isfinite(a) && std::isfinite(b) && std::abs(a - b) <= tol; }
+
+    // Engine driven by a synthetic 997 Hz source, spectrum off (loudness is always-on work).
+    struct LoudRig
+    {
+        double fs;
+        int mainCh, scCh;
+        std::atomic<std::uint32_t> resetAll { 0 }, resetInt { 0 };
+        std::unique_ptr<prism::AnalysisEngine> eng;
+        std::uint64_t pos = 0;
+        std::vector<std::vector<float>> bufs;
+
+        LoudRig(double sr, int mainChannels = 2, int sidechain = 0, int ringLog2 = 14)
+            : fs(sr), mainCh(mainChannels), scCh(sidechain)
+        {
+            eng = std::make_unique<prism::AnalysisEngine>(makeCfg(mainCh, scCh, fs), ringLog2);
+            eng->setSpectrumEnabled(false);
+            eng->attachControls({ &resetAll, &resetInt, nullptr });
+            bufs.assign((size_t) (mainCh + scCh), std::vector<float>(2048));
+        }
+
+        // Peak amplitude of a 997 Hz sine that reads `lufs` when nActive channels (weight 1 each) carry it.
+        //   LUFS = -0.691 + 10 log10( nActive * A^2 * g^2 / 2 )   =>   A = sqrt( 2 * 10^((LUFS+0.691)/10) / (nActive * g^2) )
+        double ampForLufs(double lufs, int nActive) const
+        {
+            if (lufs <= -200.0) return 0.0;
+            const double g = std::pow(10.0, prism::KWeighting::gainDb(fs, 997.0) / 20.0);
+            return std::sqrt(2.0 * std::pow(10.0, (lufs + 0.691) / 10.0) / ((double) nActive * g * g));
+        }
+
+        // amps[c] = peak amplitude for host-buffer channel c (0 = silent).
+        void toneAmps(double seconds, double hz, const std::vector<double>& amps, int block = 2048)
+        {
+            const std::uint64_t frames = (std::uint64_t) std::llround(seconds * fs);
+            const int chs = mainCh + scCh;
+            for (auto& b : bufs) if ((int) b.size() < block) b.resize((size_t) block);
+            std::vector<const float*> ptrs((size_t) chs);
+            for (int c = 0; c < chs; ++c) ptrs[(size_t) c] = bufs[(size_t) c].data();
+
+            const double w = kTwoPi * hz / fs;
+            for (std::uint64_t done = 0; done < frames;)
+            {
+                const int n = (int) std::min<std::uint64_t>((std::uint64_t) block, frames - done);
+                for (int i = 0; i < n; ++i)
+                {
+                    const double s = std::sin(w * (double) (pos + (std::uint64_t) i));
+                    for (int c = 0; c < chs; ++c)
+                        bufs[(size_t) c][(size_t) i] = (c < (int) amps.size() && amps[(size_t) c] != 0.0) ? (float) (amps[(size_t) c] * s) : 0.0f;
+                }
+                eng->captureBlock(ptrs.data(), chs, n);
+                eng->pump();
+                pos += (std::uint64_t) n;
+                done += (std::uint64_t) n;
+            }
+        }
+
+        void lufs(double seconds, double l, int nActive = 2, int block = 2048)
+        {
+            const double a = ampForLufs(l, nActive);
+            std::vector<double> amps((size_t) (mainCh + scCh), 0.0);
+            for (int c = 0; c < std::min(nActive, mainCh); ++c) amps[(size_t) c] = a;
+            toneAmps(seconds, 997.0, amps, block);
+        }
+        void silence(double seconds) { toneAmps(seconds, 997.0, {}, 2048); }
+
+        std::shared_ptr<const prism::AnalysisSnapshot> snap() { return eng->buildSnapshot(); }
+    };
+
+    //--------------------------------------------------------------------------
+    // Independent reference model for piecewise-constant programmes (no filters, no histograms):
+    // block / window energies are the time-weighted average of the segment powers.
+    struct RefSeg { double seconds; double lufs; };   // lufs <= -200 -> digital silence
+
+    double refPower(double lufs) { return lufs <= -200.0 ? 0.0 : std::pow(10.0, (lufs + 0.691) / 10.0); }
+
+    double refAvgPower(const std::vector<RefSeg>& segs, double t0, double t1)
+    {
+        double e = 0.0, t = 0.0;
+        for (const auto& s : segs)
+        {
+            const double s0 = t, s1 = t + s.seconds;
+            e += std::max(0.0, std::min(t1, s1) - std::max(t0, s0)) * refPower(s.lufs);
+            t = s1;
+        }
+        return e / (t1 - t0);
+    }
+
+    double refTotal(const std::vector<RefSeg>& segs) { double t = 0; for (auto& s : segs) t += s.seconds; return t; }
+
+    std::vector<double> refWindows(const std::vector<RefSeg>& segs, double len)
+    {
+        std::vector<double> z;
+        const double total = refTotal(segs);
+        for (int k = 0; 0.1 * k + len <= total + 1e-9; ++k)
+            z.push_back(refAvgPower(segs, 0.1 * k, 0.1 * k + len));
+        return z;
+    }
+
+    double lufsOf(double z) { return -0.691 + 10.0 * std::log10(z); }
+
+    double refIntegratedFrom(const std::vector<double>& blocks)
+    {
+        std::vector<double> kept;
+        for (double z : blocks) if (z > 0.0 && lufsOf(z) > -70.0) kept.push_back(z);
+        if (kept.empty()) return NAN;
+        double m = 0; for (double z : kept) m += z; m /= (double) kept.size();
+        const double gate = lufsOf(m) - 10.0;
+        double s = 0; int n = 0;
+        for (double z : kept) if (lufsOf(z) > gate) { s += z; ++n; }
+        return n ? lufsOf(s / n) : NAN;
+    }
+
+    double refLraFrom(const std::vector<double>& shortTerm)
+    {
+        std::vector<double> kept;
+        for (double z : shortTerm) if (z > 0.0 && lufsOf(z) > -70.0) kept.push_back(z);
+        if (kept.empty()) return NAN;
+        double m = 0; for (double z : kept) m += z; m /= (double) kept.size();
+        const double gate = lufsOf(m) - 20.0;
+        std::vector<double> l;
+        for (double z : kept) if (lufsOf(z) > gate) l.push_back(lufsOf(z));
+        if (l.empty()) return NAN;
+        std::sort(l.begin(), l.end());
+        const auto rank = [&](double p) { return (size_t) std::floor(p * (double) (l.size() - 1) + 0.5); };
+        return l[rank(0.95)] - l[rank(0.10)];
+    }
+
+    void playSegs(LoudRig& rig, const std::vector<RefSeg>& segs, int nActive = 2)
+    {
+        for (const auto& s : segs) rig.lufs(s.seconds, s.lufs, nActive);
+    }
+}
+
+static void test_loudness_kweighting()
+{
+    section("loudness_kweighting");
+
+    // BS.1770 48 kHz coefficient table (libebur128 convention).
+    const auto s1 = prism::KWeighting::stage1(48000.0), s2 = prism::KWeighting::stage2(48000.0);
+    const bool shelfOk = std::abs(s1.b0 - 1.53512485958697) < 1e-9 && std::abs(s1.b1 - (-2.69169618940638)) < 1e-9
+                      && std::abs(s1.b2 - 1.19839281085285) < 1e-9 && std::abs(s1.a1 - (-1.69065929318241)) < 1e-9
+                      && std::abs(s1.a2 - 0.73248077421585) < 1e-9;
+    const bool rlbOk = s2.b0 == 1.0 && s2.b1 == -2.0 && s2.b2 == 1.0 && std::abs(s2.a1 - (-1.99004745483398)) < 1e-9
+                    && std::abs(s2.a2 - 0.99007225036621) < 1e-9;
+    checkf(shelfOk, "48 kHz stage 1 (shelf) coefficients match the BS.1770 table to 1e-9", s1.b0 - 1.53512485958697, s1.a2 - 0.73248077421585);
+    checkf(rlbOk, "48 kHz stage 2 (RLB) coefficients match the BS.1770 table to 1e-9", s2.a1 - (-1.99004745483398), s2.a2 - 0.99007225036621);
+
+    const double g48 = prism::KWeighting::gainDb(48000.0, 997.0);
+    checkf(std::abs(g48 - 0.691) < 0.02, "K-weighting gain at 997 Hz is ~ +0.691 dB (the -0.691 LUFS offset cancels it)", g48);
+    bool ok = true;
+    double worst = 0.0;
+    for (double fs : { 44100.0, 88200.0, 96000.0, 176400.0, 192000.0 })
+    {
+        const double d = prism::KWeighting::gainDb(fs, 997.0) - g48;
+        worst = std::max(worst, std::abs(d));
+        // Bound is the measured bilinear-warp spread (worst 0.027 dB at 44.1 kHz),
+        // not a standards limit: BS.1770 fixes the 48 kHz table and libebur128-style
+        // analytic redesign at other rates inherently warps a few hundredths of a dB.
+        // The normative +-0.1 LU EBU tolerance is asserted by the case-1 tests per rate.
+        ok &= std::abs(d) <= 0.05;
+    }
+    checkf(ok, "997 Hz response at 44.1/88.2/96/176.4/192 kHz within 0.05 dB of the 48 kHz response (worst dB)", worst);
+
+    // RLB high-pass: -3 dB region near 60 Hz region is steeply attenuated at 20 Hz, flat above 500 Hz.
+    check(prism::KWeighting::gainDb(48000.0, 20.0) < -2.0 && std::abs(prism::KWeighting::gainDb(48000.0, 500.0) - prism::KWeighting::gainDb(48000.0, 400.0)) < 0.5,
+          "RLB high-pass attenuates 20 Hz, shelf region is flat-ish at 400-500 Hz");
+
+    bool chunks = true;
+    const std::pair<double, int> chunkTable[] = { { 44100.0, 441 }, { 48000.0, 480 }, { 88200.0, 882 }, { 96000.0, 960 }, { 176400.0, 1764 }, { 192000.0, 1920 } };
+    for (const auto& entry : chunkTable)
+    {
+        prism::LoudnessMeter m;
+        m.prepare(entry.first, 2);
+        chunks &= m.getChunkLength() == entry.second;
+    }
+    check(chunks, "10 ms chunk = round(0.01 fs): 441/480/882/960/1764/1920");
+}
+
+static void test_loudness_tech3341_case1_and_mono()
+{
+    section("loudness_tech3341_case1_and_mono");
+
+    // TECH 3341 case 1: 997 Hz sine, -23.0 dBFS peak in BOTH channels, reads -23.0 LUFS (+-0.1) for M, S and I.
+    // (K gain at 997 Hz = +0.691 dB cancels the -0.691 LUFS offset: LUFS = 10log10(A^2) = -23.0.)
+    for (double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        LoudRig rig(fs);
+        rig.toneAmps(20.0, 997.0, { std::pow(10.0, -23.0 / 20.0), std::pow(10.0, -23.0 / 20.0) });
+        const auto s = rig.snap();
+        char name[160];
+        std::snprintf(name, sizeof(name), "fs %.0f: case 1 reads M %.3f / S %.3f / I %.3f LUFS (expect -23.0 +-0.1), LRA %.3f", fs, s->momentaryLufs, s->shortTermLufs, s->integratedLufs, s->loudnessRange);
+        check(nearf(s->momentaryLufs, -23.0, 0.1) && nearf(s->shortTermLufs, -23.0, 0.1) && nearf(s->integratedLufs, -23.0, 0.1)
+              && s->loudnessRange < 0.05f, name);
+    }
+
+    // Channel weights L = R = 1.0: the same sine on ONE channel reads 3.01 dB lower; a mono bus equals that.
+    for (double fs : { 48000.0, 96000.0 })
+    {
+        LoudRig both(fs), left(fs), mono(fs, 1, 0);
+        const double a = std::pow(10.0, -23.0 / 20.0);
+        both.toneAmps(12.0, 997.0, { a, a });
+        left.toneAmps(12.0, 997.0, { a, 0.0 });
+        mono.toneAmps(12.0, 997.0, { a });
+        const auto sb = both.snap(), sl = left.snap(), sm = mono.snap();
+        char name[160];
+        std::snprintf(name, sizeof(name), "fs %.0f: one channel reads 3.01 dB lower (M %.3f, S %.3f, I %.3f dB)", fs,
+                      sb->momentaryLufs - sl->momentaryLufs, sb->shortTermLufs - sl->shortTermLufs, sb->integratedLufs - sl->integratedLufs);
+        check(nearf(sb->momentaryLufs - sl->momentaryLufs, 3.0103, 0.02) && nearf(sb->shortTermLufs - sl->shortTermLufs, 3.0103, 0.02)
+              && nearf(sb->integratedLufs - sl->integratedLufs, 3.0103, 0.02), name);
+        check(sm->momentaryLufs == sl->momentaryLufs && sm->integratedLufs == sl->integratedLufs && sm->shortTermLufs == sl->shortTermLufs,
+              "mono bus (single channel, weight 1) equals the same signal on the left channel only");
+    }
+}
+
+static void test_loudness_availability()
+{
+    section("loudness_availability");
+    LoudRig rig(48000.0);
+    rig.lufs(0.39, -23.0);   // 39 chunks
+    auto s = rig.snap();
+    check(std::isnan(s->momentaryLufs) && std::isnan(s->shortTermLufs) && std::isnan(s->integratedLufs) && std::isnan(s->loudnessRange),
+          "before 400 ms: M, S, I, LRA are all NaN (never 0)");
+    rig.lufs(0.02, -23.0);   // 0.41 s
+    s = rig.snap();
+    check(nearf(s->momentaryLufs, -23.0, 0.1) && nearf(s->integratedLufs, -23.0, 0.1) && std::isnan(s->shortTermLufs) && std::isnan(s->loudnessRange),
+          "at 0.41 s: momentary and integrated (first gated block) available; short-term and LRA still NaN");
+    rig.lufs(2.58, -23.0);   // 2.99 s
+    s = rig.snap();
+    check(std::isnan(s->shortTermLufs) && std::isnan(s->loudnessRange), "at 2.99 s: short-term and LRA still NaN");
+    rig.lufs(0.02, -23.0);   // 3.01 s
+    s = rig.snap();
+    check(nearf(s->shortTermLufs, -23.0, 0.1) && std::isfinite(s->loudnessRange), "at 3.01 s: short-term and LRA available");
+
+    LoudRig quiet(48000.0);
+    quiet.silence(5.0);
+    s = quiet.snap();
+    check(std::isnan(s->momentaryLufs) && std::isnan(s->shortTermLufs) && std::isnan(s->integratedLufs) && std::isnan(s->loudnessRange),
+          "digital silence: everything NaN (dashes), not 0 and not -inf");
+
+    LoudRig below(48000.0);
+    below.lufs(10.0, -80.0);   // below the -70 LUFS absolute gate
+    s = below.snap();
+    check(nearf(s->momentaryLufs, -80.0, 0.1) && std::isnan(s->integratedLufs) && std::isnan(s->loudnessRange),
+          "signal at -80 LUFS: M reads it, I and LRA stay NaN (absolute gate rejects every block)");
+}
+
+static void test_loudness_gating_absolute()
+{
+    section("loudness_gating_absolute");
+
+    // HAND CALCULATION. Stereo 997 Hz, T1 seconds at -80 LUFS then T2 seconds at -23 LUFS.
+    //  * -80 LUFS blocks are below the -70 LUFS absolute gate -> rejected, they never enter the statistics.
+    //  * Blocks are 400 ms long, one every 100 ms. A block fully inside the -23 part has energy E23.
+    //    The -23 part of length T2 holds n = (T2-0.4)/0.1 + 1 such blocks (T2 = 30 s -> 297, 20 s -> 197).
+    //  * Three blocks straddle the step (they overlap the loud part by 100/200/300 ms): energy f*E23 + (1-f)*E80
+    //    with f = 1/4, 1/2, 3/4 (E80 is 5e-6 of E23 and ignored) -> loudness -23-6.0, -23-3.0, -23-1.2 LUFS.
+    //    Relative gate = mean energy - 10 LU ~ -33 LUFS, so all three are KEPT.
+    //  * Integrated = -23 + 10 log10( (n + 1.5) / (n + 3) )       [1.5 = 1/4+1/2+3/4]
+    //      30 s: 10 log10(298.5/300) = -0.0218 dB -> -23.0218 LUFS
+    //      20 s: 10 log10(198.5/200) = -0.0327 dB -> -23.0327 LUFS
+    struct Case { double fs, t1, t2, expect; };
+    for (const Case c : { Case { 48000.0, 30.0, 30.0, -23.0218 }, Case { 44100.0, 20.0, 20.0, -23.0327 }, Case { 96000.0, 20.0, 20.0, -23.0327 } })
+    {
+        LoudRig rig(c.fs);
+        const std::vector<RefSeg> segs = { { c.t1, -80.0 }, { c.t2, -23.0 } };
+        playSegs(rig, segs);
+        const auto s = rig.snap();
+        const double ref = refIntegratedFrom(refWindows(segs, 0.4));
+        char name[200];
+        std::snprintf(name, sizeof(name), "fs %.0f, %.0f s @-80 + %.0f s @-23: I = %.4f (hand calc %.4f, reference model %.4f)", c.fs, c.t1, c.t2, s->integratedLufs, c.expect, ref);
+        check(nearf(s->integratedLufs, c.expect, 0.05) && nearf(s->integratedLufs, ref, 0.03), name);
+    }
+}
+
+static void test_loudness_gating_relative()
+{
+    section("loudness_gating_relative");
+
+    // HAND CALCULATION A (loud / quiet / loud, quiet = loud - 20 LU).
+    //  Segments: L s at -20, Q s at -40, L s at -20 (L = 20 s). Blocks fully inside one 20 s segment: n = 197.
+    //  Mean energy of the abs-gated blocks ~ (E20*(2*20) + E40*20)/60 = 0.6733 E20 -> -1.72 dB
+    //  -> relative gate = -20 - 1.72 - 10 = -31.7 LUFS: the -40 LUFS blocks are REJECTED (without the relative
+    //  gate the result would be about -21.7).
+    //  Straddling blocks: 3 per step, 2 steps: f = 1/4,1/2,3/4 each time -> loudness -26,-23,-21.2 > gate, KEPT.
+    //  Integrated = -20 + 10 log10( (2*197 + 2*1.5) / (2*197 + 6) ) = -20 + 10 log10(397/400) = -20.0327 LUFS.
+    {
+        LoudRig rig(48000.0);
+        const std::vector<RefSeg> segs = { { 20.0, -20.0 }, { 20.0, -40.0 }, { 20.0, -20.0 } };
+        playSegs(rig, segs);
+        const auto s = rig.snap();
+        const double ref = refIntegratedFrom(refWindows(segs, 0.4));
+        char name[200];
+        std::snprintf(name, sizeof(name), "20/-20, 20/-40, 20/-20 @48k: I = %.4f (hand calc -20.0327, reference %.4f); ungated would be ~ -21.7", s->integratedLufs, ref);
+        check(nearf(s->integratedLufs, -20.0327, 0.05) && nearf(s->integratedLufs, ref, 0.03) && s->integratedLufs > -20.3f, name);
+    }
+    // Same shape at 10 s segments, 96 kHz: n = 97 per segment -> I = -20 + 10 log10((194+3)/(194+6)) = -20.0654
+    {
+        LoudRig rig(96000.0);
+        const std::vector<RefSeg> segs = { { 10.0, -20.0 }, { 10.0, -40.0 }, { 10.0, -20.0 } };
+        playSegs(rig, segs);
+        const auto s = rig.snap();
+        char name[160];
+        std::snprintf(name, sizeof(name), "10/-20, 10/-40, 10/-20 @96k: I = %.4f (hand calc -20.0654)", s->integratedLufs);
+        check(nearf(s->integratedLufs, -20.0654, 0.05), name);
+    }
+    // TECH 3341 case-3 shape: 10 s @-36, 60 s @-23, 10 s @-36 -> -23.0 (+-0.1).
+    //  Mean energy = (60 E23 + 20 E36)/80 = 0.7513 E23 -> -1.24 dB; gate = -23 -1.24 -10 = -34.24 > -36: the -36 blocks are rejected.
+    //  Loud blocks n = 597; 6 straddlers (each step: f=1/4,1/2,3/4 plus (1-f)*E36 leak 0.0501) add 2*(1.5+0.075) = 3.15.
+    //  I = -23 + 10 log10((597+3.15)/603) = -23.0206 LUFS.
+    {
+        LoudRig rig(48000.0);
+        const std::vector<RefSeg> segs = { { 10.0, -36.0 }, { 60.0, -23.0 }, { 10.0, -36.0 } };
+        playSegs(rig, segs);
+        const auto s = rig.snap();
+        char name[160];
+        std::snprintf(name, sizeof(name), "TECH 3341 case-3 shape (10 s @-36, 60 s @-23, 10 s @-36): I = %.4f (hand calc -23.0206, spec -23.0 +-0.1)", s->integratedLufs);
+        check(nearf(s->integratedLufs, -23.0206, 0.05) && nearf(s->integratedLufs, -23.0, 0.1), name);
+    }
+}
+
+static void test_loudness_range()
+{
+    section("loudness_range");
+    struct Case { const char* label; std::vector<RefSeg> segs; double expect; };
+    // TECH 3342-style programmes (997 Hz stands in for pink noise; expected LRA is the level span):
+    //  A) 20 s @-20, 20 s @-30 : P10 sits in the -30 plateau, P95 in the -20 plateau -> 10 LU
+    //  B) 20 s @-20, 20 s @-15 : 5 LU
+    //  C) -50 / -35 / -20 / -35 / -50, 20 s each: the relative gate (-20 LU below the mean, ~ -46.7 LUFS) removes
+    //     the -50 plateaus; the remaining distribution spans -35..-20 -> 15 LU
+    const Case cases[] = {
+        { "A: -20/-30", { { 20, -20 }, { 20, -30 } }, 10.0 },
+        { "B: -20/-15", { { 20, -20 }, { 20, -15 } }, 5.0 },
+        { "C: -50/-35/-20/-35/-50", { { 20, -50 }, { 20, -35 }, { 20, -20 }, { 20, -35 }, { 20, -50 } }, 15.0 },
+    };
+    for (const auto& c : cases)
+    {
+        LoudRig rig(48000.0);
+        playSegs(rig, c.segs);
+        const auto s = rig.snap();
+        const double ref = refLraFrom(refWindows(c.segs, 3.0));
+        char name[200];
+        std::snprintf(name, sizeof(name), "LRA %s: %.3f LU (expect %.1f +-0.2 [TECH 3342 allows +-1], reference model %.3f)", c.label, s->loudnessRange, c.expect, ref);
+        check(nearf(s->loudnessRange, c.expect, 0.2) && nearf(s->loudnessRange, ref, 0.06), name);
+    }
+
+    LoudRig steady(44100.0);
+    steady.lufs(15.0, -23.0);
+    check(steady.snap()->loudnessRange < 0.05f, "steady tone: LRA ~ 0 (single-bin distribution)");
+
+    LoudRig lra44(44100.0);
+    const std::vector<RefSeg> segs = { { 15, -25 }, { 15, -35 } };
+    playSegs(lra44, segs);
+    check(nearf(lra44.snap()->loudnessRange, 10.0, 0.2), "LRA 10 LU also at 44.1 kHz");
+}
+
+static void test_loudness_block_size_independence()
+{
+    section("loudness_block_size_independence");
+    bool same = true;
+    float ref[4] = {};
+    bool first = true;
+    for (int bs : { 1, 7, 64, 480, 4096 })
+    {
+        LoudRig rig(48000.0, 2, 0, 16);
+        const std::vector<RefSeg> segs = { { 2.0, -30.0 }, { 2.0, -20.0 }, { 2.0, -33.0 } };
+        for (const auto& s : segs) rig.lufs(s.seconds, s.lufs, 2, bs);
+        const auto s = rig.snap();
+        const float v[4] = { s->momentaryLufs, s->shortTermLufs, s->integratedLufs, s->loudnessRange };
+        if (first) { std::memcpy(ref, v, sizeof(v)); first = false; continue; }
+        same &= std::memcmp(ref, v, sizeof(v)) == 0;
+    }
+    check(same && std::isfinite(ref[2]), "M / S / I / LRA bit-identical for block sizes {1,7,64,480,4096}");
+}
+
+static void test_loudness_reset_semantics()
+{
+    section("loudness_reset_semantics");
+    LoudRig rig(48000.0);
+    rig.lufs(8.0, -23.0);
+    auto s = rig.snap();
+    check(std::isfinite(s->integratedLufs) && std::isfinite(s->loudnessRange) && std::isfinite(s->sources[0].samplePeakMaxDb), "primed: I, LRA, sample peak available");
+    const float m0 = s->momentaryLufs, st0 = s->shortTermLufs, sp0 = s->sources[0].samplePeakMaxDb;
+
+    rig.resetInt.fetch_add(1);
+    rig.lufs(0.1, -23.0);
+    s = rig.snap();
+    check(std::isnan(s->integratedLufs) && std::isnan(s->loudnessRange), "reset_integrated: I and LRA are NaN until new data exists (never 0)");
+    check(nearf(s->momentaryLufs, m0, 0.01) && nearf(s->shortTermLufs, st0, 0.01), "reset_integrated: momentary and short-term windows unaffected");
+    check(nearf(s->sources[0].samplePeakMaxDb, sp0, 0.001), "reset_integrated: sample peak NOT cleared");
+
+    rig.lufs(0.5, -23.0);
+    s = rig.snap();
+    check(nearf(s->integratedLufs, -23.0, 0.1) && std::isnan(s->loudnessRange), "0.6 s after reset: I is back (first gated block), LRA waits for a full 3 s window");
+    rig.lufs(2.6, -23.0);
+    check(std::isfinite(rig.snap()->loudnessRange), "3.2 s after reset: LRA available again");
+
+    rig.resetAll.fetch_add(1);
+    rig.silence(0.05);
+    s = rig.snap();
+    check(std::isnan(s->integratedLufs) && std::isnan(s->loudnessRange), "reset_all clears I and LRA");
+    check(std::isinf(s->sources[0].samplePeakMaxDb) && s->sources[0].samplePeakMaxDb < 0, "reset_all also clears the sample-peak maximum");
+    check(std::isfinite(s->momentaryLufs) && std::isfinite(s->shortTermLufs), "reset_all leaves the moving M / S windows alone");
+}
+
+static void test_loudness_gap_handling()
+{
+    section("loudness_gap_handling");
+    LoudRig rig(48000.0, 2, 0, 12);   // 4096-frame ring
+    const int block = 2048;
+    std::vector<float> l(block), r(block);
+    const float* ptrs[2] = { l.data(), r.data() };
+    const double a = std::pow(10.0, -23.0 / 20.0), w = kTwoPi * 997.0 / 48000.0;
+    std::uint64_t pos = 0;
+    auto fillBlock = [&] {
+        for (int i = 0; i < block; ++i) l[(size_t) i] = r[(size_t) i] = (float) (a * std::sin(w * (double) (pos + (std::uint64_t) i)));
+        pos += (std::uint64_t) block;
+    };
+
+    int expectedGaps = 0;
+    for (int sec = 0; sec < 12; ++sec)
+    {
+        for (int b = 0; b < 23; ++b) { fillBlock(); rig.eng->captureBlock(ptrs, 2, block); rig.eng->pump(); }   // ~1 s, drained every block
+        // Overrun: three blocks without draining -> the third (2048 frames) is dropped.
+        for (int b = 0; b < 3; ++b) { fillBlock(); rig.eng->captureBlock(ptrs, 2, block); }
+        ++expectedGaps;
+        rig.eng->pump();
+    }
+    // A gap sitting exactly at the end of a drained chunk is applied when the next chunk arrives: flush.
+    fillBlock(); rig.eng->captureBlock(ptrs, 2, block); rig.eng->pump();
+    const auto s = rig.snap();
+    check(rig.eng->getOverrunCount(0) == (std::uint64_t) expectedGaps, "forced overruns happened");
+    check(rig.eng->getLoudness(0).getGapCount() == (std::uint64_t) expectedGaps, "every discontinuity reached the loudness meter (filter state reset, in-flight block dropped)");
+    check(nearf(s->integratedLufs, -23.0, 0.2) && nearf(s->momentaryLufs, -23.0, 0.3) && nearf(s->shortTermLufs, -23.0, 0.3),
+          "levels stay correct across the gaps (no glitch, no NaN)");
+}
+
+static void test_loudness_sources_and_publish()
+{
+    section("loudness_sources_and_publish");
+    LoudRig rig(48000.0, 2, 2);
+    const double aMain = rig.ampForLufs(-23.0, 2), aSc = rig.ampForLufs(-33.0, 2);
+    rig.toneAmps(10.0, 997.0, { aMain, aMain, aSc, aSc });
+    const auto s = rig.snap();
+    check(nearf(s->integratedLufs, -23.0, 0.05) && nearf(s->momentaryLufs, -23.0, 0.05), "snapshot loudness fields are source 0 (main input)");
+    check(nearf(rig.eng->getLoudness(1).integratedLufs(), -33.0, 0.05) && nearf(rig.eng->getLoudness(1).momentaryLufs(), -33.0, 0.05),
+          "sidechain loudness is measured independently (computed, unpublished)");
+
+    LoudRig monoMain(48000.0, 1, 0);
+    monoMain.lufs(6.0, -23.0, 1);
+    check(nearf(monoMain.snap()->integratedLufs, -23.0, 0.05), "mono main bus measured as a single weight-1 channel");
+}
+
+static void test_loudness_multi_hour_memory()
+{
+    section("loudness_multi_hour_memory");
+    // Chunk-domain simulation of a 10 hour session: 3.6 million 10 ms chunks through the real gating /
+    // histogram / LRA code (the K-weighting filter is bypassed via pushChunkEnergy; it is memory-free).
+    prism::LoudnessMeter m;
+    m.prepare(48000.0, 2);
+    const std::size_t bytesBefore = m.getHistogramBytes();
+
+    constexpr int kChunksPerHour = 360000;
+    constexpr int kHours = 10;
+    const std::size_t total = (std::size_t) kChunksPerHour * kHours;
+    std::vector<double> chunks;
+    chunks.reserve(total);
+    {
+        std::mt19937 rng(2026);
+        std::uniform_real_distribution<double> lvl(-45.0, -8.0);
+        std::uniform_int_distribution<int> die(0, 5);
+        for (std::size_t i = 0; i < total; i += 1000)   // 10 s segments
+        {
+            const double z = die(rng) == 0 ? 0.0 : refPower(lvl(rng));
+            for (int k = 0; k < 1000 && i + (size_t) k < total; ++k) chunks.push_back(z);
+        }
+    }
+
+    const auto t0 = Clock::now();
+    long allocs;
+    {
+        ScopedAllocCount sc;
+        for (double z : chunks) m.pushChunkEnergy(z);
+        allocs = sc.finish();
+    }
+    const double simMs = msSince(t0);
+    checkf(allocs == 0, "10 h of chunks: zero allocations in the metering path", (double) allocs);
+    check(m.getHistogramBytes() == bytesBefore, "histogram memory is constant over the session");
+    std::printf("      10 h simulated in %.0f ms; %llu gated blocks, %llu LRA samples; histogram memory %.0f KB per source (constant)\n",
+                simMs, (unsigned long long) m.getGatedBlockCount(), (unsigned long long) m.getLraSampleCount(), (double) bytesBefore / 1024.0);
+
+    // Exact (vector based) reference for the same chunk stream.
+    std::vector<double> prefix(total + 1, 0.0);
+    for (std::size_t i = 0; i < total; ++i) prefix[i + 1] = prefix[i] + chunks[i];
+    std::vector<double> blocks, shorts;
+    for (std::size_t s = 0; s + 40 <= total; s += 10) blocks.push_back((prefix[s + 40] - prefix[s]) / 40.0);
+    for (std::size_t s = 0; s + 300 <= total; s += 10) shorts.push_back((prefix[s + 300] - prefix[s]) / 300.0);
+    const double refI = refIntegratedFrom(blocks), refL = refLraFrom(shorts);
+    char name[160];
+    std::snprintf(name, sizeof(name), "10 h integrated: histogram %.4f vs exact %.4f LUFS (+-0.03)", m.integratedLufs(), refI);
+    check(nearf(m.integratedLufs(), refI, 0.03), name);
+    std::snprintf(name, sizeof(name), "10 h LRA: histogram %.3f vs exact %.3f LU (+-0.05)", m.loudnessRange(), refL);
+    check(nearf(m.loudnessRange(), refL, 0.05), name);
+
+    // Publish-time recompute cost (O(8000) histogram walks), measured with fresh dirty state each time.
+    std::mt19937 rng(5);
+    double worstUs = 0.0, sumUs = 0.0;
+    const int reps = 1000;
+    for (int i = 0; i < reps; ++i)
+    {
+        for (int k = 0; k < 10; ++k) m.pushChunkEnergy(refPower(-30.0 + (double) (rng() % 100) * 0.05));
+        const auto t1 = Clock::now();
+        volatile float a = m.integratedLufs(), b = m.loudnessRange();
+        (void) a; (void) b;
+        const double us = msSince(t1) * 1000.0;
+        worstUs = std::max(worstUs, us);
+        sumUs += us;
+    }
+    std::printf("      publish-time recompute (I + LRA walks): mean %.1f us, worst %.1f us  [budget 1000 us]\n", sumUs / reps, worstUs);
+    if (worstUs > 1000.0)
+        std::printf("      WARN: worst recompute above 1 ms (debug build or loaded machine?)\n");
+    checkf(worstUs < 5000.0, "recompute stays far below a publish period (worst us; budget 1000 us is WARN-only)", worstUs);
+}
+
+static void test_loudness_golden_fixtures()
+{
+    section("loudness_golden_fixtures");
+
+    juce::File file;
+    {
+        const juce::String rel = "loudness_golden.json";
+        juce::StringArray candidates;
+       #ifdef PRISM_FIXTURES_DIR
+        candidates.add(juce::String(PRISM_FIXTURES_DIR) + "/" + rel);
+       #endif
+        candidates.add("plugins/PRISM/Source/Tests/fixtures/" + rel);
+        candidates.add("../plugins/PRISM/Source/Tests/fixtures/" + rel);
+        candidates.add("../../plugins/PRISM/Source/Tests/fixtures/" + rel);
+        candidates.add("../../../plugins/PRISM/Source/Tests/fixtures/" + rel);
+        for (auto& c : candidates)
+        {
+            juce::File f = juce::File::isAbsolutePath(c) ? juce::File(c) : juce::File::getCurrentWorkingDirectory().getChildFile(c);
+            if (f.existsAsFile()) { file = f; break; }
+        }
+    }
+    if (! file.existsAsFile())
+    {
+        std::printf("  SKIP  fixtures file loudness_golden.json not found\n");
+        check(true, "golden comparison skipped (fixtures file not found)");
+        return;
+    }
+
+    const juce::var root = juce::JSON::parse(file);
+    const juce::var values = root["values"];
+    auto* valuesObj = values.getDynamicObject();
+    if (! root.isObject() || valuesObj == nullptr || valuesObj->getProperties().size() == 0)
+    {
+        std::printf("  SKIP  %s has no \"values\" yet. Generate true goldens with the python script in its \"generator\" field "
+                    "(libebur128 via ffmpeg + pyloudnorm); this comparison then runs automatically.\n", file.getFullPathName().toRawUTF8());
+        check(true, "golden comparison skipped (no values in fixtures file yet)");
+        return;
+    }
+
+    bool allOk = true;
+    int compared = 0;
+    const juce::var signals = root["signals"];
+    for (int si = 0; si < signals.size(); ++si)
+    {
+        const juce::var sig = signals[si];
+        const juce::String nm = sig["name"].toString();
+        if (! values.hasProperty(nm)) continue;
+        const juce::var gold = values[juce::Identifier(nm)];
+
+        const double fs = (double) sig["fs"];
+        const int chans = (int) sig["channels"];
+        LoudRig rig(fs, chans, 0, 14);
+        const juce::var segs = sig["segments"];
+        for (int k = 0; k < segs.size(); ++k)
+        {
+            const juce::var seg = segs[k];
+            const juce::String chStr = seg["channels"].toString();
+            std::vector<double> amps((size_t) chans, 0.0);
+            if (! seg["level_dbfs_peak"].isVoid())
+            {
+                const double a = std::pow(10.0, (double) seg["level_dbfs_peak"] / 20.0);
+                if (chStr.contains("L") && chans >= 1) amps[0] = a;
+                if (chStr.contains("R") && chans >= 2) amps[1] = a;
+            }
+            rig.toneAmps((double) seg["seconds"], (double) seg["freq_hz"], amps);
+        }
+        const auto s = rig.snap();
+        // Tolerances per reference: ffmpeg's ebur128 prints I/LRA quantized to 0.1 LU,
+        // so its own rounding contributes up to 0.05 -> I vs ffmpeg within 0.1.
+        // pyloudnorm reports full precision -> compare I within 0.05 when present.
+        // LRA: implementations legitimately differ by a few tenths (EBU TECH 3342's
+        // normative tolerance is +-1 LU); we hold 0.5 LU, measured worst 0.25.
+        const double gi = (double) gold["integrated"], gl = (double) gold["lra"];
+        const bool iOk = nearf(s->integratedLufs, gi, 0.1);
+        bool iPyOk = true;
+        if (gold.hasProperty("integrated_pyloudnorm"))
+            iPyOk = nearf(s->integratedLufs, (double) gold["integrated_pyloudnorm"], 0.05);
+        const bool lOk = nearf(s->loudnessRange, gl, 0.5);
+        std::printf("      %-26s I %.3f (golden %.3f)  LRA %.3f (golden %.3f)\n", nm.toRawUTF8(), s->integratedLufs, gi, s->loudnessRange, gl);
+        allOk &= iOk && iPyOk && lOk;
+        ++compared;
+    }
+    char name[128];
+    std::snprintf(name, sizeof(name), "golden fixtures: %d signals, I +-0.1 LU vs ffmpeg (0.1-quantized) and +-0.05 vs pyloudnorm, LRA +-0.5 LU", compared);
+    check(compared > 0 && allOk, name);
+}
+
+//==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf("PRISM tests  (Stage 2 / Phase 2.3)\n");
+    std::printf("PRISM tests  (Stage 2 / Phase 2.4)\n");
 
     test_ring_wraparound();
     test_ring_overrun_drops_whole_blocks();
@@ -2253,6 +2869,20 @@ int main()
     test_spectrum_parameter_switching();
     test_spectrum_enable_gating_and_processor_wiring();
     test_spectrum_cpu_budget();
+
+    // Phase 2.4
+    test_loudness_kweighting();
+    test_loudness_tech3341_case1_and_mono();
+    test_loudness_availability();
+    test_loudness_gating_absolute();
+    test_loudness_gating_relative();
+    test_loudness_range();
+    test_loudness_block_size_independence();
+    test_loudness_reset_semantics();
+    test_loudness_gap_handling();
+    test_loudness_sources_and_publish();
+    test_loudness_multi_hour_memory();
+    test_loudness_golden_fixtures();
 
     std::printf("\n%d checks, %d failure(s), %zu test cases\n", checks, failures, testNames.size());
     return failures == 0 ? 0 : 1;
