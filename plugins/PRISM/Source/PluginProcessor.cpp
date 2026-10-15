@@ -134,6 +134,7 @@ void PRISMAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         stopWorker();
         worker.reset();   // references the old engine
         const std::uint64_t base = engine != nullptr ? engine->getLastSequence() : 0;   // keep sequence monotonic across rebuilds
+        mailbox.clear();   // worker is stopped: nothing published before the rebuild (old rate / layout / integrated state) may survive
         engine = std::make_unique<prism::AnalysisEngine>(cfg);
         engine->setSequenceBase(base);
         engine->attachControls({ &resetAllEpoch, &resetIntegratedEpoch,
@@ -189,6 +190,25 @@ void PRISMAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     const int numSamples = buffer.getNumSamples();
     if (e == nullptr || numSamples <= 0)
         return;
+
+   #if PRISM_DEBUG_TONE
+    // DEBUG ONLY (compile flag, OFF by default): analyse a synthetic 1 kHz / -12 dBFS stereo sine instead of the input.
+    // The host buffer itself is still never touched. Allocation here is acceptable for a debug build.
+    {
+        if ((int) toneBuf.size() < numSamples) toneBuf.assign((size_t) numSamples, 0.0f);
+        const double fs = getSampleRate() > 0.0 ? getSampleRate() : 48000.0, inc = juce::MathConstants<double>::twoPi * 1000.0 / fs;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            toneBuf[(size_t) i] = 0.25f * (float) std::sin(tonePhase);
+            tonePhase += inc;
+            if (tonePhase > juce::MathConstants<double>::twoPi) tonePhase -= juce::MathConstants<double>::twoPi;
+        }
+        const float* ptrs[2] = { toneBuf.data(), toneBuf.data() };
+        e->captureBlock(ptrs, 2, numSamples);
+        e->capturePlayhead(getPlayHead(), numSamples);
+        return;
+    }
+   #endif
 
     const auto& constBuffer = buffer;   // read pointers only: never marks the buffer as written
     e->captureBlock(constBuffer.getArrayOfReadPointers(), constBuffer.getNumChannels(), numSamples);

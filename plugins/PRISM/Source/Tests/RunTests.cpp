@@ -45,16 +45,20 @@ namespace
 {
     thread_local int tlsCountAllocs = 0;
     std::atomic<long> gAllocCount { 0 };
+    std::atomic<long long> gAllocBytes { 0 };
 
-    inline void noteAlloc() noexcept
+    inline void noteAlloc(std::size_t n) noexcept
     {
         if (tlsCountAllocs != 0)
+        {
             gAllocCount.fetch_add(1, std::memory_order_relaxed);
+            gAllocBytes.fetch_add((long long) n, std::memory_order_relaxed);
+        }
     }
 
     void* rawAlloc(std::size_t n)
     {
-        noteAlloc();
+        noteAlloc(n);
         if (void* p = std::malloc(n != 0 ? n : 1))
             return p;
         throw std::bad_alloc();
@@ -62,7 +66,7 @@ namespace
 
     void* rawAllocAligned(std::size_t n, std::size_t align)
     {
-        noteAlloc();
+        noteAlloc(n);
         void* p = nullptr;
         if (align < sizeof(void*)) align = sizeof(void*);
         if (posix_memalign(&p, align, n != 0 ? n : 1) != 0)
@@ -72,10 +76,12 @@ namespace
 
     struct ScopedAllocCount
     {
-        ScopedAllocCount()  { start = gAllocCount.load(); ++tlsCountAllocs; }
+        ScopedAllocCount()  { start = gAllocCount.load(); startBytes = gAllocBytes.load(); ++tlsCountAllocs; }
         ~ScopedAllocCount() { if (open) --tlsCountAllocs; }
         long finish()       { --tlsCountAllocs; open = false; return gAllocCount.load() - start; }
+        long long bytes() const { return gAllocBytes.load() - startBytes; }   // bytes requested through operator new since construction
         long start = 0;
+        long long startBytes = 0;
         bool open = true;
     };
 }
@@ -3499,11 +3505,651 @@ static void test_waveform_editor_gating_and_wiring()
 }
 
 //==============================================================================
+// PHASE 2.7 - integration, concurrency, profiling
+namespace
+{
+    bool bitsEq(float a, float b) { return std::memcmp(&a, &b, sizeof(float)) == 0; }
+
+    // First difference between two snapshots (bitwise on every float, sequence excluded), "" if identical.
+    std::string diffSnapshots(const prism::AnalysisSnapshot& a, const prism::AnalysisSnapshot& b)
+    {
+        auto f = [](const char* what, float x, float y) { return bitsEq(x, y) ? std::string() : std::string(what); };
+        std::string d;
+        if (a.sampleRate != b.sampleRate) return "sampleRate";
+        if (! bitsEq(a.bpm, b.bpm)) return "bpm";
+        if (a.signalPresent != b.signalPresent) return "signalPresent";
+        for (auto s : { f("momentary", a.momentaryLufs, b.momentaryLufs), f("shortTerm", a.shortTermLufs, b.shortTermLufs),
+                        f("integrated", a.integratedLufs, b.integratedLufs), f("lra", a.loudnessRange, b.loudnessRange) })
+            if (! s.empty()) return s;
+        for (size_t i = 0; i < a.sources.size(); ++i)
+        {
+            const auto& x = a.sources[i];
+            const auto& y = b.sources[i];
+            const std::string tag = "source" + std::to_string(i) + ".";
+            if (x.hasSpectrum != y.hasSpectrum) return tag + "hasSpectrum";
+            if (std::memcmp(x.spectrumDb.data(), y.spectrumDb.data(), sizeof(float) * x.spectrumDb.size()) != 0) return tag + "spectrum";
+            if (x.waveformColumnCount != y.waveformColumnCount) return tag + "waveformColumnCount";
+            if (std::memcmp(x.waveformColumns.data(), y.waveformColumns.data(), sizeof(float) * 4 * (size_t) x.waveformColumnCount) != 0) return tag + "waveformColumns";
+            if (x.gonioPairCount != y.gonioPairCount) return tag + "gonioPairCount";
+            if (std::memcmp(x.gonio.data(), y.gonio.data(), sizeof(float) * 2 * (size_t) x.gonioPairCount) != 0) return tag + "gonio";
+            if (x.scopeCount != y.scopeCount) return tag + "scopeCount";
+            if (std::memcmp(x.scope.data(), y.scope.data(), sizeof(float) * (size_t) x.scopeCount) != 0) return tag + "scope";
+            if (! bitsEq(x.truePeakMaxDb, y.truePeakMaxDb)) return tag + "truePeak";
+            if (! bitsEq(x.samplePeakMaxDb, y.samplePeakMaxDb)) return tag + "samplePeak";
+            if (x.hasStereo != y.hasStereo) return tag + "hasStereo";
+            if (! bitsEq(x.correlation, y.correlation)) return tag + "correlation";
+            if (! bitsEq(x.widthPercent, y.widthPercent)) return tag + "width";
+            if (! bitsEq(x.balanceDb, y.balanceDb)) return tag + "balance";
+        }
+        return {};
+    }
+
+    // Rich deterministic multichannel programme: per-channel tones + noise, a slow level swell, one near-full-scale spike.
+    std::vector<std::vector<float>> makeProgramme(int chs, std::size_t frames, double fs)
+    {
+        std::vector<std::vector<float>> d((size_t) chs, std::vector<float>(frames));
+        for (int c = 0; c < chs; ++c)
+            for (std::size_t i = 0; i < frames; ++i)
+            {
+                const double t = (double) i / fs;
+                const double env = 0.35 + 0.25 * std::sin(kTwoPi * 0.9 * t);
+                double v = env * std::sin(kTwoPi * (330.0 + 410.0 * c) * t) + 0.08 * std::sin(kTwoPi * (5100.0 + 700.0 * c) * t) + 0.04 * (double) hnoise(c, i);
+                if (i == 12345) v = 0.95;
+                d[(size_t) c][i] = (float) v;
+            }
+        return d;
+    }
+
+    // Property checks every published snapshot must satisfy.
+    bool snapshotSane(const prism::AnalysisSnapshot& s, double expectedFs)
+    {
+        bool ok = s.sampleRate == expectedFs;
+        auto loudOk = [](float v) { return std::isnan(v) || (v > -130.0f && v < 30.0f); };
+        ok &= loudOk(s.momentaryLufs) && loudOk(s.shortTermLufs) && loudOk(s.integratedLufs) && (std::isnan(s.loudnessRange) || s.loudnessRange >= 0.0f);
+        for (const auto& x : s.sources)
+        {
+            ok &= x.scopeCount >= 0 && x.scopeCount <= prism::kScopeSamples && x.gonioPairCount >= 0 && x.gonioPairCount <= prism::kGonioPairs;
+            ok &= x.waveformColumnCount >= 0 && x.waveformColumnCount <= prism::kMaxWaveformColumns;
+            for (int i = 0; i < x.waveformColumnCount; ++i)
+            {
+                const auto& c = x.waveformColumns[(size_t) i];
+                ok &= c[0] >= 0.0f && c[0] <= 1.0f && c[1] >= 0.0f && c[1] <= 1.0f && c[2] >= 0.0f && c[2] <= 1.0f && (c[3] == 0.0f || c[3] == 1.0f || c[3] == 2.0f);
+            }
+            if (x.hasStereo)
+                ok &= x.correlation >= -1.0f && x.correlation <= 1.0f && x.widthPercent >= 0.0f && x.widthPercent <= 100.0f && x.balanceDb >= -60.0f && x.balanceDb <= 60.0f;
+            ok &= x.truePeakMaxDb >= x.samplePeakMaxDb;   // -INF >= -INF holds; NaN would fail
+            if (x.hasSpectrum)
+                for (float v : x.spectrumDb) ok &= std::isfinite(v) && v >= -120.0f && v <= 12.0f;
+            for (int i = 0; i < x.scopeCount; ++i) ok &= std::isfinite(x.scope[(size_t) i]);
+        }
+        return ok;
+    }
+}
+
+static void test_integration_processor_vs_synchronous_reference()
+{
+    section("integration_processor_vs_synchronous_reference");
+    // The processor path (real processBlock, bus layout, channel offsets, ring, then ONE synchronous pump) must give
+    // the same snapshot, bit for bit, as the reference path (engine fed block by block, pumped every block).
+    // The worker is stopped (releaseResources) before audio so scheduling cannot change WHICH hops land in the
+    // publish; the stream is shorter than the 65536-frame history so no hop is skipped by either path.
+    struct Layout { int mainCh, scCh; };
+    const Layout layouts[] = { { 1, 0 }, { 2, 0 }, { 2, 1 }, { 2, 2 }, { 1, 2 } };
+    const std::size_t frames = 30000;
+
+    int combos = 0;
+    bool allSame = true;
+    std::string firstBad;
+    auto runCase = [&](double fs, Layout lay, int block) {
+        const int chs = lay.mainCh + lay.scCh;
+        const auto data = makeProgramme(chs, frames, fs);
+
+        PRISMAudioProcessor proc;
+        if (! configure(proc, lay.mainCh, lay.scCh, fs, block)) { allSame = false; firstBad = "configure"; return; }
+        proc.prepareToPlay(fs, block);
+        proc.releaseResources();
+        juce::MidiBuffer midi;
+        for (std::size_t pos = 0; pos < frames;)
+        {
+            const int n = (int) std::min<std::size_t>((std::size_t) block, frames - pos);
+            float* ptrs[4];
+            for (int c = 0; c < chs; ++c) ptrs[c] = const_cast<float*>(data[(size_t) c].data() + pos);
+            juce::AudioBuffer<float> view(ptrs, chs, n);
+            proc.processBlock(view, midi);
+            pos += (std::size_t) n;
+        }
+        auto* eng = proc.getAnalysisEngine();
+        eng->setSpectrumEnabled(true);
+        eng->pump();
+        const auto a = eng->buildSnapshot();
+
+        prism::AnalysisEngine ref(makeCfg(lay.mainCh, lay.scCh, fs), 16);
+        for (std::size_t pos = 0; pos < frames;)
+        {
+            const int n = (int) std::min<std::size_t>((std::size_t) block, frames - pos);
+            const float* ptrs[4];
+            for (int c = 0; c < chs; ++c) ptrs[c] = data[(size_t) c].data() + pos;
+            ref.captureBlock(ptrs, chs, n);
+            ref.pump();
+            pos += (std::size_t) n;
+        }
+        const auto b = ref.buildSnapshot();
+
+        const auto diff = diffSnapshots(*a, *b);
+        ++combos;
+        if (! diff.empty() || ! a->sources[0].hasSpectrum || ! snapshotSane(*a, fs))
+        {
+            allSame = false;
+            if (firstBad.empty())
+            {
+                char buf[160];
+                std::snprintf(buf, sizeof(buf), "fs %.0f main %d sc %d block %d: %s", fs, lay.mainCh, lay.scCh, block, diff.empty() ? "sanity/hasSpectrum" : diff.c_str());
+                firstBad = buf;
+            }
+        }
+    };
+
+    for (double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (const auto lay : layouts)
+            for (int block : { 7, 480, 8192 })
+                runCase(fs, lay, block);
+    runCase(48000.0, { 2, 2 }, 1);
+    runCase(96000.0, { 1, 0 }, 1);
+    runCase(44100.0, { 2, 1 }, 64);
+    runCase(192000.0, { 2, 2 }, 4096);
+
+    char name[200];
+    std::snprintf(name, sizeof(name), "%d configs (rates 44.1-192k, mono/stereo, sidechain off/mono/stereo, blocks 1..8192): processor snapshot bit-identical to the synchronous reference%s%s",
+                  combos, firstBad.empty() ? "" : " -- first mismatch: ", firstBad.c_str());
+    check(allSame, name);
+}
+
+static void test_integration_parameter_storm()
+{
+    section("integration_parameter_storm");
+    // 6000 flips of fft_size / window / analysis_mode, one per 10 ms of audio = 60 s of simulated time, against the
+    // live worker (editor active, snapshots fetched every block).
+    PRISMAudioProcessor proc;
+    check(configure(proc, 2, 0, 48000.0, 480), "configure");
+    proc.prepareToPlay(48000.0, 480);
+    proc.setEditorActive(true);
+
+    auto* pSize = proc.apvts.getParameter(prism::ids::fftSize);
+    auto* pWin = proc.apvts.getParameter(prism::ids::window);
+    auto* pMode = proc.apvts.getParameter(prism::ids::analysisMode);
+
+    const int k1024 = pickBin(48000.0, 1024, 2000.0);   // bin-centred for every FFT size
+    auto tone = sineRat((std::uint64_t) k1024, 1024, 0.1f, 3);
+    juce::AudioBuffer<float> buf(2, 480);
+    juce::MidiBuffer midi;
+    std::mt19937 rng(2027);
+
+    long allocs = 0;
+    bool valid = true;
+    int withSpectrum = 0;
+    std::uint64_t pos = 0, lastSeq = 0;
+    bool monotonic = true;
+    for (int flip = 0; flip < 6000; ++flip)
+    {
+        pSize->setValueNotifyingHost(pSize->convertTo0to1((float) (rng() % 5)));
+        pWin->setValueNotifyingHost(pWin->convertTo0to1((float) (rng() % 2)));
+        pMode->setValueNotifyingHost(pMode->convertTo0to1((float) (rng() % 3)));
+
+        for (int i = 0; i < 480; ++i) { const float v = tone(0, pos + (std::uint64_t) i); buf.setSample(0, i, v); buf.setSample(1, i, v); }
+        pos += 480;
+        {
+            ScopedAllocCount sc;
+            proc.processBlock(buf, midi);
+            allocs += sc.finish();
+        }
+        if ((flip & 3) == 3) sleepMs(1);
+        const auto s = proc.getLatestAnalysisSnapshot();
+        if (s != nullptr)
+        {
+            monotonic &= s->sequence >= lastSeq;
+            lastSeq = s->sequence;
+            valid &= snapshotSane(*s, 48000.0);
+            withSpectrum += s->sources[0].hasSpectrum ? 1 : 0;
+        }
+    }
+    checkf(allocs == 0, "processBlock allocated nothing during 6000 parameter flips", (double) allocs);
+    check(valid && monotonic, "every snapshot during the storm is sane (finite spectra in [-120,12] dB, meters in range, sequence monotonic)");
+    checkf(withSpectrum > 0, "valid spectra were published during the storm (fetches that carried hasSpectrum)", (double) withSpectrum);
+
+    // After the storm: fixed settings, the spectrum must settle on the correct level.
+    pSize->setValueNotifyingHost(pSize->convertTo0to1(2.0f));
+    pWin->setValueNotifyingHost(pWin->convertTo0to1(0.0f));
+    pMode->setValueNotifyingHost(pMode->convertTo0to1(2.0f));
+    bool settled = false;
+    const auto t0 = Clock::now();
+    while (msSince(t0) < 4000.0 && ! settled)
+    {
+        for (int i = 0; i < 480; ++i) { const float v = tone(0, pos + (std::uint64_t) i); buf.setSample(0, i, v); buf.setSample(1, i, v); }
+        pos += 480;
+        proc.processBlock(buf, midi);
+        sleepMs(4);
+        const auto s = proc.getLatestAnalysisSnapshot();
+        if (s != nullptr && s->sources[0].hasSpectrum && pos > 480 * 6200ull)
+            settled = std::abs(curvePeak(s->sources[0]).db + 20.0) <= 0.15;   // a full-length 4096 window of steady tone
+    }
+    check(settled, "after the storm the 4096/Hann/combined spectrum reads the -20 dBFS tone correctly");
+    proc.setEditorActive(false);
+    proc.releaseResources();
+}
+
+static void test_integration_rate_and_layout_change()
+{
+    section("integration_rate_and_layout_change");
+    PRISMAudioProcessor proc;
+    juce::MidiBuffer midi;
+    std::uint64_t lastSeq = 0;
+    bool seqMonotonic = true, neverStale = true;
+    double currentFs = 48000.0;
+
+    auto play = [&](int mainCh, int scCh, double fs, double seconds, float amp) {
+        juce::AudioBuffer<float> buf(mainCh + scCh, 480);
+        const double w = kTwoPi * 997.0 / fs;
+        std::uint64_t pos = 0;
+        const auto t0 = Clock::now();
+        std::shared_ptr<const prism::AnalysisSnapshot> last;
+        while (msSince(t0) < seconds * 1000.0)
+        {
+            for (int i = 0; i < 480; ++i)
+                for (int c = 0; c < mainCh + scCh; ++c) buf.setSample(c, i, amp * (float) std::sin(w * (double) (pos + (std::uint64_t) i)));
+            pos += 480;
+            proc.processBlock(buf, midi);
+            const auto s = proc.getLatestAnalysisSnapshot();
+            if (s != nullptr)
+            {
+                seqMonotonic &= s->sequence >= lastSeq;
+                lastSeq = s->sequence;
+                neverStale &= s->sampleRate == currentFs;
+                last = s;
+            }
+            sleepMs(4);
+        }
+        return last;
+    };
+
+    check(configure(proc, 2, 0, 48000.0, 480), "configure 48k stereo");
+    proc.prepareToPlay(48000.0, 480);
+    proc.setEditorActive(true);
+    auto s1 = play(2, 0, 48000.0, 1.8, 0.3f);
+    check(s1 != nullptr && std::isfinite(s1->integratedLufs) && s1->sources[0].hasStereo && ! s1->sources[1].hasStereo, "session running: integrated loudness available, source 1 absent");
+    const auto seq1 = lastSeq;
+    auto* engBefore = proc.getAnalysisEngine();
+
+    // Same configuration again (host re-prepare): nothing is reset.
+    proc.prepareToPlay(48000.0, 256);
+    check(proc.getAnalysisEngine() == engBefore && proc.getLatestAnalysisSnapshot() != nullptr, "re-prepare with the same rate/layout keeps the engine and the published snapshot");
+    auto s1b = play(2, 0, 48000.0, 0.3, 0.3f);
+    check(s1b != nullptr && std::isfinite(s1b->integratedLufs), "integrated loudness survives a same-config prepare");
+
+    // Sample-rate change.
+    proc.releaseResources();
+    check(configure(proc, 2, 0, 96000.0, 480), "configure 96k stereo");
+    currentFs = 96000.0;
+    proc.prepareToPlay(96000.0, 480);
+    check(proc.getAnalysisEngine() != engBefore && proc.getLatestAnalysisSnapshot() == nullptr, "rate change: engine rebuilt and the stale snapshot is gone immediately");
+    auto s2 = play(2, 0, 96000.0, 0.25, 0.3f);   // < 400 ms of new audio
+    check(s2 != nullptr && s2->sampleRate == 96000.0 && std::isnan(s2->integratedLufs) && s2->sequence > seq1,
+          "first snapshot after the rate change: new rate, integrated reset (NaN), sequence continues upward");
+    auto s2b = play(2, 0, 96000.0, 1.2, 0.3f);
+    check(s2b != nullptr && std::isfinite(s2b->integratedLufs) && nearf(s2b->integratedLufs, 20.0 * std::log10(0.3) + 0.0, 2.0), "integrated loudness measures again at the new rate");
+
+    // Layout change: enable the sidechain.
+    proc.releaseResources();
+    check(configure(proc, 2, 2, 96000.0, 480), "configure 96k stereo + sidechain");
+    proc.prepareToPlay(96000.0, 480);
+    check(proc.getLatestAnalysisSnapshot() == nullptr, "layout change: no stale snapshot");
+    auto s3 = play(2, 2, 96000.0, 0.8, 0.2f);
+    check(s3 != nullptr && s3->sources[1].hasStereo && s3->sources[1].scopeCount > 0, "layout change: sidechain source is analysed");
+
+    // And back to mono.
+    proc.releaseResources();
+    check(configure(proc, 1, 0, 44100.0, 480), "configure 44.1k mono");
+    currentFs = 44100.0;
+    proc.prepareToPlay(44100.0, 480);
+    auto s4 = play(1, 0, 44100.0, 0.8, 0.2f);
+    check(s4 != nullptr && ! s4->sources[0].hasStereo && s4->sampleRate == 44100.0 && ! s4->sources[1].hasStereo && s4->sources[1].scopeCount == 0, "mono at 44.1 kHz: hasStereo false, no phantom source");
+
+    check(seqMonotonic, "snapshot sequence never went backwards across three rebuilds");
+    check(neverStale, "every snapshot ever fetched carries the sample rate that was active when it was fetched (nothing stale)");
+    proc.setEditorActive(false);
+    proc.releaseResources();
+}
+
+static void test_integration_editor_mode_transitions()
+{
+    section("integration_editor_mode_transitions");
+    PRISMAudioProcessor proc;
+    check(configure(proc, 2, 0, 48000.0, 480), "configure");
+    proc.prepareToPlay(48000.0, 480);
+
+    juce::AudioBuffer<float> buf(2, 480);
+    juce::MidiBuffer midi;
+    std::uint64_t pos = 0;
+    auto feedFor = [&](double ms, bool fetch) {
+        const auto t0 = Clock::now();
+        while (msSince(t0) < ms)
+        {
+            for (int i = 0; i < 480; ++i)
+            {
+                const float v = 0.3f * std::sin(0.13f * (float) ((pos + (std::uint64_t) i) % 100000));
+                buf.setSample(0, i, v); buf.setSample(1, i, v);
+            }
+            pos += 480;
+            proc.processBlock(buf, midi);
+            if (fetch) proc.getLatestAnalysisSnapshot();
+            sleepMs(4);
+        }
+    };
+
+    // 1) Editor closed: loudness / peaks keep running, nothing else does, nothing is published.
+    feedFor(1200.0, true);   // fetching does not count: no editor is registered
+    check(proc.getAnalysisWorker()->getPublishCount() == 0 && proc.getLatestAnalysisSnapshot() == nullptr, "editor closed: no snapshot built or published");
+    proc.releaseResources();
+    auto* eng = proc.getAnalysisEngine();
+    eng->pump();
+    check(eng->getSpectrum().getTotalHops(0) == 0 && eng->getWaveform(0).columnsLogged() == 0, "editor closed: no FFT hops and no waveform columns");
+    check(std::isfinite(eng->getLoudness(0).momentaryLufs()) && eng->getHistory(0).framesSeen() == pos, "editor closed: loudness and capture keep running (every frame accounted for)");
+    const float mBefore = eng->getLoudness(0).momentaryLufs();
+
+    // 2) Editor opens: everything switches on.
+    proc.prepareToPlay(48000.0, 480);
+    proc.setEditorActive(true);
+    feedFor(1500.0, true);
+    const auto s = proc.getLatestAnalysisSnapshot();
+    check(s != nullptr && s->sources[0].hasSpectrum && s->sources[0].waveformColumnCount > 0 && std::isfinite(s->integratedLufs), "editor open: spectrum, waveform columns and loudness are in the snapshot");
+    check(std::abs(s->momentaryLufs - mBefore) < 0.5f, "loudness measured while the editor was closed is continuous with the open session (same signal, same level)");
+
+    // 3) Editor closes (or stops fetching): publishing stops, audio keeps flowing.
+    proc.setEditorActive(false);
+    feedFor(300.0, false);
+    const auto published = proc.getAnalysisWorker()->getPublishCount();
+    feedFor(500.0, false);
+    check(proc.getAnalysisWorker()->getPublishCount() == published, "editor closed again: publishing stops");
+
+    // 4) Editor 'open' but no longer fetching: the heartbeat expires and the worker drops to inactive mode.
+    proc.setEditorActive(true);
+    feedFor(300.0, true);
+    feedFor(900.0, false);   // > 500 ms without a fetch
+    const auto published2 = proc.getAnalysisWorker()->getPublishCount();
+    feedFor(400.0, false);
+    check(proc.getAnalysisWorker()->getPublishCount() == published2, "stale fetch heartbeat: publishing stops without an explicit close");
+    feedFor(300.0, true);
+    check(proc.getAnalysisWorker()->getPublishCount() > published2, "fetching again resumes publishing");
+
+    proc.setEditorActive(false);
+    proc.releaseResources();
+}
+
+static void test_integration_reset_plumbing()
+{
+    section("integration_reset_plumbing");
+    PRISMAudioProcessor proc;
+    check(configure(proc, 2, 0, 48000.0, 480), "configure");
+    proc.prepareToPlay(48000.0, 480);
+    proc.setEditorActive(true);
+
+    juce::AudioBuffer<float> loud(2, 480), quiet(2, 480);
+    juce::MidiBuffer midi;
+    for (int i = 0; i < 480; ++i) for (int c = 0; c < 2; ++c) { loud.setSample(c, i, 0.5f * std::sin(0.13f * (float) i)); quiet.setSample(c, i, 0.0f); }
+
+    auto waitFor = [&](juce::AudioBuffer<float>& b, auto&& pred) {
+        const auto t0 = Clock::now();
+        while (msSince(t0) < 4000.0)
+        {
+            proc.processBlock(b, midi);
+            const auto s = proc.getLatestAnalysisSnapshot();
+            if (s != nullptr && pred(*s)) return true;
+            sleepMs(3);
+        }
+        return false;
+    };
+
+    check(waitFor(loud, [](const prism::AnalysisSnapshot& s) { return std::isfinite(s.shortTermLufs) && std::isfinite(s.loudnessRange) && std::isfinite(s.sources[0].truePeakMaxDb); }),
+          "primed: M/S/I/LRA, sample and true peak available");
+    float tp0 = proc.getLatestAnalysisSnapshot()->sources[0].truePeakMaxDb;
+
+    proc.requestResetIntegrated();
+    check(waitFor(loud, [](const prism::AnalysisSnapshot& s) { return std::isnan(s.integratedLufs) && std::isnan(s.loudnessRange); }),
+          "requestResetIntegrated(): published I and LRA go NaN");
+    check(proc.getLatestAnalysisSnapshot()->sources[0].truePeakMaxDb >= tp0 - 0.001f && std::isfinite(proc.getLatestAnalysisSnapshot()->shortTermLufs),
+          "...while true peak and the moving windows are untouched");
+    check(waitFor(loud, [](const prism::AnalysisSnapshot& s) { return std::isfinite(s.integratedLufs); }), "...and integrated loudness restarts from new audio");
+
+    // Quiet the input and let the pipeline drain BEFORE asking for the reset. A reset takes effect when the worker
+    // reaches it; loud frames captured before the request but still in the ring when it fires are, by definition,
+    // post-reset audio for the worker (true peak and the first 400 ms gating block are computed from the ring), so
+    // asserting 'all cleared' while loud audio is still in flight would race against ~a block of pipeline latency.
+    for (int i = 0; i < 30; ++i) { proc.processBlock(quiet, midi); proc.getLatestAnalysisSnapshot(); sleepMs(5); }
+    check(std::isfinite(proc.getLatestAnalysisSnapshot()->integratedLufs) && std::isfinite(proc.getLatestAnalysisSnapshot()->sources[0].truePeakMaxDb),
+          "silence does not clear anything by itself (I and peaks hold)");
+
+    proc.requestResetAll();
+    check(waitFor(quiet, [](const prism::AnalysisSnapshot& s) {
+              return std::isnan(s.integratedLufs) && std::isnan(s.loudnessRange) && std::isinf(s.sources[0].samplePeakMaxDb) && s.sources[0].samplePeakMaxDb < 0
+                     && std::isinf(s.sources[0].truePeakMaxDb) && s.sources[0].truePeakMaxDb < 0;
+          }), "requestResetAll(): I, LRA, sample peak and true peak are all cleared in the published snapshot");
+
+    // Measurements restart immediately from new audio: -INF / NaN only until data arrives.
+    check(waitFor(loud, [](const prism::AnalysisSnapshot& s) { return std::isfinite(s.sources[0].samplePeakMaxDb) && std::isfinite(s.sources[0].truePeakMaxDb); }),
+          "after the reset, sample and true peak restart from the next audio");
+    proc.requestResetAll();
+    check(waitFor(loud, [](const prism::AnalysisSnapshot& s) { return std::isnan(s.integratedLufs); }),
+          "reset while a tone keeps playing: integrated shows NaN until its first post-reset gated block");
+
+    proc.setEditorActive(false);
+    proc.releaseResources();
+}
+
+static void test_integration_stress_all_engines()
+{
+    section("integration_stress_all_engines");
+    double seconds = 2.0;
+    if (const char* env = std::getenv("PRISM_STRESS_SECONDS")) seconds = std::max(0.2, std::atof(env));
+
+    // Stereo + stereo sidechain, host playhead with beats, every analyzer live. Audio thread: random block sizes
+    // 1..8192. Message thread: fetches + validates every snapshot, flips parameters, requests resets, opens/closes
+    // the editor. (prepareToPlay / releaseResources never overlap processBlock: the host contract.)
+    PRISMAudioProcessor proc;
+    check(configure(proc, 2, 2, 48000.0, 8192), "configure");
+    proc.prepareToPlay(48000.0, 8192);
+    proc.setEditorActive(true);
+
+    const auto programme = makeProgramme(4, 65536, 48000.0);
+    std::atomic<bool> stop { false };
+    std::atomic<long> audioBlocks { 0 };
+    std::atomic<long> audioAllocs { 0 };
+    std::atomic<bool> passthrough { true };
+    FakePlayHead ph;
+
+    std::thread audio([&] {
+        juce::MidiBuffer midi;
+        std::mt19937 rng(4242);
+        std::vector<std::vector<float>> work(4, std::vector<float>(8192)), expect(4, std::vector<float>(8192));
+        proc.setPlayHead(&ph);
+        double ppq = 0.0;
+        std::size_t pos = 0;
+        while (! stop.load(std::memory_order_acquire))
+        {
+            const int n = 1 + (int) (rng() % 8192);
+            for (int c = 0; c < 4; ++c)
+            {
+                for (int i = 0; i < n; ++i) work[(size_t) c][(size_t) i] = programme[(size_t) c][(pos + (std::size_t) i) % programme[0].size()];
+                std::memcpy(expect[(size_t) c].data(), work[(size_t) c].data(), (size_t) n * sizeof(float));
+            }
+            pos += (std::size_t) n;
+            float* ptrs[4] = { work[0].data(), work[1].data(), work[2].data(), work[3].data() };
+            juce::AudioBuffer<float> view(ptrs, 4, n);
+            ph.ppq = ppq;
+            ppq += (double) n * 2.0 / 48000.0;
+            long a;
+            {
+                ScopedAllocCount sc;
+                proc.processBlock(view, midi);
+                a = sc.finish();
+            }
+            audioAllocs.fetch_add(a);
+            for (int c = 0; c < 4; ++c)
+                if (std::memcmp(work[(size_t) c].data(), expect[(size_t) c].data(), (size_t) n * sizeof(float)) != 0)
+                    passthrough.store(false);
+            audioBlocks.fetch_add(1);
+            if ((rng() & 7) == 0) std::this_thread::yield();
+        }
+        proc.setPlayHead(nullptr);
+    });
+
+    auto* pSize = proc.apvts.getParameter(prism::ids::fftSize);
+    auto* pWin = proc.apvts.getParameter(prism::ids::window);
+    auto* pMode = proc.apvts.getParameter(prism::ids::analysisMode);
+    std::mt19937 rng(77);
+    std::uint64_t prev = 0;
+    bool monotonic = true, sane = true;
+    long fetches = 0, distinct = 0;
+    const auto t0 = Clock::now();
+    while (msSince(t0) < seconds * 1000.0)
+    {
+        const auto s = proc.getLatestAnalysisSnapshot();
+        ++fetches;
+        if (s != nullptr)
+        {
+            monotonic &= s->sequence >= prev;
+            if (s->sequence != prev) ++distinct;
+            prev = s->sequence;
+            sane &= snapshotSane(*s, 48000.0);
+        }
+        switch (fetches % 40)
+        {
+            case 3:  pSize->setValueNotifyingHost(pSize->convertTo0to1((float) (rng() % 5))); break;
+            case 9:  pWin->setValueNotifyingHost(pWin->convertTo0to1((float) (rng() % 2))); break;
+            case 15: pMode->setValueNotifyingHost(pMode->convertTo0to1((float) (rng() % 3))); break;
+            case 21: proc.requestResetIntegrated(); break;
+            case 27: proc.requestResetAll(); break;
+            case 33: proc.setEditorActive(false); proc.setEditorActive(true); break;
+            default: break;
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(300));
+    }
+    stop.store(true, std::memory_order_release);
+    audio.join();
+    proc.setEditorActive(false);
+    proc.releaseResources();
+
+    check(passthrough.load(), "audio thread: output bit-identical to input for every block (host buffer incl. sidechain channels untouched)");
+    check(monotonic, "snapshot sequence never goes backwards under concurrency");
+    check(sane, "every fetched snapshot satisfies the range / invariant checks (TP >= SP, meters in range, finite spectra, <= 16 columns)");
+    checkf(audioAllocs.load() == 0, "audio thread: zero allocations across the whole run (all engines, parameter flips, resets)", (double) audioAllocs.load());
+    checkf(audioBlocks.load() > 20 && distinct > 5, "blocks processed / distinct snapshots", (double) audioBlocks.load(), (double) distinct);
+    std::printf("      %ld blocks (1..8192 frames), %ld fetches, %ld distinct snapshots, overruns source0=%llu\n", audioBlocks.load(), fetches, distinct,
+                (unsigned long long) proc.getAnalysisEngine()->getOverrunCount(0));
+}
+
+static void test_integration_profile_and_memory()
+{
+    section("integration_profile_and_memory");
+    // Worker CPU = time spent in pump() (+ buildSnapshot() once per 1/60 s while the editor is open) per second of audio,
+    // measured single-threaded so scheduling noise does not enter. Capture (the audio thread's job) is excluded.
+    std::printf("      PROFILE|fs|sources|editor|cpu_percent\n");
+    bool keepsUp = true;
+    const double seconds = 5.0;
+    struct Row { double fs; int sources; bool open; double cpu; };
+    std::vector<Row> rows;
+
+    for (double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (int sources : { 1, 2 })
+            for (bool open : { false, true })
+            {
+                prism::AnalysisEngine eng(makeCfg(2, sources == 2 ? 2 : 0, fs), 16);
+                eng.setSpectrumEnabled(open);
+                const int chs = sources == 2 ? 4 : 2;
+                std::vector<std::vector<float>> bufs((size_t) chs, std::vector<float>(4096));
+                for (int c = 0; c < chs; ++c)
+                    for (int i = 0; i < 4096; ++i)
+                        bufs[(size_t) c][(size_t) i] = 0.25f * std::sin(0.037f * (float) i * (float) (c + 1)) + 0.1f * hnoise(c, (std::uint64_t) i);
+                const float* ptrs[4] = { bufs[0].data(), bufs[1].data(), bufs.back().data(), bufs.back().data() };
+                if (chs == 4) { ptrs[2] = bufs[2].data(); ptrs[3] = bufs[3].data(); }
+
+                const int blocks = (int) (seconds * fs / 4096.0);
+                const double buildEvery = fs / 60.0;
+                double sinceBuild = 0.0, busyMs = 0.0;
+                for (int b = 0; b < blocks; ++b)
+                {
+                    eng.captureBlock(ptrs, chs, 4096);
+                    const auto t0 = Clock::now();
+                    eng.pump();
+                    sinceBuild += 4096.0;
+                    if (open)
+                        while (sinceBuild >= buildEvery) { (void) eng.buildSnapshot(); sinceBuild -= buildEvery; }
+                    busyMs += msSince(t0);
+                }
+                const double audioMs = 1000.0 * blocks * 4096.0 / fs;
+                const double cpu = 100.0 * busyMs / audioMs;
+                rows.push_back({ fs, sources, open, cpu });
+                keepsUp &= cpu < 100.0;
+                std::printf("      PROFILE|%.0f|%d|%s|%.3f\n", fs, sources, open ? "open" : "closed", cpu);
+            }
+
+    // Budgets (WARN-only): open < 3 % @48k, < 8 % @192k; closed < 0.5 % @48k (scaled with the sample rate elsewhere).
+    for (const auto& r : rows)
+    {
+        const double budget = r.open ? (r.fs <= 48000.0 ? 3.0 : (r.fs >= 192000.0 ? 8.0 : 5.0)) : 0.5 * std::max(1.0, r.fs / 48000.0);
+        if (r.cpu > budget)
+            std::printf("      WARN: %.0f Hz, %d source(s), editor %s: %.3f %% exceeds the %.1f %% budget (debug build or loaded machine?)\n", r.fs, r.sources, r.open ? "open" : "closed", r.cpu, budget);
+    }
+    check(keepsUp, "worker keeps up with real time in every cell of the {44.1,48,96,192k} x {1,2 sources} x {open,closed} matrix (budgets are WARN-only)");
+
+    {   // heaviest FFT configuration: N=1024 (hop 256), combined, two stereo sources, 192 kHz, editor open
+        std::atomic<float> size { 0.0f }, win { 0.0f }, mode { 2.0f };
+        prism::AnalysisEngine eng(makeCfg(2, 2, 192000.0), 16);
+        eng.attachControls({ nullptr, nullptr, &mode, &size, &win });
+        std::vector<std::vector<float>> bufs(4, std::vector<float>(4096));
+        for (int c = 0; c < 4; ++c) for (int i = 0; i < 4096; ++i) bufs[(size_t) c][(size_t) i] = 0.2f * hnoise(c, (std::uint64_t) i);
+        const float* ptrs[4] = { bufs[0].data(), bufs[1].data(), bufs[2].data(), bufs[3].data() };
+        const int blocks = (int) (seconds * 192000.0 / 4096.0);
+        double busyMs = 0.0, sinceBuild = 0.0;
+        for (int b = 0; b < blocks; ++b)
+        {
+            eng.captureBlock(ptrs, 4, 4096);
+            const auto t0 = Clock::now();
+            eng.pump();
+            sinceBuild += 4096.0;
+            while (sinceBuild >= 192000.0 / 60.0) { (void) eng.buildSnapshot(); sinceBuild -= 192000.0 / 60.0; }
+            busyMs += msSince(t0);
+        }
+        const double cpu = 100.0 * busyMs / (1000.0 * blocks * 4096.0 / 192000.0);
+        std::printf("      PROFILE|192000|2|open_fft1024|%.3f\n", cpu);
+        check(cpu < 100.0, "worst case (192 kHz, 2 sources, N=1024 hop 256, editor open) still keeps up with real time");
+    }
+
+    // Memory: bytes requested through operator new while building a 2-source engine and running it long enough to touch
+    // every lazily allocated structure, plus a handful of live snapshots.
+    {
+        long long bytes;
+        {
+            ScopedAllocCount sc;
+            auto eng = std::make_unique<prism::AnalysisEngine>(makeCfg(2, 2, 192000.0));   // default 2^18-frame rings
+            std::vector<std::vector<float>> bufs(4, std::vector<float>(4096, 0.1f));
+            const float* ptrs[4] = { bufs[0].data(), bufs[1].data(), bufs[2].data(), bufs[3].data() };
+            for (int b = 0; b < 60; ++b) { eng->captureBlock(ptrs, 4, 4096); eng->pump(); }
+            std::vector<std::shared_ptr<const prism::AnalysisSnapshot>> live;
+            for (int i = 0; i < 4; ++i) live.push_back(eng->buildSnapshot());   // mailbox + editor + worker + spare
+            bytes = sc.bytes();
+            sc.finish();
+        }
+        const double mb = (double) bytes / (1024.0 * 1024.0);
+        std::printf("      PROFILE|memory_mb|2_sources_192k_engine+4_snapshots|%.2f\n", mb);
+        checkf(mb < 10.0, "engine footprint (2 sources, default rings, spectrum/loudness/waveform state, 4 live snapshots) < 10 MB (MB)", mb);
+    }
+}
+
+//==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf("PRISM tests  (Stage 2 / Phase 2.6)\n");
+    std::printf("PRISM tests  (Stage 2 / Phase 2.7)\n");
 
     test_ring_wraparound();
     test_ring_overrun_drops_whole_blocks();
@@ -3582,6 +4228,15 @@ int main()
     test_waveform_beat_flags();
     test_waveform_ack_delivery();
     test_waveform_editor_gating_and_wiring();
+
+    // Phase 2.7
+    test_integration_processor_vs_synchronous_reference();
+    test_integration_parameter_storm();
+    test_integration_rate_and_layout_change();
+    test_integration_editor_mode_transitions();
+    test_integration_reset_plumbing();
+    test_integration_stress_all_engines();
+    test_integration_profile_and_memory();
 
     std::printf("\n%d checks, %d failure(s), %zu test cases\n", checks, failures, testNames.size());
     return failures == 0 ? 0 : 1;

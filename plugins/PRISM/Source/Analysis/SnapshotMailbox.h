@@ -23,6 +23,17 @@ namespace prism
             }
         }
 
+        // Drop the published snapshot (engine rebuilt: anything published before is stale). Message / prepare thread.
+        void clear()
+        {
+            Ptr old;
+            {
+                const juce::SpinLock::ScopedLockType l(lock);
+                old = std::move(latest);
+                latest.reset();
+            }
+        }
+
         Ptr fetch() const
         {
             const juce::SpinLock::ScopedLockType l(lock);
