@@ -942,17 +942,23 @@ function wfSetSpan(s, fromHost) {
   if (changed && !fromHost && typeof postUi === 'function') postUi();
 }
 
-/* CDJ / rekordbox 3-BAND model: three LAYERED, solid, continuous silhouettes drawn back-to-front per column:
-   lows (widest, back) -> mids -> highs (innermost luminous core, theme high colour blended 70% toward white).
-   Colours are the theme trio (BAND.*). Exact rekordbox blue/amber/cream = set BAND.low/mid/high to
-   [38,92,214] / [214,150,52] / [250,244,230] (constant swap). No gaps, no outline: the jagged tips are the per-column heights. */
+/* CDJ / rekordbox 3-BAND model, NESTED-RIM structure: three solid continuous layers drawn back-to-front per column.
+   core (highs, theme high colour blended 70% toward white) innermost; mids extend beyond the core by a rim;
+   lows extend beyond the mids by a rim. Each rim is proportional to its band energy but clamped (hairline .. ~0.25A),
+   so all three colours are visible on every audible column and no layer balloons; overall height still tracks amplitude.
+   Exact rekordbox blue/amber/cream = set BAND.low/mid/high to [38,92,214] / [214,150,52] / [250,244,230]. */
 function wfDrawBands(g, x, mid, A, b, m, hi) {
   b = clamp(b, 0, 1); m = clamp(m, 0, 1); hi = clamp(hi, 0, 1);
-  var h0 = A * b, h1 = A * 0.85 * m, h2 = A * 0.6 * hi, L = BAND.low, M = BAND.mid, H = BAND.high;
+  if (Math.max(b, m, hi) < 0.02) return;                       // inaudible: draw nothing
+  var hl = Math.max(1.5, DPR * 1.25);                          // hairline rim (device px)
+  var hCore = A * (0.08 + 0.42 * hi);
+  var hMid = hCore + clamp(A * 0.30 * m, hl, A * 0.22);
+  var hLow = hMid + clamp(A * 0.34 * b, hl, A * 0.26);
+  var L = BAND.low, M = BAND.mid, H = BAND.high;
   g.globalAlpha = 1;
-  if (h0 >= 0.5) { g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x, mid - h0, 1, 2 * h0); }
-  if (h1 >= 0.5) { g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x, mid - h1, 1, 2 * h1); }
-  if (h2 >= 0.5) { g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x, mid - h2, 1, 2 * h2); }
+  g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x, mid - hLow, 1, 2 * hLow);
+  g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x, mid - hMid, 1, 2 * hMid);
+  g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x, mid - hCore, 1, 2 * hCore);
 }
 function wfColumn(g, x, c, flag) {
   var mid = wfH / 2, A = mid * 0.86;   // max band height ~86% of the half-lane
