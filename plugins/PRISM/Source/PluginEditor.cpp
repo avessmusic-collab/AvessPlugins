@@ -536,7 +536,7 @@ void PRISMAudioProcessorEditor::pushAnalysisFrame()
         auto v = frameTimesMs; std::sort (v.begin(), v.end());
         float sum = 0; for (auto x : v) sum += x;
         std::fprintf (stderr, "PRISM_FRAME_TIMING n=%zu mean=%.3fms p50=%.3fms p99=%.3fms max=%.3fms\n", v.size(),
-                      sum / (float) v.size(), v[v.size() / 2], v[(size_t) (v.size() * 0.99)], v.back());
+                      sum / (float) v.size(), v[v.size() / 2], v[v.size() * 99 / 100], v.back());
         std::fflush (stderr);
         frameTimesMs.clear();
     }

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "Analysis/AnalysisEngine.h"
 #include "Analysis/AnalysisSnapshot.h"
@@ -64,6 +65,14 @@ public:
     // Defaults for the state entries / UI state (used by state init and sanitizer)
     static void applyStateDefaults(juce::ValueTree& state);
     static void sanitizeState(juce::ValueTree& state);
+
+   #ifndef PRISM_DEBUG_TONE
+    #define PRISM_DEBUG_TONE 0
+   #endif
+   #if PRISM_DEBUG_TONE
+    std::vector<float> toneBuf;
+    double tonePhase = 0.0;
+   #endif
 
     // Public: the v8 editor scaffolding accesses processorRef.apvts directly.
     juce::AudioProcessorValueTreeState apvts;
