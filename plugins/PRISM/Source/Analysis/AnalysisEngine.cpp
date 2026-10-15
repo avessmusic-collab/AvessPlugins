@@ -16,7 +16,32 @@ namespace prism
             auto& s = sources[(size_t) i];
             s.ring.prepare(registry[i].numChannels, ringLog2Capacity);
             s.history.prepare(registry[i].numChannels);
+            s.stereo.prepare(config.sampleRate);
         }
+    }
+
+    void AnalysisEngine::attachControls(const ExternalControls& c) noexcept
+    {
+        controls = c;
+        seenResetAll        = c.resetAllEpoch != nullptr ? c.resetAllEpoch->load(std::memory_order_relaxed) : 0;
+        seenResetIntegrated = c.resetIntegratedEpoch != nullptr ? c.resetIntegratedEpoch->load(std::memory_order_relaxed) : 0;
+    }
+
+    int AnalysisEngine::scopeLengthFor(double fs) noexcept
+    {
+        return std::min(kScopeSamples, (int) std::ceil(0.020 * fs) + 800 + 256);
+    }
+
+    int AnalysisEngine::gonioStrideFor(double fs) noexcept
+    {
+        return std::max(1, (int) std::lround(3.0 * fs / 48000.0));
+    }
+
+    int AnalysisEngine::readAnalysisMode() const noexcept
+    {
+        if (controls.analysisMode == nullptr)
+            return 2;   // default: combined
+        return std::clamp((int) std::lround(controls.analysisMode->load(std::memory_order_relaxed)), 0, 2);
     }
 
     //==========================================================================
@@ -139,6 +164,24 @@ namespace prism
     {
         float* dst[2] = { scratchL.data(), scratchR.data() };
 
+        // reset_all (message thread -> epoch counter): clear the peak maxima. Other resets arrive in later phases.
+        if (controls.resetAllEpoch != nullptr)
+        {
+            const auto e = controls.resetAllEpoch->load(std::memory_order_relaxed);
+            if (e != seenResetAll)
+            {
+                seenResetAll = e;
+                for (int k = 0; k < registry.getActiveCount(); ++k)
+                {
+                    auto& st = sources[(size_t) registry.getActiveIndex(k)];
+                    st.samplePeak.exchange(0.0f, std::memory_order_relaxed);
+                    st.samplePeakMaxLin = 0.0f;
+                }
+            }
+        }
+        if (controls.resetIntegratedEpoch != nullptr)
+            seenResetIntegrated = controls.resetIntegratedEpoch->load(std::memory_order_relaxed);
+
         for (int k = 0; k < registry.getActiveCount(); ++k)
         {
             auto& st = sources[(size_t) registry.getActiveIndex(k)];
@@ -153,6 +196,26 @@ namespace prism
                 const float* const src[2] = { dst[0], dst[1] };
                 st.history.push(src, got);
                 newFrames = true;
+
+                // Worker-side metering on the SANITISED frames just pushed (two contiguous segments per channel).
+                const bool stereoSrc = registry[registry.getActiveIndex(k)].numChannels == 2;
+                const auto segL = st.history.latest(0, got);
+                const auto segR = st.history.latest(1, got);
+                const float* ls[2] = { segL.a, segL.b };
+                const float* rs[2] = { segR.a, segR.b };
+                const int ns[2] = { segL.na, segL.nb };
+                for (int part = 0; part < 2; ++part)
+                {
+                    if (ns[part] <= 0)
+                        continue;
+                    if (stereoSrc)
+                        st.stereo.process(ls[part], rs[part], ns[part]);
+                    for (int i = 0; i < ns[part]; ++i)
+                    {
+                        const float a = std::max(std::abs(ls[part][i]), stereoSrc ? std::abs(rs[part][i]) : 0.0f);
+                        st.framesSinceLoud = a > kSignalThresholdLin ? 0 : st.framesSinceLoud + 1;
+                    }
+                }
             }
 
             const std::uint64_t ov = st.ring.getOverrunCount();
@@ -179,7 +242,76 @@ namespace prism
         snap->sequence   = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
         snap->sampleRate = config.sampleRate;
         snap->bpm        = bpm.load(std::memory_order_relaxed);
-        // Phase 2.1: nothing is measured yet; all other fields keep their "unavailable" defaults.
+
+        const double fs = config.sampleRate;
+        const int mode = readAnalysisMode();
+        const std::uint64_t holdFrames = (std::uint64_t) (kSignalHoldSeconds * fs);
+        const int scopeLen = scopeLengthFor(fs);
+        const int stride = gonioStrideFor(fs);
+        constexpr float kInvSqrt2 = 0.70710678118654752f;
+
+        for (int k = 0; k < registry.getActiveCount(); ++k)
+        {
+            const int idx = registry.getActiveIndex(k);
+            if (idx >= kSourceCount)
+                continue;
+
+            const auto& info = registry[idx];
+            auto& st = sources[(size_t) idx];
+            auto& out = snap->sources[(size_t) idx];
+
+            out.samplePeakMaxDb = st.samplePeakMaxLin > 0.0f ? (float) (20.0 * std::log10((double) st.samplePeakMaxLin))
+                                                             : -INFINITY;
+            snap->signalPresent = snap->signalPresent || st.framesSinceLoud < holdFrames;
+
+            out.hasStereo = info.numChannels == 2;
+            if (out.hasStereo)
+            {
+                const auto m = st.stereo.compute();
+                out.correlation = m.correlation;
+                out.widthPercent = m.widthPercent;
+                out.balanceDb = m.balanceDb;
+            }
+
+            // Scope: most recent `scopeCount` contiguous frames, oldest first. Only real frames
+            // are published (count = min(window, framesSeen)); nothing is zero-padded.
+            const auto L = st.history.latest(0, scopeLen);
+            const auto R = st.history.latest(1, scopeLen);
+            out.scopeCount = L.total();
+            int w = 0;
+            for (int part = 0; part < 2; ++part)
+            {
+                const float* l = part == 0 ? L.a : L.b;
+                const float* r = part == 0 ? R.a : R.b;
+                const int n = part == 0 ? L.na : L.nb;
+                for (int i = 0; i < n; ++i, ++w)
+                {
+                    float v = l[i];
+                    if (info.numChannels == 2)
+                        v = mode == 0 ? l[i] : (mode == 1 ? (l[i] + r[i]) * kInvSqrt2 : 0.5f * (l[i] + r[i]));
+                    out.scope[(size_t) w] = v;
+                }
+            }
+
+            // Gonio: 900 raw L/R pairs, every `stride`-th frame, ending at the newest frame.
+            const std::uint64_t seen = st.history.framesSeen();
+            const int avail = (int) std::min<std::uint64_t>(seen, StreamHistory::kCapacity);
+            const int pairs = avail > 0 ? std::min(kGonioPairs, (avail - 1) / stride + 1) : 0;
+            out.gonioPairCount = pairs;
+            if (pairs > 0)
+            {
+                const int span = (pairs - 1) * stride + 1;       // frames covered, ending at the newest
+                const auto gl = st.history.latest(0, span);
+                const auto gr = st.history.latest(1, span);
+                for (int p = 0; p < pairs; ++p)
+                {
+                    const int off = p * stride;                  // offset from the oldest covered frame
+                    const bool inA = off < gl.na;
+                    out.gonio[(size_t) (2 * p)]     = inA ? gl.a[off] : gl.b[off - gl.na];
+                    out.gonio[(size_t) (2 * p + 1)] = inA ? gr.a[off] : gr.b[off - gr.na];
+                }
+            }
+        }
         return snap;
     }
 

@@ -136,6 +136,8 @@ void PRISMAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         const std::uint64_t base = engine != nullptr ? engine->getLastSequence() : 0;   // keep sequence monotonic across rebuilds
         engine = std::make_unique<prism::AnalysisEngine>(cfg);
         engine->setSequenceBase(base);
+        engine->attachControls({ &resetAllEpoch, &resetIntegratedEpoch,
+                                 apvts.getRawParameterValue(prism::ids::analysisMode) });   // before the worker starts
         ++engineRebuildCount;
     }
 

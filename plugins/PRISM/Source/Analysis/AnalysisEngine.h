@@ -9,6 +9,7 @@
 
 #include "AnalysisSnapshot.h"
 #include "SourceRegistry.h"
+#include "StereoMetrics.h"
 #include "StreamHistory.h"
 #include "../Capture/BeatEventQueue.h"
 #include "../Capture/SpscFrameRing.h"
@@ -31,6 +32,23 @@ namespace prism
 
         explicit AnalysisEngine(const EngineConfig& cfg,
                                 int ringLog2Capacity = SpscFrameRing::kDefaultLog2Capacity);
+
+        // Message-thread -> worker controls (all polled by the worker; atomics owned by the processor).
+        struct ExternalControls
+        {
+            const std::atomic<std::uint32_t>* resetAllEpoch        = nullptr;
+            const std::atomic<std::uint32_t>* resetIntegratedEpoch = nullptr;   // consumed from Phase 2.4
+            const std::atomic<float>*         analysisMode         = nullptr;   // raw APVTS value: 0 L/R, 1 M/S, 2 combined
+        };
+        // Call before the worker starts. Baselines the epochs: resets requested earlier are not re-applied.
+        void attachControls(const ExternalControls& c) noexcept;
+
+        static constexpr float kSignalThresholdLin = 3.1622777e-5f;   // -90 dBFS
+        static constexpr double kSignalHoldSeconds = 0.5;
+        // min(kScopeSamples, ceil(0.020 fs) + 800 + 256)  (architecture C9)
+        static int scopeLengthFor(double sampleRate) noexcept;
+        // max(1, round(3 fs / 48000))  (architecture C9): 900 pairs span ~56 ms at any rate
+        static int gonioStrideFor(double sampleRate) noexcept;
 
         const EngineConfig& getConfig() const noexcept { return config; }
         const SourceRegistry& getRegistry() const noexcept { return registry; }
@@ -80,9 +98,15 @@ namespace prism
             float samplePeakMaxLin = 0.0f;
             std::uint64_t lastOverrunSeen = 0;
             std::uint64_t gapEvents = 0;
+            StereoMetrics stereo;
+            std::uint64_t framesSinceLoud = std::uint64_t(1) << 62;   // frames since |x| > -90 dBFS
         };
 
+        int readAnalysisMode() const noexcept;
+
         EngineConfig config;
+        ExternalControls controls;
+        std::uint32_t seenResetAll = 0, seenResetIntegrated = 0;
         SourceRegistry registry;
         std::array<SourceState, kMaxSources> sources;
         BeatEventQueue beatQueue;
