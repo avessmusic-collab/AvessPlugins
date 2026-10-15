@@ -139,7 +139,8 @@ void PRISMAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         engine->attachControls({ &resetAllEpoch, &resetIntegratedEpoch,
                                  apvts.getRawParameterValue(prism::ids::analysisMode),
                                  apvts.getRawParameterValue(prism::ids::fftSize),
-                                 apvts.getRawParameterValue(prism::ids::window) });   // before the worker starts
+                                 apvts.getRawParameterValue(prism::ids::window),
+                                 &lastFetchedSequence });   // before the worker starts
         ++engineRebuildCount;
     }
 

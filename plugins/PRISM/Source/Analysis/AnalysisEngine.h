@@ -14,6 +14,7 @@
 #include "StereoMetrics.h"
 #include "StreamHistory.h"
 #include "TruePeakMeter.h"
+#include "WaveformExtractor.h"
 #include "../Capture/BeatEventQueue.h"
 #include "../Capture/SpscFrameRing.h"
 
@@ -44,6 +45,10 @@ namespace prism
             const std::atomic<float>*         analysisMode         = nullptr;   // raw APVTS value: 0 L/R, 1 M/S, 2 combined
             const std::atomic<float>*         fftSizeIndex         = nullptr;   // raw APVTS choice index 0..4 (1024..16384)
             const std::atomic<float>*         windowIndex          = nullptr;   // raw APVTS choice index 0 hann, 1 blackmanHarris
+            // Sequence of the last snapshot the consumer (editor) actually fetched. Drives the consumer-
+            // acknowledged waveform delivery: every snapshot carries all columns newer than the delivered point.
+            // If null, each snapshot is assumed delivered (latest-only behaviour).
+            const std::atomic<std::uint64_t>* lastFetchedSequence  = nullptr;
         };
 
         // FFT hops only run while enabled (the worker enables them while the editor is active).
@@ -51,6 +56,9 @@ namespace prism
         SpectrumEngine& getSpectrum() noexcept { return spectrum; }
         LoudnessMeter& getLoudness(int source) noexcept { return sources[(size_t) source].loudness; }
         const TruePeakMeter& getTruePeakMeter(int source) const noexcept { return sources[(size_t) source].truePeak; }
+        const WaveformExtractor& getWaveform(int source) const noexcept { return sources[(size_t) source].wave; }
+        std::uint64_t getWaveformDroppedColumns(int source) const noexcept { return sources[(size_t) source].waveDropped; }
+        std::int64_t getWaveformAckedColumn(int source) const noexcept { return sources[(size_t) source].ackedCol; }
         // Call before the worker starts. Baselines the epochs: resets requested earlier are not re-applied.
         void attachControls(const ExternalControls& c) noexcept;
 
@@ -112,6 +120,12 @@ namespace prism
             StereoMetrics stereo;
             LoudnessMeter loudness;
             TruePeakMeter truePeak;
+            WaveformExtractor wave;
+            bool waveNeedsSkip = true;                  // resync the column stream on the next processed chunk
+            std::int64_t ackedCol = -1;                 // highest column known delivered to the consumer
+            std::int64_t droppedCountedUpTo = -1;       // columns <= this were already counted as dropped
+            std::int64_t lastHighest = -1;              // highest column included in the previous snapshot
+            std::uint64_t waveDropped = 0;              // columns permanently lost to a stalled consumer
             std::uint64_t lastOverrunLoud = 0;
             bool pendingGap = false;
             std::uint64_t pendingGapPos = 0;
@@ -121,8 +135,16 @@ namespace prism
         int readAnalysisMode() const noexcept;
         SpectrumEngine::Params readSpectrumParams() const noexcept;
 
+        struct AckEntry
+        {
+            std::uint64_t sequence = 0;
+            std::array<std::int64_t, kSourceCount> highest {};   // highest waveform column included, per source
+        };
+        static constexpr int kAckMapSize = 64;
+        std::array<AckEntry, kAckMapSize> ackMap {};              // snapshot sequence -> highest column included
+
         SpectrumEngine spectrum;
-        std::atomic<bool> spectrumEnabled { true };
+        std::atomic<bool> spectrumEnabled { true };   // "editor active": FFT hops AND waveform columns run only while set
         EngineConfig config;
         ExternalControls controls;
         std::uint32_t seenResetAll = 0, seenResetIntegrated = 0;

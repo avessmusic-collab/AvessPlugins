@@ -19,6 +19,7 @@ namespace prism
             s.stereo.prepare(config.sampleRate);
             s.loudness.prepare(config.sampleRate, registry[i].numChannels);
             s.truePeak.prepare(registry[i].numChannels);
+            s.wave.prepare(config.sampleRate, registry[i].numChannels);
         }
         spectrum.prepare(config.sampleRate);
     }
@@ -207,6 +208,23 @@ namespace prism
             }
         }
 
+        const bool editorWork = spectrumEnabled.load(std::memory_order_relaxed);
+
+        // Beat / bar events first: an event is pushed AFTER its block was written to the ring, so every event
+        // popped here refers to frames the extractor has (almost always) not processed yet -> pending flag.
+        // Events for already-finished columns patch the log (see WaveformExtractor::markBeat).
+        {
+            BeatEvent be;
+            while (beatQueue.pop(be))
+            {
+                beatLog[(size_t) (beatsSeen % kBeatLogSize)] = be;
+                ++beatsSeen;
+                if (editorWork)
+                    for (int k = 0; k < registry.getActiveCount(); ++k)
+                        sources[(size_t) registry.getActiveIndex(k)].wave.markBeat(be.frameIndex, be.isBar);
+            }
+        }
+
         for (int k = 0; k < registry.getActiveCount(); ++k)
         {
             auto& st = sources[(size_t) registry.getActiveIndex(k)];
@@ -244,19 +262,32 @@ namespace prism
                         doGap = true;
                         st.pendingGap = false;
                     }
+                    // Waveform columns are editor-active work. After an inactive period the column stream is
+                    // re-synchronised to the absolute frame index (the partial column is not logged).
+                    if (editorWork && st.waveNeedsSkip)
+                    {
+                        st.wave.skipTo(chunkStart);
+                        st.waveNeedsSkip = false;
+                    }
+                    if (! editorWork)
+                        st.waveNeedsSkip = true;
+
                     if (split > 0)
                     {
                         st.loudness.process(loudL.data(), loudR.data(), split);
                         st.truePeak.process(loudL.data(), loudR.data(), split);
+                        if (editorWork) st.wave.process(loudL.data(), loudR.data(), split);
                     }
                     if (doGap)
                     {
                         st.loudness.notifyGap();
                         st.truePeak.notifyGap();
+                        if (editorWork) st.wave.notifyGap();
                         if (split < got)
                         {
                             st.loudness.process(loudL.data() + split, loudR.data() + split, got - split);
                             st.truePeak.process(loudL.data() + split, loudR.data() + split, got - split);
+                            if (editorWork) st.wave.process(loudL.data() + split, loudR.data() + split, got - split);
                         }
                     }
                 }
@@ -292,15 +323,8 @@ namespace prism
             st.samplePeakMaxLin = std::max(st.samplePeakMaxLin, st.samplePeak.exchange(0.0f, std::memory_order_relaxed));
 
             // Editor-active work: FFT hops (keyed to absolute frame index; see SpectrumEngine).
-            if (spectrumEnabled.load(std::memory_order_relaxed))
+            if (editorWork)
                 spectrum.advance(registry.getActiveIndex(k), st.history, readSpectrumParams());
-        }
-
-        BeatEvent e;
-        while (beatQueue.pop(e))
-        {
-            beatLog[(size_t) (beatsSeen % kBeatLogSize)] = e;
-            ++beatsSeen;
         }
     }
 
@@ -317,6 +341,38 @@ namespace prism
         const int scopeLen = scopeLengthFor(fs);
         const int stride = gonioStrideFor(fs);
         constexpr float kInvSqrt2 = 0.70710678118654752f;
+
+        // Consumer-acknowledged waveform delivery. The editor tells us (via the processor) which snapshot
+        // sequence it last fetched; the map written at publish time translates that into the highest column it
+        // has seen. Every snapshot then carries all columns newer than that point (newest 16 at most), so a
+        // skipped or unfetched snapshot never leaves a gap and a fetched one never repeats a column.
+        if (controls.lastFetchedSequence != nullptr)
+        {
+            const std::uint64_t f = controls.lastFetchedSequence->load(std::memory_order_relaxed);
+            if (f != 0)
+            {
+                const auto& e = ackMap[(size_t) (f % kAckMapSize)];
+                if (e.sequence == f)
+                    for (int k = 0; k < registry.getActiveCount(); ++k)
+                    {
+                        const int idx = registry.getActiveIndex(k);
+                        if (idx < kSourceCount)
+                            sources[(size_t) idx].ackedCol = std::max(sources[(size_t) idx].ackedCol, e.highest[(size_t) idx]);
+                    }
+            }
+        }
+        else   // no feedback channel: assume the previous snapshot was delivered (latest-only behaviour)
+        {
+            for (int k = 0; k < registry.getActiveCount(); ++k)
+            {
+                const int idx = registry.getActiveIndex(k);
+                if (idx < kSourceCount)
+                    sources[(size_t) idx].ackedCol = std::max(sources[(size_t) idx].ackedCol, sources[(size_t) idx].lastHighest);
+            }
+        }
+        AckEntry ackNow;
+        ackNow.sequence = snap->sequence;
+        for (auto& h : ackNow.highest) h = -1;
 
         for (int k = 0; k < registry.getActiveCount(); ++k)
         {
@@ -338,6 +394,24 @@ namespace prism
             snap->signalPresent = snap->signalPresent || st.framesSinceLoud < holdFrames;
 
             spectrum.publish(idx, out);
+
+            {   // waveform columns: [bass, mids, highs, flag], oldest first
+                std::array<WaveformExtractor::Column, kMaxWaveformColumns> cols {};
+                const int n = st.wave.collectNewer(st.ackedCol, kMaxWaveformColumns, cols.data());
+                if (n > 0)
+                {
+                    // Columns older than the ones we can still send are permanently lost: count each once.
+                    const auto first = (std::int64_t) cols[0].index;
+                    st.waveDropped += (std::uint64_t) st.wave.countBetween(std::max(st.ackedCol, st.droppedCountedUpTo), first);
+                    st.droppedCountedUpTo = std::max(st.droppedCountedUpTo, first - 1);
+                }
+                out.waveformColumnCount = n;
+                for (int i = 0; i < n; ++i)
+                    out.waveformColumns[(size_t) i] = { cols[(size_t) i].bass, cols[(size_t) i].mid, cols[(size_t) i].high, cols[(size_t) i].flag };
+                const std::int64_t highest = n > 0 ? (std::int64_t) cols[(size_t) (n - 1)].index : st.ackedCol;
+                st.lastHighest = highest;
+                ackNow.highest[(size_t) idx] = highest;
+            }
 
             if (idx == 0)   // global loudness fields = source 0 (main input); NaN until available, never 0
             {
@@ -395,6 +469,7 @@ namespace prism
                 }
             }
         }
+        ackMap[(size_t) (snap->sequence % kAckMapSize)] = ackNow;
         return snap;
     }
 

@@ -19,6 +19,7 @@
 #include "Analysis/SnapshotMailbox.h"
 #include "Analysis/SourceRegistry.h"
 #include "Analysis/StreamHistory.h"
+#include "Analysis/WaveformExtractor.h"
 #include "Capture/BeatEventQueue.h"
 #include "Capture/SpscFrameRing.h"
 
@@ -3113,11 +3114,396 @@ static void test_true_peak_cpu_budget()
 }
 
 //==============================================================================
+// PHASE 2.6 - waveform columns + beat flags + consumer-acknowledged delivery
+namespace
+{
+    using Col = prism::WaveformExtractor::Column;
+
+    std::vector<Col> allColumns(const prism::WaveformExtractor& w)
+    {
+        std::vector<Col> v((size_t) prism::WaveformExtractor::kLogSize);
+        const int n = w.collectNewer(-1, prism::WaveformExtractor::kLogSize, v.data());
+        v.resize((size_t) n);
+        return v;
+    }
+
+    // Inverse of the -54..0 dBFS column map (v -> linear peak); 0 means "silent".
+    double unitToLin(float v) { return v <= 0.0f ? 0.0 : std::pow(10.0, ((double) v * 54.0 - 54.0) / 20.0); }
+
+    // Run an extractor on a stereo sine (L = R) and return the per-band linear peak maxima over the last 30 columns.
+    struct BandPeaks { double bass, mid, high; };
+    BandPeaks bandPeaksForSine(double fs, double hz, double amp)
+    {
+        prism::WaveformExtractor w;
+        w.prepare(fs, 2);
+        const int block = 1024;
+        std::vector<float> buf((size_t) block);
+        const std::uint64_t frames = (std::uint64_t) fs;   // 1 s
+        for (std::uint64_t pos = 0; pos < frames; pos += (std::uint64_t) block)
+        {
+            const int n = (int) std::min<std::uint64_t>((std::uint64_t) block, frames - pos);
+            for (int i = 0; i < n; ++i) buf[(size_t) i] = (float) (amp * std::sin(kTwoPi * hz * (double) (pos + (std::uint64_t) i) / fs));
+            w.process(buf.data(), buf.data(), n);
+        }
+        const auto cols = allColumns(w);
+        BandPeaks p { 0, 0, 0 };
+        for (size_t i = cols.size() - 30; i < cols.size(); ++i)
+        {
+            p.bass = std::max(p.bass, unitToLin(cols[i].bass));
+            p.mid  = std::max(p.mid,  unitToLin(cols[i].mid));
+            p.high = std::max(p.high, unitToLin(cols[i].high));
+        }
+        return p;
+    }
+}
+
+static void test_waveform_column_rate()
+{
+    section("waveform_column_rate");
+    bool rateOk = true, driftOk = true, firstOk = true;
+    double worst = 0.0;
+    for (double fs : { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 })
+    {
+        prism::WaveformExtractor w;
+        w.prepare(fs, 2);
+        std::vector<float> zeros(4096, 0.0f);
+        const std::uint64_t frames = (std::uint64_t) (60.0 * fs);
+        for (std::uint64_t pos = 0; pos < frames; pos += 4096)
+            w.process(zeros.data(), zeros.data(), (int) std::min<std::uint64_t>(4096, frames - pos));
+        const double rate = (double) w.columnsDone() / 60.0;
+        worst = std::max(worst, std::abs(rate - 84.33));
+        rateOk &= std::abs(rate - 84.33) <= 0.01 && w.columnsDone() == 5060;   // 60 s * 253/3
+
+        // Integer arithmetic: no drift over 10 hours (3.036e6 columns exactly), at every rate.
+        prism::WaveformExtractor longRun;
+        longRun.prepare(fs, 2);
+        longRun.skipTo((std::uint64_t) (36000.0 * fs));
+        driftOk &= longRun.columnsDone() == 3036000;
+
+        // Column k closes exactly at frame ceil((k+1)*3*fs/253).
+        prism::WaveformExtractor edge;
+        edge.prepare(fs, 2);
+        const std::uint64_t fsI = (std::uint64_t) fs;
+        const std::uint64_t closeAt = (3 * fsI + 252) / 253;   // end of column 0 in frames
+        edge.process(zeros.data(), zeros.data(), (int) (closeAt - 1));
+        const bool before = edge.columnsDone() == 0;
+        edge.process(zeros.data(), zeros.data(), 1);
+        firstOk &= before && edge.columnsDone() == 1;
+    }
+    checkf(rateOk, "column rate over 60 s = 84.33 +- 0.01 /s at 44.1/48/88.2/96/176.4/192 kHz (worst deviation from 84.33)", worst);
+    check(driftOk, "10 simulated hours: exactly 3,036,000 columns at every rate (no drift)");
+    check(firstOk, "column boundaries land on ceil((k+1)*3 fs/253) frames");
+
+    {   // through the engine, block-size independent
+        for (int bs : { 1, 480, 4096 })
+        {
+            prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+            feed(eng, 0, 48000, bs, [](int, std::uint64_t) { return 0.0f; });
+            check(eng.getWaveform(0).columnsDone() == 84, "engine: 1 s at 48 kHz = 84 columns (floor(253/3)) for any block size");
+        }
+    }
+}
+
+static void test_waveform_band_separation()
+{
+    section("waveform_band_separation");
+    const double fs = 48000.0, a = 0.5;
+    auto ratioBelow = [](double small, double big) { return big > 0.0 && small / big < 0.05; };
+
+    const auto b60 = bandPeaksForSine(fs, 60.0, a);
+    char name[200];
+    std::snprintf(name, sizeof(name), "60 Hz: bass %.4f, mids %.5f, highs %.6f (linear peaks) -> mids/highs < 5 %% of bass", b60.bass, b60.mid, b60.high);
+    check(ratioBelow(b60.mid, b60.bass) && ratioBelow(b60.high, b60.bass) && std::abs(dbOfLin(b60.bass) - dbOfLin(a)) < 0.5, name);
+
+    const auto b1k = bandPeaksForSine(fs, 1000.0, a);
+    std::snprintf(name, sizeof(name), "1 kHz: bass %.5f, mids %.4f, highs %.4f -> bass/highs < 5 %% of mids", b1k.bass, b1k.mid, b1k.high);
+    check(ratioBelow(b1k.bass, b1k.mid) && ratioBelow(b1k.high, b1k.mid) && std::abs(dbOfLin(b1k.mid) - dbOfLin(a)) < 0.5, name);
+
+    // 8123 Hz, NOT 8000: column peaks are SAMPLE peaks. 8000 Hz at 48 kHz is exactly 6 samples per cycle with a
+    // fixed phase, so the samples never reach the crest (0.866 of it, -1.25 dB) in every column. A frequency that is
+    // not commensurate with fs sweeps the sampling phase, and the max over 30 columns finds the crest (< 0.05 dB miss).
+    const auto b8k = bandPeaksForSine(fs, 8123.0, a);
+    std::snprintf(name, sizeof(name), "8.1 kHz: bass %.6f, mids %.5f, highs %.4f -> bass/mids < 5 %% of highs, highs within 0.5 dB of the tone", b8k.bass, b8k.mid, b8k.high);
+    check(ratioBelow(b8k.bass, b8k.high) && ratioBelow(b8k.mid, b8k.high) && std::abs(dbOfLin(b8k.high) - dbOfLin(a)) < 0.5, name);
+
+    // Same behaviour at another rate (crossover design is per-rate).
+    const auto b1k96 = bandPeaksForSine(96000.0, 1000.0, a);
+    check(ratioBelow(b1k96.bass, b1k96.mid) && ratioBelow(b1k96.high, b1k96.mid), "1 kHz at 96 kHz: mids dominate");
+
+    {   // pink noise: all three bands alive
+        prism::WaveformExtractor w;
+        w.prepare(fs, 2);
+        std::vector<float> l(1024), r(1024);
+        double bL[7] = {}, bR[7] = {};
+        for (std::uint64_t pos = 0; pos < 96000; pos += 1024)
+        {
+            for (int i = 0; i < 1024; ++i)
+            {
+                auto pink = [&](int ch, double* b) {
+                    const double white = 2.0 * (double) hnoise(ch, pos + (std::uint64_t) i);
+                    b[0] = 0.99886 * b[0] + white * 0.0555179; b[1] = 0.99332 * b[1] + white * 0.0750759;
+                    b[2] = 0.96900 * b[2] + white * 0.1538520; b[3] = 0.86650 * b[3] + white * 0.3104856;
+                    b[4] = 0.55000 * b[4] + white * 0.5329522; b[5] = -0.7616 * b[5] - white * 0.0168980;
+                    const double out = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + white * 0.5362;
+                    b[6] = white * 0.115926;
+                    return (float) (0.25 * out);
+                };
+                l[(size_t) i] = pink(0, bL);
+                r[(size_t) i] = pink(1, bR);
+            }
+            w.process(l.data(), r.data(), 1024);
+        }
+        const auto cols = allColumns(w);
+        double mean[3] = {};
+        for (size_t i = 20; i < cols.size(); ++i) { mean[0] += cols[i].bass; mean[1] += cols[i].mid; mean[2] += cols[i].high; }
+        for (double& m : mean) m /= (double) (cols.size() - 20);
+        std::snprintf(name, sizeof(name), "pink noise: mean column values bass %.3f / mids %.3f / highs %.3f are all non-zero (> 0.05)", mean[0], mean[1], mean[2]);
+        check(mean[0] > 0.05 && mean[1] > 0.05 && mean[2] > 0.05, name);
+    }
+
+    {   // silence -> exact zeros; anti-phase stereo sums to nothing
+        prism::WaveformExtractor w;
+        w.prepare(fs, 2);
+        std::vector<float> z(1024, 0.0f);
+        for (int i = 0; i < 94; ++i) w.process(z.data(), z.data(), 1024);
+        bool zero = true;
+        for (const auto& c : allColumns(w)) zero &= c.bass == 0.0f && c.mid == 0.0f && c.high == 0.0f && c.flag == 0.0f;
+        check(zero && w.columnsDone() > 100, "digital silence: every column is exactly 0 (bass, mids, highs, flag)");
+
+        prism::WaveformExtractor ap;
+        ap.prepare(fs, 2);
+        std::vector<float> s(1024), ns(1024);
+        for (int i = 0; i < 1024; ++i) { s[(size_t) i] = 0.5f * std::sin(0.1f * (float) i); ns[(size_t) i] = -s[(size_t) i]; }
+        for (int i = 0; i < 20; ++i) ap.process(s.data(), ns.data(), 1024);
+        bool zero2 = true;
+        for (const auto& c : allColumns(ap)) zero2 &= c.bass == 0.0f && c.mid == 0.0f && c.high == 0.0f;
+        check(zero2, "anti-phase L/R: (L+R)/2 = 0 -> zero columns");
+    }
+}
+
+static void test_waveform_beat_flags()
+{
+    section("waveform_beat_flags");
+    // 120 bpm, 4/4: a beat every 0.5 s (24000 frames @48k), a bar every 2 s; column k holds frame f for k = floor(f*253/(3*48000)).
+    for (int bs : { 480, 333, 4096 })
+    {
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        FakePlayHead ph;
+        std::vector<float> buf((size_t) bs, 0.1f);
+        const float* ptrs[2] = { buf.data(), buf.data() };
+        const std::uint64_t total = 480000;   // 10 s -> 20 beats
+        for (std::uint64_t pos = 0; pos < total;)
+        {
+            const int n = (int) std::min<std::uint64_t>((std::uint64_t) bs, total - pos);
+            ph.ppq = (double) pos * 2.0 / 48000.0;
+            eng.captureBlock(ptrs, 2, n);
+            eng.capturePlayhead(&ph, n);
+            eng.pump();
+            pos += (std::uint64_t) n;
+        }
+        // one more silent pump block so the last in-flight column closes
+        const auto cols = allColumns(eng.getWaveform(0));
+
+        std::vector<std::pair<std::uint64_t, float>> flagged;
+        for (const auto& c : cols) if (c.flag != 0.0f) flagged.push_back({ c.index, c.flag });
+
+        bool shapeOk = flagged.size() == 20;
+        bool posOk = true, kindOk = true;
+        for (size_t k = 0; k < flagged.size() && k < 20; ++k)
+        {
+            const std::int64_t expectCol = (std::int64_t) (24000ull * k * 253ull / (3ull * 48000ull));
+            posOk &= std::abs((std::int64_t) flagged[k].first - expectCol) <= 1;
+            kindOk &= flagged[k].second == (k % 4 == 0 ? 2.0f : 1.0f);
+        }
+        bool spacing = true;
+        for (size_t k = 1; k < flagged.size(); ++k)
+        {
+            const auto d = (std::int64_t) flagged[k].first - (std::int64_t) flagged[k - 1].first;
+            spacing &= d >= 41 && d <= 44;   // 0.5 s = 42.17 columns (+-1 column)
+        }
+        std::int64_t lastBar = -1;
+        bool barSpacing = true;
+        for (size_t k = 0; k < flagged.size(); ++k)
+            if (flagged[k].second == 2.0f)
+            {
+                if (lastBar >= 0) { const auto d = (std::int64_t) flagged[k].first - lastBar; barSpacing &= d >= 167 && d <= 170; }   // 2 s = 168.67
+                lastBar = (std::int64_t) flagged[k].first;
+            }
+        char name[160];
+        std::snprintf(name, sizeof(name), "120 bpm 4/4, block %d: 20 flagged columns, beat spacing ~42.17, bar every ~168.67 (+-1 column), bars = flag 2", bs);
+        check(shapeOk && posOk && kindOk && spacing && barSpacing, name);
+    }
+
+    {   // no host playhead (or stopped transport): flags 0 and bpm NaN
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        feed(eng, 0, 96000, 480, [](int, std::uint64_t i) { return 0.2f * std::sin(0.05f * (float) i); });
+        bool noFlags = true;
+        for (const auto& c : allColumns(eng.getWaveform(0))) noFlags &= c.flag == 0.0f;
+        check(noFlags && eng.getWaveform(0).columnsDone() > 100 && std::isnan(eng.buildSnapshot()->bpm), "no playhead: columns flow with flag 0, bpm NaN");
+
+        prism::AnalysisEngine eng2(makeCfg(2, 0, 48000.0), 14);
+        FakePlayHead ph;
+        ph.playing = false;
+        std::vector<float> buf(480, 0.1f);
+        const float* ptrs[2] = { buf.data(), buf.data() };
+        for (int b = 0; b < 400; ++b) { ph.ppq = b * 0.02; eng2.captureBlock(ptrs, 2, 480); eng2.capturePlayhead(&ph, 480); eng2.pump(); }
+        bool none = true;
+        for (const auto& c : allColumns(eng2.getWaveform(0))) none &= c.flag == 0.0f;
+        check(none && eng2.buildSnapshot()->bpm == 120.0f, "transport stopped: no flags, bpm still published");
+    }
+}
+
+static void test_waveform_ack_delivery()
+{
+    section("waveform_ack_delivery");
+    std::atomic<std::uint64_t> fetched { 0 };
+    prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+    eng.setSpectrumEnabled(true);
+    eng.attachControls({ nullptr, nullptr, nullptr, nullptr, nullptr, &fetched });
+
+    // 60 Hz tone with a slowly moving level so every column has a distinct value (identity check by content).
+    auto gen = [](std::uint64_t i) {
+        const double t = (double) i / 48000.0;
+        return (float) ((0.1 + 0.4 * std::abs(std::sin(kTwoPi * 0.7 * t))) * std::sin(kTwoPi * 60.0 * t));
+    };
+    std::uint64_t pos = 0;
+    auto pushFrames = [&](int n) {
+        std::vector<float> b((size_t) n);
+        for (int i = 0; i < n; ++i) b[(size_t) i] = gen(pos + (std::uint64_t) i);
+        const float* ptrs[2] = { b.data(), b.data() };
+        eng.captureBlock(ptrs, 2, n);
+        eng.pump();
+        pos += (std::uint64_t) n;
+    };
+
+    // Editor-like consumer: snapshots every ~16.7 ms (800 frames), it fetches every 3rd one.
+    std::vector<std::array<float, 4>> received;
+    std::int64_t lastFetchedNewest = -1;
+    bool consistent = true;
+    int snapshots = 0;
+    for (int it = 0; it < 360; ++it)   // 6 s
+    {
+        pushFrames(800);
+        const auto snap = eng.buildSnapshot();
+        const std::int64_t newest = eng.getWaveform(0).newestIndex();
+        ++snapshots;
+        if (snapshots % 3 == 0)
+        {
+            fetched.store(snap->sequence);
+            const auto& s0 = snap->sources[0];
+            for (int i = 0; i < s0.waveformColumnCount; ++i) received.push_back(s0.waveformColumns[(size_t) i]);
+            lastFetchedNewest = newest;
+            consistent &= (std::int64_t) received.size() == newest + 1;   // no missing, no duplicated column
+        }
+    }
+    check(consistent && lastFetchedNewest > 400, "fetching every 3rd snapshot: received column count == newest column + 1 at every fetch (nothing missing or repeated)");
+
+    const auto log = allColumns(eng.getWaveform(0));
+    bool content = received.size() <= log.size();
+    for (size_t i = 0; content && i < received.size(); ++i)
+        content &= received[i][0] == log[i].bass && received[i][1] == log[i].mid && received[i][2] == log[i].high && received[i][3] == log[i].flag;
+    check(content, "received columns equal the engine's column log element-for-element, in order");
+    check(eng.getWaveformDroppedColumns(0) == 0, "no columns dropped while the consumer keeps up");
+
+    // Stall: no fetches for 400 ms (~33 columns) while snapshots keep being built; then one fetch.
+    const std::int64_t ackedBefore = lastFetchedNewest;
+    std::shared_ptr<const prism::AnalysisSnapshot> last;
+    for (int it = 0; it < 24; ++it) { pushFrames(800); last = eng.buildSnapshot(); }   // 24 unfetched snapshots
+    const std::int64_t newest = eng.getWaveform(0).newestIndex();
+    fetched.store(last->sequence);
+    const std::int64_t pending = newest - ackedBefore;
+    check(pending > 16, "stall produced more than 16 pending columns");
+    check(last->sources[0].waveformColumnCount == 16, "stalled snapshot carries the newest 16 columns");
+    const auto log2 = allColumns(eng.getWaveform(0));
+    bool newest16 = true;
+    for (int i = 0; i < 16; ++i)
+    {
+        const auto& c = log2[log2.size() - 16 + (size_t) i];
+        const auto& r = last->sources[0].waveformColumns[(size_t) i];
+        newest16 &= r[0] == c.bass && r[1] == c.mid && r[2] == c.high && r[3] == c.flag;
+    }
+    check(newest16, "...and they are exactly the newest 16 of the log (oldest dropped)");
+    // The next snapshot after the fetch sees the ack; the drop is counted exactly once, not once per snapshot.
+    pushFrames(800);
+    const auto after = eng.buildSnapshot();
+    char name[160];
+    std::snprintf(name, sizeof(name), "dropped-column count = pending - 16 = %lld (reported %llu), counted once across the 24 stalled snapshots", (long long) (pending - 16),
+                  (unsigned long long) eng.getWaveformDroppedColumns(0));
+    check(eng.getWaveformDroppedColumns(0) == (std::uint64_t) (pending - 16), name);
+    check(eng.getWaveformAckedColumn(0) == newest, "after the fetch the ack point jumps to the delivered column");
+    check(after->sources[0].waveformColumnCount <= 2, "after catching up, snapshots carry only the new columns again");
+
+    // Without a feedback channel every snapshot is assumed delivered (latest-only).
+    prism::AnalysisEngine plain(makeCfg(2, 0, 48000.0), 14);
+    feed(plain, 0, 48000, 480, [](int, std::uint64_t) { return 0.1f; });
+    const auto s1 = plain.buildSnapshot();
+    feed(plain, 48000, 4800, 480, [](int, std::uint64_t) { return 0.1f; });
+    const auto s2 = plain.buildSnapshot();
+    check(s1->sources[0].waveformColumnCount == 16 && s2->sources[0].waveformColumnCount <= 9, "no ack channel: the next snapshot carries only columns newer than the previous one");
+}
+
+static void test_waveform_editor_gating_and_wiring()
+{
+    section("waveform_editor_gating_and_wiring");
+    {
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        eng.setSpectrumEnabled(false);
+        feed(eng, 0, 144000, 480, [](int, std::uint64_t i) { return 0.3f * std::sin(0.2f * (float) i); });
+        check(eng.getWaveform(0).columnsLogged() == 0 && eng.buildSnapshot()->sources[0].waveformColumnCount == 0, "editor inactive: no columns are built");
+        eng.setSpectrumEnabled(true);
+        feed(eng, 144000, 48000, 480, [](int, std::uint64_t i) { return 0.3f * std::sin(0.2f * (float) i); });
+        const auto& w = eng.getWaveform(0);
+        const auto first = allColumns(w).front().index;
+        check(w.columnsLogged() > 80 && w.newestIndex() == (std::int64_t) w.columnsDone() - 1, "re-enabled: columns resume on the absolute column grid, nothing before the gap is invented");
+        check(first == w.columnOfFrame(144000) + 1 || first == w.columnOfFrame(144000), "the partial column at the resync point is skipped (first logged index is on the grid)");
+        check(eng.buildSnapshot()->sources[0].waveformColumnCount == 16, "snapshot after re-enable carries columns");
+    }
+    {   // mono source and absent sidechain
+        prism::AnalysisEngine eng(makeCfg(1, 0, 48000.0), 14);
+        feed(eng, 0, 48000, 480, [](int, std::uint64_t i) { return 0.3f * std::sin(0.02f * (float) i); });
+        const auto snap = eng.buildSnapshot();
+        check(snap->sources[0].waveformColumnCount == 16 && snap->sources[1].waveformColumnCount == 0, "mono main produces columns; absent sidechain carries none");
+    }
+    {   // processor end to end: a fast consumer loses nothing
+        PRISMAudioProcessor proc;
+        check(configure(proc, 2, 0, 48000.0, 480), "configure");
+        proc.prepareToPlay(48000.0, 480);
+        proc.setEditorActive(true);
+        juce::AudioBuffer<float> buf(2, 480);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 480; ++i) for (int c = 0; c < 2; ++c) buf.setSample(c, i, 0.3f * std::sin(0.3f * (float) i));
+        std::uint64_t lastSeq = 0;
+        std::uint64_t received = 0;
+        const auto t0 = Clock::now();
+        while (msSince(t0) < 1500.0)
+        {
+            proc.processBlock(buf, midi);
+            const auto s = proc.getLatestAnalysisSnapshot();
+            if (s != nullptr && s->sequence != lastSeq)
+            {
+                lastSeq = s->sequence;
+                received += (std::uint64_t) s->sources[0].waveformColumnCount;
+            }
+            sleepMs(5);
+        }
+        proc.setEditorActive(false);
+        proc.releaseResources();
+        auto* eng = proc.getAnalysisEngine();
+        eng->pump();
+        const auto total = (std::uint64_t) (eng->getWaveform(0).newestIndex() + 1);
+        char name[160];
+        std::snprintf(name, sizeof(name), "processor: fast consumer received %llu of %llu columns, dropped %llu", (unsigned long long) received, (unsigned long long) total,
+                      (unsigned long long) eng->getWaveformDroppedColumns(0));
+        check(eng->getWaveformDroppedColumns(0) == 0 && received <= total && received + 16 + 8 >= total && received > 60, name);
+    }
+}
+
+//==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf("PRISM tests  (Stage 2 / Phase 2.5)\n");
+    std::printf("PRISM tests  (Stage 2 / Phase 2.6)\n");
 
     test_ring_wraparound();
     test_ring_overrun_drops_whole_blocks();
@@ -3189,6 +3575,13 @@ int main()
     test_true_peak_invariant_random();
     test_true_peak_hold_reset_and_sources();
     test_true_peak_cpu_budget();
+
+    // Phase 2.6
+    test_waveform_column_rate();
+    test_waveform_band_separation();
+    test_waveform_beat_flags();
+    test_waveform_ack_delivery();
+    test_waveform_editor_gating_and_wiring();
 
     std::printf("\n%d checks, %d failure(s), %zu test cases\n", checks, failures, testNames.size());
     return failures == 0 ? 0 : 1;
