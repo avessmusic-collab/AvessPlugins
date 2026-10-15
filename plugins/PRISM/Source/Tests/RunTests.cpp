@@ -1652,11 +1652,558 @@ static void test_processor_peak_reset_end_to_end()
 }
 
 //==============================================================================
+// PHASE 2.3 - spectrum engine
+namespace
+{
+    constexpr int kSizeList[5] = { 1024, 2048, 4096, 8192, 16384 };
+    const char* winName(int w) { return w == 0 ? "hann" : "blackmanHarris"; }
+
+    // Holds an engine wired to controllable fft_size / window / analysis_mode "parameters".
+    struct SpecRig
+    {
+        std::atomic<float> size, win, mode;
+        std::unique_ptr<prism::AnalysisEngine> eng;
+
+        SpecRig(double fs, int sizeIdx, int winIdx, int modeIdx = 2, int mainCh = 2, int sc = 0)
+            : size((float) sizeIdx), win((float) winIdx), mode((float) modeIdx)
+        {
+            eng = std::make_unique<prism::AnalysisEngine>(makeCfg(mainCh, sc, fs), 16);
+            eng->attachControls({ nullptr, nullptr, &mode, &size, &win });
+        }
+        void feedFrames(std::uint64_t from, std::uint64_t frames, int block, const Gen& g) { feed(*eng, from, frames, block, g); }
+        prism::SourceSnapshot snap(int src = 0) { return eng->buildSnapshot()->sources[(size_t) src]; }
+    };
+
+    // Sine at num/den cycles per sample, exact phase via integer arithmetic. chMask bit c -> channel c carries it.
+    Gen sineRat(std::uint64_t num, std::uint64_t den, float amp, int chMask, float sign1 = 1.0f)
+    {
+        return [=](int c, std::uint64_t i) {
+            if (! ((chMask >> c) & 1)) return 0.0f;
+            const double ph = (double) ((num * i) % den) / (double) den;
+            return (c == 1 ? sign1 : 1.0f) * amp * (float) std::sin(2.0 * 3.14159265358979323846 * ph);
+        };
+    }
+
+    float gauss(int ch, std::uint64_t i, float sigma)
+    {
+        auto u = [&](std::uint32_t seed) {
+            std::uint32_t h = (std::uint32_t) i * 2654435761u + (std::uint32_t) (ch + 1) * 97531u + seed * 40503u;
+            h ^= h >> 16; h *= 2246822519u; h ^= h >> 13; h *= 3266489917u; h ^= h >> 16;
+            return ((double) (h & 0xffffff) + 0.5) / 16777216.0;
+        };
+        return sigma * (float) (std::sqrt(-2.0 * std::log(u(1))) * std::cos(2.0 * 3.14159265358979323846 * u(2)));
+    }
+
+    int pickBin(double fs, int n, double hz) { return std::max(4, (int) std::lround(hz * n / fs)); }
+
+    struct CurvePeak { float db = -1000.0f; int idx = -1; };
+    CurvePeak curvePeak(const prism::SourceSnapshot& s)
+    {
+        CurvePeak p;
+        for (int i = 0; i < prism::kSpectrumPoints; ++i)
+            if (s.spectrumDb[(size_t) i] > p.db) { p.db = s.spectrumDb[(size_t) i]; p.idx = i; }
+        return p;
+    }
+    double octaves(double a, double b) { return std::abs(std::log2(a / b)); }
+}
+
+static void test_spectrum_basics_and_map()
+{
+    section("spectrum_basics_and_map");
+    check(std::abs(prism::SpectrumEngine::pointFrequency(0) - 20.0) < 1e-9 && std::abs(prism::SpectrumEngine::pointFrequency(639) - 20000.0) < 1e-6,
+          "log points span 20 Hz .. 20 kHz (640 points)");
+
+    prism::SpectrumEngine se;
+    se.prepare(48000.0);
+    bool ok = true;
+    for (int s = 0; s < 5; ++s)
+    {
+        const int n = kSizeList[s];
+        ok &= std::abs(se.getWindowSum(s, 0) - n * 0.5) < 1e-3;                       // Hann: S = N/2
+        ok &= std::abs(se.getWindowSum(s, 1) / n - 0.35875) < 1e-6;                   // Blackman-Harris: S = 0.35875 N
+        ok &= std::abs(se.getWindowValue(s, 0, n / 2) - 1.0f) < 1e-6f && se.getWindowValue(s, 0, 0) == 0.0f;
+        ok &= std::abs(se.getWindowValue(s, 1, n / 2) - 1.0f) < 1e-5f;
+        ok &= std::abs(se.getWindowSumSquares(s, 0) / n - 0.375) < 1e-6;              // sum(hann^2) = 3N/8
+    }
+    check(ok, "window tables: Hann S=N/2, BH S=0.35875N (numeric), peak = 1 at N/2, sum(hann^2)=3N/8");
+}
+
+static void test_spectrum_hop_timing()
+{
+    section("spectrum_hop_timing");
+    bool ok = true;
+    for (int sizeIdx : { 0, 2, 4 })
+        for (int bs : { 1, 7, 480, 4096 })
+        {
+            SpecRig rig(48000.0, sizeIdx, 0);
+            const int n = kSizeList[sizeIdx], hop = n / 4;
+            const std::uint64_t frames = (std::uint64_t) n + 5000 + 37;
+            rig.feedFrames(0, frames, bs, [](int, std::uint64_t i) { return 0.1f * (float) (i % 7); });
+            const std::uint64_t expect = (frames - (std::uint64_t) n) / (std::uint64_t) hop + 1;
+            ok &= rig.eng->getSpectrum().getTotalHops(0) == expect;
+        }
+    check(ok, "hop count = floor((frames-N)/(N/4))+1 for every block size (hops keyed to absolute frame index)");
+}
+
+static void test_spectrum_bin_centred_accuracy()
+{
+    section("spectrum_bin_centred_accuracy");
+    bool ok = true, freqOk = true, noInvention = true;
+    int combos = 0;
+    double worst = 0.0;
+
+    auto run = [&](double fs, int sizeIdx, int win) {
+        const int n = kSizeList[sizeIdx];
+        const int k = pickBin(fs, n, 2000.0);
+        const double f = (double) k * fs / n;
+        for (double db : { -0.1, -20.0, -60.0 })
+        {
+            SpecRig rig(fs, sizeIdx, win);
+            rig.feedFrames(0, (std::uint64_t) (2 * n), 4096, sineRat((std::uint64_t) k, (std::uint64_t) n, (float) std::pow(10.0, db / 20.0), 3));
+            const auto s = rig.snap();
+            const auto pk = curvePeak(s);
+            const double err = pk.db - db;
+            worst = std::max(worst, std::abs(err));
+            const bool lvl = s.hasSpectrum && std::abs(err) <= 0.1;
+            const bool fq = octaves(prism::SpectrumEngine::pointFrequency(pk.idx), f) <= 0.0157;
+            bool inv = true;
+            for (int i = 0; i < prism::kSpectrumPoints; ++i) inv &= s.spectrumDb[(size_t) i] <= (float) db + 0.05f;
+            ok &= lvl; freqOk &= fq; noInvention &= inv; ++combos;
+            if (! (lvl && fq && inv))
+                std::printf("      FAIL detail: fs %.0f N %d %s %.1f dB -> peak %.3f dB at point %d (%.1f Hz, tone %.1f Hz)\n",
+                            fs, n, winName(win), db, pk.db, pk.idx, prism::SpectrumEngine::pointFrequency(pk.idx), f);
+        }
+    };
+
+    for (int sizeIdx = 0; sizeIdx < 5; ++sizeIdx)          // all 5 sizes x 2 windows @ 48 kHz
+        for (int win = 0; win < 2; ++win)
+            run(48000.0, sizeIdx, win);
+    for (double fs : { 44100.0, 96000.0, 192000.0 })       // all rates @ 4096 (48 kHz covered above)
+        for (int win = 0; win < 2; ++win)
+            run(fs, 2, win);
+
+    checkf(ok, "bin-centred sine at -0.1/-20/-60 dBFS reads true level +-0.1 dB (5 sizes x 2 windows @48k; 4 rates x 2 windows @4096)", (double) combos, worst);
+    check(freqOk, "peak point within one log-point (0.0156 oct) of the tone");
+    check(noInvention, "no point anywhere exceeds the true level (log map never invents energy)");
+}
+
+static void test_spectrum_scalloping()
+{
+    section("spectrum_scalloping");
+    bool hannOk = true, bhOk = true;
+    double hannWorst = 0.0, bhWorst = 0.0;
+    auto run = [&](double fs, int sizeIdx, int win) {
+        const int n = kSizeList[sizeIdx];
+        const int k = pickBin(fs, n, 2000.0);
+        SpecRig rig(fs, sizeIdx, win);
+        rig.feedFrames(0, (std::uint64_t) (2 * n), 4096, sineRat((std::uint64_t) (2 * k + 1), (std::uint64_t) (2 * n), 0.1f, 3));   // (k+0.5) bins
+        const double err = curvePeak(rig.snap()).db - (-20.0);
+        if (win == 0) { hannWorst = std::min(hannWorst, err); hannOk &= err >= -1.5 && err <= 0.05; }
+        else          { bhWorst = std::min(bhWorst, err);     bhOk &= err >= -1.0 && err <= 0.05; }
+    };
+    for (int sizeIdx = 0; sizeIdx < 5; ++sizeIdx) for (int win = 0; win < 2; ++win) run(48000.0, sizeIdx, win);
+    for (double fs : { 44100.0, 96000.0, 192000.0 }) for (int win = 0; win < 2; ++win) run(fs, 2, win);
+    checkf(hannOk, "half-bin sine, Hann: scalloping error within -1.5 dB (worst dB)", hannWorst);
+    checkf(bhOk, "half-bin sine, Blackman-Harris: scalloping error within -1.0 dB (worst dB)", bhWorst);
+}
+
+static void test_spectrum_coherent_gain_equality()
+{
+    section("spectrum_coherent_gain_equality");
+    bool ok = true;
+    double worst = 0.0;
+    for (int sizeIdx : { 0, 2, 4 })
+        for (double fs : { 48000.0, 96000.0 })
+        {
+            const int n = kSizeList[sizeIdx];
+            const int k = pickBin(fs, n, 3000.0);
+            float lvl[2] = {};
+            for (int win = 0; win < 2; ++win)
+            {
+                SpecRig rig(fs, sizeIdx, win);
+                rig.feedFrames(0, (std::uint64_t) (2 * n), 4096, sineRat((std::uint64_t) k, (std::uint64_t) n, 0.3f, 3));
+                lvl[win] = curvePeak(rig.snap()).db;
+            }
+            worst = std::max(worst, (double) std::abs(lvl[0] - lvl[1]));
+            ok &= std::abs(lvl[0] - lvl[1]) <= 0.01f;
+        }
+    checkf(ok, "Hann and Blackman-Harris read the same level for the same sine (dB diff)", worst);
+}
+
+static void test_spectrum_white_noise_density()
+{
+    section("spectrum_white_noise_density");
+    const float sigma = 0.1f;
+    struct Case { int sizeIdx, win; };
+    double levelHann4096 = 0.0, levelBh4096 = 0.0;
+    for (const Case c : { Case { 0, 0 }, Case { 2, 0 }, Case { 2, 1 }, Case { 4, 0 } })
+    {
+        const int n = kSizeList[c.sizeIdx], hop = n / 4;
+        SpecRig rig(48000.0, c.sizeIdx, c.win);
+        const std::uint64_t frames = (std::uint64_t) n + 200 * (std::uint64_t) hop;   // 201 overlapped frames
+        rig.feedFrames(0, frames, 4096, [&](int ch, std::uint64_t i) { return gauss(ch, i, sigma); });
+
+        std::vector<double> p;
+        const bool got = rig.eng->getSpectrum().getMeanBinPower(0, p);
+        const int hops = rig.eng->getSpectrum().getAccumulatedHops(0);
+
+        const double S = rig.eng->getSpectrum().getWindowSum(c.sizeIdx, c.win), S2 = rig.eng->getSpectrum().getWindowSumSquares(c.sizeIdx, c.win);
+        const double expected = 4.0 * (double) sigma * sigma * S2 / (S * S);   // per-bin power: sigma^2 * sum(w^2) * (2/S)^2
+        double sum = 0.0;
+        int cnt = 0;
+        for (int k = 20; k < n / 2 - 20; ++k) { sum += p[(size_t) k]; ++cnt; }
+        const double meas = 10.0 * std::log10(sum / cnt), exp_db = 10.0 * std::log10(expected);
+
+        char name[160];
+        std::snprintf(name, sizeof(name), "N=%d %s: mean bin level %.2f dB vs analytical %.2f dB over %d frames (+-0.5)", n, winName(c.win), meas, exp_db, hops);
+        check(got && hops >= 200 && std::abs(meas - exp_db) <= 0.5, name);
+        if (c.sizeIdx == 2) (c.win == 0 ? levelHann4096 : levelBh4096) = meas;
+    }
+    // Windows differ only by their ENBW: analytic ENBW ratio BH/Hann = (sum w^2 / S^2) ratio.
+    prism::SpectrumEngine se; se.prepare(48000.0);
+    const double enbwHann = se.getWindowSumSquares(2, 0) / (se.getWindowSum(2, 0) * se.getWindowSum(2, 0));
+    const double enbwBh   = se.getWindowSumSquares(2, 1) / (se.getWindowSum(2, 1) * se.getWindowSum(2, 1));
+    const double analyticDiff = 10.0 * std::log10(enbwBh / enbwHann);
+    checkf(std::abs((levelBh4096 - levelHann4096) - analyticDiff) <= 0.3, "BH vs Hann noise level differs by the ENBW ratio (dB, analytic)", levelBh4096 - levelHann4096, analyticDiff);
+}
+
+static void test_spectrum_impulse()
+{
+    section("spectrum_impulse");
+    bool flat = true, level = true, hasData = true;
+    double maxSpread = 0.0, maxErr = 0.0;
+    for (int sizeIdx : { 0, 2, 4 })
+        for (int win = 0; win < 2; ++win)
+            for (int pos : { 2, 4 })   // impulse at N/2 (window peak) and N/4
+            {
+                const int n = kSizeList[sizeIdx];
+                const int n0 = n / pos;
+                SpecRig rig(48000.0, sizeIdx, win);
+                const float a = 0.5f;
+                rig.feedFrames(0, (std::uint64_t) n, 480, [&](int, std::uint64_t i) { return i == (std::uint64_t) n0 ? a : 0.0f; });
+                const auto s = rig.snap();
+                hasData &= s.hasSpectrum && rig.eng->getSpectrum().getTotalHops(0) == 1;
+
+                const double S = rig.eng->getSpectrum().getWindowSum(sizeIdx, win);
+                const double wn0 = rig.eng->getSpectrum().getWindowValue(sizeIdx, win, n0);
+                const double expectDb = 20.0 * std::log10(2.0 * a * wn0 / S);   // |X_k| = a * w[n0] for every k
+                float lo = 1e9f, hi = -1e9f;
+                const double df = 48000.0 / n;
+                for (int i = 0; i < prism::kSpectrumPoints; ++i)
+                {
+                    // Points below one bin spacing interpolate against the DC bin, which carries 1/S (not 2/S)
+                    // by definition (a real signal's DC counts once) -> excluded from the flatness criterion.
+                    if (prism::SpectrumEngine::pointFrequency(i) < df)
+                        continue;
+                    lo = std::min(lo, s.spectrumDb[(size_t) i]);
+                    hi = std::max(hi, s.spectrumDb[(size_t) i]);
+                }
+                maxSpread = std::max(maxSpread, (double) (hi - lo));
+                maxErr = std::max(maxErr, std::abs((hi + lo) * 0.5 - expectDb));
+                flat &= (hi - lo) < 0.02f;
+                level &= std::abs((hi + lo) * 0.5 - expectDb) < 0.02;
+            }
+    check(hasData, "single hop completed exactly when N frames are in");
+    checkf(flat, "impulse spectrum is flat across all 640 points (no spurious tones), max spread dB", maxSpread);
+    checkf(level, "impulse level = 20log10(2 a w[n0] / S) (windowed-impulse prediction), max error dB", maxErr);
+}
+
+static void test_spectrum_multitone_leakage()
+{
+    section("spectrum_multitone_leakage");
+    const double fs = 48000.0;
+    const int sizeIdx = 4, n = 16384;
+    const double df = fs / n;
+    const double toneHz[4] = { 100.0, 1000.0, 5000.0, 10000.0 };
+    const double toneDb[4] = { -12.0, -18.0, -24.0, -30.0 };
+    int kk[4];
+    for (int t = 0; t < 4; ++t) kk[t] = (int) std::lround(toneHz[t] / df);
+
+    for (int win = 0; win < 2; ++win)
+    {
+        SpecRig rig(fs, sizeIdx, win);
+        rig.feedFrames(0, (std::uint64_t) (2 * n), 4096, [&](int, std::uint64_t i) {
+            double v = 0.0;
+            for (int t = 0; t < 4; ++t)
+                v += std::pow(10.0, toneDb[t] / 20.0) * std::sin(2.0 * 3.14159265358979323846 * (double) (((std::uint64_t) kk[t] * i) % (std::uint64_t) n) / n);
+            return (float) v;
+        });
+        const auto s = rig.snap();
+
+        bool levelsOk = true;
+        double worst = 0.0;
+        for (int t = 0; t < 4; ++t)
+        {
+            const double f = kk[t] * df;
+            float best = -1000.0f;
+            for (int i = 0; i < prism::kSpectrumPoints; ++i)
+                if (octaves(prism::SpectrumEngine::pointFrequency(i), f) < 0.02)
+                    best = std::max(best, s.spectrumDb[(size_t) i]);
+            worst = std::max(worst, std::abs(best - toneDb[t]));
+            levelsOk &= std::abs(best - toneDb[t]) <= 0.1;
+        }
+        char name[128];
+        std::snprintf(name, sizeof(name), "%s: each tone level within +-0.1 dB (-12/-18/-24/-30), worst %.3f", winName(win), worst);
+        check(levelsOk, name);
+
+        const double specDb = win == 0 ? 31.0 : 92.0;   // first-sidelobe spec of the window
+        float farMax = -1000.0f;
+        for (int i = 0; i < prism::kSpectrumPoints; ++i)
+        {
+            const double fi = prism::SpectrumEngine::pointFrequency(i);
+            bool far = true;
+            for (int t = 0; t < 4; ++t) far &= std::abs(fi - kk[t] * df) > 10.0 * df + 0.012 * fi;
+            if (far) farMax = std::max(farMax, s.spectrumDb[(size_t) i]);
+        }
+        std::snprintf(name, sizeof(name), "%s: everything away from the tones <= (-12 dB - %.0f dB sidelobe spec); max %.1f dB", winName(win), specDb, farMax);
+        check(farMax <= -12.0 - specDb, name);
+    }
+}
+
+static void test_spectrum_analysis_modes()
+{
+    section("spectrum_analysis_modes");
+    const double fs = 48000.0;
+    const int sizeIdx = 2, n = 4096;
+    const int k = pickBin(fs, n, 2000.0);
+    const float amp = 0.1f;   // -20 dBFS
+    auto peakFor = [&](int mode, int chMask, float sign1, int mainCh = 2) {
+        SpecRig rig(fs, sizeIdx, 0, mode, mainCh, 0);
+        rig.feedFrames(0, 2 * n, 4096, sineRat((std::uint64_t) k, (std::uint64_t) n, amp, chMask, sign1));
+        return rig.snap();
+    };
+
+    checkf(std::abs(curvePeak(peakFor(0, 1, 1.0f)).db - (-20.0)) <= 0.1, "L-only sine: leftRight shows -20 dB", curvePeak(peakFor(0, 1, 1.0f)).db);
+    checkf(std::abs(curvePeak(peakFor(1, 1, 1.0f)).db - (-23.01)) <= 0.1, "L-only sine: midSide shows -3.01 dB lower (M=(L+R)/sqrt2)", curvePeak(peakFor(1, 1, 1.0f)).db);
+    checkf(std::abs(curvePeak(peakFor(2, 1, 1.0f)).db - (-23.01)) <= 0.1, "L-only sine: combined (power mean) shows -3.01 dB lower", curvePeak(peakFor(2, 1, 1.0f)).db);
+    checkf(std::abs(curvePeak(peakFor(2, 3, 1.0f)).db - (-20.0)) <= 0.1, "identical L=R: combined reads the true -20 dB", curvePeak(peakFor(2, 3, 1.0f)).db);
+
+    checkf(std::abs(curvePeak(peakFor(2, 3, -1.0f)).db - (-20.0)) <= 0.1, "anti-phase: combined unaffected (no cancellation)", curvePeak(peakFor(2, 3, -1.0f)).db);
+    checkf(std::abs(curvePeak(peakFor(0, 3, -1.0f)).db - (-20.0)) <= 0.1, "anti-phase: leftRight shows the Left channel", curvePeak(peakFor(0, 3, -1.0f)).db);
+    {
+        const auto s = peakFor(1, 3, -1.0f);
+        bool allFloor = s.hasSpectrum;
+        for (int i = 0; i < prism::kSpectrumPoints; ++i) allFloor &= s.spectrumDb[(size_t) i] == -120.0f;
+        check(allFloor, "anti-phase: midSide Mid cancels to exactly -120 dB everywhere");
+    }
+    check(std::abs(curvePeak(peakFor(0, 1, 1.0f, 1)).db - (-20.0)) <= 0.1 && std::abs(curvePeak(peakFor(1, 1, 1.0f, 1)).db - (-20.0)) <= 0.1
+          && std::abs(curvePeak(peakFor(2, 1, 1.0f, 1)).db - (-20.0)) <= 0.1, "mono source: single channel in every mode (no -3 dB)");
+}
+
+static void test_spectrum_silence_and_warmup()
+{
+    section("spectrum_silence_and_warmup");
+    bool floorOk = true, warmOk = true, noNan = true;
+    for (int sizeIdx = 0; sizeIdx < 5; ++sizeIdx)
+    {
+        const int n = kSizeList[sizeIdx];
+        SpecRig rig(48000.0, sizeIdx, sizeIdx % 2);
+        rig.feedFrames(0, (std::uint64_t) (n - 1), 480, [](int, std::uint64_t) { return 0.0f; });
+        warmOk &= ! rig.snap().hasSpectrum;
+        rig.feedFrames((std::uint64_t) (n - 1), 1, 480, [](int, std::uint64_t) { return 0.0f; });
+        const auto s = rig.snap();
+        warmOk &= s.hasSpectrum;
+        for (int i = 0; i < prism::kSpectrumPoints; ++i)
+        {
+            floorOk &= s.spectrumDb[(size_t) i] == -120.0f;
+            noNan &= std::isfinite(s.spectrumDb[(size_t) i]);
+        }
+        // Same warm-up for a real signal: unavailable until N frames, never zeros-as-data.
+        SpecRig sig2(48000.0, sizeIdx, 0);
+        sig2.feedFrames(0, (std::uint64_t) (n - 1), 480, sineRat(5, 64, 0.5f, 3));
+        warmOk &= ! sig2.snap().hasSpectrum;
+    }
+    check(warmOk, "hasSpectrum false until exactly N frames are in (all 5 sizes)");
+    check(floorOk && noNan, "digital silence: all 640 points exactly -120.0 dBFS (no -inf/NaN)");
+
+    {   // signal then silence: floor reached once the window is silent
+        SpecRig rig(48000.0, 0, 0);
+        rig.feedFrames(0, 4096, 480, sineRat(5, 64, 0.5f, 3));
+        rig.snap();
+        rig.feedFrames(4096, 4096, 480, [](int, std::uint64_t) { return 0.0f; });
+        rig.snap();   // consumes the hops that still overlapped the signal
+        rig.feedFrames(8192, 4096, 480, [](int, std::uint64_t) { return 0.0f; });
+        const auto s = rig.snap();
+        bool allFloor = s.hasSpectrum;
+        for (int i = 0; i < prism::kSpectrumPoints; ++i) allFloor &= s.spectrumDb[(size_t) i] == -120.0f;
+        check(allFloor, "after the signal stops, the spectrum falls to exactly -120 dBFS");
+    }
+    {   // mono & absent sidechain
+        prism::AnalysisEngine eng(makeCfg(1, 0), 14);
+        feed(eng, 0, 8192, 480, sineRat(5, 64, 0.5f, 1));
+        const auto snap = eng.buildSnapshot();
+        check(snap->sources[0].hasSpectrum && ! snap->sources[1].hasSpectrum, "mono source has a spectrum; absent sidechain has none");
+        bool zero = true;
+        for (float v : snap->sources[1].spectrumDb) zero &= v == 0.0f;
+        check(zero, "absent sidechain curve left untouched (hasSpectrum=false is the signal)");
+    }
+}
+
+static void test_spectrum_block_size_bit_identity()
+{
+    section("spectrum_block_size_bit_identity");
+    struct Cfg { double fs; int size, win, mode; };
+    const Cfg cfgs[] = { { 48000.0, 0, 0, 2 }, { 48000.0, 2, 1, 1 }, { 48000.0, 3, 0, 0 }, { 44100.0, 2, 0, 2 }, { 96000.0, 1, 1, 2 } };
+    bool same = true, hopsSame = true;
+    for (const auto& c : cfgs)
+    {
+        prism::SourceSnapshot ref;
+        std::uint64_t refHops = 0;
+        bool first = true;
+        for (int bs : { 1, 7, 64, 480, 4096 })
+        {
+            SpecRig rig(c.fs, c.size, c.win, c.mode);
+            rig.feedFrames(0, 30000, bs, [](int ch, std::uint64_t i) {
+                return 0.3f * std::sin(0.05f * (float) (i % 20000) + (float) ch) + 0.1f * hnoise(ch, i);
+            });
+            const auto s = rig.snap();
+            const auto hops = rig.eng->getSpectrum().getTotalHops(0);
+            if (first) { ref = s; refHops = hops; first = false; continue; }
+            same &= s.hasSpectrum == ref.hasSpectrum && std::memcmp(s.spectrumDb.data(), ref.spectrumDb.data(), sizeof(float) * prism::kSpectrumPoints) == 0;
+            hopsSame &= hops == refHops;
+        }
+        same &= ref.hasSpectrum;
+    }
+    check(hopsSame, "same number of hops for block sizes {1,7,64,480,4096}");
+    check(same, "published spectra bit-identical for block sizes {1,7,64,480,4096} (5 size/window/mode/rate configs)");
+}
+
+static void test_spectrum_parameter_switching()
+{
+    section("spectrum_parameter_switching");
+    const double fs = 48000.0;
+    const int k1024 = pickBin(fs, 1024, 2000.0);   // bin-centred for every FFT size (k_N = k1024 * N/1024)
+    auto tone = sineRat((std::uint64_t) k1024, 1024, 0.1f, 3);   // -20 dBFS
+
+    SpecRig rig(fs, 0, 0);
+    rig.feedFrames(0, 3000, 480, tone);
+    auto s = rig.snap();
+    check(s.hasSpectrum && std::abs(curvePeak(s).db + 20.0) <= 0.1, "N=1024 reads -20 dB");
+
+    rig.size.store(2.0f);   // -> 4096
+    rig.feedFrames(3000, 1000, 480, tone);   // 4000 frames: not enough for N=4096
+    s = rig.snap();
+    check(! s.hasSpectrum, "after growing N, hasSpectrum is false until N' frames are in (no stale curve)");
+    rig.feedFrames(4000, 200, 100, tone);
+    s = rig.snap();
+    check(s.hasSpectrum && std::abs(curvePeak(s).db + 20.0) <= 0.1, "N=4096 valid at the next hop; level correct");
+    check(rig.eng->getSpectrum().getActiveParams(0).sizeIndex == 2, "active size switched");
+
+    rig.win.store(1.0f);   // -> Blackman-Harris
+    rig.feedFrames(4200, 1000, 100, tone);   // next hop boundary (multiple of N/4) lies ahead; 1000 frames cover it
+    s = rig.snap();
+    check(s.hasSpectrum && std::abs(curvePeak(s).db + 20.0) <= 0.1 && rig.eng->getSpectrum().getActiveParams(0).windowIndex == 1,
+          "window switch applied at the next hop; level unchanged (coherent gain)");
+
+    // Rapid random switching: never crashes, curves always finite and in range.
+    std::mt19937 rng(99);
+    bool fine = true;
+    std::uint64_t pos = 5200;
+    for (int it = 0; it < 300; ++it)
+    {
+        rig.size.store((float) (rng() % 5));
+        rig.win.store((float) (rng() % 2));
+        rig.mode.store((float) (rng() % 3));
+        rig.feedFrames(pos, 480, 480, tone);
+        pos += 480;
+        const auto sn = rig.snap();
+        if (sn.hasSpectrum)
+            for (int i = 0; i < prism::kSpectrumPoints; ++i) fine &= std::isfinite(sn.spectrumDb[(size_t) i]) && sn.spectrumDb[(size_t) i] >= -120.0f && sn.spectrumDb[(size_t) i] <= 0.5f;
+    }
+    check(fine, "300 random fft_size/window/analysis_mode switches: curves always finite and in [-120, 0.5]");
+
+    rig.size.store(4.0f); rig.win.store(0.0f); rig.mode.store(2.0f);
+    rig.feedFrames(pos, 40000, 4096, tone);
+    s = rig.snap();
+    check(s.hasSpectrum && std::abs(curvePeak(s).db + 20.0) <= 0.1, "after the storm, spectrum is correct for the final settings");
+}
+
+static void test_spectrum_enable_gating_and_processor_wiring()
+{
+    section("spectrum_enable_gating_and_processor_wiring");
+    {
+        SpecRig rig(48000.0, 2, 0);
+        const int k = pickBin(48000.0, 4096, 2000.0);
+        auto tone = sineRat((std::uint64_t) k, 4096, 0.1f, 3);
+        rig.eng->setSpectrumEnabled(false);
+        rig.feedFrames(0, 10000, 480, tone);
+        check(! rig.snap().hasSpectrum && rig.eng->getSpectrum().getTotalHops(0) == 0, "editor inactive: no FFT hops, no spectrum");
+        rig.eng->setSpectrumEnabled(true);
+        rig.feedFrames(10000, 5000, 480, tone);
+        auto s = rig.snap();
+        check(s.hasSpectrum && rig.eng->getSpectrum().getTotalHops(0) > 0 && std::abs(curvePeak(s).db + 20.0) <= 0.1, "re-enabled: spectrum resumes with correct level");
+
+        rig.eng->setSpectrumEnabled(false);
+        rig.feedFrames(15000, 100000, 4096, tone);   // longer than the 65536-frame history
+        rig.eng->setSpectrumEnabled(true);
+        rig.feedFrames(115000, 600, 600, tone);
+        s = rig.snap();
+        check(s.hasSpectrum && std::abs(curvePeak(s).db + 20.0) <= 0.1, "re-enable after a long gap skips to recent history (no crash, correct level)");
+    }
+
+    {   // The processor wires fft_size / window / analysis_mode APVTS atomics to the engine.
+        PRISMAudioProcessor proc;
+        check(configure(proc, 2, 0, 48000.0, 1100), "configure");
+        proc.prepareToPlay(48000.0, 1100);
+        juce::AudioBuffer<float> buf(2, 1100);
+        juce::MidiBuffer midi;
+        for (int i = 0; i < 1100; ++i) for (int c = 0; c < 2; ++c) buf.setSample(c, i, 0.1f * std::sin(0.2f * (float) i));
+        proc.processBlock(buf, midi);
+        proc.releaseResources();
+        auto* eng = proc.getAnalysisEngine();
+        eng->setSpectrumEnabled(true);
+        eng->pump();
+        check(! eng->buildSnapshot()->sources[0].hasSpectrum, "default fft_size 4096: 1100 frames is not enough");
+
+        auto* fftPrm = proc.apvts.getParameter(prism::ids::fftSize);
+        fftPrm->setValueNotifyingHost(fftPrm->convertTo0to1(0.0f));   // 1024
+        eng->pump();
+        check(eng->buildSnapshot()->sources[0].hasSpectrum && eng->getSpectrum().getActiveParams(0).sizeIndex == 0, "fft_size=1024 reaches the engine (spectrum valid with 1100 frames)");
+
+        auto* winPrm = proc.apvts.getParameter(prism::ids::window);
+        winPrm->setValueNotifyingHost(winPrm->convertTo0to1(1.0f));
+        auto* modePrm = proc.apvts.getParameter(prism::ids::analysisMode);
+        modePrm->setValueNotifyingHost(modePrm->convertTo0to1(0.0f));
+        eng->pump();
+        const auto ap = eng->getSpectrum().getActiveParams(0);
+        check(ap.windowIndex == 1 && ap.mode == 0, "window=blackmanHarris and analysis_mode=leftRight reach the engine");
+    }
+}
+
+static void test_spectrum_cpu_budget()
+{
+    section("spectrum_cpu_budget");
+    struct Case { int sizeIdx; const char* label; };
+    for (const Case c : { Case { 4, "N=16384" }, Case { 0, "N=1024" } })
+    {
+        SpecRig rig(192000.0, c.sizeIdx, 0, 2, 2, 2);   // 2 stereo sources, combined (2 FFTs / hop / source)
+        std::vector<std::vector<float>> bufs(4, std::vector<float>(4096));
+        for (int ch = 0; ch < 4; ++ch) for (int i = 0; i < 4096; ++i) bufs[(size_t) ch][(size_t) i] = 0.2f * hnoise(ch, (std::uint64_t) i);
+        const float* ptrs[4] = { bufs[0].data(), bufs[1].data(), bufs[2].data(), bufs[3].data() };
+
+        const double audioSeconds = 10.0;
+        const int blocks = (int) (audioSeconds * 192000.0 / 4096.0);
+        const auto t0 = Clock::now();
+        for (int b = 0; b < blocks; ++b) { rig.eng->captureBlock(ptrs, 4, 4096); rig.eng->pump(); }
+        const double wall = msSince(t0) / 1000.0;
+        const double pct = 100.0 * wall / (blocks * 4096.0 / 192000.0);
+
+        std::printf("      %s @192 kHz, 2 stereo sources, combined: %.2f %% of one core (capture + pump + FFT), %llu hops/source\n",
+                    c.label, pct, (unsigned long long) rig.eng->getSpectrum().getTotalHops(0));
+        if (pct > 5.0)
+            std::printf("      WARN: above the 5%% budget (debug build or loaded machine?)\n");
+        char name[96];
+        std::snprintf(name, sizeof(name), "%s @192k keeps up with real time (%.2f %% core; budget 5 %% is WARN-only)", c.label, pct);
+        check(pct < 100.0, name);
+    }
+}
+
+//==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf("PRISM tests  (Stage 2 / Phase 2.2)\n");
+    std::printf("PRISM tests  (Stage 2 / Phase 2.3)\n");
 
     test_ring_wraparound();
     test_ring_overrun_drops_whole_blocks();
@@ -1690,6 +2237,22 @@ int main()
     test_mono_and_absent_sources_snapshot();
     test_signal_present();
     test_processor_peak_reset_end_to_end();
+
+    // Phase 2.3
+    test_spectrum_basics_and_map();
+    test_spectrum_hop_timing();
+    test_spectrum_bin_centred_accuracy();
+    test_spectrum_scalloping();
+    test_spectrum_coherent_gain_equality();
+    test_spectrum_white_noise_density();
+    test_spectrum_impulse();
+    test_spectrum_multitone_leakage();
+    test_spectrum_analysis_modes();
+    test_spectrum_silence_and_warmup();
+    test_spectrum_block_size_bit_identity();
+    test_spectrum_parameter_switching();
+    test_spectrum_enable_gating_and_processor_wiring();
+    test_spectrum_cpu_budget();
 
     std::printf("\n%d checks, %d failure(s), %zu test cases\n", checks, failures, testNames.size());
     return failures == 0 ? 0 : 1;

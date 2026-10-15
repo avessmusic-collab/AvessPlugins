@@ -18,6 +18,18 @@ namespace prism
             s.history.prepare(registry[i].numChannels);
             s.stereo.prepare(config.sampleRate);
         }
+        spectrum.prepare(config.sampleRate);
+    }
+
+    SpectrumEngine::Params AnalysisEngine::readSpectrumParams() const noexcept
+    {
+        SpectrumEngine::Params p;
+        p.mode = readAnalysisMode();
+        if (controls.fftSizeIndex != nullptr)
+            p.sizeIndex = std::clamp((int) std::lround(controls.fftSizeIndex->load(std::memory_order_relaxed)), 0, SpectrumEngine::kNumSizes - 1);
+        if (controls.windowIndex != nullptr)
+            p.windowIndex = std::clamp((int) std::lround(controls.windowIndex->load(std::memory_order_relaxed)), 0, SpectrumEngine::kNumWindows - 1);
+        return p;
     }
 
     void AnalysisEngine::attachControls(const ExternalControls& c) noexcept
@@ -226,6 +238,10 @@ namespace prism
             }
 
             st.samplePeakMaxLin = std::max(st.samplePeakMaxLin, st.samplePeak.exchange(0.0f, std::memory_order_relaxed));
+
+            // Editor-active work: FFT hops (keyed to absolute frame index; see SpectrumEngine).
+            if (spectrumEnabled.load(std::memory_order_relaxed))
+                spectrum.advance(registry.getActiveIndex(k), st.history, readSpectrumParams());
         }
 
         BeatEvent e;
@@ -263,6 +279,8 @@ namespace prism
             out.samplePeakMaxDb = st.samplePeakMaxLin > 0.0f ? (float) (20.0 * std::log10((double) st.samplePeakMaxLin))
                                                              : -INFINITY;
             snap->signalPresent = snap->signalPresent || st.framesSinceLoud < holdFrames;
+
+            spectrum.publish(idx, out);
 
             out.hasStereo = info.numChannels == 2;
             if (out.hasStereo)

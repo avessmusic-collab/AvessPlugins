@@ -48,10 +48,11 @@ namespace prism
 
         while (! threadShouldExit())
         {
+            const bool active = isEditorActive(ctl, steadyNowMs());
+            engine.setSpectrumEnabled(active);   // FFT hops only while the editor is active
             engine.pump();
             cycleCount.fetch_add(1, std::memory_order_relaxed);
 
-            const bool active = isEditorActive(ctl, steadyNowMs());
             if (active)
             {
                 const double now = toMs(clock::now());

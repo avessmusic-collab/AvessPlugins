@@ -137,7 +137,9 @@ void PRISMAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         engine = std::make_unique<prism::AnalysisEngine>(cfg);
         engine->setSequenceBase(base);
         engine->attachControls({ &resetAllEpoch, &resetIntegratedEpoch,
-                                 apvts.getRawParameterValue(prism::ids::analysisMode) });   // before the worker starts
+                                 apvts.getRawParameterValue(prism::ids::analysisMode),
+                                 apvts.getRawParameterValue(prism::ids::fftSize),
+                                 apvts.getRawParameterValue(prism::ids::window) });   // before the worker starts
         ++engineRebuildCount;
     }
 

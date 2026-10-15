@@ -9,6 +9,7 @@
 
 #include "AnalysisSnapshot.h"
 #include "SourceRegistry.h"
+#include "SpectrumEngine.h"
 #include "StereoMetrics.h"
 #include "StreamHistory.h"
 #include "../Capture/BeatEventQueue.h"
@@ -39,7 +40,13 @@ namespace prism
             const std::atomic<std::uint32_t>* resetAllEpoch        = nullptr;
             const std::atomic<std::uint32_t>* resetIntegratedEpoch = nullptr;   // consumed from Phase 2.4
             const std::atomic<float>*         analysisMode         = nullptr;   // raw APVTS value: 0 L/R, 1 M/S, 2 combined
+            const std::atomic<float>*         fftSizeIndex         = nullptr;   // raw APVTS choice index 0..4 (1024..16384)
+            const std::atomic<float>*         windowIndex          = nullptr;   // raw APVTS choice index 0 hann, 1 blackmanHarris
         };
+
+        // FFT hops only run while enabled (the worker enables them while the editor is active).
+        void setSpectrumEnabled(bool e) noexcept { spectrumEnabled.store(e, std::memory_order_relaxed); }
+        SpectrumEngine& getSpectrum() noexcept { return spectrum; }
         // Call before the worker starts. Baselines the epochs: resets requested earlier are not re-applied.
         void attachControls(const ExternalControls& c) noexcept;
 
@@ -103,7 +110,10 @@ namespace prism
         };
 
         int readAnalysisMode() const noexcept;
+        SpectrumEngine::Params readSpectrumParams() const noexcept;
 
+        SpectrumEngine spectrum;
+        std::atomic<bool> spectrumEnabled { true };
         EngineConfig config;
         ExternalControls controls;
         std::uint32_t seenResetAll = 0, seenResetIntegrated = 0;

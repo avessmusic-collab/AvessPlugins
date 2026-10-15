@@ -29,6 +29,8 @@ set(PRISM_CORE_SOURCES
     # Stage 2 Phase 2.1 - capture, worker skeleton, snapshot publishing
     Source/Analysis/AnalysisEngine.cpp
     Source/Analysis/AnalysisWorker.cpp
+    # Stage 2 Phase 2.3 - spectrum engine
+    Source/Analysis/SpectrumEngine.cpp
 )
 
 target_sources(PRISM PRIVATE ${PRISM_CORE_SOURCES})

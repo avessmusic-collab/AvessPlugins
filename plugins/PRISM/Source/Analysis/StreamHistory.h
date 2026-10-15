@@ -80,6 +80,21 @@ namespace prism
             return s;
         }
 
+        // Copies frames [startAbs, startAbs + n) of a channel (absolute stream indices) into dst.
+        // Returns false if the range is not (or no longer) available.
+        bool copyAbsolute(int channel, std::uint64_t startAbs, int n, float* dst) const noexcept
+        {
+            if (srcChannels <= 0 || n <= 0 || startAbs + (std::uint64_t) n > seen || seen - startAbs > (std::uint64_t) kCapacity)
+                return false;
+            const float* base = data[channel & 1].data();
+            const std::size_t s = (std::size_t) (startAbs & (kCapacity - 1));
+            const std::size_t first = std::min<std::size_t>((std::size_t) n, kCapacity - s);
+            std::memcpy(dst, base + s, first * sizeof(float));
+            if (first < (std::size_t) n)
+                std::memcpy(dst + first, base, ((std::size_t) n - first) * sizeof(float));
+            return true;
+        }
+
     private:
         float sanitize(float x) noexcept
         {
