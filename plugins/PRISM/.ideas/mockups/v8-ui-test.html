@@ -926,15 +926,30 @@ function wfBands(t, s, o) {
     o[2] = Math.min(1, 0.12 + 0.3 * ae * duck + 0.08 * Math.random()) * (0.85 + Math.random() * 0.3);
   }
 }
+/* Connecting envelope contour: a 1 device-px polyline over the column tips (top + mirrored bottom), so decays read as
+   continuous tails. Drawn into the same offscreen strip as the columns (so it scrolls and redraws with them).
+   Single-column gaps (the 1px column gaps / jitter) are bridged; a silent stretch (>3 empty px) drops to the centreline
+   once and then draws nothing, so silence has no floating line. */
+var wfTip = { x: -100, h: 0, c: '#fff', fell: true };
+function wfContourSeg(g, x0, h0, x1, h1, mid, col) {
+  g.strokeStyle = col; g.lineWidth = 1; g.globalAlpha = 0.95; g.beginPath();
+  g.moveTo(x0 + 0.5, mid - h0); g.lineTo(x1 + 0.5, mid - h1); g.moveTo(x0 + 0.5, mid + h0); g.lineTo(x1 + 0.5, mid + h1); g.stroke(); g.globalAlpha = 1;
+}
+function wfContourReset() { wfTip.x = -100; wfTip.fell = true; }
+function wfContourScroll(n) { wfTip.x -= n; if (wfTip.x < 0) { wfTip.x = -100; wfTip.fell = true; } }
+function wfContourIdle(g, x, mid) {
+  var t = wfTip; if (t.x < 0 || t.fell || x - t.x < 4) return;
+  wfContourSeg(g, t.x, t.h, t.x + 4, 0.5, mid, t.c); t.fell = true;
+}
 /* Rekordbox/Traktor RGB model: ONE mirrored amplitude bar per column; COLOUR encodes the spectrum.
    colour = (b^2*low + m^2*mid + h^2*high) / sum(w)  (squared weights make the dominant band pop), theme trio as anchors.
    (Literal rekordbox colours = set BAND.low/mid/high to red/green/blue; the trio comes from the colour theme.)
    Solid fill, luminous crest (top ~15% lightened toward white), slightly darker core near the centreline. */
 function wfDrawBands(g, x, mid, A, b, m, hi) {
   b = clamp(b, 0, 1); m = clamp(m, 0, 1); hi = clamp(hi, 0, 1);
-  var peak = Math.max(b, m, hi); if (peak <= 0) return;
+  var peak = Math.max(b, m, hi); if (peak <= 0) { wfContourIdle(g, x, mid); return; }
   var v = 0.75 * Math.max(b, 0.85 * m, 0.7 * hi) + 0.25 * Math.min(1, (b + m + hi) / 2);
-  var h = A * v; if (h < 0.75) return;
+  var h = A * v; if (h < 0.75) { wfContourIdle(g, x, mid); return; }
   var wb = b * b, wm = m * m, wh = hi * hi, S = wb + wm + wh, L = BAND.low, M = BAND.mid, H = BAND.high;
   var r = (wb * L[0] + wm * M[0] + wh * H[0]) / S, gg = (wb * L[1] + wm * M[1] + wh * H[1]) / S, bl = (wb * L[2] + wm * M[2] + wh * H[2]) / S;
   var k = 0.55 + 0.45 * clamp(peak / 0.35, 0, 1);                      // very quiet columns fade toward a dim neutral
@@ -946,13 +961,16 @@ function wfDrawBands(g, x, mid, A, b, m, hi) {
   g.fillStyle = rgb(r + (255 - r) * 0.4, gg + (255 - gg) * 0.4, bl + (255 - bl) * 0.4);          // luminous crest
   g.fillRect(x, mid - h, 1, tip); g.fillRect(x, mid + h - tip, 1, tip);
   g.fillStyle = rgb(r * 0.72, gg * 0.72, bl * 0.72); g.fillRect(x, mid - c, 1, 2 * c);             // darker base at the centreline
+  var lc = rgb(r + (255 - r) * 0.3, gg + (255 - gg) * 0.3, bl + (255 - bl) * 0.3), t = wfTip;       // contour: brightened local colour
+  if (t.x >= 0 && x - t.x <= 3 && x > t.x) wfContourSeg(g, t.x, t.h, x, h, mid, lc);
+  t.x = x; t.h = h; t.c = lc; t.fell = false;
 }
 var wfLastCol = -1;
 function wfColumn(g, x, tw) {
   var mid = wfH / 2, A = mid * 0.82, bi = Math.floor(tw / WF_BEAT());   // max band height ~82% of the half-lane
   if (bi !== wfLastBeat) { wfLastBeat = bi; g.fillStyle = (bi % 4 === 0) ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.08)'; g.fillRect(x, 0, 1, wfH); }
   var ci = Math.floor(tw * WF.pps), gap = ci !== wfLastCol; wfLastCol = ci;
-  if (gap && DPR >= 2) return;   // 1 device-px gap before each data column (columns read as discrete, Rekordbox-like)
+  if (gap && DPR >= 2) { wfContourIdle(g, x, mid); return; }   // 1 device-px gap before each data column (columns read as discrete, Rekordbox-like)
   wfBands(tw, P.wf_src, bandOut);
   wfDrawBands(g, x, mid, A, bandOut[0], bandOut[1], bandOut[2]);
 }
@@ -961,7 +979,7 @@ function wfInit() {
   wfW = Math.round(cv.wf_cv.w * DPR); wfH = Math.round(cv.wf_cv.h * DPR);
   wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d');
   wfTmp = document.createElement('canvas'); wfTmp.width = wfW; wfTmp.height = wfH; wfTctx = wfTmp.getContext('2d');
-  wfLastBeat = -1; var ppx = WF.pps * DPR;
+  wfLastBeat = -1; wfContourReset(); var ppx = WF.pps * DPR;
   for (var k = 0; k < wfW; k++) wfColumn(wfCtx, k, tDemo + 60 - (wfW - 1 - k) / ppx);
 }
 function wfResize() {
@@ -973,7 +991,7 @@ function wfResize() {
 function wfStep(dt) {
   wfAcc += WF.pps * dt * DPR; var n = Math.floor(wfAcc); if (n < 1) return; wfAcc -= n; n = Math.min(n, wfW);
   wfTctx.clearRect(0, 0, wfW, wfH); wfTctx.drawImage(wfOff, -n, 0);
-  wfCtx.clearRect(0, 0, wfW, wfH); wfCtx.drawImage(wfTmp, 0, 0);
+  wfCtx.clearRect(0, 0, wfW, wfH); wfCtx.drawImage(wfTmp, 0, 0); wfContourScroll(n);
   var ppx = WF.pps * DPR; for (var k = 0; k < n; k++) wfColumn(wfCtx, wfW - n + k, tDemo + 60 - (n - 1 - k) / ppx);
 }
 function drawWaveform() {
