@@ -1416,3 +1416,32 @@ this).
 **Documented in:** plugins/DROP/CHANGELOG.md (2026-09-30 entry)
 
 ---
+
+## 28. setPlayConfigDetails() Disables Non-Main Buses - Enable Sidechain AFTER It (TEST HARNESSES)
+
+### ❌ WRONG (sidechain silently disappears)
+```cpp
+proc.setBusesLayout(layoutWithSidechainEnabled);   // sidechain ON
+proc.setPlayConfigDetails(2, 2, fs, block);        // ...calls disableNonMainBuses() internally!
+proc.prepareToPlay(fs, block);                     // sidechain is now OFF again
+```
+
+### ✅ CORRECT
+```cpp
+proc.setBusesLayout(mainOnlyLayout);               // sidechain disabled
+proc.setPlayConfigDetails(mainCh, mainCh, fs, block);
+proc.setBusesLayout(layoutWithSidechainEnabled);   // NOW enable the sidechain
+proc.setRateAndBufferSizeDetails(fs, block);
+proc.prepareToPlay(fs, block);
+```
+
+**Why:** `AudioProcessor::setPlayConfigDetails()` ends with `disableNonMainBuses()`
+(juce_AudioProcessor.cpp ~line 367), deleting any aux/sidechain bus enabled before it.
+Symptom: every sidechain-layout test config fails its channel-count check while the
+plugin itself passes pluginval bus tests (hosts don't use setPlayConfigDetails).
+Cost PRISM Phase 2.1 a full 12-failure debugging round.
+
+**When:** any console test harness that enables aux/sidechain buses (combine with the
+existing rule: setPlayConfigDetails BEFORE prepareToPlay or getSampleRate()==0).
+
+**Documented in:** PRISM Stage 2 Phase 2.1 (2026-10-15), commit d2a470b
