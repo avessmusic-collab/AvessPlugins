@@ -2586,6 +2586,8 @@ static void test_loudness_reset_semantics()
     auto s = rig.snap();
     check(std::isfinite(s->integratedLufs) && std::isfinite(s->loudnessRange) && std::isfinite(s->sources[0].samplePeakMaxDb), "primed: I, LRA, sample peak available");
     const float m0 = s->momentaryLufs, st0 = s->shortTermLufs, sp0 = s->sources[0].samplePeakMaxDb;
+    const float tp0 = s->sources[0].truePeakMaxDb;
+    check(std::isfinite(tp0) && tp0 >= sp0, "primed: true peak available and >= sample peak");
 
     rig.resetInt.fetch_add(1);
     rig.lufs(0.1, -23.0);
@@ -2593,6 +2595,7 @@ static void test_loudness_reset_semantics()
     check(std::isnan(s->integratedLufs) && std::isnan(s->loudnessRange), "reset_integrated: I and LRA are NaN until new data exists (never 0)");
     check(nearf(s->momentaryLufs, m0, 0.01) && nearf(s->shortTermLufs, st0, 0.01), "reset_integrated: momentary and short-term windows unaffected");
     check(nearf(s->sources[0].samplePeakMaxDb, sp0, 0.001), "reset_integrated: sample peak NOT cleared");
+    check(nearf(s->sources[0].truePeakMaxDb, tp0, 0.001), "reset_integrated: true peak NOT cleared");
 
     rig.lufs(0.5, -23.0);
     s = rig.snap();
@@ -2605,6 +2608,7 @@ static void test_loudness_reset_semantics()
     s = rig.snap();
     check(std::isnan(s->integratedLufs) && std::isnan(s->loudnessRange), "reset_all clears I and LRA");
     check(std::isinf(s->sources[0].samplePeakMaxDb) && s->sources[0].samplePeakMaxDb < 0, "reset_all also clears the sample-peak maximum");
+    check(std::isinf(s->sources[0].truePeakMaxDb) && s->sources[0].truePeakMaxDb < 0, "reset_all also clears the true-peak maximum (-INF -> dashes)");
     check(std::isfinite(s->momentaryLufs) && std::isfinite(s->shortTermLufs), "reset_all leaves the moving M / S windows alone");
 }
 
@@ -2815,11 +2819,305 @@ static void test_loudness_golden_fixtures()
 }
 
 //==============================================================================
+// PHASE 2.5 - true peak
+namespace
+{
+    // fs/4 sine: x[n] = A sin(phi + n pi/2) -> samples A*(sin phi, cos phi, -sin phi, -cos phi), exact for any fs.
+    Gen fsQuarterSine(double amp, double phaseDeg, int mask = 3)
+    {
+        const double phi = phaseDeg * kTwoPi / 360.0;
+        return [=](int c, std::uint64_t i) {
+            if (! ((mask >> c) & 1)) return 0.0f;
+            return (float) (amp * std::sin(phi + (double) (i % 4) * kTwoPi / 4.0));
+        };
+    }
+
+    // Steady-state true-peak measurement. The tone fades in over 600 samples (raised cosine): a tone that starts
+    // abruptly at a crest is a STEP, and a step genuinely overshoots when band-limited (Gibbs) -- a correct
+    // true-peak meter reads that, but it is not what TECH 3341 style steady-tone cases measure. (The first
+    // version of these tests started abruptly and over-read by up to +0.5 dB at phases whose first sample
+    // sits on a crest; the interpolator itself was within 2 % in steady state.)
+    prism::SourceSnapshot measureTp(double fs, const Gen& g, std::uint64_t frames = 3000, int mainCh = 2)
+    {
+        prism::AnalysisEngine eng(makeCfg(mainCh, 0, fs), 14);
+        eng.setSpectrumEnabled(false);
+        constexpr std::uint64_t kFade = 600;
+        feed(eng, 0, frames, 480, [&](int c, std::uint64_t i) {
+            const double w = i >= kFade ? 1.0 : 0.5 - 0.5 * std::cos(3.14159265358979323846 * (double) i / (double) kFade);
+            return (float) (w * (double) g(c, i));
+        });
+        return eng.buildSnapshot()->sources[0];
+    }
+
+    double dbOfLin(double lin) { return 20.0 * std::log10(lin); }
+}
+
+static void test_true_peak_filter_response()
+{
+    section("true_peak_filter_response");
+
+    const auto& c = prism::TruePeakMeter::coefficients();
+    bool unity = true;
+    for (int p = 0; p < 4; ++p)
+    {
+        double s = 0.0;
+        for (int t = 0; t < 12; ++t) s += (double) c[(size_t) p][(size_t) t];
+        unity &= std::abs(s - 1.0) < 1e-6;
+    }
+    check(unity, "4 phases x 12 taps (derived Kaiser windowed-sinc): every polyphase branch has unity DC gain");
+
+    // Passband: interpolated outputs reconstruct an ideal sine on the 4x grid (output phase p of input n sits at n-6+p/4).
+    double worstErr = 0.0;
+    for (double f : { 0.02, 0.05, 0.10, 0.15, 0.20, 0.25 })
+    {
+        prism::TruePeakMeter m;
+        m.prepare(1);
+        for (int n = 0; n < 600; ++n)
+        {
+            float y[4];
+            m.filterSample(0, (float) std::sin(kTwoPi * f * n + 0.3), y);
+            if (n < 40) continue;
+            for (int p = 0; p < 4; ++p)
+                worstErr = std::max(worstErr, std::abs((double) y[p] - std::sin(kTwoPi * f * (n - 6 + p / 4.0) + 0.3)));
+        }
+    }
+    checkf(worstErr < 0.02, "sine reconstruction error on the 4x grid < 2 % (-34 dB) for f <= fs/4 (worst)", worstErr);
+
+    double passDev = 0.0;
+    for (double f = 0.0; f <= 0.25 + 1e-9; f += 0.005) passDev = std::max(passDev, std::abs(prism::TruePeakMeter::responseDb(f)));
+    checkf(passDev < 0.1, "composite passband 0..fs/4 flat within 0.1 dB (worst dB)", passDev);
+
+    // PER-BRANCH gain. The composite above can hide branch imbalance (branch errors partly cancel in the sum),
+    // and the true-peak reading is a MAX over branches, so every single fractional-delay branch must be flat:
+    // |H_p(f)| within +0.2 / -0.4 dB (TECH 3341 window) for all four phases, swept finely over 0..0.25 fs
+    // (0.25..0.30 fs is swept too and printed for information).
+    double branchHi = -1000.0, branchLo = 1000.0, branchHi25 = -1000.0, branchHi30 = -1000.0, branchLo30 = 1000.0;
+    for (int p = 0; p < 4; ++p)
+        for (double f = 0.0; f <= 0.30 + 1e-9; f += 0.0025)
+        {
+            const double w = kTwoPi * f;
+            double re = 0.0, im = 0.0;
+            for (int j = 0; j < 12; ++j)
+            {
+                re += (double) c[(size_t) p][(size_t) j] * std::cos(w * (11 - j));
+                im -= (double) c[(size_t) p][(size_t) j] * std::sin(w * (11 - j));
+            }
+            const double db = 20.0 * std::log10(std::sqrt(re * re + im * im));
+            branchHi30 = std::max(branchHi30, db);
+            branchLo30 = std::min(branchLo30, db);
+            if (f <= 0.25 + 1e-9) { branchHi = std::max(branchHi, db); branchLo = std::min(branchLo, db); }
+        }
+    branchHi25 = branchHi;
+    char bname[200];
+    std::snprintf(bname, sizeof(bname), "every polyphase branch within +0.2/-0.4 dB over 0..fs/4 (range %.3f .. %.3f dB; to 0.30 fs: %.3f .. %.3f)", branchLo, branchHi, branchLo30, branchHi30);
+    check(branchHi25 <= 0.2 && branchLo >= -0.4, bname);
+
+    // Image rejection: images of a tone at f appear at fs +- f. For tones up to fs/4 the nearest image is at 0.75 fs.
+    double worstStop = -1000.0;
+    for (double f = 0.75; f <= 2.0 + 1e-9; f += 0.005) worstStop = std::max(worstStop, prism::TruePeakMeter::responseDb(f));
+    checkf(worstStop <= -38.0, "image rejection >= 38 dB over 0.75 fs .. 2 fs (images of tones up to fs/4) (worst dB)", worstStop);
+    std::printf("      composite passband flatness 0..fs/4: %.4f dB; stopband (0.75..2 fs) worst %.1f dB\n", passDev, worstStop);
+}
+
+static void test_true_peak_fs4_sine()
+{
+    section("true_peak_fs4_sine");
+    // 45 degrees, amplitude 1.0: samples are +-0.7071 -> SP = -3.01 dBFS, the continuous peak (1.0, 0 dBTP) lies
+    // exactly half-way between samples (output phase 2 of the 4x grid). Same digital sequence at every rate.
+    for (double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        const auto s = measureTp(fs, fsQuarterSine(1.0, 45.0));
+        char name[160];
+        std::snprintf(name, sizeof(name), "fs %.0f: SP %.3f dBFS (expect -3.01), TP %.3f dBTP (expect 0.00, +0.2/-0.4)", fs, s.samplePeakMaxDb, s.truePeakMaxDb);
+        check(nearf(s.samplePeakMaxDb, -3.0103, 0.01) && s.truePeakMaxDb >= -0.4f && s.truePeakMaxDb <= 0.2f && s.truePeakMaxDb >= s.samplePeakMaxDb, name);
+    }
+}
+
+static void test_true_peak_phase_and_level_sweep()
+{
+    section("true_peak_phase_and_level_sweep");
+    // Worst-case phase scan: the 4x grid only samples every 0.25 sample, so the reading can miss the true crest by
+    // at most cos(pi/2 * 0.125) = -0.17 dB. Allowed window (TECH 3341): +0.2 / -0.4 dB.
+    for (double fs : { 48000.0, 96000.0 })
+    {
+        double lo = 1e9, hi = -1e9;
+        bool ok = true;
+        for (double deg = 0.0; deg < 360.0; deg += 5.0)
+        {
+            const auto s = measureTp(fs, fsQuarterSine(0.5, deg), 1800);
+            const double err = s.truePeakMaxDb - dbOfLin(0.5);
+            lo = std::min(lo, err); hi = std::max(hi, err);
+            ok &= err >= -0.4 && err <= 0.2 && s.truePeakMaxDb >= s.samplePeakMaxDb;
+        }
+        char name[160];
+        std::snprintf(name, sizeof(name), "fs %.0f: A=0.5 over 72 phases: TP error in [%.3f, %.3f] dB (limits -0.4 / +0.2)", fs, lo, hi);
+        check(ok, name);
+    }
+
+    // Inter-sample over: +3 dBTP crest whose samples never exceed -0.01 dBFS.
+    for (double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        const double amp = std::pow(10.0, 3.0 / 20.0);
+        const auto s = measureTp(fs, fsQuarterSine(amp, 45.0));
+        char name[160];
+        std::snprintf(name, sizeof(name), "fs %.0f: inter-sample over: SP %.3f dBFS but TP %.3f dBTP (expect +3.0, +0.2/-0.4)", fs, s.samplePeakMaxDb, s.truePeakMaxDb);
+        check(s.samplePeakMaxDb < 0.0f && nearf(s.truePeakMaxDb, 3.0, 0.4) && s.truePeakMaxDb - s.samplePeakMaxDb > 2.5f, name);
+    }
+
+    bool levels = true;
+    for (double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (double lvl : { 3.0, 0.0, -1.0, -3.0, -6.0, -12.0, -30.0 })
+        {
+            const auto s = measureTp(fs, fsQuarterSine(std::pow(10.0, lvl / 20.0), 45.0));
+            const double err = s.truePeakMaxDb - lvl;
+            levels &= err >= -0.4 && err <= 0.2;
+        }
+    check(levels, "level sweep +3 .. -30 dBTP at 45 deg, all four rates: within +0.2/-0.4 dB");
+
+    {   // Information: an ABRUPT start on a crest is a step; band-limited reconstruction of a step overshoots (Gibbs).
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        eng.setSpectrumEnabled(false);
+        feed(eng, 0, 1800, 480, fsQuarterSine(0.5, 90.0));
+        const double err = eng.buildSnapshot()->sources[0].truePeakMaxDb - dbOfLin(0.5);
+        std::printf("      abrupt start on a crest (phase 90 deg, no fade, history primed with the first sample): TP error %+.3f dB\n", err);
+        check(err > -0.4 && err < 1.0, "abrupt-start reading stays bounded (< +1 dB); steady-state tests use a fade-in");
+    }
+
+    // Mid-band tones (fs/8, 0.2 fs) at several phases also stay inside the window.
+    bool mid = true;
+    for (double f : { 0.125, 0.2 })
+        for (double deg : { 0.0, 37.0, 90.0, 133.0 })
+        {
+            const double ph = deg * kTwoPi / 360.0;
+            const auto s = measureTp(48000.0, [&](int, std::uint64_t i) { return (float) (0.7 * std::sin(kTwoPi * f * (double) i + ph)); }, 4000);
+            const double err = s.truePeakMaxDb - dbOfLin(0.7);
+            mid &= err >= -0.4 && err <= 0.2;
+        }
+    check(mid, "fs/8 and 0.2 fs tones at 4 phases each: TP within +0.2/-0.4 dB of the analytic crest");
+}
+
+static void test_true_peak_invariant_random()
+{
+    section("true_peak_invariant_random");
+    // 1e6 random blocks in total (250k per rate, two stereo sources): published TP >= SP at every check.
+    bool invariant = true, finite = true;
+    std::uint64_t blocksTotal = 0;
+    for (double fs : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        prism::AnalysisEngine eng(makeCfg(2, 2, fs), 14);
+        eng.setSpectrumEnabled(false);
+        std::mt19937 rng((unsigned) fs);
+        std::vector<std::vector<float>> bufs(4, std::vector<float>(64));
+        const float* ptrs[4] = { bufs[0].data(), bufs[1].data(), bufs[2].data(), bufs[3].data() };
+        for (int b = 0; b < 250000; ++b)
+        {
+            const int n = 1 + (int) (rng() % 64);
+            const int kind = (int) (rng() % 6);
+            const float scale = (float) (rng() % 1000) / 800.0f;   // up to 1.25: overs included
+            for (int c = 0; c < 4; ++c)
+                for (int i = 0; i < n; ++i)
+                {
+                    float v;
+                    switch (kind)
+                    {
+                        case 0: v = scale * ((float) (rng() & 0xffff) / 32768.0f - 1.0f); break;   // noise
+                        case 1: v = (i & 1) ? scale : -scale; break;                                // Nyquist square
+                        case 2: v = (i % 4 < 2) ? scale * 0.7071f : -scale * 0.7071f; break;        // fs/4 at 45 deg
+                        case 3: v = i == n / 2 ? scale : 0.0f; break;                               // impulse
+                        case 4: v = 0.0f; break;                                                    // silence
+                        default: v = scale * std::sin(0.3f * (float) i + (float) c); break;
+                    }
+                    bufs[(size_t) c][(size_t) i] = v;
+                }
+            eng.captureBlock(ptrs, 4, n);
+            eng.pump();
+            ++blocksTotal;
+            if ((b % 5000) == 4999)
+            {
+                const auto snap = eng.buildSnapshot();
+                for (int s = 0; s < 2; ++s)
+                {
+                    const auto& src = snap->sources[(size_t) s];
+                    invariant &= src.truePeakMaxDb >= src.samplePeakMaxDb;
+                    finite &= std::isfinite(src.truePeakMaxDb) || (std::isinf(src.truePeakMaxDb) && src.truePeakMaxDb < 0);
+                }
+            }
+        }
+        const auto fin = eng.buildSnapshot();
+        for (int s = 0; s < 2; ++s)
+            invariant &= fin->sources[(size_t) s].truePeakMaxDb >= fin->sources[(size_t) s].samplePeakMaxDb;
+        std::printf("      fs %.0f: final SP %.3f / TP %.3f dB (source 0), raw 4x-FIR max %.4f lin\n", fs, fin->sources[0].samplePeakMaxDb,
+                    fin->sources[0].truePeakMaxDb, eng.getTruePeakMeter(0).maxLinear());
+    }
+    checkf(invariant, "TP >= SP in every published snapshot (1e6 random blocks, 4 rates, 2 sources)", (double) blocksTotal);
+    check(finite, "TP is finite or exactly -INF, never NaN or +inf");
+}
+
+static void test_true_peak_hold_reset_and_sources()
+{
+    section("true_peak_hold_reset_and_sources");
+    {
+        prism::AnalysisEngine eng(makeCfg(2, 2, 48000.0), 14);
+        eng.setSpectrumEnabled(false);
+        auto tp = [&](int src) { return eng.buildSnapshot()->sources[(size_t) src].truePeakMaxDb; };
+
+        check(std::isinf(tp(0)) && tp(0) < 0 && std::isinf(tp(1)) && tp(1) < 0, "before any signal: -INF on both sources (dashes)");
+        feed(eng, 0, 4800, 480, [](int, std::uint64_t) { return 0.0f; });
+        check(std::isinf(tp(0)) && tp(0) < 0, "digital silence keeps -INF");
+
+        feed(eng, 4800, 480, 480, [](int c, std::uint64_t i) { return (c < 2 && i == 5000) ? 0.5f : 0.0f; });
+        const float t1 = tp(0);
+        check(std::isfinite(t1) && t1 >= dbOfLin(0.5) - 0.01f, "an impulse is registered");
+        check(std::isinf(tp(1)) && tp(1) < 0, "the silent sidechain stays -INF (sources independent)");
+
+        feed(eng, 5280, 96000, 4096, [](int, std::uint64_t) { return 0.0f; });
+        check(tp(0) == t1, "true peak never decays (2 s of silence later: unchanged)");
+        feed(eng, 101280, 480, 480, [](int c, std::uint64_t i) { return (c < 2 && i == 101400) ? 0.1f : 0.0f; });
+        check(tp(0) == t1, "a later, smaller peak does not lower the maximum");
+        feed(eng, 101760, 480, 480, [](int c, std::uint64_t i) { return (c < 2 && i == 101900) ? 0.9f : 0.0f; });
+        check(tp(0) > t1 && tp(0) >= dbOfLin(0.9) - 0.01f, "a larger peak raises it");
+    }
+    {   // mono source: single channel, no stereo partner
+        // Steady state (fade-in): an abrupt start is a step and legitimately overshoots; with the history primed by
+        // the first sample, the 45 deg start looks like a long +0.707 plateau followed by the tone, whose first
+        // negative crest rides on that step's Gibbs overshoot (about +0.5 dB) -- not a meter error.
+        const auto s = measureTp(48000.0, fsQuarterSine(1.0, 45.0, 1), 3000, 1);
+        check(s.truePeakMaxDb >= -0.4f && s.truePeakMaxDb <= 0.2f && s.truePeakMaxDb >= s.samplePeakMaxDb, "mono source: fs/4 45 deg reads ~0 dBTP");
+    }
+    {   // crest only on the right channel is found
+        const auto s = measureTp(48000.0, fsQuarterSine(1.0, 45.0, 2));
+        check(s.truePeakMaxDb >= -0.4f && s.truePeakMaxDb <= 0.2f, "right-channel-only crest is measured");
+    }
+}
+
+static void test_true_peak_cpu_budget()
+{
+    section("true_peak_cpu_budget");
+    prism::TruePeakMeter meters[2];
+    meters[0].prepare(2); meters[1].prepare(2);
+    std::vector<float> l(4096), r(4096);
+    for (int i = 0; i < 4096; ++i) { l[(size_t) i] = 0.5f * hnoise(0, (std::uint64_t) i); r[(size_t) i] = 0.5f * hnoise(1, (std::uint64_t) i); }
+
+    const int blocks = (int) (10.0 * 192000.0 / 4096.0);
+    const auto t0 = Clock::now();
+    for (int b = 0; b < blocks; ++b)
+        for (auto& m : meters) m.process(l.data(), r.data(), 4096);
+    const double wall = msSince(t0) / 1000.0;
+    const double pct = 100.0 * wall / (blocks * 4096.0 / 192000.0);
+    std::printf("      true peak @192 kHz, 2 stereo sources: %.3f %% of one core (4 channels x 48 MAC per sample)\n", pct);
+    if (pct > 1.0)
+        std::printf("      WARN: above the 1%% budget (debug build or loaded machine?)\n");
+    char name[96];
+    std::snprintf(name, sizeof(name), "true peak keeps up with real time at 192 kHz (%.3f %% core; 1 %% budget is WARN-only)", pct);
+    check(pct < 100.0 && meters[0].maxLinear() > 0.0f, name);
+}
+
+//==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf("PRISM tests  (Stage 2 / Phase 2.4)\n");
+    std::printf("PRISM tests  (Stage 2 / Phase 2.5)\n");
 
     test_ring_wraparound();
     test_ring_overrun_drops_whole_blocks();
@@ -2883,6 +3181,14 @@ int main()
     test_loudness_sources_and_publish();
     test_loudness_multi_hour_memory();
     test_loudness_golden_fixtures();
+
+    // Phase 2.5
+    test_true_peak_filter_response();
+    test_true_peak_fs4_sine();
+    test_true_peak_phase_and_level_sweep();
+    test_true_peak_invariant_random();
+    test_true_peak_hold_reset_and_sources();
+    test_true_peak_cpu_budget();
 
     std::printf("\n%d checks, %d failure(s), %zu test cases\n", checks, failures, testNames.size());
     return failures == 0 ? 0 : 1;

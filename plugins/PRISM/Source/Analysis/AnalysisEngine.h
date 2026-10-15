@@ -13,6 +13,7 @@
 #include "SpectrumEngine.h"
 #include "StereoMetrics.h"
 #include "StreamHistory.h"
+#include "TruePeakMeter.h"
 #include "../Capture/BeatEventQueue.h"
 #include "../Capture/SpscFrameRing.h"
 
@@ -49,6 +50,7 @@ namespace prism
         void setSpectrumEnabled(bool e) noexcept { spectrumEnabled.store(e, std::memory_order_relaxed); }
         SpectrumEngine& getSpectrum() noexcept { return spectrum; }
         LoudnessMeter& getLoudness(int source) noexcept { return sources[(size_t) source].loudness; }
+        const TruePeakMeter& getTruePeakMeter(int source) const noexcept { return sources[(size_t) source].truePeak; }
         // Call before the worker starts. Baselines the epochs: resets requested earlier are not re-applied.
         void attachControls(const ExternalControls& c) noexcept;
 
@@ -109,6 +111,7 @@ namespace prism
             std::uint64_t gapEvents = 0;
             StereoMetrics stereo;
             LoudnessMeter loudness;
+            TruePeakMeter truePeak;
             std::uint64_t lastOverrunLoud = 0;
             bool pendingGap = false;
             std::uint64_t pendingGapPos = 0;

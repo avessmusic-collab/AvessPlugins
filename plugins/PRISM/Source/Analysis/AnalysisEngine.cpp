@@ -18,6 +18,7 @@ namespace prism
             s.history.prepare(registry[i].numChannels);
             s.stereo.prepare(config.sampleRate);
             s.loudness.prepare(config.sampleRate, registry[i].numChannels);
+            s.truePeak.prepare(registry[i].numChannels);
         }
         spectrum.prepare(config.sampleRate);
     }
@@ -189,7 +190,9 @@ namespace prism
                     auto& st = sources[(size_t) registry.getActiveIndex(k)];
                     st.samplePeak.exchange(0.0f, std::memory_order_relaxed);
                     st.samplePeakMaxLin = 0.0f;
-                    st.loudness.resetIntegrated();   // reset_all also clears I + LRA (TP/SP maxima: SP here, TP in 2.5)
+                    st.loudness.resetIntegrated();   // reset_all also clears I + LRA
+                    st.truePeak.reset();             // ... and both peak maxima (SP above, TP here); FIR history too,
+                                                     //     so pre-reset samples cannot ring into the new measurement
                 }
             }
         }
@@ -242,12 +245,19 @@ namespace prism
                         st.pendingGap = false;
                     }
                     if (split > 0)
+                    {
                         st.loudness.process(loudL.data(), loudR.data(), split);
+                        st.truePeak.process(loudL.data(), loudR.data(), split);
+                    }
                     if (doGap)
                     {
                         st.loudness.notifyGap();
+                        st.truePeak.notifyGap();
                         if (split < got)
+                        {
                             st.loudness.process(loudL.data() + split, loudR.data() + split, got - split);
+                            st.truePeak.process(loudL.data() + split, loudR.data() + split, got - split);
+                        }
                     }
                 }
 
@@ -320,6 +330,11 @@ namespace prism
 
             out.samplePeakMaxDb = st.samplePeakMaxLin > 0.0f ? (float) (20.0 * std::log10((double) st.samplePeakMaxLin))
                                                              : -INFINITY;
+            // True peak: streaming 4x FIR maximum, folded with the lossless sample peak so that the
+            // DSP invariant TP >= SP always holds (the interpolator's phase 0 is not an exact identity).
+            const float tpLin = std::max(st.truePeak.maxLinear(), st.samplePeakMaxLin);
+            out.truePeakMaxDb = tpLin > 0.0f ? (float) (20.0 * std::log10((double) tpLin)) : -INFINITY;
+
             snap->signalPresent = snap->signalPresent || st.framesSinceLoud < holdFrames;
 
             spectrum.publish(idx, out);
