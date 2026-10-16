@@ -146,7 +146,7 @@ body.rm #demo i, body.rm #demo span { animation: none; }
 }
 .pop.open { opacity: 1; visibility: visible; transform: none; transition: opacity .18s ease, transform .18s ease, visibility 0s; }
 #pop_src { left: 485px; top: 541px; width: 360px; height: 134px; transform-origin: 100% 100%; }
-#pop_set { left: 445px; top: 317px; width: 400px; height: 358px; transform-origin: 100% 100%; }
+#pop_set { left: 445px; top: 286px; width: 400px; height: 389px; transform-origin: 100% 100%; }
 .pop h4 { margin: 0 0 12px; font-weight: normal; font-size: 11px; letter-spacing: 0.08em; color: var(--label); text-transform: uppercase; }
 .prow { display: flex; align-items: center; height: 28px; }
 .prow > label { width: 104px; flex: none; color: var(--label); }
@@ -229,10 +229,9 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="pane sb" style="left:853px;top:323px;width:232px;height:136px"></div>
   <canvas id="meter_cv" class="sb" data-w="230" data-h="134" style="left:854px;top:324px;z-index:3"></canvas>
   <div class="pane sb" style="left:853px;top:458px;width:232px;height:94px"></div>
-  <canvas id="kb0" class="sb kn" data-w="40" data-h="40" style="left:862px;top:467px"></canvas><div class="sb kl" style="left:853px;top:512px">SMTH</div><div class="sb kv" id="kv0" style="left:853px;top:525px"></div>
-  <canvas id="kb1" class="sb kn" data-w="40" data-h="40" style="left:920px;top:467px"></canvas><div class="sb kl" style="left:911px;top:512px">TILT</div><div class="sb kv" id="kv1" style="left:911px;top:525px"></div>
-  <canvas id="kb2" class="sb kn" data-w="40" data-h="40" style="left:978px;top:467px"></canvas><div class="sb kl" style="left:969px;top:512px">GLOW</div><div class="sb kv" id="kv2" style="left:969px;top:525px"></div>
-  <canvas id="kb3" class="sb kn" data-w="40" data-h="40" style="left:1036px;top:467px"></canvas><div class="sb kl" style="left:1027px;top:512px">SPD</div><div class="sb kv" id="kv3" style="left:1027px;top:525px"></div>
+  <canvas id="kb0" class="sb kn" data-w="40" data-h="40" style="left:871px;top:467px"></canvas><div class="sb kl" style="left:862px;top:512px">SMTH</div><div class="sb kv" id="kv0" style="left:862px;top:525px"></div>
+  <canvas id="kb2" class="sb kn" data-w="40" data-h="40" style="left:949px;top:467px"></canvas><div class="sb kl" style="left:940px;top:512px">GLOW</div><div class="sb kv" id="kv2" style="left:940px;top:525px"></div>
+  <canvas id="kb3" class="sb kn" data-w="40" data-h="40" style="left:1026px;top:467px"></canvas><div class="sb kl" style="left:1017px;top:512px">SPD</div><div class="sb kv" id="kv3" style="left:1017px;top:525px"></div>
   <div class="pane sb" style="left:853px;top:551px;width:232px;height:132px"></div>
   <div class="sb sbn" id="btn_freeze" style="left:863px;top:565px">Freeze</div><div class="sb sbn" id="btn_reset" style="left:971px;top:565px">Reset</div>
   <div class="sb sbn" id="btn_reset_i" style="left:863px;top:601px">Reset I</div><div class="sb sbn theme" id="btn_theme" style="left:971px;top:601px" title="Color theme (click to cycle)">Coral/Mint</div>
@@ -304,7 +303,7 @@ var pow10db = function (db) { return Math.exp(0.230258509 * db); };
 var DPR = Math.min(2, window.devicePixelRatio || 1);
 
 /* ---------- State ---------- */
-var P = { fft_size: 4096, window: 'hann', smoothing: 35, spectrum_tilt: 0, display_range: -90, spectrogram_speed: 1,
+var P = { fft_size: 4096, window: 'hann', smoothing: 35, spectrum_tilt: 4.5, display_range: -90, spectrogram_speed: 1,
           peak_decay: 12, sg_src: 0, wf_src: 0, gn_src: 0, sc_src: 0, color_theme: 'Coral/Mint', freeze: false, analysis_mode: 'combined', preset: 'Studio', reduced_motion: false, glow_intensity: 55 };
 var THEMES = [
   { name: 'Coral/Mint',   c1: ['coral', '#ff7a66'],    c2: ['mint', '#5df2b8'],   neutral: '#e9e2dc', light: '#ffd2c9', band: ['#ff4b4b', '#ffb84d', '#5df2b8'] },
@@ -327,7 +326,7 @@ var SRC = [
 function effVisible(i) { var any = SRC[0].solo || SRC[1].solo; return any ? SRC[i].solo : SRC[i].visible; }
 
 var PRESETS = {
-  'Studio':      { smoothing: 35, spectrum_tilt: 0  , spectrogram_speed: 1,   peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: 'hann' },
+  'Studio':      { smoothing: 35, spectrum_tilt: 4.5, spectrogram_speed: 1,   peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: 'hann' },
   'Minimal':     { smoothing: 25, spectrum_tilt: 0,   spectrogram_speed: 1,   peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: 'hann' },
   'Neon':        { smoothing: 45, spectrum_tilt: 3,   spectrogram_speed: 1.5, peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: 'hann' },
   'Ambient':     { smoothing: 80, spectrum_tilt: 3,   spectrogram_speed: 0.5, peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: 'hann' },
@@ -344,7 +343,7 @@ function setParam(id, val, silent) {
 
 /* ---------- Canvases ---------- */
 var cv = {};
-['meter_cv', 'kb0', 'kb1', 'kb2', 'kb3', 'spec_ghost', 'spec_cv', 'wf_cv', 'sg_cv', 'sg_lbl', 'gn_cv', 'gn_grid', 'sc_cv', 'sc_grid'].forEach(function (id) {
+['meter_cv', 'kb0', 'kb2', 'kb3', 'spec_ghost', 'spec_cv', 'wf_cv', 'sg_cv', 'sg_lbl', 'gn_cv', 'gn_grid', 'sc_cv', 'sc_grid'].forEach(function (id) {
   var el = $(id), w = +el.dataset.w, h = +el.dataset.h;
   el.width = Math.round(w * DPR); el.height = Math.round(h * DPR); el.style.width = w + 'px'; el.style.height = h + 'px';
   var g = el.getContext('2d'); g.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -849,6 +848,7 @@ function slHtml(id) { return '<div class="sl" id="' + id + '"><div class="tr"><d
     '<div class="prow"><label>Analysis</label><div class="ctl">' + segHtml('sg_mode', [['leftRight', 'L/R'], ['midSide', 'M/S'], ['combined', 'Comb']]) + '</div></div>' +
     '<div class="prow"><label>Range</label><div class="ctl">' + segHtml('sg_rng', [[-48, '-48'], [-60, '-60'], [-72, '-72'], [-90, '-90']]) + '</div></div>' +
     '<div class="prow"><label>Peak decay</label><div class="ctl">' + slHtml('sl_decay') + '</div></div>' +
+    '<div class="prow"><label>Tilt</label><div class="ctl">' + slHtml('sl_tilt') + '</div></div>' +
     '<div class="prow"><label>Reduced motion</label><div class="ctl"><button class="tg" id="tg_rm">Off</button></div></div>';
   $('pop_set').innerHTML = rows;
   $('pop_set').style.padding = '16px 20px 16px';
@@ -861,6 +861,7 @@ function slHtml(id) { return '<div class="sl" id="' + id + '"><div class="tr"><d
   var num = function (v) { return +v; }, str = function (v) { return v; };
   bindSeg('sg_theme', 'color_theme', str); bindSeg('sg_preset', 'preset', str); bindSeg('sg_fft', 'fft_size', num); bindSeg('sg_win', 'window', str); bindSeg('sg_mode', 'analysis_mode', str); bindSeg('sg_rng', 'display_range', num);
   Slider($('sl_decay'), { id: 'peak_decay', min: 3, max: 60, def: 12, step: 1, fmt: function (v) { return Math.round(v) + 'db/s'; } });
+  Slider($('sl_tilt'), { id: 'spectrum_tilt', min: 0, max: 4.5, def: 4.5, step: 0.1, fmt: function (v) { return v.toFixed(1) + ' db/oct'; } });   // no dedicated knob: default 4.5 dB/oct (Pro-Q 3 analyzer slope, 1 kHz pivot)
   $('tg_rm').addEventListener('click', function () { setParam('reduced_motion', !P.reduced_motion); });
   on('reduced_motion', function (v) { $('tg_rm').classList.toggle('on', v); $('tg_rm').textContent = v ? 'On' : 'Off'; document.body.classList.toggle('rm', v); });
   $('btn_freeze').addEventListener('click', function () { setParam('freeze', !P.freeze); });
@@ -1027,13 +1028,12 @@ function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE colu
 }
 var WF_GRID_STYLE = [ [0.32, 1.0], [0.18, 0.7], [0.11, 0.55], [0.07, 0.5], [0.045, 0.5] ];   // [alpha, css px width] per level: bar, beat, 1/2, 1/4, 1/8 of a beat; a quiet reference layer under the audio (no halo, nothing jumps out of the lane)
 var wfFlagRing = new Uint8Array(WF_CAP);
+var wfFracRing = [new Float32Array(WF_CAP).fill(-1), new Float32Array(WF_CAP).fill(-1)];   // per column per source: onset fraction inside the column (-1 = none)
 /* Alignment constants (visual lane only).
    WF_COL_CENTER = 0: columns are drawn START-aligned, spanning [i, i+1), so an onset that sits exactly on a beat (the case that matters)
    starts exactly at the line (a mid-column onset draws up to 1 column early, which the eye forgives; the unbiased-centre convention tried before
-   pushed beat-aligned kicks half a column BEHIND their line). On top of that, ONSET SNAP (see wfSnaps) pins a strong transient's leading edge to a
-   nearby grid line: user-requested display alignment only; readouts and column data are untouched.
-   WF_BAND_DELAY_MS: constant group delay of the engine's LR4 band filters (bass: 2 x Butterworth @200 Hz, gd(0) = 2*sqrt(2)/(2*pi*200) = 2.25 ms;
-   mids ~0.4 ms, highs ~0.1 ms). Each band layer is drawn that much earlier (latency compensation of a known constant, applied as a sub-column pixel shift). */
+   pushed beat-aligned kicks half a column BEHIND their line). Onset POSITIONS come from the engine (sub-column onsetFrac, see wfOnsetShifts).
+   */
 var WF_COL_CENTER = 0, WF_BAND_DELAY_MS = [2.25, 0.4, 0.1], wfBandDx = [0, 0, 0];
 var wfOnsetRing = [new Float32Array(WF_CAP), new Float32Array(WF_CAP)], wfOnsetSt = [{ prev: 0, ref: 0.1, held: 0 }, { prev: 0, ref: 0.1, held: 0 }];
 /* Onset emphasis (VISUAL lane only: it scales the drawn height, no readout or measurement uses it).
@@ -1050,9 +1050,10 @@ function wfOnsetPeek(s, b, m, h) {   // onset of an in-progress column, WITHOUT 
   var st = wfOnsetSt[s], E = Math.max(b, m, h), o = Math.min(1, Math.max(0, (E - st.prev) / Math.max(st.ref, 0.05)));
   return Math.max(o, st.held * 0.88);
 }
-function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1) {   // append one column (both sources, kept in lockstep)
+function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1, fr0, fr1) {   // append one column (both sources, kept in lockstep)
   var o = (wfN % WF_CAP) * 4, r0 = wfRing[0], r1 = wfRing[1];
   r0[o] = b0; r0[o + 1] = m0; r0[o + 2] = h0; r0[o + 3] = f0; r1[o] = b1; r1[o + 1] = m1; r1[o + 2] = h1; r1[o + 3] = f1;
+  wfFracRing[0][wfN % WF_CAP] = fr0 === undefined ? -1 : fr0; wfFracRing[1][wfN % WF_CAP] = fr1 === undefined ? -1 : fr1;
   wfFlagRing[wfN % WF_CAP] = f0 > f1 ? f0 : f1;   // flags are playhead-derived, so shared by both sources
   wfOnsetRing[0][wfN % WF_CAP] = wfOnset(0, b0, m0, h0); wfOnsetRing[1][wfN % WF_CAP] = wfOnset(1, b1, m1, h1); wfN++;
 }
@@ -1083,23 +1084,14 @@ function wfDrawGridLines(g, lines) {   // drawn FIRST (behind the waveform layer
     g.fillStyle = 'rgba(255,255,255,' + st[0] + ')'; g.fillRect(xr, 0, tw, wfH);
   }
 }
-/* Onset snap (display alignment, user-requested): a column that starts a strong transient (onset factor >= 0.5 and rising) whose line position L satisfies
-   -0.6 <= L - start < 1.0 (an onset sitting on the beat lands in the column that CONTAINS the line, so the start is 0..1 column early) gets its leading
-   edge drawn exactly at the line. When the line is LATER than the column start (d > 0, <= 1 column = 11.9 ms) the whole lead column is translated by d (its start
-   AND end boundary move), so it keeps its full width and its full height is never squeezed out; the following column absorbs the shift (total duration
-   unchanged). When the line is earlier (d < 0, <= 0.6 column) only the start boundary moves (the lead column widens). Off-beat onsets farther away stay at
-   their true position. sh[col] = shift of the boundary at the start of column col (columns); lead[col] marks a snapped transient. */
-function wfSnaps(lines, src, newest, lo) {
-  var sh = {}, lead = {}, on = wfOnsetRing[src], k, i;
-  for (k = 0; k < lines.length; k++) {
-    var Lc = lines[k][2], i0 = Math.floor(Lc - 1) + 1, i1 = Math.floor(Lc + 0.6), best = null;
-    for (i = i0; i <= i1; i++) {
-      if (i > newest || i < lo || i < 1) continue;
-      var o = on[i % WF_CAP], op = on[(i - 1) % WF_CAP];
-      if (o >= 0.5 && op <= o - 0.05) { var d = Lc - i; if (best === null || Math.abs(d) < Math.abs(best.d)) best = { i: i, d: d }; }
-    }
-    if (best) { sh[best.i] = best.d; lead[best.i] = true; if (best.d > 0 && sh[best.i + 1] === undefined) sh[best.i + 1] = best.d; }
-  }
+/* Sample-accurate onsets: the engine reports, per column, onsetFrac = where inside the column the transient begins (-1 = none), measured on the
+   UNFILTERED mono input (sub-ms, no band-filter delay). The wedge's leading edge is drawn at exactly column + onsetFrac: the boundary between the
+   previous column and this one is moved to that true position (the earlier near-line snap hack is gone: real positions beat fake snapping). The
+   grid stays mathematically true, so an on-beat kick starts within ~1 ms of its line because BOTH are true. sh[col] = boundary shift in columns;
+   lead[col] marks a column with a measured onset (its layers use no filter-delay shift: the onset time is already delay-free). */
+function wfOnsetShifts(src, newest, lo, W, T, ppc) {
+  var sh = {}, lead = {}, fr = wfFracRing[src], i0 = Math.max(lo, 1, Math.floor(wfXToCol(0, W, T, ppc)) - 1), i1 = Math.min(newest, Math.ceil(wfXToCol(W, W, T, ppc)) + 1), i;
+  for (i = i0; i <= i1; i++) { var f = fr[i % WF_CAP]; if (f >= 0) { sh[i] = f; lead[i] = true; } }
   return { sh: sh, lead: lead };
 }
 function wfRender() {
@@ -1109,7 +1101,7 @@ function wfRender() {
   var liveV = null;   // the demo clock has no in-progress column
   var ring = wfRing[P.wf_src], ppc = W / (wfSpanSec() * WF_CPS), T = wfT, mid = wfH / 2, A = mid * 0.86, x, idx, lo = wfN - WF_CAP;
   for (var bk = 0; bk < 3; bk++) wfBandDx[bk] = -Math.round(WF_BAND_DELAY_MS[bk] / 1000 * WF_CPS * ppc);   // filter-latency compensation (px)
-  var lines = wfGridLinesNow(W, T, ppc), snap = wfSnaps(lines, P.wf_src, newest, lo);
+  var lines = wfGridLinesNow(W, T, ppc), snap = wfOnsetShifts(P.wf_src, newest, lo, W, T, ppc);
   wfDrawGridLines(g, lines);   // grid FIRST: it sits behind the waveform layers
   if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
     var rs = 0, ri = -1, real = false;
@@ -1148,7 +1140,8 @@ function wfDemoFill() {   // demo clock: columns "arrive" exactly like the engin
   while (wfDemoN < target) {
     var t = wfDemoN / WF_CPS, bi = Math.floor(t / BEAT), pb = Math.floor((wfDemoN - 1) / WF_CPS / BEAT), f = (bi !== pb) ? ((bi % 4 === 0) ? 2 : 1) : 0;
     wfBands(t + 1 / WF_CPS, 0, wfDemoB0); wfBands(t + 1 / WF_CPS, 1, wfDemoB1);   // a column holds the PEAK of its interval: sample at the interval END so an onset lands in the column that contains it (like the engine)
-    wfPushCol(wfDemoB0[0], wfDemoB0[1], wfDemoB0[2], f, wfDemoB1[0], wfDemoB1[1], wfDemoB1[2], f); if (f === 2) wfAnchorAdd(Math.round(bi * BEAT * 48000), 48000, 60 / BEAT, 4, 4); wfDemoN++;
+    var ofr = (bi !== pb) ? bi * BEAT * WF_CPS - wfDemoN : -1;   // the demo kick starts exactly on the beat: its position inside the column
+    wfPushCol(wfDemoB0[0], wfDemoB0[1], wfDemoB0[2], f, wfDemoB1[0], wfDemoB1[1], wfDemoB1[2], f, ofr, ofr); if (f === 2) wfAnchorAdd(Math.round(bi * BEAT * 48000), 48000, 60 / BEAT, 4, 4); wfDemoN++;
   }
 }
 function wfStep(dt) {
@@ -1304,7 +1297,6 @@ on('glow_intensity', function () { needRedraw = true; });
 /* ================= v8: SIDEBAR KNOBS + NEEDLE METER ================= */
 var KNOBS = [
   { id: 'smoothing', cv: 'kb0', val: 'kv0', min: 0, max: 100, def: 35, step: 1, fmt: function (v) { return Math.round(v) + '%'; } },
-  { id: 'spectrum_tilt', cv: 'kb1', val: 'kv1', min: 0, max: 4.5, def: 0, step: 0.1, fmt: function (v) { return v.toFixed(1); } },
   { id: 'glow_intensity', cv: 'kb2', val: 'kv2', min: 0, max: 100, def: 55, step: 1, fmt: function (v) { return Math.round(v) + '%'; } },
   { id: 'spectrogram_speed', cv: 'kb3', val: 'kv3', min: 0.25, max: 4, def: 1, log: true, step: 0.01, fmt: function (v) { return v.toFixed(2) + 'x'; } }
 ];

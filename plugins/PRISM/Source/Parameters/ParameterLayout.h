@@ -36,11 +36,12 @@ namespace prism
             NormalisableRange<float>(0.0f, 100.0f, 0.01f), 35.0f,
             AudioParameterFloatAttributes().withLabel("%")));
 
-        // spectrum_tilt - Float 0..4.5 dB/oct, default 0 (flat; user reverted the Pro-Q
-        // 4.5 default on 2026-10-16 - slope stays available on the TILT knob), linear
+        // spectrum_tilt - Float 0..4.5 dB/oct, default 4.5 (FabFilter Pro-Q 3 analyzer slope, 1 kHz pivot).
+        // Decision trail: 2026-10-15 default 4.5; 2026-10-16 reverted to 0 with a TILT knob; 2026-10-16 final: no knob, default 4.5
+        // again (Settings popover slider). Linear.
         layout.add(std::make_unique<AudioParameterFloat>(
             ParameterID { ids::spectrumTilt, 1 }, "Spectrum Tilt",
-            NormalisableRange<float>(0.0f, 4.5f, 0.1f), 0.0f,
+            NormalisableRange<float>(0.0f, 4.5f, 0.1f), 4.5f,
             AudioParameterFloatAttributes().withLabel("dB/oct")));
 
         // display_range - Choice (index 0..3), default "-90" (index 3)

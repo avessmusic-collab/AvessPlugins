@@ -580,9 +580,9 @@ bool PRISMAudioProcessorEditor::pushAnalysisFrameImpl()
     {
         spectrum.add (s.hasSpectrum ? juce::var (packFloats (s.spectrumDb.data(), prism::kSpectrumPoints)) : juce::var());
 
-        // waveform columns are flattened [bass, mids, highs, flag] x n
+        // waveform columns are flattened [bass, mids, highs, flag, onsetFrac] x n (frame field waveformStride = 5; older pages assume 4)
         std::vector<float> flat;
-        flat.reserve ((size_t) s.waveformColumnCount * 4);
+        flat.reserve ((size_t) s.waveformColumnCount * 5);
         for (int c = 0; c < s.waveformColumnCount; ++c)
             flat.insert (flat.end(), s.waveformColumns[(size_t) c].begin(), s.waveformColumns[(size_t) c].end());
         waveform.add (juce::var (packFloats (flat.data(), (int) flat.size())));
@@ -624,6 +624,7 @@ bool PRISMAudioProcessorEditor::pushAnalysisFrameImpl()
     frame->setProperty ("sampleRate", snap->sampleRate);
     frame->setProperty ("live",       snap->signalPresent);
     frame->setProperty ("bpm",        numberOrNull (snap->bpm));
+    frame->setProperty ("waveformStride", 5);   // floats per waveform column: bass, mids, highs, flag, onsetFrac (older pages assume 4 and ignore the rest)
     if (snap->barAnchorStreamFrame >= 0)   // additive + optional: the grid anchor (stream frame of the latest downbeat; exact in a double up to 2^53)
         frame->setProperty ("barAnchor", (double) snap->barAnchorStreamFrame);
     {

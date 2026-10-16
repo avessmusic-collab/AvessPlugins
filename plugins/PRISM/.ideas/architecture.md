@@ -237,7 +237,7 @@ All 17 ids verbatim from `parameter-spec.md`, in spec order. "Engine" = analysis
 | `fft_size` | Choice | 1024/2048/4096/8192/16384, def 4096 | C5 Spectrum | Selects FFT order 10..14 and hop N/4; takes effect at the next hop. Also drives the log-map index tables and `hasSpectrum` warm-up. |
 | `window` | Choice | hann/blackmanHarris, def hann | C5 Spectrum | Selects window table + its `S=sum(w)` normaliser. |
 | `smoothing` | Float | 0-100 %, def 35 | UI | None (display-side attack 5+0.6v ms / release 30+8v ms). Snapshot is unsmoothed. |
-| `spectrum_tilt` | Float | 0-4.5 dB/oct, def 0 | UI | None. Engine data stays untilted; spectrogram/inspector are true dBFS. |
+| `spectrum_tilt` | Float | 0-4.5 dB/oct, def 4.5 (Pro-Q 3 slope; no knob, Settings slider) | UI | None. Engine data stays untilted; spectrogram/inspector are true dBFS. |
 | `display_range` | Choice | -48/-60/-72/-90, def -90 | UI | None. Engine floor is a fixed -120 dBFS so range changes never need re-analysis. |
 | `spectrogram_speed` | Float | 0.25-4.0x log, def 1.0 | UI | None. Needs custom `NormalisableRange` (`convertFrom0to1 = min*pow(max/min, n)`, inverse via `log`) with 0.01 interval - Stage 1 task. |
 | `peak_decay` | Float | 3-60 dB/s, def 12 | UI | None (UI peak-hold after 1.2 s). |

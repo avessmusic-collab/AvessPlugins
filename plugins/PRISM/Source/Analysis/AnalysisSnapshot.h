@@ -31,7 +31,7 @@ namespace prism
         std::array<float, 3> liveColumn {};                   // its band peaks so far: bass, mids, highs (0..1)
         std::int64_t waveformFirstColumn = -1;                // absolute column index of waveformColumns[0] (-1 = none); lets the page place columns by index
         int   waveformColumnCount = 0;                        // each column: bass, mids, highs (0..1), flag (0 none, 1 beat, 2 bar)
-        std::array<std::array<float, 4>, kMaxWaveformColumns> waveformColumns {};
+        std::array<std::array<float, 5>, kMaxWaveformColumns> waveformColumns {};   // [bass, mids, highs, flag, onsetFrac (-1 = none)]
 
         int   gonioPairCount = 0;
         std::array<float, 2 * kGonioPairs> gonio {};          // interleaved L,R in -1..1

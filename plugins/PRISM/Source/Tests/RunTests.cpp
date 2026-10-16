@@ -3655,6 +3655,113 @@ static void test_waveform_live_column_and_ui_sources()
     }
 }
 
+static void test_waveform_onset_fraction()
+{
+    section("waveform_onset_fraction");
+    // Sample-accurate onset timing: a click starting at a KNOWN sample must be reported as onsetFrac inside its column, within 1 ms of the true sample,
+    // at 44.1 / 48 / 96 kHz and at many positions inside the column; no other column may report an onset (silence before, decay after).
+    for (double fs : { 44100.0, 48000.0, 96000.0 })
+    {
+        prism::AnalysisEngine eng(makeCfg(2, 0, fs), 14);
+        const std::uint64_t total = (std::uint64_t) (fs * 6.0);
+        std::vector<std::uint64_t> clicks;
+        for (int k = 0; k < 10; ++k) clicks.push_back((std::uint64_t) std::llround(fs * (0.4 + 0.5 * k) + fs * 0.0071 * k * 1.37));   // spread over every column phase
+        auto x = [&](std::uint64_t i) {
+            for (auto s0 : clicks)
+                if (i >= s0 && i < s0 + (std::uint64_t) (0.08 * fs))
+                {
+                    const double t = (double) (i - s0) / fs;
+                    std::uint32_t h = (std::uint32_t) i * 2654435761u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;   // noise burst (deterministic)
+                    return (float) (0.7 * std::exp(-t / 0.02) * ((double) (h & 0xffff) / 32767.5 - 1.0));
+                }
+            return 0.0f;
+        };
+        feed(eng, 0, total, 480, [&](int, std::uint64_t i) { return x(i); });
+        const auto cols = allColumns(eng.getWaveform(0));
+        const auto colStart = [&](std::uint64_t k) { return (k * 3ull * (std::uint64_t) fs + 252ull) / 253ull; };   // first frame of column k = ceil(k*3fs/253)
+        int found = 0, spurious = 0; double worstMs = 0.0;
+        for (const auto& c : cols)
+        {
+            if (c.onsetFrac < 0.0f) continue;
+            bool expectedHere = false;
+            for (auto s0 : clicks)
+                if ((std::uint64_t) (s0 * 253ull / (3ull * (std::uint64_t) fs)) == c.index)
+                {
+                    expectedHere = true;
+                    const double len = (double) (colStart(c.index + 1) - colStart(c.index));
+                    const double trueFrac = (double) (s0 - colStart(c.index)) / len;
+                    const double errMs = std::abs((double) c.onsetFrac - trueFrac) * len / fs * 1000.0;
+                    worstMs = std::max(worstMs, errMs);
+                    ++found;
+                }
+            if (! expectedHere) ++spurious;
+        }
+        std::printf("   [info] fs %.0f: %d/10 onsets located, worst error %.3f ms, %d spurious\n", fs, found, worstMs, spurious);
+        char name[160];
+        std::snprintf(name, sizeof(name), "%.0f Hz: all 10 clicks located within 1 ms of the true sample, no spurious onsets", fs);
+        check(found == 10 && worstMs <= 1.0 && spurious == 0, name);
+    }
+}
+
+static void test_capture_skew_audio_vs_beat_events()
+{
+    section("capture_skew_audio_vs_beat_events");
+    // SKEW AUDIT: audio capture (captureBlock -> ring write position) and beat events (capturePlayhead -> lastBlockStart + ppq offset) must index the SAME stream
+    // position for the SAME block. Test: a click is rendered at exactly the sample where the host's ppq crosses each beat (odd block sizes, 100/120/140 bpm);
+    // the engine's logged beat-event frame and the click's onset position derived from the audio columns (column start + onsetFrac * length) must agree within 1 ms.
+    // A one-block skew (6-45 ms) between the two would fail this immediately, even though each side is self-consistent.
+    struct Case { double bpm; int block; double fs; };
+    for (const Case& c : { Case { 120.0, 333, 48000.0 }, Case { 100.0, 477, 44100.0 }, Case { 140.0, 1021, 96000.0 }, Case { 128.0, 4096, 48000.0 } })
+    {
+        prism::AnalysisEngine eng(makeCfg(2, 0, c.fs), 14);
+        FakePlayHead ph; ph.bpm = c.bpm; ph.hasBarStart = true; ph.barStart = 0.0;
+        const double qPerSample = c.bpm / 60.0 / c.fs;
+        const std::uint64_t total = (std::uint64_t) (c.fs * 8.0);
+        std::vector<std::uint64_t> beatSamples;   // exact sample of each beat (ppq integer crossing), from the same ppq model the host reports
+        for (int n = 1; (double) n / qPerSample < (double) total - 0.2 * c.fs; ++n) beatSamples.push_back((std::uint64_t) std::llround((double) n / qPerSample));
+        std::vector<float> buf((size_t) c.block);
+        const float* ptrs[2] = { buf.data(), buf.data() };
+        for (std::uint64_t pos = 0; pos < total;)
+        {
+            const int n = (int) std::min<std::uint64_t>((std::uint64_t) c.block, total - pos);
+            for (int i = 0; i < n; ++i)
+            {
+                float v = 0.0f; const std::uint64_t f = pos + (std::uint64_t) i;
+                for (auto b : beatSamples) if (f >= b && f < b + (std::uint64_t) (0.05 * c.fs))
+                {
+                    std::uint32_t h = (std::uint32_t) f * 2654435761u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+                    v = (float) (0.7 * std::exp(-(double) (f - b) / (0.015 * c.fs)) * ((double) (h & 0xffff) / 32767.5 - 1.0));
+                }
+                buf[(size_t) i] = v;
+            }
+            ph.ppq = (double) pos * qPerSample;
+            ph.barStart = std::floor(ph.ppq / 4.0 + 1e-12) * 4.0;
+            eng.captureBlock(ptrs, 2, n); eng.capturePlayhead(&ph, n); eng.pump();
+            pos += (std::uint64_t) n;
+        }
+        const auto cols = allColumns(eng.getWaveform(0));
+        const auto colStart = [&](std::uint64_t k) { return (k * 3ull * (std::uint64_t) c.fs + 252ull) / 253ull; };
+        int matched = 0; double worstMs = 0.0;
+        for (std::uint64_t i = 0; i < eng.getBeatEventsSeen(); ++i)
+        {
+            const auto ev = eng.getBeatLogEntry(i).frameIndex;
+            const std::uint64_t k = ev * 253ull / (3ull * (std::uint64_t) c.fs);
+            for (const auto& col : cols)
+                if (col.index == k && col.onsetFrac >= 0.0f)
+                {
+                    const double len = (double) (colStart(k + 1) - colStart(k));
+                    const double onsetSample = (double) colStart(k) + (double) col.onsetFrac * len;
+                    worstMs = std::max(worstMs, std::abs(onsetSample - (double) ev) / c.fs * 1000.0);
+                    ++matched;
+                }
+        }
+        std::printf("   [info] %.0f bpm, block %d, %.0f Hz: %d beat events matched an audio onset, worst |event - audio onset| = %.3f ms\n", c.bpm, c.block, c.fs, matched, worstMs);
+        char name[160];
+        std::snprintf(name, sizeof(name), "%.0f bpm / block %d / %.0f Hz: beat event frame == audio onset position within 1 ms (no capture skew)", c.bpm, c.block, c.fs);
+        check(matched >= 8 && worstMs <= 1.0, name);
+    }
+}
+
 static void test_waveform_ack_delivery()
 {
     section("waveform_ack_delivery");
@@ -3679,7 +3786,7 @@ static void test_waveform_ack_delivery()
     };
 
     // Editor-like consumer: snapshots every ~16.7 ms (800 frames), it fetches every 3rd one.
-    std::vector<std::array<float, 4>> received;
+    std::vector<std::array<float, 5>> received;
     std::int64_t lastFetchedNewest = -1;
     bool consistent = true;
     int snapshots = 0;
@@ -3825,7 +3932,7 @@ namespace
             if (x.hasSpectrum != y.hasSpectrum) return tag + "hasSpectrum";
             if (std::memcmp(x.spectrumDb.data(), y.spectrumDb.data(), sizeof(float) * x.spectrumDb.size()) != 0) return tag + "spectrum";
             if (x.waveformColumnCount != y.waveformColumnCount) return tag + "waveformColumnCount";
-            if (std::memcmp(x.waveformColumns.data(), y.waveformColumns.data(), sizeof(float) * 4 * (size_t) x.waveformColumnCount) != 0) return tag + "waveformColumns";
+            if (std::memcmp(x.waveformColumns.data(), y.waveformColumns.data(), sizeof(float) * 5 * (size_t) x.waveformColumnCount) != 0) return tag + "waveformColumns";
             if (x.gonioPairCount != y.gonioPairCount) return tag + "gonioPairCount";
             if (std::memcmp(x.gonio.data(), y.gonio.data(), sizeof(float) * 2 * (size_t) x.gonioPairCount) != 0) return tag + "gonio";
             if (x.scopeCount != y.scopeCount) return tag + "scopeCount";
@@ -4534,10 +4641,68 @@ static void test_stage3_multi_instance_and_project_reload()
     }
 }
 
+// Harness-only: PRISM_DUMP_FRAMES=<file> [PRISM_DUMP_BPM=120] writes engine-shaped snapshot data (as the editor would push it at 60 Hz) for page-side checks.
+static void dump_engine_frames(const char* path)
+{
+    const double bpm = std::getenv("PRISM_DUMP_BPM") != nullptr ? std::atof(std::getenv("PRISM_DUMP_BPM")) : 120.0, fs = 48000.0;
+    prism::AnalysisEngine eng(makeCfg(2, 0, fs), 14);
+    FakePlayHead ph; ph.bpm = bpm; ph.hasBarStart = true; ph.barStart = 0.0;
+    const double qPerSample = bpm / 60.0 / fs, beatSamples = fs * 60.0 / bpm;
+    const std::uint64_t total = (std::uint64_t) (fs * 24.0);
+    std::vector<std::uint64_t> kicks, offs;     // on-beat kicks (every beat) and off-beat kicks (a sixteenth after the 3rd beat of each bar, odd phase)
+    for (int n = 1; (double) n * beatSamples < (double) total - 0.4 * fs; ++n)
+    {
+        kicks.push_back((std::uint64_t) std::llround((double) n * beatSamples));
+        if (n % 4 == 3) offs.push_back((std::uint64_t) std::llround((double) n * beatSamples + beatSamples * 0.3 + 7.0));
+    }
+    std::vector<float> buf(800);
+    const float* ptrs[2] = { buf.data(), buf.data() };
+    std::FILE* f = std::fopen(path, "w");
+    if (f == nullptr) return;
+    std::fprintf(f, "{\"fs\":%.0f,\"bpm\":%.3f,\"kicks\":[", fs, bpm);
+    for (size_t i = 0; i < kicks.size(); ++i) std::fprintf(f, "%s%llu", i ? "," : "", (unsigned long long) kicks[i]);
+    std::fprintf(f, "],\"offs\":[");
+    for (size_t i = 0; i < offs.size(); ++i) std::fprintf(f, "%s%llu", i ? "," : "", (unsigned long long) offs[i]);
+    std::fprintf(f, "],\"frames\":[");
+    bool firstFrame = true;
+    for (std::uint64_t pos = 0; pos < total; pos += 800)
+    {
+        for (int i = 0; i < 800; ++i)
+        {
+            float v = 0.0f; const std::uint64_t fr = pos + (std::uint64_t) i;
+            for (const auto* list : { &kicks, &offs })
+                for (auto b : *list)
+                    if (fr >= b && fr < b + (std::uint64_t) (0.45 * fs))
+                    {
+                        const double t = (double) (fr - b) / fs;
+                        v += (float) (0.9 * std::exp(-t / 0.12) * std::sin(2.0 * 3.14159265358979 * (55.0 + 40.0 * std::exp(-t / 0.02)) * t));   // 55 Hz kick with a pitch drop
+                    }
+            buf[(size_t) i] = v;
+        }
+        ph.ppq = (double) pos * qPerSample;
+        ph.barStart = std::floor(ph.ppq / 4.0 + 1e-12) * 4.0;
+        eng.captureBlock(ptrs, 2, 800); eng.capturePlayhead(&ph, 800); eng.pump();
+        const auto snap = eng.buildSnapshot();
+        const auto& s0 = snap->sources[0];
+        std::fprintf(f, "%s{\"first\":%lld,\"anchor\":%lld,\"cols\":[", firstFrame ? "" : ",", (long long) s0.waveformFirstColumn, (long long) snap->barAnchorStreamFrame);
+        firstFrame = false;
+        for (int c = 0; c < s0.waveformColumnCount; ++c)
+        {
+            const auto& r = s0.waveformColumns[(size_t) c];
+            std::fprintf(f, "%s[%.5f,%.5f,%.5f,%.0f,%.5f]", c ? "," : "", r[0], r[1], r[2], r[3], r[4]);
+        }
+        std::fprintf(f, "],\"live\":[%lld,%.5f,%.5f,%.5f]}", (long long) s0.liveColumnIndex, s0.liveColumn[0], s0.liveColumn[1], s0.liveColumn[2]);
+    }
+    std::fprintf(f, "]}\n");
+    std::fclose(f);
+}
+
 //==============================================================================
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    if (const char* dump = std::getenv("PRISM_DUMP_FRAMES")) { dump_engine_frames(dump); return 0; }   // harness-only data dump, not a test run
 
     std::printf("PRISM tests  (Stage 2 / Phase 2.7)\n");
 
@@ -4619,6 +4784,8 @@ int main()
     test_waveform_beat_flags_tempo_and_loop();
     test_waveform_beat_events_host_grid();
     test_waveform_live_column_and_ui_sources();
+    test_waveform_onset_fraction();
+    test_capture_skew_audio_vs_beat_events();
     test_waveform_ack_delivery();
     test_waveform_editor_gating_and_wiring();
 

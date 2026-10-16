@@ -60,7 +60,7 @@ It is simultaneously a **trustworthy engineering tool** (calibrated axes, standa
 
 ## Parameters (locked by finalized mockup v7 — see .ideas/mockups/v7-ui.yaml)
 
-17 APVTS parameters: fft_size (choice, default 4096), window (choice, Hann default), smoothing (0–100%, single knob replacing attack/release), spectrum_tilt (0–4.5 dB/oct, default 0), display_range (default −90..0 dBFS), spectrogram_speed, peak_decay, freeze (bool), analysis_mode (L/R / M/S / combined), preset (Studio/Minimal/Neon/Ambient/Scientific/Performance), **color_theme** (7 choices: Coral/Mint default, Cyan/Violet, Amber/Cyan, Magenta/Blue, Green/Ice, Gold/Violet, Ice/Steel — each a full token set incl. band-color trio for spectrogram/waveform), reduced_motion, glow_intensity, src1_visible, src1_solo, src2_visible, src2_solo.
+17 APVTS parameters: fft_size (choice, default 4096), window (choice, Hann default), smoothing (0–100%, single knob replacing attack/release), spectrum_tilt (0–4.5 dB/oct, default 4.5 = Pro-Q 3 analyzer slope; Settings slider, no knob), display_range (default −90..0 dBFS), spectrogram_speed, peak_decay, freeze (bool), analysis_mode (L/R / M/S / combined), preset (Studio/Minimal/Neon/Ambient/Scientific/Performance), **color_theme** (7 choices: Coral/Mint default, Cyan/Violet, Amber/Cyan, Magenta/Blue, Green/Ice, Gold/Violet, Ice/Steel — each a full token set incl. band-color trio for spectrogram/waveform), reduced_motion, glow_intensity, src1_visible, src1_solo, src2_visible, src2_solo.
 
 2 ValueTree state entries: src1_name, src2_name (defaults "Ch1"/"Ch2"). Per-channel colors derive solely from color_theme (no individual color overrides).
 

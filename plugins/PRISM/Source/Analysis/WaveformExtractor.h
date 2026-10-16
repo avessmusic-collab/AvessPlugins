@@ -33,6 +33,7 @@ namespace prism
         {
             std::uint64_t index = 0;
             float bass = 0.0f, mid = 0.0f, high = 0.0f, flag = 0.0f;
+            float onsetFrac = -1.0f;   // -1 = no onset in this column; else 0..1 = where inside the column the transient begins (see finishColumn)
         };
 
         void prepare(double sampleRate, int numChannels) noexcept
@@ -40,6 +41,7 @@ namespace prism
             fsInt = std::max<std::uint64_t>(1, (std::uint64_t) std::llround(sampleRate));
             channels = std::clamp(numChannels, 1, 2);
             designFilters(sampleRate);
+            monoAbs.assign((size_t) ((fsInt * kRateDen + kRateNum - 1) / kRateNum) + 4, 0.0f);   // one column of |mono input| (columns are ceil(3*fs/253) frames at most, +slack)
             log.assign((size_t) kLogSize, Column {});
             logCount = 0;
             pendingCount = 0;
@@ -56,6 +58,7 @@ namespace prism
             dropCurrent = abs > startOfCol;
             resetFilters();
             peaks[0] = peaks[1] = peaks[2] = 0.0;
+            colFill = 0; prevMonoPeak = 0.0;
             // pending beat flags are kept on purpose: events are popped before the first chunk of a pump is
             // processed (which is where a resync happens); stale ones are purged as columns finish.
         }
@@ -94,6 +97,7 @@ namespace prism
                 const double rest = cascade(hp200, x);
                 const double mid  = cascade(lp2500, rest);
                 const double high = cascade(hp2500, rest);
+                if (colFill < (int) monoAbs.size()) monoAbs[(size_t) colFill++] = (float) std::abs(x);   // UNFILTERED mono: no group delay, the timing reference for onsets
                 peaks[0] = std::max(peaks[0], std::abs(low));
                 peaks[1] = std::max(peaks[1], std::abs(mid));
                 peaks[2] = std::max(peaks[2], std::abs(high));
@@ -218,11 +222,30 @@ namespace prism
                 c.bass = toUnit(peaks[0]);
                 c.mid  = toUnit(peaks[1]);
                 c.high = toUnit(peaks[2]);
+                // ONSET FRACTION (sample-accurate timing of 'the beginning of the waveform'). Reference = the unfiltered mono input.
+                //   onset column  <=>  peak|x| >= -50 dBFS  and  peak|x| >= 1.5 x the previous column's peak|x| (>= +3.5 dB rise);
+                //   position      =  first sample of the column whose |x| reaches max(25 % (-12 dB) of the column's peak|x|, 1.25 x the previous column's peak|x|),
+                //                    as a fraction of the column (the second term keeps a decaying tail of the previous sound from triggering the threshold early).
+                // 25 % of peak is reached within the first quarter period of the onset waveform (<= ~1 ms for a 50 Hz fundamental, ~0.1 ms for a click or
+                // noise burst), without the group delay of the band filters. Anything else is -1 (no onset).
+                {
+                    float pk = 0.0f;
+                    for (int i = 0; i < colFill; ++i) pk = std::max(pk, monoAbs[(size_t) i]);
+                    if (colFill > 0 && pk >= kOnsetFloorLin && (double) pk >= 1.5 * prevMonoPeak)
+                    {
+                        const float thr = std::max(0.25f * pk, (float) (1.25 * prevMonoPeak));
+                        int first = 0;
+                        while (first < colFill && monoAbs[(size_t) first] < thr) ++first;
+                        c.onsetFrac = (float) first / (float) colFill;
+                    }
+                }
                 for (int i = 0; i < pendingCount; ++i)
                     if (pending[(size_t) i].first == colsDone) c.flag = std::max(c.flag, pending[(size_t) i].second);
                 log[(size_t) (logCount % kLogSize)] = c;
                 ++logCount;
             }
+            if (colFill > 0) { float pk = 0.0f; for (int i = 0; i < colFill; ++i) pk = std::max(pk, monoAbs[(size_t) i]); prevMonoPeak = pk; }
+            colFill = 0;
             dropCurrent = false;
 
             // forget flags for columns that are now in the past
@@ -242,6 +265,10 @@ namespace prism
         std::uint64_t nextAbs = 0, colsDone = 0, logCount = 0;
         bool dropCurrent = false;
         double peaks[3] = { 0.0, 0.0, 0.0 };
+        static constexpr float kOnsetFloorLin = 0.0031622777f;   // -50 dBFS
+        std::vector<float> monoAbs;
+        int colFill = 0;
+        double prevMonoPeak = 0.0;
         std::vector<Column> log;   // heap: 4096 x 24 B per active source (keeps the engine object small)
         std::array<std::pair<std::uint64_t, float>, 32> pending {};
         int pendingCount = 0;

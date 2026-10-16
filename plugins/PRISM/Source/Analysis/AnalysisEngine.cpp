@@ -442,7 +442,7 @@ namespace prism
                     out.liveColumn = { live3[0], live3[1], live3[2] };
                 }
                 for (int i = 0; i < n; ++i)
-                    out.waveformColumns[(size_t) i] = { cols[(size_t) i].bass, cols[(size_t) i].mid, cols[(size_t) i].high, cols[(size_t) i].flag };
+                    out.waveformColumns[(size_t) i] = { cols[(size_t) i].bass, cols[(size_t) i].mid, cols[(size_t) i].high, cols[(size_t) i].flag, cols[(size_t) i].onsetFrac };
                 const std::int64_t highest = n > 0 ? (std::int64_t) cols[(size_t) (n - 1)].index : st.ackedCol;
                 st.lastHighest = highest;
                 ackNow.highest[(size_t) idx] = highest;
