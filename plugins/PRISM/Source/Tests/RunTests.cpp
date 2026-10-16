@@ -4406,8 +4406,10 @@ static void test_stage3_multi_instance_and_project_reload()
           check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: invalid -> 8 bars");
           t.setProperty(uiWaveformSpan, 12, nullptr); PRISMAudioProcessor::sanitizeState(t);
           check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: old seconds value (12) -> 8 bars");
-          t.setProperty(uiWaveformSpan, 16, nullptr); PRISMAudioProcessor::sanitizeState(t);
-          check((int) t.getProperty(uiWaveformSpan) == 16, "waveform span sanitizer: 16 bars accepted"); }
+          for (int ok : { 1, 2, 4, 8, 16, 32 }) { t.setProperty(uiWaveformSpan, ok, nullptr); PRISMAudioProcessor::sanitizeState(t);
+            check((int) t.getProperty(uiWaveformSpan) == ok, "waveform span sanitizer: bars value accepted"); }
+          for (int bad : { 0, 3, 5, 24, 64 }) { t.setProperty(uiWaveformSpan, bad, nullptr); PRISMAudioProcessor::sanitizeState(t);
+            check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: value outside {1,2,4,8,16,32} -> 8"); } }
         check(ec->getWidth() == 880 && ec->getHeight() == (int) std::lround(880.0 * 36.0 / 55.0), "reload: editor size restored at 55:36");
 
         // state replaced while the editor is OPEN (host recalls a project): editor must follow without a crash
