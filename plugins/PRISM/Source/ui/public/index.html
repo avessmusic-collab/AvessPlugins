@@ -416,6 +416,7 @@ function receiveAnalysisFrame(fr) {
   if (!fr || typeof fr !== 'object') return;
   D.lastAt = performance.now(); D.hasData = true; D.live = fr.live !== false;
   if (isNum(fr.sampleRate) && fr.sampleRate > 0) D.fs = fr.sampleRate;
+  if (fr.transport === -1 || fr.transport === 0 || fr.transport === 1) WFTRANS = fr.transport;
   D.bpm = isNum(fr.bpm) && fr.bpm > 0 ? fr.bpm : null;
   if (D.bpm) { var wasKnown = WFI.known; WFI.bpm = D.bpm; WFI.known = true; if (!wasKnown) wfSpanPaint(); }
   if (fr.timeSig && fr.timeSig.length === 2 && fr.timeSig[0] > 0 && fr.timeSig[1] > 0) { WFI.num = fr.timeSig[0]; WFI.den = fr.timeSig[1]; }   // optional host/analysis tempo; shown as dashes when absent
@@ -989,12 +990,15 @@ var WF = { pps: 0, c: THEMES[0].band.slice() };
 var wfOff = null, wfCtx = null, wfW = 0, wfH = 0;
 var wfRing = [new Float32Array(WF_CAP * 4), new Float32Array(WF_CAP * 4)];
 var wfN = 0, wfT = 0, wfIdleAcc = 0;
+var WFTRANS = -1, wfWasFrozen = false;   // host transport: -1 unknown / no playhead (always scrolls), 0 paused (strip + grid frozen as one), 1 playing
 function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / wfSpanSec(); }
-function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + WFSPAN + (WFSPAN === 1 ? ' bar' : ' bars'); }
-function wfSetSpan(s, fromHost) {
-  s = +s; if (WF_SPANS.indexOf(s) < 0) s = 8; var changed = s !== WFSPAN; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
+function wfSpanText() { var v = WFSPAN, isInt = Math.abs(v - Math.round(v)) < 0.05, t = isInt ? String(Math.round(v)) : v.toFixed(1); return t + (isInt && Math.round(v) === 1 ? ' bar' : ' bars'); }
+function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + wfSpanText(); }
+function wfSetSpan(s, fromHost, quiet) {   // span in BARS: continuous 0.5..32 (wheel zoom); non-finite -> 8
+  s = +s; if (!isFinite(s)) s = 8; s = Math.min(32, Math.max(0.5, s));
+  var changed = Math.abs(s - WFSPAN) > 1e-6; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
   if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }   // history is kept: re-projection only
-  if (changed && !fromHost) { if (typeof postUi === "function") postUi(); }
+  if (changed && !fromHost && !quiet) { if (typeof postUi === "function") postUi(); }
 }
 /* CDJ / rekordbox 3-BAND model, NESTED-RIM structure: three solid continuous layers drawn back-to-front per column.
    core (highs, theme high colour blended 70% toward white) innermost; mids extend beyond the core by a rim;
@@ -1049,7 +1053,7 @@ function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE colu
     var a = wfAnchors[s], barCols = a.cpb * a.num;
     var lo = s === 0 ? a.col - 1.05 * barCols : a.col;
     // segments are strictly half-open [anchor_i, anchor_i+1) and never longer than 1.25 bars
-    var hi = Math.min(s < n - 1 ? wfAnchors[s + 1].col - 0.5 : right, a.col + 1.25 * barCols);   // every segment is capped at 1.25 bars: a gap between anchors (idle / new session) never gets a spurious lattice   // -0.5 col: the next anchor's own bar line is authoritative; the previous lattice never lands a near-duplicate beside it
+    var hi = Math.min(s < n - 1 ? wfAnchors[s + 1].col - 0.5 : right, a.col + 1.25 * barCols, right);   // every segment is capped at 1.25 bars: a gap between anchors (idle / new session) never gets a spurious lattice   // -0.5 col: the next anchor's own bar line is authoritative; the previous lattice never lands a near-duplicate beside it
     lo = Math.max(lo, left);
     if (hi <= left || lo >= right) continue;
     var f = -1, q;   // finest depth whose spacing is >= 7 device px (density gate); bars only if even beats are denser than that
@@ -1184,6 +1188,8 @@ function wfResize() {
   wfW = nw; wfH = nh; wfAlloc(); wfRender();
 }
 function wfStep(dt) {
+  if (WFTRANS === 0) { wfWasFrozen = true; return; }   // PAUSED: freeze the whole strip (T holds, no synthetic columns, grid and waveform move as one); incoming columns still fill the ring
+  if (wfWasFrozen) { wfWasFrozen = false; wfT = wfN; }   // resume: jump to the newest column (no fast-forward)
   if (!isLive()) { wfIdleAcc += dt * WF_CPS; while (wfIdleAcc >= 1) { wfIdleAcc -= 1; wfPushCol(0, 0, 0, 0, 0, 0, 0, 0); wfSynthTail++; } } else wfIdleAcc = 0;   // no data: scroll silence on the same clock
   wfT = Math.min(wfN + (wfLiveFor(P.wf_src) ? 1.0 : 1.2), Math.max(wfN, wfT + dt * WF_CPS));   // live column present: the right edge shows real data, so never run ahead of the column   // monotonic, never behind the data, never more than 1.2 columns ahead
   wfRender();
@@ -1222,7 +1228,7 @@ function drawWaveform() {
   g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, cy, o.w, 1 / DPR);
   g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(o.w - 1, 0, 1, o.h);
   g.font = '9px ' + MONO; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(190,205,215,0.5)';
-  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + WFSPAN + (WFSPAN === 1 ? ' bar' : ' bars'), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
+  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + wfSpanText(), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
 }
 
 /* ================= v8: TILED PANE LAYOUT (drag-to-resize on shared borders) + FULLSCREEN ================= */
@@ -1296,7 +1302,19 @@ function setFullscreen(on, instant, quiet) {
   })(t0);
 }
 $('fsbtn').addEventListener('click', function (e) { e.stopPropagation(); setFullscreen(!UI.fullscreen); });
-$('wfspan').addEventListener('click', function (e) { e.stopPropagation(); wfSetSpan(WF_SPANS[(WF_SPANS.indexOf(WFSPAN) + 1) % WF_SPANS.length]); });
+$('wfspan').addEventListener('click', function (e) { e.stopPropagation(); wfSetSpan((function () { for (var q = 0; q < WF_SPANS.length; q++) if (WF_SPANS[q] > WFSPAN + 1e-6) return WF_SPANS[q]; return WF_SPANS[0]; })()); });   // next preset above the current value (continuous zoom values land on the next preset)
+/* Zoom on the lane itself: mouse wheel (and trackpad pinch = ctrl+wheel) over the waveform pane changes the span continuously, exponential steps
+   (1.12x per wheel notch), clamped to 0.5..32 bars. The right edge ('now') is the anchor by construction, so it stays put. UI state only (no host
+   gesture): the new value is posted once, ~300 ms after the last notch. The SPAN chip still cycles the presets. */
+var wfZoomTimer = 0;
+document.addEventListener('wheel', function (e) {
+  var r = $('wf_cv').getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  e.preventDefault();
+  var steps = e.ctrlKey ? e.deltaY / 10 : (e.deltaMode === 1 ? e.deltaY / 3 : e.deltaY / 100);
+  wfSetSpan(WFSPAN * Math.pow(1.12, steps), false, true);
+  clearTimeout(wfZoomTimer); wfZoomTimer = setTimeout(function () { if (typeof postUi === 'function') postUi(); }, 300);
+}, { passive: false, capture: true });
+
 var DRAG = null;
 function dragStart(id) { DRAG = { id: id, rows: UI.rows.slice(), cols: UI.cols.slice() }; $(id).classList.add('drag'); }
 function dragMove(dPx) {

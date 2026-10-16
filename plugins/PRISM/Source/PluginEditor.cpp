@@ -353,7 +353,7 @@ void PRISMAudioProcessorEditor::handleUiStateEvent (const juce::var& payload)
     tmp.setProperty (uiFullscreen,     (bool) payload.getProperty ("fullscreen", false),                      nullptr);
     tmp.setProperty (uiGonioSource,    (int) payload.getProperty ("gonio_source", 0),                         nullptr);
     tmp.setProperty (uiScopeSource,    (int) payload.getProperty ("scope_source", 0),                         nullptr);
-    tmp.setProperty (uiWaveformSpan,   (int) payload.getProperty ("waveform_span", 8),                       nullptr);
+    tmp.setProperty (uiWaveformSpan,   (double) payload.getProperty ("waveform_span", 8.0),                       nullptr);
     PRISMAudioProcessor::sanitizeState (tmp);
 
     auto& st = processorRef.apvts.state;
@@ -405,7 +405,7 @@ juce::var PRISMAudioProcessorEditor::buildInitUi() const
     o->setProperty ("row_splits",       intsToVar (parseInts (st.getProperty (prism::ids::uiRowSplits, "").toString())));
     o->setProperty ("lower_col_splits", intsToVar (parseInts (st.getProperty (prism::ids::uiLowerColSplits, "").toString())));
     o->setProperty ("fullscreen",       (bool) st.getProperty (prism::ids::uiFullscreen, false));
-    o->setProperty ("waveform_span",    (int) st.getProperty (prism::ids::uiWaveformSpan, 8));
+    o->setProperty ("waveform_span",    (double) st.getProperty (prism::ids::uiWaveformSpan, 8.0));
     o->setProperty ("gonio_source",     (int) st.getProperty (prism::ids::uiGonioSource, 0));
     o->setProperty ("scope_source",     (int) st.getProperty (prism::ids::uiScopeSource, 0));
     o->setProperty ("spectrogram_orientation", st.getProperty (prism::ids::uiSgOrientation, "v").toString() == "h" ? "h" : "v");
@@ -625,6 +625,7 @@ bool PRISMAudioProcessorEditor::pushAnalysisFrameImpl()
     frame->setProperty ("live",       snap->signalPresent);
     frame->setProperty ("bpm",        numberOrNull (snap->bpm));
     frame->setProperty ("waveformStride", 5);   // floats per waveform column: bass, mids, highs, flag, onsetFrac (older pages assume 4 and ignore the rest)
+    frame->setProperty ("transport", snap->transportPlaying);   // additive: -1 unknown (Standalone / no playhead), 0 paused, 1 playing
     if (snap->barAnchorStreamFrame >= 0)   // additive + optional: the grid anchor (stream frame of the latest downbeat; exact in a double up to 2^53)
         frame->setProperty ("barAnchor", (double) snap->barAnchorStreamFrame);
     {

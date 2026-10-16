@@ -884,6 +884,7 @@ function slHtml(id) { return '<div class="sl" id="' + id + '"><div class="tr"><d
   });
   document.addEventListener('click', function () { closeAll(null); });
   document.addEventListener('keydown', function (e) {
+    if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target && e.target.tagName === 'INPUT')) { WFTRANS = WFTRANS === 0 ? 1 : 0; }   // demo: toggle the simulated host pause
     if (e.key === 'Escape') { closeAll(null); if (UI.fullscreen) setFullscreen(false); }
     if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target && e.target.tagName === 'INPUT')) setFullscreen(!UI.fullscreen);
     if (e.code === 'Space') { e.preventDefault(); setParam('freeze', !P.freeze); }
@@ -931,12 +932,15 @@ var WF = { pps: 0, c: THEMES[0].band.slice() };
 var wfOff = null, wfCtx = null, wfW = 0, wfH = 0;
 var wfRing = [new Float32Array(WF_CAP * 4), new Float32Array(WF_CAP * 4)];
 var wfN = 0, wfT = 0, wfIdleAcc = 0;
+var WFTRANS = -1, wfWasFrozen = false;   // host transport: -1 unknown / no playhead (always scrolls), 0 paused (strip + grid frozen as one), 1 playing
 function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / wfSpanSec(); }
-function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + WFSPAN + (WFSPAN === 1 ? ' bar' : ' bars'); }
-function wfSetSpan(s, fromHost) {
-  s = +s; if (WF_SPANS.indexOf(s) < 0) s = 8; var changed = s !== WFSPAN; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
+function wfSpanText() { var v = WFSPAN, isInt = Math.abs(v - Math.round(v)) < 0.05, t = isInt ? String(Math.round(v)) : v.toFixed(1); return t + (isInt && Math.round(v) === 1 ? ' bar' : ' bars'); }
+function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + wfSpanText(); }
+function wfSetSpan(s, fromHost, quiet) {   // span in BARS: continuous 0.5..32 (wheel zoom); non-finite -> 8
+  s = +s; if (!isFinite(s)) s = 8; s = Math.min(32, Math.max(0.5, s));
+  var changed = Math.abs(s - WFSPAN) > 1e-6; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
   if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }   // history is kept: re-projection only
-  if (changed && !fromHost) { }
+  if (changed && !fromHost && !quiet) { if (typeof postUi === "function") postUi(); }
 }
 function wfBands(t, s, o) {
   var bt = t % BEAT, kenv = Math.exp(-bt / 0.15), half = t % (BEAT / 2), be = 0.35 + 0.65 * Math.exp(-half / 0.2);
@@ -1007,7 +1011,7 @@ function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE colu
     var a = wfAnchors[s], barCols = a.cpb * a.num;
     var lo = s === 0 ? a.col - 1.05 * barCols : a.col;
     // segments are strictly half-open [anchor_i, anchor_i+1) and never longer than 1.25 bars
-    var hi = Math.min(s < n - 1 ? wfAnchors[s + 1].col - 0.5 : right, a.col + 1.25 * barCols);   // every segment is capped at 1.25 bars: a gap between anchors (idle / new session) never gets a spurious lattice   // -0.5 col: the next anchor's own bar line is authoritative; the previous lattice never lands a near-duplicate beside it
+    var hi = Math.min(s < n - 1 ? wfAnchors[s + 1].col - 0.5 : right, a.col + 1.25 * barCols, right);   // every segment is capped at 1.25 bars: a gap between anchors (idle / new session) never gets a spurious lattice   // -0.5 col: the next anchor's own bar line is authoritative; the previous lattice never lands a near-duplicate beside it
     lo = Math.max(lo, left);
     if (hi <= left || lo >= right) continue;
     var f = -1, q;   // finest depth whose spacing is >= 7 device px (density gate); bars only if even beats are denser than that
@@ -1145,7 +1149,9 @@ function wfDemoFill() {   // demo clock: columns "arrive" exactly like the engin
   }
 }
 function wfStep(dt) {
-  wfDemoFill();
+  wfDemoFill();   // the demo transport keeps delivering columns while paused (the ring stays complete)
+  if (WFTRANS === 0) { wfWasFrozen = true; return; }   // PAUSED: strip and grid frozen as one (press P to toggle the demo pause)
+  if (wfWasFrozen) { wfWasFrozen = false; wfT = wfN; }
   wfT = Math.min(wfN + 1.2, Math.max(wfN, wfT + dt * WF_CPS));
   wfRender();
 }
@@ -1175,7 +1181,7 @@ function drawWaveform() {
   g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, cy, o.w, 1 / DPR);
   g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(o.w - 1, 0, 1, o.h);
   g.font = '9px ' + MONO; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(190,205,215,0.5)';
-  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + WFSPAN + (WFSPAN === 1 ? ' bar' : ' bars'), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
+  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + wfSpanText(), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
 }
 
 /* ================= v8: TILED PANE LAYOUT (drag-to-resize on shared borders) + FULLSCREEN ================= */
@@ -1250,7 +1256,19 @@ function setFullscreen(on, instant) {
   })(t0);
 }
 $('fsbtn').addEventListener('click', function (e) { e.stopPropagation(); setFullscreen(!UI.fullscreen); });
-$('wfspan').addEventListener('click', function (e) { e.stopPropagation(); wfSetSpan(WF_SPANS[(WF_SPANS.indexOf(WFSPAN) + 1) % WF_SPANS.length]); });
+$('wfspan').addEventListener('click', function (e) { e.stopPropagation(); wfSetSpan((function () { for (var q = 0; q < WF_SPANS.length; q++) if (WF_SPANS[q] > WFSPAN + 1e-6) return WF_SPANS[q]; return WF_SPANS[0]; })()); });   // next preset above the current value (continuous zoom values land on the next preset)
+/* Zoom on the lane itself: mouse wheel (and trackpad pinch = ctrl+wheel) over the waveform pane changes the span continuously, exponential steps
+   (1.12x per wheel notch), clamped to 0.5..32 bars. The right edge ('now') is the anchor by construction, so it stays put. UI state only (no host
+   gesture): the new value is posted once, ~300 ms after the last notch. The SPAN chip still cycles the presets. */
+var wfZoomTimer = 0;
+document.addEventListener('wheel', function (e) {
+  var r = $('wf_cv').getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  e.preventDefault();
+  var steps = e.ctrlKey ? e.deltaY / 10 : (e.deltaMode === 1 ? e.deltaY / 3 : e.deltaY / 100);
+  wfSetSpan(WFSPAN * Math.pow(1.12, steps), false, true);
+  clearTimeout(wfZoomTimer); wfZoomTimer = setTimeout(function () { if (typeof postUi === 'function') postUi(); }, 300);
+}, { passive: false, capture: true });
+
 var DRAG = null;
 function dragStart(id) { DRAG = { id: id, rows: UI.rows.slice(), cols: UI.cols.slice() }; $(id).classList.add('drag'); }
 function dragMove(dPx) {

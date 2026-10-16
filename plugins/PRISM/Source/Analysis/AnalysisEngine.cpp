@@ -121,6 +121,7 @@ namespace prism
         // Negative ppq (count-in / pre-roll) emits nothing; a backwards jump (loop) forgets what was emitted (clean re-anchor).
         if (playHead == nullptr)
         {
+            transportState.store(-1, std::memory_order_relaxed);
             bpm.store(NAN, std::memory_order_relaxed);
             sigNum.store(0, std::memory_order_relaxed);
             sigDen.store(0, std::memory_order_relaxed);
@@ -131,6 +132,7 @@ namespace prism
         const auto pos = playHead->getPosition();
         if (! pos.hasValue())
         {
+            transportState.store(-1, std::memory_order_relaxed);
             bpm.store(NAN, std::memory_order_relaxed);
             sigNum.store(0, std::memory_order_relaxed);
             sigDen.store(0, std::memory_order_relaxed);
@@ -138,6 +140,7 @@ namespace prism
             return;
         }
 
+        transportState.store(pos->getIsPlaying() ? 1 : 0, std::memory_order_relaxed);   // host transport: lets the page freeze the strip while paused
         const auto tempo = pos->getBpm();
         bpm.store(tempo.hasValue() ? (float) *tempo : NAN, std::memory_order_relaxed);
 
@@ -361,6 +364,7 @@ namespace prism
         snap->sampleRate = config.sampleRate;
         snap->bpm        = bpm.load(std::memory_order_relaxed);
         snap->barAnchorStreamFrame = lastBarFrame;
+        snap->transportPlaying = transportState.load(std::memory_order_relaxed);
         snap->timeSigNumerator   = sigNum.load(std::memory_order_relaxed);
         snap->timeSigDenominator = sigDen.load(std::memory_order_relaxed);
 

@@ -88,8 +88,13 @@ void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)
     state.setProperty(uiGonioSource, (int) state.getProperty(uiGonioSource, 0) == 1 ? 1 : 0, nullptr);   // UI-only source selectors: {0, 1}
     state.setProperty(uiScopeSource, (int) state.getProperty(uiScopeSource, 0) == 1 ? 1 : 0, nullptr);
 
-    const int span = (int) state.getProperty(uiWaveformSpan, 8);   // bars: 1 | 2 | 4 | 8 | 16 | 32 (older builds stored seconds -> values outside the set reset to 8)
-    state.setProperty(uiWaveformSpan, (span == 1 || span == 2 || span == 4 || span == 8 || span == 16 || span == 32) ? span : 8, nullptr);
+    // waveform span in BARS: continuous (mouse-wheel zoom), clamped to [0.5, 32]; non-finite / missing -> 8 (old integer values stay valid)
+    {
+        const juce::var v = state.getProperty(uiWaveformSpan);
+        double span = v.isVoid() ? 8.0 : (double) v;
+        span = std::isfinite(span) ? juce::jlimit(0.5, 32.0, span) : 8.0;
+        state.setProperty(uiWaveformSpan, span, nullptr);
+    }
 
     // Window size: width >= 770, height locked to the 55:36 aspect (1100x720)
     const int w = juce::jlimit(kMinWidth, kMaxWidth, (int) state.getProperty(uiWidth, kDefaultWidth));

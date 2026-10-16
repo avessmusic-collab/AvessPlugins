@@ -3762,6 +3762,21 @@ static void test_capture_skew_audio_vs_beat_events()
     }
 }
 
+static void test_transport_state_published()
+{
+    section("transport_state_published");
+    // The page freezes the strip while the host is paused: the engine publishes the host transport state in every snapshot.
+    prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+    FakePlayHead ph;
+    std::vector<float> buf(480, 0.1f);
+    const float* ptrs[2] = { buf.data(), buf.data() };
+    auto run = [&](juce::AudioPlayHead* p) { eng.captureBlock(ptrs, 2, 480); eng.capturePlayhead(p, 480); eng.pump(); return eng.buildSnapshot()->transportPlaying; };
+    check(run(nullptr) == -1, "no playhead -> transport -1 (page keeps scrolling)");
+    ph.playing = true;  check(run(&ph) == 1, "playing -> 1");
+    ph.playing = false; check(run(&ph) == 0, "paused -> 0 (page freezes)");
+    ph.playing = true;  check(run(&ph) == 1, "resume -> 1");
+}
+
 static void test_waveform_ack_delivery()
 {
     section("waveform_ack_delivery");
@@ -4613,15 +4628,17 @@ static void test_stage3_multi_instance_and_project_reload()
         check(choiceIndex(c, "color_theme") == 3, "reload: theme restored");
         check(c.apvts.state.getProperty(uiRowSplits).toString() == "300,60,238", "reload: splits restored");
         check(c.apvts.state.getProperty(src1Name).toString() == "Kick", "reload: source name restored");
-        check((int) c.apvts.state.getProperty(uiWaveformSpan) == 4, "reload: waveform span (bars) restored");
-        { juce::ValueTree t("T"); t.setProperty(uiWaveformSpan, 9, nullptr); PRISMAudioProcessor::sanitizeState(t);
-          check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: invalid -> 8 bars");
-          t.setProperty(uiWaveformSpan, 12, nullptr); PRISMAudioProcessor::sanitizeState(t);
-          check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: old seconds value (12) -> 8 bars");
-          for (int ok : { 1, 2, 4, 8, 16, 32 }) { t.setProperty(uiWaveformSpan, ok, nullptr); PRISMAudioProcessor::sanitizeState(t);
-            check((int) t.getProperty(uiWaveformSpan) == ok, "waveform span sanitizer: bars value accepted"); }
-          for (int bad : { 0, 3, 5, 24, 64 }) { t.setProperty(uiWaveformSpan, bad, nullptr); PRISMAudioProcessor::sanitizeState(t);
-            check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: value outside {1,2,4,8,16,32} -> 8"); } }
+        check((double) c.apvts.state.getProperty(uiWaveformSpan) == 4.0, "reload: waveform span (bars) restored");
+        {   // waveform span (bars) is continuous: any finite value is clamped to [0.5, 32]; non-finite -> 8; old integers stay valid
+            juce::ValueTree t("T");
+            auto spanAfter = [&](const juce::var& in) { t.setProperty(uiWaveformSpan, in, nullptr); PRISMAudioProcessor::sanitizeState(t); return (double) t.getProperty(uiWaveformSpan); };
+            check(spanAfter(6.3) == 6.3, "waveform span sanitizer: 6.3 accepted (continuous)");
+            check(spanAfter(0.2) == 0.5, "waveform span sanitizer: 0.2 clamped to 0.5");
+            check(spanAfter(100) == 32.0, "waveform span sanitizer: 100 clamped to 32");
+            check(spanAfter(std::nan("")) == 8.0, "waveform span sanitizer: NaN -> 8");
+            check(spanAfter(std::numeric_limits<double>::infinity()) == 8.0, "waveform span sanitizer: inf -> 8");
+            for (int ok : { 1, 2, 4, 8, 16, 32 }) check(spanAfter(ok) == (double) ok, "waveform span sanitizer: old integer values stay valid");
+        }
         check(ec->getWidth() == 880 && ec->getHeight() == (int) std::lround(880.0 * 36.0 / 55.0), "reload: editor size restored at 55:36");
 
         // state replaced while the editor is OPEN (host recalls a project): editor must follow without a crash
@@ -4785,6 +4802,7 @@ int main()
     test_waveform_beat_events_host_grid();
     test_waveform_live_column_and_ui_sources();
     test_waveform_onset_fraction();
+    test_transport_state_published();
     test_capture_skew_audio_vs_beat_events();
     test_waveform_ack_delivery();
     test_waveform_editor_gating_and_wiring();

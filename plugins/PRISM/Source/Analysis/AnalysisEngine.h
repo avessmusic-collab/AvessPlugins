@@ -152,6 +152,7 @@ namespace prism
         std::array<SourceState, kMaxSources> sources;
         BeatEventQueue beatQueue;
         std::atomic<float> bpm { NAN };
+        std::atomic<int> transportState { -1 };        // -1 unknown / no playhead, 0 stopped (paused), 1 playing: published as AnalysisSnapshot::transportPlaying
         std::atomic<int> sigNum { 0 }, sigDen { 0 };   // host time signature (0 = unknown), published in the snapshot
 
         // audio-thread-only playhead state

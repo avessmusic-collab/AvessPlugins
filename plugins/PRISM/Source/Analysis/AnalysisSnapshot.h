@@ -52,6 +52,7 @@ namespace prism
         std::uint64_t sequence     = 0;                       // strictly increasing; the editor skips repeats
         double        sampleRate   = 0.0;
         float         bpm          = NAN;                     // optional tempo for the waveform header annotation (NaN -> dashes)
+        int           transportPlaying = -1;                  // host transport: -1 unknown / no playhead, 0 stopped (paused), 1 playing
         std::int64_t  barAnchorStreamFrame = -1;              // source-0 stream frame of the most recent downbeat (bar event); -1 = none yet
         int           timeSigNumerator = 0, timeSigDenominator = 0;   // host time signature (0 = unknown); optional, additive
         bool          signalPresent = false;                  // false -> UI shows "NO SIGNAL"
