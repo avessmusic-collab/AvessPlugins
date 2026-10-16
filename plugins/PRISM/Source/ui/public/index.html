@@ -1006,17 +1006,21 @@ function wfSetSpan(s, fromHost, quiet) {   // span in BARS: continuous 0.5..32 (
    so all three colours are visible on every audible column and no layer balloons; overall height still tracks amplitude.
    Exact rekordbox blue/amber/cream = set BAND.low/mid/high to [38,92,214] / [214,150,52] / [250,244,230]. */
 function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in device px; on = onset 0..1 (visual height weighting)
+  /* FIXED layer identity in every situation, theme and path (normal, live edge, peak-held): OUTER = lows (theme low colour), MIDDLE = mids (theme mid
+     colour), INNER = highs (theme high colour blended 70 % toward white). A band that is not meaningfully present (<= 0.015) draws NO layer at all and
+     gets no forced hairline, so bassless content never has a bass-impersonating outer block: mids-only reads as a middle-weight amber wedge (slightly
+     lighter paint when it is the outermost visible layer), highs-only as a white core. Rims keep their proportional size (a present-but-tiny band still
+     gets a 1-2 px rim). */
   b = clamp(b, 0, 1); m = clamp(m, 0, 1); hi = clamp(hi, 0, 1); A *= WF_ONSET_BASE + WF_ONSET_GAIN * (on || 0);
-  if (Math.max(b, m, hi) < 0.02) return;                       // inaudible: draw nothing
-  var hl = Math.max(1.5, DPR * 1.25);                          // hairline rim (device px)
-  var hCore = A * (0.08 + 0.42 * hi);
-  var hMid = hCore + clamp(A * 0.30 * m, hl, A * 0.22);
-  var hLow = Math.min(hMid + clamp(A * 0.34 * b, hl, A * 0.26), mid * 0.97);   // never past the lane
+  var T = 0.015, hl = Math.max(1.5, DPR * 1.25), base = A * 0.08, hv = 0, hCore = 0, hMid = 0, hLow = 0;
+  if (hi > T) { hCore = A * (0.08 + 0.42 * hi); hv = hCore; }
+  if (m > T)  { hMid = Math.max(hv, base) + clamp(A * 0.30 * m, hl, A * 0.22); hv = hMid; }
+  if (b > T)  { hLow = Math.min(Math.max(hv, base) + clamp(A * 0.34 * b, hl, A * 0.26), mid * 0.97); }
   var L = BAND.low, M = BAND.mid, H = BAND.high;
   g.globalAlpha = 1;
-  g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x + wfBandDx[0], mid - hLow, w, 2 * hLow);
-  g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x + wfBandDx[1], mid - hMid, w, 2 * hMid);
-  g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x + wfBandDx[2], mid - hCore, w, 2 * hCore);
+  if (hLow > 0) { g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x + wfBandDx[0], mid - hLow, w, 2 * hLow); }
+  if (hMid > 0) { g.globalAlpha = hLow > 0 ? 1 : 0.9; g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x + wfBandDx[1], mid - hMid, w, 2 * hMid); g.globalAlpha = 1; }
+  if (hCore > 0) { g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x + wfBandDx[2], mid - hCore, w, 2 * hCore); }
 }
 /* ---- Unified time base + musical grid (computed, not estimated) ----
    ONE coordinate system for waveform and grid. Everything lives in COLUMN space (a column is a fixed slice of the audio
@@ -1201,6 +1205,7 @@ window.__wfRowSat = function (y) { if (!wfCtx) return []; var d = wfCtx.getImage
 window.__wfPix = function (x0, n, y) { if (!wfCtx) return []; var d = wfCtx.getImageData(x0, y, n, 1).data, o = []; for (var i = 0; i < n; i++) o.push([d[i * 4], d[i * 4 + 1], d[i * 4 + 2], d[i * 4 + 3]]); return o; };   // measurement hook
 window.__wfLiveInfo = function () { return { live: wfLive, offset: wfOffset, N: wfN, T: wfT }; };   // measurement hook
 window.__wfFrac = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfFracRing[src][i % WF_CAP] : null; };   // measurement hook: onset fraction of an ENGINE column
+window.__wfBandColors = function () { return { low: BAND.low.slice(), mid: BAND.mid.slice(), high: BAND.high.slice() }; };   // measurement hook
 window.__wfOnset = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfOnsetRing[src][i % WF_CAP] : null; };   // measurement hook
 window.__wfPeek = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfRing[src][(i % WF_CAP) * 4] : null; };   // measurement hook: bass value of a source at an ENGINE column   // measurement hook: advance the strip clock without rAF
 window.__wfGrid = function (lo, hi) {   // measurement hook: anchors + lattice lines (col in PAGE column space) over [lo, hi] (default: visible window)
