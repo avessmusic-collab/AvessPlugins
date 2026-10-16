@@ -204,7 +204,7 @@ modules:
 controls:
   # ---- sidebar knobs (bind to existing parameters)
   - { id: smoothing_knob, type: slider, widget: rotary-knob, label: "SMTH", parameter: smoothing, range: [0.0, 100.0], default: 35.0, unit: "%", position: { x: 862, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
-  - { id: tilt_knob,      type: slider, widget: rotary-knob, label: "TILT", parameter: spectrum_tilt, range: [0.0, 4.5], default: 4.5, unit: "dB/oct", position: { x: 920, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
+  - { id: tilt_knob,      type: slider, widget: rotary-knob, label: "TILT", parameter: spectrum_tilt, range: [0.0, 4.5], default: 0.0, unit: "dB/oct", position: { x: 920, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
   - { id: glow_knob,      type: slider, widget: rotary-knob, label: "GLOW", parameter: glow_intensity, range: [0, 100], default: 55, unit: "%", position: { x: 978, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
   - { id: speed_knob,     type: slider, widget: rotary-knob, label: "SPD",  parameter: spectrogram_speed, range: [0.25, 4.0], default: 1.0, skew: log, unit: "x", position: { x: 1036, y: 467 }, size: { width: 40, height: 40, diameter: 40 } }
   # ---- sidebar buttons
@@ -249,7 +249,7 @@ parameters:
   - { id: window,            brief_name: window,           type: choice, storage: apvts, options: [hann, blackmanHarris], default: hann, ui: window_selector }
   - { id: smoothing,         brief_name: smoothing,        type: float,  storage: apvts, range: [0.0, 100.0], default: 35.0, units: "%", ui: smoothing_knob,
       mapping: "attack 5 + 0.6*v ms, release 30 + 8*v ms" }
-  - { id: spectrum_tilt,     brief_name: spectrumTilt,     type: float,  storage: apvts, range: [0.0, 4.5], default: 4.5, units: "dB/oct", ui: tilt_knob, note: "visual only, pivot 1 kHz; readouts stay true dBFS; default 4.5 = Pro-Q 4 analyzer convention (user, 2026-10-15)" }
+  - { id: spectrum_tilt,     brief_name: spectrumTilt,     type: float,  storage: apvts, range: [0.0, 4.5], default: 0.0, units: "dB/oct", ui: tilt_knob, note: "visual only, pivot 1 kHz; readouts stay true dBFS; default 0 (flat; user reverted the Pro-Q 4.5 default 2026-10-16 — slope available on the TILT knob)" }
   - { id: display_range,     brief_name: displayRange,     type: choice, storage: apvts, options: [-48, -60, -72, -90], default: -90, units: "dBFS lower bound (top fixed at 0)", ui: display_range_selector }
   - { id: spectrogram_speed, brief_name: spectrogramSpeed, type: float,  storage: apvts, range: [0.25, 4.0], default: 1.0, units: "x", skew: log, ui: speed_knob }
   - { id: peak_decay,        brief_name: peakDecay,        type: float,  storage: apvts, range: [3.0, 60.0], default: 12.0, units: "dB/s", ui: decay_slider }
@@ -269,7 +269,7 @@ parameters:
   - { id: src2_name,         brief_name: "source[1].name",    type: string, storage: state, default: "Ch2", ui: src2_name_field }
 
 presets:
-  Studio:      { smoothing: 35, spectrum_tilt: 4.5, spectrogram_speed: 1.0,  peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: hann }
+  Studio:      { smoothing: 35, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: hann }
   Minimal:     { smoothing: 25, spectrum_tilt: 0.0, spectrogram_speed: 1.0,  peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: hann }
   Neon:        { smoothing: 45, spectrum_tilt: 3.0, spectrogram_speed: 1.5,  peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: hann }
   Ambient:     { smoothing: 80, spectrum_tilt: 3.0, spectrogram_speed: 0.5,  peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: hann }

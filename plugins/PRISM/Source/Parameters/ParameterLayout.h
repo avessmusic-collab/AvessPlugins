@@ -36,11 +36,11 @@ namespace prism
             NormalisableRange<float>(0.0f, 100.0f, 0.01f), 35.0f,
             AudioParameterFloatAttributes().withLabel("%")));
 
-        // spectrum_tilt - Float 0..4.5 dB/oct, default 4.5 (Pro-Q 4 analyzer default:
-        // perceptual slope around the 1 kHz pivot; user decision 2026-10-15), linear
+        // spectrum_tilt - Float 0..4.5 dB/oct, default 0 (flat; user reverted the Pro-Q
+        // 4.5 default on 2026-10-16 - slope stays available on the TILT knob), linear
         layout.add(std::make_unique<AudioParameterFloat>(
             ParameterID { ids::spectrumTilt, 1 }, "Spectrum Tilt",
-            NormalisableRange<float>(0.0f, 4.5f, 0.1f), 4.5f,
+            NormalisableRange<float>(0.0f, 4.5f, 0.1f), 0.0f,
             AudioParameterFloatAttributes().withLabel("dB/oct")));
 
         // display_range - Choice (index 0..3), default "-90" (index 3)

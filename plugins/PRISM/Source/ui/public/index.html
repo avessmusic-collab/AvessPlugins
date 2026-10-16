@@ -299,7 +299,7 @@ var clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
 var DPR = Math.min(2, window.devicePixelRatio || 1);
 
 /* ---------- State ---------- */
-var P = { fft_size: 4096, window: 'hann', smoothing: 35, spectrum_tilt: 4.5, display_range: -90, spectrogram_speed: 1,
+var P = { fft_size: 4096, window: 'hann', smoothing: 35, spectrum_tilt: 0, display_range: -90, spectrogram_speed: 1,
           peak_decay: 12, sg_src: 0, wf_src: 0, color_theme: 'Coral/Mint', freeze: false, analysis_mode: 'combined', preset: 'Studio', reduced_motion: false, glow_intensity: 55 };
 var THEMES = [
   { name: 'Coral/Mint',   c1: ['coral', '#ff7a66'],    c2: ['mint', '#5df2b8'],   neutral: '#e9e2dc', light: '#ffd2c9', band: ['#ff4b4b', '#ffb84d', '#5df2b8'] },
@@ -322,7 +322,7 @@ var SRC = [
 function effVisible(i) { var any = SRC[0].solo || SRC[1].solo; return any ? SRC[i].solo : SRC[i].visible; }
 
 var PRESETS = {
-  'Studio':      { smoothing: 35, spectrum_tilt: 4.5, spectrogram_speed: 1,   peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: 'hann' },
+  'Studio':      { smoothing: 35, spectrum_tilt: 0  , spectrogram_speed: 1,   peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: 'hann' },
   'Minimal':     { smoothing: 25, spectrum_tilt: 0,   spectrogram_speed: 1,   peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: 'hann' },
   'Neon':        { smoothing: 45, spectrum_tilt: 3,   spectrogram_speed: 1.5, peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: 'hann' },
   'Ambient':     { smoothing: 80, spectrum_tilt: 3,   spectrogram_speed: 0.5, peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: 'hann' },
