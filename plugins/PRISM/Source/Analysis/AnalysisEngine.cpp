@@ -243,6 +243,8 @@ namespace prism
             {
                 beatLog[(size_t) (beatsSeen % kBeatLogSize)] = be;
                 ++beatsSeen;
+                if (be.isBar && (std::int64_t) be.frameIndex > lastBarFrame)
+                    lastBarFrame = (std::int64_t) be.frameIndex;   // monotonic: a loop jump never moves the anchor backwards in stream time
                 if (editorWork)
                     for (int k = 0; k < registry.getActiveCount(); ++k)
                         sources[(size_t) registry.getActiveIndex(k)].wave.markBeat(be.frameIndex, be.isBar);
@@ -358,6 +360,7 @@ namespace prism
         snap->sequence   = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
         snap->sampleRate = config.sampleRate;
         snap->bpm        = bpm.load(std::memory_order_relaxed);
+        snap->barAnchorStreamFrame = lastBarFrame;
         snap->timeSigNumerator   = sigNum.load(std::memory_order_relaxed);
         snap->timeSigDenominator = sigDen.load(std::memory_order_relaxed);
 
@@ -432,6 +435,7 @@ namespace prism
                     st.droppedCountedUpTo = std::max(st.droppedCountedUpTo, first - 1);
                 }
                 out.waveformColumnCount = n;
+                out.waveformFirstColumn = n > 0 ? (std::int64_t) cols[0].index : -1;
                 for (int i = 0; i < n; ++i)
                     out.waveformColumns[(size_t) i] = { cols[(size_t) i].bass, cols[(size_t) i].mid, cols[(size_t) i].high, cols[(size_t) i].flag };
                 const std::int64_t highest = n > 0 ? (std::int64_t) cols[(size_t) (n - 1)].index : st.ackedCol;

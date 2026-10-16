@@ -657,6 +657,13 @@ bool PRISMAudioProcessorEditor::pushAnalysisFrameImpl()
     frame->setProperty ("sampleRate", snap->sampleRate);
     frame->setProperty ("live",       snap->signalPresent);
     frame->setProperty ("bpm",        numberOrNull (snap->bpm));
+    if (snap->barAnchorStreamFrame >= 0)   // additive + optional: the grid anchor (stream frame of the latest downbeat; exact in a double up to 2^53)
+        frame->setProperty ("barAnchor", (double) snap->barAnchorStreamFrame);
+    {
+        juce::Array<juce::var> first;   // absolute index of the first column in each source's waveform array (-1 = none): place by index, detect gaps
+        for (const auto& s : snap->sources) first.add ((double) s.waveformFirstColumn);
+        frame->setProperty ("waveformFirst", first);
+    }
     if (snap->timeSigNumerator > 0 && snap->timeSigDenominator > 0)   // additive + optional: older pages ignore it
         frame->setProperty ("timeSig", juce::Array<juce::var> { snap->timeSigNumerator, snap->timeSigDenominator });
     frame->setProperty ("spectrum",   spectrum);

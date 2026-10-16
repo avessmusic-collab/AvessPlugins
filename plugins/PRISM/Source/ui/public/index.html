@@ -376,13 +376,18 @@ function fitTo(arr, n) {   // linear resample to n points
      meters: { loudness: {M,S,I,LRA}, peaks: [{sp,tp},{sp,tp}], stereo: [{corr,width,bal},{...}] }
    }
    ============================================================================ */
-function wfIngest(a0, a1) {   // append ALL received columns at once (no queue / cap): the batch size is whatever the engine delivered
+function wfIngest(a0, a1, first0, first1) {   // append ALL received columns at once; place by absolute engine column index (gap-aware)
   var k0 = a0 ? a0.length >> 2 : 0, k1 = a1 ? a1.length >> 2 : 0, k = Math.max(k0, k1), i, p = window.__wfProbe, hot = false;
+  var first = first0 >= 0 && k0 > 0 ? first0 : (first1 >= 0 && k1 > 0 ? first1 : -1);
+  if (first >= 0 && k > 0) {
+    var g = first - (wfOffset + wfN);                              // columns the engine produced that we did not receive (engine drop / editor idle)
+    if (g > 0 && g <= 2048) { for (i = 0; i < g; i++) wfPushCol(0, 0, 0, 0, 0, 0, 0, 0); }   // true elapsed time: keep the gap
+    else if (g !== 0) wfOffset = first - wfN;                      // discontinuity (first batch, restart, long idle): re-base the mapping
+  }
   for (i = 0; i < k; i++) {
     var j = i * 4, x0 = i < k0, x1 = i < k1;
     wfPushCol(x0 ? a0[j] : 0, x0 ? a0[j + 1] : 0, x0 ? a0[j + 2] : 0, x0 ? a0[j + 3] : 0, x1 ? a1[j] : 0, x1 ? a1[j + 1] : 0, x1 ? a1[j + 2] : 0, x1 ? a1[j + 3] : 0);
     if (x0 && Math.max(a0[j], a0[j + 1], a0[j + 2]) > 0.05) hot = true;
-    wgOnColumn(wfN - 1, Math.max(x0 ? a0[j + 3] : 0, x1 ? a1[j + 3] : 0), D.bpm);
   }
   if (p && hot && !p.dataAt) p.dataAt = Date.now();
 }
@@ -404,7 +409,8 @@ function receiveAnalysisFrame(fr) {
     a = fr.waveform ? f32(fr.waveform[s]) : null;
     wfa[s] = a;
   }
-  if (fr.waveform) wfIngest(wfa[0], wfa[1]);
+  if (fr.waveform) wfIngest(wfa[0], wfa[1], fr.waveformFirst ? fr.waveformFirst[0] : -1, fr.waveformFirst ? fr.waveformFirst[1] : -1);
+  if (fr.barAnchor >= 0 && D.bpm) wfAnchorAdd(fr.barAnchor, D.fs, D.bpm, WFI.num, WFI.den);   // after the columns: wfOffset is current
   var m = fr.meters;
   if (m) { D.loud = m.loudness || null; D.peaks = m.peaks || []; D.stereo = m.stereo || []; }
 }
@@ -981,51 +987,55 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi) {   // w = block width in device
   g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x, mid - hMid, w, 2 * hMid);
   g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x, mid - hCore, w, 2 * hCore);
 }
-/* ---- Musical grid (beat / bar lines) ----
-   Engine flags (1 = beat, 2 = bar) sit on the column that CONTAINS each beat's stream index, so a flag alone is quantised to
-   +-1 column (~12 ms) and carries no intra-column position. The page derives a continuous grid from them: anchor = the latest
-   flag, spacing = 84.333*60/bpm columns per beat (bpm from the playhead), beat positions kept as FLOAT column positions
-   (sub-column precision); every flag nudges the phase (gain 0.35, which dithers the quantisation out) and a flag more than one
-   column from the predicted line re-anchors the grid immediately (tempo jump / loop / seek). Lines are generated when their
-   column is delivered and stored (so history keeps the tempo that was valid then); lines falling in the <=1.2 extrapolated
-   columns are drawn predictively. No bpm, or no flag for 2.5 beats (transport stopped) => no grid is generated (honesty rule);
-   un-gridded flags still draw as plain ticks (at the column centre). Flags remain ground truth. */
-var wfFlagRing = new Uint8Array(WF_CAP), wfCover = new Int32Array(WF_CAP);   // wfCover[i % CAP] === i + 1  <=>  column i has a grid line next to it (stamp: no clearing needed)
-var WG_CAP = 1024, wgPos = new Float64Array(WG_CAP), wgBar = new Uint8Array(WG_CAP), wgCount = 0;
-var WG = { valid: false, s: 0, pn: 0, beatNo: 0, barBeat: 0, barKnown: false, bpb: 4, lastBarNo: null, lastFlagIdx: -1 };
-function wgIsBar(no) { return WG.barKnown && ((((no - WG.barBeat) % WG.bpb) + WG.bpb) % WG.bpb) === 0; }
-function wgAdd(pos, bar) {
-  wgPos[wgCount % WG_CAP] = pos; wgBar[wgCount % WG_CAP] = bar ? 1 : 0; wgCount++;
-  var c = Math.floor(pos); for (var d = -1; d <= 1; d++) if (c + d >= 0) wfCover[(c + d) % WF_CAP] = c + d + 1;   // suppress plain flag ticks next to a grid line
+/* ---- Unified time base + musical grid (computed, not estimated) ----
+   ONE coordinate system for waveform and grid. Everything lives in COLUMN space (a column is a fixed slice of the audio
+   stream: engine column index = floor(streamFrame * 253 / (3 * fs)), 84.333 columns/s at ANY sample rate). The single
+   time->pixel transform is wfColToX(col) = W - (T - col) * pxPerCol (and its inverse wfXToCol); the waveform columns are placed
+   with exactly this transform (wfRender) and the grid lines are placed with exactly this transform (wfDrawGrid). T (the right-edge
+   clock) is shared, so relative positions can never depend on the refresh rate. Waveform columns are NEVER moved to fit the grid.
+   Grid = lattice derived from the host's downbeat anchor (engine: stream frame of the latest bar event), bpm and meter:
+       anchorCol  = anchorFrame * 253 / (3 * fs)  - wfOffset            (double precision, exact rational)
+       colsPerBeat= (253/3) * (60/bpm) * (4/den)   colsPerBar = colsPerBeat * num      (beat = 1/den note)
+       line j     = anchorCol + j * colsPerBeat / 2^s      (s = subdivision depth: 0 beat, 1 = 1/8, 2 = 1/16, 3 = 1/32 in 4/4)
+   Every new anchor re-derives the lattice from scratch: no incremental phase, no nudging, no accumulation => zero drift. A small
+   anchor history (tempo + meter that were true at each bar) draws past bars correctly across tempo changes. No anchor / no bpm => no
+   grid (honesty rule); a lattice is never extended further than 1.25 bars past its last anchor (transport stopped). */
+var wfOffset = 0;          // engine absolute column index minus page column index (re-synced from waveformFirst on every batch)
+var wfAnchors = [], wfAnchorFrame = -1, WF_MAX_ANCHORS = 64;
+function wfColToX(col, W, T, ppc) { return W - (T - col) * ppc; }
+function wfXToCol(x, W, T, ppc) { return T - (W - x) / ppc; }
+function wfAnchorAdd(frame, fs, bpm, num, den) {   // frame: engine stream frame of a downbeat
+  if (!(frame >= 0) || !(fs > 0) || !(bpm > 0) || frame === wfAnchorFrame) return;
+  wfAnchorFrame = frame;
+  var d = den > 0 ? den : 4;
+  wfAnchors.push({ col: frame * 253 / (3 * fs) - wfOffset, cpb: WF_CPS * (60 / bpm) * (4 / d), num: num > 0 ? num : 4 });
+  if (wfAnchors.length > WF_MAX_ANCHORS) wfAnchors.shift();
 }
-function wgOnColumn(i, flag, bpm) {   // called once per delivered column, after it was appended (wfN === i + 1)
-  if (!(bpm > 0)) { WG.valid = false; return; }
-  var s = WF_CPS * 60 / bpm * (4 / (WFI.den > 0 ? WFI.den : 4));   // beat = 1/denominator note (6/8 -> 8th-note beats)
-  if (WFI.num > 0) WG.bpb = WFI.num;                                 // bar length from the host meter (else learned below)
-  if (WG.valid) WG.s = s;                                   // tempo change: new spacing from the next line on
-  if (flag) {
-    var c = i + 0.5;
-    if (!WG.valid) { WG.valid = true; WG.s = s; WG.pn = c; WG.beatNo = 0; WG.barKnown = flag === 2; WG.barBeat = 0; WG.lastBarNo = flag === 2 ? 0 : null; }
-    else {
-      var pprev = WG.pn - WG.s, cand = Math.abs(c - WG.pn) <= Math.abs(c - pprev) ? WG.pn : pprev, err = c - cand;
-      if (Math.abs(err) <= 1.0) {                           // consistent with the grid: refine the phase, keep bar identity
-        var no = cand === WG.pn ? WG.beatNo : WG.beatNo - 1;
-        WG.pn += err * 0.35;
-        if (flag === 2) {
-          if (WG.barKnown && WG.lastBarNo !== null) { var db = no - WG.lastBarNo; if (!(WFI.num > 0) && db >= 2 && db <= 12 && db !== WG.bpb) WG.bpb = db; }
-          WG.barKnown = true; WG.barBeat = ((no % WG.bpb) + WG.bpb) % WG.bpb; WG.lastBarNo = no;
-          if (cand === pprev && wgCount > 0) wgBar[(wgCount - 1) % WG_CAP] = 1;   // that line was already generated as a plain beat
-        }
-      } else {                                              // mismatch (loop jump / seek / tempo jump): snap to this flag
-        WG.pn = c; WG.beatNo = 0; WG.barKnown = flag === 2; WG.barBeat = 0; WG.lastBarNo = flag === 2 ? 0 : null;
-      }
+function wfGridEach(left, right, ppc, cb) {   // calls cb(col, level) level: 0 bar, 1 beat, 2 sub (1/2 beat), 3 sub (1/4), 4 sub (1/8)
+  var n = wfAnchors.length, s, j;
+  for (s = 0; s < n; s++) {
+    var a = wfAnchors[s], barCols = a.cpb * a.num;
+    var lo = s === 0 ? a.col - 1.05 * barCols : a.col, hi = Math.min(s < n - 1 ? wfAnchors[s + 1].col : right, a.col + 1.25 * barCols);
+    if (s === 0) { lo = Math.max(lo, left); } else lo = Math.max(lo, left);
+    if (hi <= left || lo >= right) continue;
+    var f = -1, q;   // finest depth whose spacing is >= 7 device px (density gate); bars only if even beats are denser than that
+    for (q = 3; q >= 0; q--) if (a.cpb / (1 << q) * ppc >= 7) { f = q; break; }
+    var per = f >= 0 ? (1 << f) : 1, step = f >= 0 ? a.cpb / per : barCols, barSteps = f >= 0 ? a.num * per : 1;
+    var j0 = Math.ceil((lo - a.col) / step - 1e-9), j1 = Math.ceil((hi - a.col) / step - 1e-9) - 1;
+    for (j = j0; j <= j1; j++) {
+      var lvl;
+      if ((((j % barSteps) + barSteps) % barSteps) === 0) lvl = 0;
+      else if (f < 0) lvl = 0;
+      else if ((((j % per) + per) % per) === 0) lvl = 1;
+      else if ((((j % (per >> 1)) + (per >> 1)) % (per >> 1)) === 0) lvl = 2;
+      else if (per >= 4 && (((j % (per >> 2)) + (per >> 2)) % (per >> 2)) === 0) lvl = 3;
+      else lvl = 4;
+      cb(a.col + j * step, lvl);
     }
-    WG.lastFlagIdx = i;
   }
-  if (!WG.valid) return;
-  if (i - WG.lastFlagIdx > 2.5 * WG.s) { WG.valid = false; return; }   // no flag for 2.5 beats: transport stopped / no playhead
-  while (WG.pn < wfN) { wgAdd(WG.pn, wgIsBar(WG.beatNo)); WG.pn += WG.s; WG.beatNo++; }
 }
+var WF_GRID_STYLE = [ [0.62, 1.1], [0.34, 0.7], [0.20, 0.55], [0.13, 0.5], [0.08, 0.5] ];   // [alpha, css px width] per level: bar, beat, 1/2, 1/4, 1/8 of a beat
+var wfFlagRing = new Uint8Array(WF_CAP);
 function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1) {   // append one column (both sources, kept in lockstep)
   var o = (wfN % WF_CAP) * 4, r0 = wfRing[0], r1 = wfRing[1];
   r0[o] = b0; r0[o + 1] = m0; r0[o + 2] = h0; r0[o + 3] = f0; r1[o] = b1; r1[o + 1] = m1; r1[o + 2] = h1; r1[o + 3] = f1;
@@ -1034,21 +1044,15 @@ function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1) {   // append one column (bot
 function wfFlushRun(g, x0, x1, ring, idx, mid, A, tick) {
   var o = (idx % WF_CAP) * 4, w = x1 - x0, f = wfFlagRing[idx % WF_CAP];
   wfDrawBands(g, x0, w, mid, A, ring[o], ring[o + 1], ring[o + 2]);
-  if (tick && f && wfCover[idx % WF_CAP] !== idx + 1) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0 + (w >> 1), 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // ungridded flag: column centre   // beat / bar tick over the shapes
-}
-function wfDrawGridLine(g, pos, bar, W, T, ppc) {
-  /* Downbeats (beat 1 of each bar) anchor the lane: bright, slightly wider, with a soft halo. Intermediate beats are much
-     fainter and only drawn at 2/4-bar spans, where there is room. */
-  if (!bar && WFSPAN > 4) return;
-  var x = W - (T - pos) * ppc; if (x < -3 || x > W + 2) return;
-  var tw = bar ? Math.max(1, Math.round(DPR * 1.1)) : Math.max(1, Math.round(DPR * 0.6)), xr = Math.round(x - tw / 2);
-  if (bar) { g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(xr - Math.round(DPR), 0, tw + 2 * Math.round(DPR), wfH); }
-  g.fillStyle = bar ? 'rgba(255,255,255,0.62)' : 'rgba(255,255,255,0.09)'; g.fillRect(xr, 0, tw, wfH);
+  if (tick && f && !wfAnchors.length) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0 + (w >> 1), 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // ungridded flag: column centre   // beat / bar tick over the shapes
 }
 function wfDrawGrid(g, W, T, ppc) {
-  var k, n = Math.min(wgCount, WG_CAP), pos;
-  for (k = wgCount - 1; k >= wgCount - n; k--) { pos = wgPos[k % WG_CAP]; if (W - (T - pos) * ppc < -2) break; wfDrawGridLine(g, pos, wgBar[k % WG_CAP], W, T, ppc); }
-  if (WG.valid) { var p = WG.pn, no = WG.beatNo; while (p < T) { wfDrawGridLine(g, p, wgIsBar(no), W, T, ppc); p += WG.s; no++; } }   // predictive: extrapolated right edge
+  wfGridEach(wfXToCol(-4, W, T, ppc), T, ppc, function (col, lvl) {
+    var x = wfColToX(col, W, T, ppc); if (x < -4 || x > W + 2) return;
+    var st = WF_GRID_STYLE[lvl], tw = Math.max(1, Math.round(DPR * st[1])), xr = Math.round(x - tw / 2);
+    if (lvl === 0) { var h = Math.max(1, Math.round(DPR)); g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(xr - h, 0, tw + 2 * h, wfH); }   // soft halo: downbeats anchor the lane
+    g.fillStyle = 'rgba(255,255,255,' + st[0] + ')'; g.fillRect(xr, 0, tw, wfH);
+  });
 }
 function wfRender() {
   if (!wfCtx) return;
@@ -1059,15 +1063,15 @@ function wfRender() {
     var rs = 0, ri = -1, real = false;
     for (x = 0; x <= W; x++) {
       var cur = -1, isReal = false;
-      if (x < W) { idx = Math.floor(T - (W - x - 0.5) / ppc); isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; }
+      if (x < W) { idx = Math.floor(wfXToCol(x + 0.5, W, T, ppc)); isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; }
       if (x === 0) { ri = cur; real = isReal; rs = 0; continue; }
       if (cur !== ri || (x < W && isReal !== real)) { if (ri >= 0) wfFlushRun(g, rs, x, ring, ri, mid, A, real); rs = x; ri = cur; real = isReal; }
     }
   } else {          // decimation (more than one column per device px): peak-hold over the covered columns
     for (x = 0; x < W; x++) {
-      var i0 = Math.floor(T - (W - x) / ppc), i1 = Math.min(newest, Math.floor(T - (W - x - 1) / ppc - 1e-9)), b = 0, m = 0, h = 0, f = 0, i;
+      var i0 = Math.floor(wfXToCol(x, W, T, ppc)), i1 = Math.min(newest, Math.floor(wfXToCol(x + 1, W, T, ppc) - 1e-9)), b = 0, m = 0, h = 0, f = 0, i;
       if (i0 < lo) i0 = lo; if (i0 < 0) i0 = 0;
-      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (wfFlagRing[i % WF_CAP] > f && wfCover[i % WF_CAP] !== i + 1) f = wfFlagRing[i % WF_CAP]; }   // flag survives peak-hold
+      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (wfFlagRing[i % WF_CAP] > f && !wfAnchors.length) f = wfFlagRing[i % WF_CAP]; }   // flag survives peak-hold
       if (i1 >= i0) { wfDrawBands(g, x, 1, mid, A, b, m, h); if (f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x, 0, 1, wfH); } }
     }
   }
@@ -1086,13 +1090,17 @@ function wfResize() {
   wfW = nw; wfH = nh; wfAlloc(); wfRender();
 }
 function wfStep(dt) {
-  if (!isLive()) { wfIdleAcc += dt * WF_CPS; while (wfIdleAcc >= 1) { wfIdleAcc -= 1; wfPushCol(0, 0, 0, 0, 0, 0, 0, 0); wgOnColumn(wfN - 1, 0, 0); } } else wfIdleAcc = 0;   // no data: scroll silence on the same clock
+  if (!isLive()) { wfIdleAcc += dt * WF_CPS; while (wfIdleAcc >= 1) { wfIdleAcc -= 1; wfPushCol(0, 0, 0, 0, 0, 0, 0, 0); } } else wfIdleAcc = 0;   // no data: scroll silence on the same clock
   wfT = Math.min(wfN + 1.2, Math.max(wfN, wfT + dt * WF_CPS));   // monotonic, never behind the data, never more than 1.2 columns ahead
   wfRender();
 }
 /* debug/measurement hook (read-only): geometry + the true-duration check used by the Stage 3 timing verification */
 window.__wfStep = function (dt) { wfStep(dt); };   // measurement hook: advance the strip clock without rAF
-window.__wfGrid = function () { var L = [], n = Math.min(wgCount, 40), k; for (k = wgCount - n; k < wgCount; k++) L.push([+wgPos[k % WG_CAP].toFixed(2), wgBar[k % WG_CAP]]); return { valid: WG.valid, s: WG.s, pn: WG.pn, bpb: WG.bpb, barKnown: WG.barKnown, count: wgCount, lines: L }; };
+window.__wfGrid = function (lo, hi) {   // measurement hook: anchors + lattice lines (col in PAGE column space) over [lo, hi] (default: visible window)
+  var W = wfW, ppc = W / (wfSpanSec() * WF_CPS), L = [], l0 = lo === undefined ? wfXToCol(0, W, wfT, ppc) : lo, h0 = hi === undefined ? wfT : hi;
+  wfGridEach(l0, h0, ppc, function (col, lvl) { L.push([col, lvl]); });
+  return { anchors: wfAnchors.map(function (a) { return [a.col, a.cpb, a.num]; }), offset: wfOffset, T: wfT, N: wfN, ppc: ppc, W: W, lines: L };
+};
 window.__wfDebug = function (rowY) {
   var out = { W: wfW, H: wfH, span: WFSPAN, spanSec: wfSpanSec(), ppc: wfW / (wfSpanSec() * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
   var ring = wfRing[0], i, cur = 0;

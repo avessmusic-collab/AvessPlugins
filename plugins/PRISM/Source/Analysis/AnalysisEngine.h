@@ -164,6 +164,7 @@ namespace prism
         std::array<float, kDrainChunk> scratchL {}, scratchR {}, loudL {}, loudR {};
         std::array<BeatEvent, kBeatLogSize> beatLog {};
         std::uint64_t beatsSeen = 0;
+        std::int64_t lastBarFrame = -1;   // worker-private: stream frame of the newest bar event popped (published as barAnchorStreamFrame)
         bool newFrames = false;
         std::atomic<std::uint64_t> sequence { 0 };
     };

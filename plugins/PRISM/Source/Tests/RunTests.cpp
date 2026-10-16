@@ -3377,6 +3377,7 @@ static void test_waveform_beat_flags_tempo_and_loop()
 
     prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
     FakePlayHead ph;
+    std::int64_t loopPrevAnchor = -1; bool loopAnchorMonotonic = true;
     const int sizes[4] = { 333, 477, 1021, 480 };
     std::vector<float> buf(4096, 0.1f);
     const float* ptrs[2] = { buf.data(), buf.data() };
@@ -3393,6 +3394,14 @@ static void test_waveform_beat_flags_tempo_and_loop()
         eng.capturePlayhead(&ph, n);
         eng.pump();
         pos += (std::uint64_t) n;
+        const auto a = eng.buildSnapshot()->barAnchorStreamFrame;
+        loopAnchorMonotonic &= a >= loopPrevAnchor;
+        loopPrevAnchor = a;
+    }
+    {   // survives the loop jump: anchor never moved backwards in stream time and ends on the last bar event
+        std::int64_t lastBar = -1;
+        for (std::uint64_t i = 0; i < eng.getBeatEventsSeen(); ++i) if (eng.getBeatLogEntry(i).isBar) lastBar = (std::int64_t) eng.getBeatLogEntry(i).frameIndex;
+        check(loopAnchorMonotonic && loopPrevAnchor == lastBar && lastBar > 0, "barAnchorStreamFrame survives tempo change + loop jump (monotonic, ends on the last bar event)");
     }
     std::vector<std::pair<std::uint64_t, float>> flagged;
     for (const auto& c : allColumns(eng.getWaveform(0))) if (c.flag != 0.0f) flagged.push_back({ c.index, c.flag });
@@ -3436,6 +3445,9 @@ static void test_waveform_beat_events_host_grid()
         std::vector<float> buf((size_t) c.block, 0.1f);
         const float* ptrs[2] = { buf.data(), buf.data() };
         const std::uint64_t total = (std::uint64_t) (c.seconds * fs);
+        const bool noAnchorAtStart = eng.buildSnapshot()->barAnchorStreamFrame == -1;
+        std::int64_t prevAnchor = -1; int anchorChanges = 0; bool anchorMonotonic = true;
+        std::int64_t prevHighestCol = -1; bool firstColOk = true; int batches = 0;
         for (std::uint64_t pos = 0; pos < total;)
         {
             const int n = (int) std::min<std::uint64_t>((std::uint64_t) c.block, total - pos);
@@ -3445,6 +3457,19 @@ static void test_waveform_beat_events_host_grid()
             eng.capturePlayhead(&ph, n);
             eng.pump();
             pos += (std::uint64_t) n;
+            const auto snap = eng.buildSnapshot();
+            const auto a = snap->barAnchorStreamFrame;   // grid anchor published to the page
+            {   // waveformFirstColumn: contiguous with the previous batch (the page places columns by index and detects gaps with it)
+                const auto& src = snap->sources[0];
+                if (src.waveformColumnCount > 0)
+                {
+                    firstColOk &= src.waveformFirstColumn >= 0 && (prevHighestCol < 0 || src.waveformFirstColumn == prevHighestCol + 1);
+                    prevHighestCol = src.waveformFirstColumn + src.waveformColumnCount - 1;
+                    ++batches;
+                }
+            }
+            anchorMonotonic &= a >= prevAnchor;
+            if (a != prevAnchor) { ++anchorChanges; prevAnchor = a; }
         }
         // expected: every beat position b = anchor + k*unit with ppq in [ppqStart, ppqStart + total*qPerSample)
         std::vector<std::pair<std::uint64_t, bool>> expected;
@@ -3467,7 +3492,14 @@ static void test_waveform_beat_events_host_grid()
             posOk &= d <= 1;
             barOk &= be.isBar == expected[(size_t) i].second;
         }
-        std::printf("   [info] %s: %llu events (expected %zu), worst frame error %lld\n", c.name, (unsigned long long) seen, expected.size(), (long long) worst);
+        // grid anchor: -1 before any bar, changes exactly once per bar, never goes backwards, ends on the last downbeat frame
+        std::int64_t lastBarExpected = -1; int barCount = 0;
+        for (const auto& e : expected) if (e.second) { lastBarExpected = (std::int64_t) e.first; ++barCount; }
+        const bool anchorOk = noAnchorAtStart && anchorMonotonic && anchorChanges == barCount
+                              && std::llabs(prevAnchor - lastBarExpected) <= 1;
+        std::printf("   [info] %s: %llu events (expected %zu), worst frame error %lld; anchor changes %d (bars %d), final anchor %lld (last downbeat %lld), %d column batches\n", c.name, (unsigned long long) seen, expected.size(), (long long) worst, anchorChanges, barCount, (long long) prevAnchor, (long long) lastBarExpected, batches);
+        check(anchorOk, "barAnchorStreamFrame: -1 before any bar, once per bar, monotonic, equals the last downbeat frame (+-1)");
+        check(firstColOk && batches > 50, "snapshot waveformFirstColumn: every batch starts exactly after the previous one (contiguous absolute column indices)");
         char name[200];
         std::snprintf(name, sizeof(name), "%s: event count, +-1 frame positions, downbeats from lastBarStart", c.name);
         check(countOk && posOk && barOk, name);

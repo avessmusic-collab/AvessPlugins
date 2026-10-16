@@ -27,6 +27,7 @@ namespace prism
         bool  hasSpectrum = false;
         std::array<float, kSpectrumPoints> spectrumDb {};
 
+        std::int64_t waveformFirstColumn = -1;                // absolute column index of waveformColumns[0] (-1 = none); lets the page place columns by index
         int   waveformColumnCount = 0;                        // each column: bass, mids, highs (0..1), flag (0 none, 1 beat, 2 bar)
         std::array<std::array<float, 4>, kMaxWaveformColumns> waveformColumns {};
 
@@ -49,6 +50,7 @@ namespace prism
         std::uint64_t sequence     = 0;                       // strictly increasing; the editor skips repeats
         double        sampleRate   = 0.0;
         float         bpm          = NAN;                     // optional tempo for the waveform header annotation (NaN -> dashes)
+        std::int64_t  barAnchorStreamFrame = -1;              // source-0 stream frame of the most recent downbeat (bar event); -1 = none yet
         int           timeSigNumerator = 0, timeSigDenominator = 0;   // host time signature (0 = unknown); optional, additive
         bool          signalPresent = false;                  // false -> UI shows "NO SIGNAL"
 
