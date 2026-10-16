@@ -49,6 +49,7 @@ namespace prism
         std::uint64_t sequence     = 0;                       // strictly increasing; the editor skips repeats
         double        sampleRate   = 0.0;
         float         bpm          = NAN;                     // optional tempo for the waveform header annotation (NaN -> dashes)
+        int           timeSigNumerator = 0, timeSigDenominator = 0;   // host time signature (0 = unknown); optional, additive
         bool          signalPresent = false;                  // false -> UI shows "NO SIGNAL"
 
         float momentaryLufs  = NAN;                           // 400 ms

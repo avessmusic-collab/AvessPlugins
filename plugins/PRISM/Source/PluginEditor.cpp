@@ -388,7 +388,7 @@ void PRISMAudioProcessorEditor::handleUiStateEvent (const juce::var& payload)
     tmp.setProperty (uiLowerColSplits, joinInts (intsFromVar (payload.getProperty ("lower_col_splits", {}))), nullptr);
     tmp.setProperty (uiSgOrientation,  payload.getProperty ("spectrogram_orientation", "v").toString(),      nullptr);
     tmp.setProperty (uiFullscreen,     (bool) payload.getProperty ("fullscreen", false),                      nullptr);
-    tmp.setProperty (uiWaveformSpan,   (int) payload.getProperty ("waveform_span", 12),                       nullptr);
+    tmp.setProperty (uiWaveformSpan,   (int) payload.getProperty ("waveform_span", 8),                       nullptr);
     PRISMAudioProcessor::sanitizeState (tmp);
 
     auto& st = processorRef.apvts.state;
@@ -440,7 +440,7 @@ juce::var PRISMAudioProcessorEditor::buildInitUi() const
     o->setProperty ("row_splits",       intsToVar (parseInts (st.getProperty (kRowSplitsId, "").toString())));
     o->setProperty ("lower_col_splits", intsToVar (parseInts (st.getProperty (kColSplitsId, "").toString())));
     o->setProperty ("fullscreen",       (bool) st.getProperty (kFullscreenId, false));
-    o->setProperty ("waveform_span",    (int) st.getProperty (prism::ids::uiWaveformSpan, 12));
+    o->setProperty ("waveform_span",    (int) st.getProperty (prism::ids::uiWaveformSpan, 8));
     o->setProperty ("spectrogram_orientation", st.getProperty (kSgOrientId, "v").toString() == "h" ? "h" : "v");
     return juce::var (o);
 }
@@ -657,6 +657,8 @@ bool PRISMAudioProcessorEditor::pushAnalysisFrameImpl()
     frame->setProperty ("sampleRate", snap->sampleRate);
     frame->setProperty ("live",       snap->signalPresent);
     frame->setProperty ("bpm",        numberOrNull (snap->bpm));
+    if (snap->timeSigNumerator > 0 && snap->timeSigDenominator > 0)   // additive + optional: older pages ignore it
+        frame->setProperty ("timeSig", juce::Array<juce::var> { snap->timeSigNumerator, snap->timeSigDenominator });
     frame->setProperty ("spectrum",   spectrum);
     frame->setProperty ("waveform",   waveform);
     // Decimation hook (risk R2 lever): gonio/scope on every 2nd pushed frame only. OFF: the page treats a missing

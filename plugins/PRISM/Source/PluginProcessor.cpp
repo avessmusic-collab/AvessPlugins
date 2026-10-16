@@ -76,7 +76,7 @@ void PRISMAudioProcessor::applyStateDefaults(juce::ValueTree& state)
     if (! state.hasProperty(uiRowSplits))       state.setProperty(uiRowSplits, "226,70,302", nullptr);
     if (! state.hasProperty(uiLowerColSplits))  state.setProperty(uiLowerColSplits, "296,266,272", nullptr);
     if (! state.hasProperty(uiSgOrientation))   state.setProperty(uiSgOrientation, "v", nullptr);
-    if (! state.hasProperty(uiWaveformSpan))    state.setProperty(uiWaveformSpan, 12, nullptr);
+    if (! state.hasProperty(uiWaveformSpan))    state.setProperty(uiWaveformSpan, 8, nullptr);
     if (! state.hasProperty(uiFullscreen))      state.setProperty(uiFullscreen, false, nullptr);
     if (! state.hasProperty(uiWidth))           state.setProperty(uiWidth, 1100, nullptr);
     if (! state.hasProperty(uiHeight))          state.setProperty(uiHeight, 720, nullptr);
@@ -99,8 +99,8 @@ void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)
 
     state.setProperty(uiFullscreen, (bool) state.getProperty(uiFullscreen, false), nullptr);
 
-    const int span = (int) state.getProperty(uiWaveformSpan, 12);
-    state.setProperty(uiWaveformSpan, (span == 3 || span == 6 || span == 12 || span == 24) ? span : 12, nullptr);
+    const int span = (int) state.getProperty(uiWaveformSpan, 8);   // bars: 2 | 4 | 8 | 16 (older builds stored seconds -> reset to 8)
+    state.setProperty(uiWaveformSpan, (span == 2 || span == 4 || span == 8 || span == 16) ? span : 8, nullptr);
 
     // Window size: width >= 770, height locked to the 55:36 aspect (1100x720)
     const int w = juce::jlimit(kMinWidth, kMaxWidth, (int) state.getProperty(uiWidth, kDefaultWidth));

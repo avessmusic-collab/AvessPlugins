@@ -32,7 +32,7 @@ namespace prism::ids
     inline constexpr const char* uiRowSplits      = "ui_row_splits";
     inline constexpr const char* uiLowerColSplits = "ui_lower_col_splits";
     inline constexpr const char* uiSgOrientation  = "ui_spectrogram_orientation";
-    inline constexpr const char* uiWaveformSpan   = "ui_waveform_span";   // 3 | 6 | 12 | 24 seconds (default 12)
+    inline constexpr const char* uiWaveformSpan   = "ui_waveform_span";   // bars: 2 | 4 | 8 | 16 (default 8)
     inline constexpr const char* uiFullscreen     = "ui_fullscreen";
     inline constexpr const char* uiWidth          = "ui_width";
     inline constexpr const char* uiHeight         = "ui_height";

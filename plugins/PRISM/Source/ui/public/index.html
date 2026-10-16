@@ -200,7 +200,7 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="cap" id="cap_wf" style="left:44px;width:76px;top:316px">Waveform</div>
   <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
   <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
-  <div class="sgsel" id="wfspan" style="left:244px;width:62px" title="Waveform span (click to cycle 3s / 6s / 12s / 24s)">SPAN 12s</div>
+  <div class="sgsel" id="wfspan" style="left:244px;width:92px" title="Waveform span in bars (click to cycle 2 / 4 / 8 / 16)">SPAN ~8 bars</div>
   <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#ff4b4b">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#ffb84d">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#5df2b8">&#9679;</span> highs</div>
   <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
 
@@ -390,7 +390,9 @@ function receiveAnalysisFrame(fr) {
   if (!fr || typeof fr !== 'object') return;
   D.lastAt = performance.now(); D.hasData = true; D.live = fr.live !== false;
   if (isNum(fr.sampleRate) && fr.sampleRate > 0) D.fs = fr.sampleRate;
-  D.bpm = isNum(fr.bpm) && fr.bpm > 0 ? fr.bpm : null;   // optional host/analysis tempo; shown as dashes when absent
+  D.bpm = isNum(fr.bpm) && fr.bpm > 0 ? fr.bpm : null;
+  if (D.bpm) { var wasKnown = WFI.known; WFI.bpm = D.bpm; WFI.known = true; if (!wasKnown) wfSpanPaint(); }
+  if (fr.timeSig && fr.timeSig.length === 2 && fr.timeSig[0] > 0 && fr.timeSig[1] > 0) { WFI.num = fr.timeSig[0]; WFI.den = fr.timeSig[1]; }   // optional host/analysis tempo; shown as dashes when absent
   var s, a, wfa = [null, null];
   for (s = 0; s < 2; s++) {
     a = fr.spectrum ? f32(fr.spectrum[s]) : null; D.spec[s] = a ? fitTo(a, N) : null;
@@ -946,15 +948,18 @@ on('color_theme', function (n) { applyTheme(n); KNOBS.forEach(function (k) { k.d
    true duration at any span; (3) drives the sub-column scroll by a clock T that advances with wall time but is clamped to
    [wfN, wfN + 1.2] and therefore re-syncs to the data on every batch and can never drift or fall behind. Columns beyond the
    newest (the <=1.2 extrapolated ones) show the held newest value and are replaced as soon as real data arrives. */
-var WFSPAN = 12, WF_SPANS = [3, 6, 12, 24], WF_CPS = 253 / 3, WF_CAP = 4096;   // 4096 columns = 48.6 s > 24 s span
+var WFSPAN = 8, WF_SPANS = [2, 4, 8, 16], WF_CPS = 253 / 3, WF_CAP = 8192;   // span in BARS; 8192 columns = 97 s of history
+var WFI = { bpm: 0, num: 0, den: 0, known: false };   // last known host tempo + meter (tempo is quarter-note bpm)
+function wfBarSec() { var bpm = WFI.bpm > 0 ? WFI.bpm : 120, num = WFI.num > 0 ? WFI.num : 4, den = WFI.den > 0 ? WFI.den : 4; return num * (4 / den) * 60 / bpm; }
+function wfSpanSec() { return Math.min(WFSPAN * wfBarSec(), (WF_CAP - 64) / WF_CPS); }   // visible window in seconds (bars -> time via the live tempo/meter)
 var WF = { pps: 0, c: THEMES[0].band.slice() };
 var wfOff = null, wfCtx = null, wfW = 0, wfH = 0;
 var wfRing = [new Float32Array(WF_CAP * 4), new Float32Array(WF_CAP * 4)];
 var wfN = 0, wfT = 0, wfIdleAcc = 0;
-function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / WFSPAN; }
-function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + WFSPAN + 's'; }
+function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / wfSpanSec(); }
+function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + WFSPAN + ' bars'; }
 function wfSetSpan(s, fromHost) {
-  s = +s; if (WF_SPANS.indexOf(s) < 0) s = 12; var changed = s !== WFSPAN; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
+  s = +s; if (WF_SPANS.indexOf(s) < 0) s = 8; var changed = s !== WFSPAN; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
   if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }   // history is kept: re-projection only
   if (changed && !fromHost) { if (typeof postUi === "function") postUi(); }
 }
@@ -985,17 +990,18 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi) {   // w = block width in device
    column is delivered and stored (so history keeps the tempo that was valid then); lines falling in the <=1.2 extrapolated
    columns are drawn predictively. No bpm, or no flag for 2.5 beats (transport stopped) => no grid is generated (honesty rule);
    un-gridded flags still draw as plain ticks (at the column centre). Flags remain ground truth. */
-var wfFlagRing = new Uint8Array(WF_CAP), wfCover = new Uint8Array(WF_CAP);
+var wfFlagRing = new Uint8Array(WF_CAP), wfCover = new Int32Array(WF_CAP);   // wfCover[i % CAP] === i + 1  <=>  column i has a grid line next to it (stamp: no clearing needed)
 var WG_CAP = 1024, wgPos = new Float64Array(WG_CAP), wgBar = new Uint8Array(WG_CAP), wgCount = 0;
 var WG = { valid: false, s: 0, pn: 0, beatNo: 0, barBeat: 0, barKnown: false, bpb: 4, lastBarNo: null, lastFlagIdx: -1 };
 function wgIsBar(no) { return WG.barKnown && ((((no - WG.barBeat) % WG.bpb) + WG.bpb) % WG.bpb) === 0; }
 function wgAdd(pos, bar) {
   wgPos[wgCount % WG_CAP] = pos; wgBar[wgCount % WG_CAP] = bar ? 1 : 0; wgCount++;
-  var c = Math.floor(pos); for (var d = -1; d <= 1; d++) if (c + d >= 0) wfCover[(c + d) % WF_CAP] = 1;   // suppress plain flag ticks next to a grid line
+  var c = Math.floor(pos); for (var d = -1; d <= 1; d++) if (c + d >= 0) wfCover[(c + d) % WF_CAP] = c + d + 1;   // suppress plain flag ticks next to a grid line
 }
 function wgOnColumn(i, flag, bpm) {   // called once per delivered column, after it was appended (wfN === i + 1)
   if (!(bpm > 0)) { WG.valid = false; return; }
-  var s = WF_CPS * 60 / bpm;
+  var s = WF_CPS * 60 / bpm * (4 / (WFI.den > 0 ? WFI.den : 4));   // beat = 1/denominator note (6/8 -> 8th-note beats)
+  if (WFI.num > 0) WG.bpb = WFI.num;                                 // bar length from the host meter (else learned below)
   if (WG.valid) WG.s = s;                                   // tempo change: new spacing from the next line on
   if (flag) {
     var c = i + 0.5;
@@ -1006,7 +1012,7 @@ function wgOnColumn(i, flag, bpm) {   // called once per delivered column, after
         var no = cand === WG.pn ? WG.beatNo : WG.beatNo - 1;
         WG.pn += err * 0.35;
         if (flag === 2) {
-          if (WG.barKnown && WG.lastBarNo !== null) { var db = no - WG.lastBarNo; if (db >= 2 && db <= 12 && db !== WG.bpb) WG.bpb = db; }
+          if (WG.barKnown && WG.lastBarNo !== null) { var db = no - WG.lastBarNo; if (!(WFI.num > 0) && db >= 2 && db <= 12 && db !== WG.bpb) WG.bpb = db; }
           WG.barKnown = true; WG.barBeat = ((no % WG.bpb) + WG.bpb) % WG.bpb; WG.lastBarNo = no;
           if (cand === pprev && wgCount > 0) wgBar[(wgCount - 1) % WG_CAP] = 1;   // that line was already generated as a plain beat
         }
@@ -1023,17 +1029,21 @@ function wgOnColumn(i, flag, bpm) {   // called once per delivered column, after
 function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1) {   // append one column (both sources, kept in lockstep)
   var o = (wfN % WF_CAP) * 4, r0 = wfRing[0], r1 = wfRing[1];
   r0[o] = b0; r0[o + 1] = m0; r0[o + 2] = h0; r0[o + 3] = f0; r1[o] = b1; r1[o + 1] = m1; r1[o + 2] = h1; r1[o + 3] = f1;
-  wfFlagRing[wfN % WF_CAP] = f0 > f1 ? f0 : f1; wfCover[wfN % WF_CAP] = 0; wfN++;   // flags are playhead-derived, so shared by both sources
+  wfFlagRing[wfN % WF_CAP] = f0 > f1 ? f0 : f1; wfN++;   // flags are playhead-derived, so shared by both sources
 }
 function wfFlushRun(g, x0, x1, ring, idx, mid, A, tick) {
   var o = (idx % WF_CAP) * 4, w = x1 - x0, f = wfFlagRing[idx % WF_CAP];
   wfDrawBands(g, x0, w, mid, A, ring[o], ring[o + 1], ring[o + 2]);
-  if (tick && f && !wfCover[idx % WF_CAP]) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0 + (w >> 1), 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // ungridded flag: column centre   // beat / bar tick over the shapes
+  if (tick && f && wfCover[idx % WF_CAP] !== idx + 1) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0 + (w >> 1), 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // ungridded flag: column centre   // beat / bar tick over the shapes
 }
 function wfDrawGridLine(g, pos, bar, W, T, ppc) {
-  var x = W - (T - pos) * ppc; if (x < -2 || x > W + 1) return;
-  g.fillStyle = bar ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)';
-  var tw = Math.max(1, Math.round(DPR * 0.8)); g.fillRect(Math.round(x - tw / 2), 0, tw, wfH);
+  /* Downbeats (beat 1 of each bar) anchor the lane: bright, slightly wider, with a soft halo. Intermediate beats are much
+     fainter and only drawn at 2/4-bar spans, where there is room. */
+  if (!bar && WFSPAN > 4) return;
+  var x = W - (T - pos) * ppc; if (x < -3 || x > W + 2) return;
+  var tw = bar ? Math.max(1, Math.round(DPR * 1.1)) : Math.max(1, Math.round(DPR * 0.6)), xr = Math.round(x - tw / 2);
+  if (bar) { g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(xr - Math.round(DPR), 0, tw + 2 * Math.round(DPR), wfH); }
+  g.fillStyle = bar ? 'rgba(255,255,255,0.62)' : 'rgba(255,255,255,0.09)'; g.fillRect(xr, 0, tw, wfH);
 }
 function wfDrawGrid(g, W, T, ppc) {
   var k, n = Math.min(wgCount, WG_CAP), pos;
@@ -1044,7 +1054,7 @@ function wfRender() {
   if (!wfCtx) return;
   var g = wfCtx, W = wfW, newest = wfN - 1; g.clearRect(0, 0, W, wfH);
   if (newest < 0) return;
-  var ring = wfRing[P.wf_src], ppc = W / (WFSPAN * WF_CPS), T = wfT, mid = wfH / 2, A = mid * 0.86, x, idx, lo = wfN - WF_CAP;
+  var ring = wfRing[P.wf_src], ppc = W / (wfSpanSec() * WF_CPS), T = wfT, mid = wfH / 2, A = mid * 0.86, x, idx, lo = wfN - WF_CAP;
   if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
     var rs = 0, ri = -1, real = false;
     for (x = 0; x <= W; x++) {
@@ -1057,7 +1067,7 @@ function wfRender() {
     for (x = 0; x < W; x++) {
       var i0 = Math.floor(T - (W - x) / ppc), i1 = Math.min(newest, Math.floor(T - (W - x - 1) / ppc - 1e-9)), b = 0, m = 0, h = 0, f = 0, i;
       if (i0 < lo) i0 = lo; if (i0 < 0) i0 = 0;
-      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (wfFlagRing[i % WF_CAP] > f && !wfCover[i % WF_CAP]) f = wfFlagRing[i % WF_CAP]; }   // flag survives peak-hold
+      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (wfFlagRing[i % WF_CAP] > f && wfCover[i % WF_CAP] !== i + 1) f = wfFlagRing[i % WF_CAP]; }   // flag survives peak-hold
       if (i1 >= i0) { wfDrawBands(g, x, 1, mid, A, b, m, h); if (f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x, 0, 1, wfH); } }
     }
   }
@@ -1084,7 +1094,7 @@ function wfStep(dt) {
 window.__wfStep = function (dt) { wfStep(dt); };   // measurement hook: advance the strip clock without rAF
 window.__wfGrid = function () { var L = [], n = Math.min(wgCount, 40), k; for (k = wgCount - n; k < wgCount; k++) L.push([+wgPos[k % WG_CAP].toFixed(2), wgBar[k % WG_CAP]]); return { valid: WG.valid, s: WG.s, pn: WG.pn, bpb: WG.bpb, barKnown: WG.barKnown, count: wgCount, lines: L }; };
 window.__wfDebug = function (rowY) {
-  var out = { W: wfW, H: wfH, span: WFSPAN, ppc: wfW / (WFSPAN * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
+  var out = { W: wfW, H: wfH, span: WFSPAN, spanSec: wfSpanSec(), ppc: wfW / (wfSpanSec() * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
   var ring = wfRing[0], i, cur = 0;
   for (i = Math.max(0, wfN - WF_CAP); i <= wfN; i++) {
     var on = false; if (i < wfN) { var o = (i % WF_CAP) * 4; on = Math.max(ring[o], ring[o + 1], ring[o + 2]) >= 0.05; }
@@ -1103,7 +1113,7 @@ function drawWaveform() {
   g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(0, cy - 1, o.w, 3); g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(0, cy, o.w, 1);
   g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(o.w - 1, 0, 1, o.h);
   g.font = '9px ' + MONO; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(190,205,215,0.5)';
-  g.textAlign = 'left'; g.fillText('-' + WFSPAN + 's', 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
+  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + WFSPAN + ' bars', 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
 }
 
 /* ================= v8: TILED PANE LAYOUT (drag-to-resize on shared borders) + FULLSCREEN ================= */

@@ -152,12 +152,13 @@ namespace prism
         std::array<SourceState, kMaxSources> sources;
         BeatEventQueue beatQueue;
         std::atomic<float> bpm { NAN };
+        std::atomic<int> sigNum { 0 }, sigDen { 0 };   // host time signature (0 = unknown), published in the snapshot
 
         // audio-thread-only playhead state
         std::uint64_t lastBlockStart = 0;
         bool lastBlockWritten = false;
         double prevPpq = -1.0e300;
-        std::int64_t lastBeatNumber = INT64_MIN;
+        double lastEmittedPpq = -1.0e300;   // ppq of the last beat event pushed (dedup across blocks); reset on stop / jump
 
         // worker-private
         std::array<float, kDrainChunk> scratchL {}, scratchR {}, loudL {}, loudR {};

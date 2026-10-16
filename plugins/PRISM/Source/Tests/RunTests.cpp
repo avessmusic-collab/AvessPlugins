@@ -170,6 +170,8 @@ namespace
     {
         double ppq = 0.0, bpm = 120.0;
         bool playing = true, hasPpq = true, hasBpm = true;
+        bool hasBarStart = false; double barStart = 0.0;       // ppqPositionOfLastBarStart (host-authoritative downbeat)
+        int sigNum = 4, sigDen = 4;
 
         juce::Optional<PositionInfo> getPosition() const override
         {
@@ -177,7 +179,8 @@ namespace
             if (hasBpm) i.setBpm(bpm);
             if (hasPpq) i.setPpqPosition(ppq);
             i.setIsPlaying(playing);
-            i.setTimeSignature(TimeSignature { 4, 4 });
+            if (hasBarStart) i.setPpqPositionOfLastBarStart(barStart);
+            i.setTimeSignature(TimeSignature { sigNum, sigDen });
             return i;
         }
     };
@@ -3412,6 +3415,109 @@ static void test_waveform_beat_flags_tempo_and_loop()
     check(kindBad == 0, "bars (ppq % 4 == 0) are flag 2 and beats flag 1 across tempo change and loop jump");
 }
 
+static void test_waveform_beat_events_host_grid()
+{
+    section("waveform_beat_events_host_grid");
+    // Host-authoritative grid: downbeat = ppqPositionOfLastBarStart, beat spacing = 4/denominator quarters, bar = numerator beats.
+    // Compares the engine's logged beat events (absolute stream frames) with analytically expected sample positions: +-1 frame.
+    struct Case { const char* name; int num, den; double bpm, anchor; double ppqStart; double seconds; int block; };
+    const Case cases[] = {
+        { "4/4, bar 1 starts at ppq 1.5 (offset anchor)",  4, 4, 120.0, 1.5, 1.5,  8.0, 333 },
+        { "3/4, 100 bpm, anchor 0.75",                     3, 4, 100.0, 0.75, 0.75, 9.0, 477 },
+        { "6/8, 90 bpm (8th-note beats, bar = 3 quarters)", 6, 8, 90.0, 0.0, 0.0,  8.0, 1021 },
+        { "7/8, 140 bpm, anchor 2.0 (late bar)",           7, 8, 140.0, 2.0, 2.0,  7.0, 480 },
+    };
+    const double fs = 48000.0;
+    for (const auto& c : cases)
+    {
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        FakePlayHead ph; ph.bpm = c.bpm; ph.sigNum = c.num; ph.sigDen = c.den; ph.hasBarStart = true;
+        const double unit = 4.0 / c.den, barQ = c.num * unit, qPerSample = c.bpm / 60.0 / fs;
+        std::vector<float> buf((size_t) c.block, 0.1f);
+        const float* ptrs[2] = { buf.data(), buf.data() };
+        const std::uint64_t total = (std::uint64_t) (c.seconds * fs);
+        for (std::uint64_t pos = 0; pos < total;)
+        {
+            const int n = (int) std::min<std::uint64_t>((std::uint64_t) c.block, total - pos);
+            ph.ppq = c.ppqStart + (double) pos * qPerSample;
+            ph.barStart = c.anchor + std::floor((ph.ppq - c.anchor) / barQ + 1e-12) * barQ;   // what a host reports
+            eng.captureBlock(ptrs, 2, n);
+            eng.capturePlayhead(&ph, n);
+            eng.pump();
+            pos += (std::uint64_t) n;
+        }
+        // expected: every beat position b = anchor + k*unit with ppq in [ppqStart, ppqStart + total*qPerSample)
+        std::vector<std::pair<std::uint64_t, bool>> expected;
+        for (std::int64_t k = (std::int64_t) std::ceil((c.ppqStart - c.anchor) / unit - 1e-9);; ++k)
+        {
+            const double bp = c.anchor + (double) k * unit;
+            const double fr = (bp - c.ppqStart) / qPerSample;
+            if (fr >= (double) total - 0.5) break;
+            const std::int64_t kk = ((k % c.num) + c.num) % c.num;
+            expected.push_back({ (std::uint64_t) std::llround(std::max(0.0, fr)), kk == 0 });
+        }
+        const auto seen = eng.getBeatEventsSeen();
+        bool countOk = seen == expected.size(), posOk = true, barOk = true;
+        std::int64_t worst = 0;
+        for (std::uint64_t i = 0; i < std::min<std::uint64_t>(seen, expected.size()); ++i)
+        {
+            const auto& be = eng.getBeatLogEntry(i);
+            const auto d = std::llabs((std::int64_t) be.frameIndex - (std::int64_t) expected[(size_t) i].first);
+            worst = std::max(worst, d);
+            posOk &= d <= 1;
+            barOk &= be.isBar == expected[(size_t) i].second;
+        }
+        std::printf("   [info] %s: %llu events (expected %zu), worst frame error %lld\n", c.name, (unsigned long long) seen, expected.size(), (long long) worst);
+        char name[200];
+        std::snprintf(name, sizeof(name), "%s: event count, +-1 frame positions, downbeats from lastBarStart", c.name);
+        check(countOk && posOk && barOk, name);
+    }
+
+    {   // count-in: ppq -4 .. 0 emits nothing; events start at ppq 0 (downbeat); bpm 120, 4/4
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        FakePlayHead ph; ph.hasBarStart = true; ph.sigNum = 4; ph.sigDen = 4;
+        std::vector<float> buf(480, 0.1f);
+        const float* ptrs[2] = { buf.data(), buf.data() };
+        const double qPerSample = 120.0 / 60.0 / 48000.0;
+        for (std::uint64_t pos = 0; pos < 96000 + 480; pos += 480)   // 2 s count-in (4 quarters) + 0.01 s
+        {
+            ph.ppq = -4.0 + (double) pos * qPerSample;
+            ph.barStart = -4.0 + std::floor((ph.ppq + 4.0) / 4.0 + 1e-12) * 4.0;
+            eng.captureBlock(ptrs, 2, 480); eng.capturePlayhead(&ph, 480); eng.pump();
+        }
+        bool noneBeforeZero = true; int downbeats = 0;
+        for (std::uint64_t i = 0; i < eng.getBeatEventsSeen(); ++i)
+        {
+            noneBeforeZero &= eng.getBeatLogEntry(i).frameIndex >= 96000 - 1;
+            downbeats += eng.getBeatLogEntry(i).isBar ? 1 : 0;
+        }
+        check(eng.getBeatEventsSeen() == 1 && noneBeforeZero && downbeats == 1, "count-in (negative ppq): no events until ppq 0, then the downbeat");
+    }
+
+    {   // time-signature change mid-session (4/4 -> 3/4): spacing and bars follow the new signature, loop jump re-anchors
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        FakePlayHead ph; ph.hasBarStart = true; ph.bpm = 120.0;
+        std::vector<float> buf(480, 0.1f);
+        const float* ptrs[2] = { buf.data(), buf.data() };
+        const double qPerSample = 120.0 / 60.0 / 48000.0;
+        double ppq = 0.0;
+        std::vector<bool> bars;
+        for (int b = 0; b < 1000; ++b)   // 10 s: 4/4 for ppq < 8 (2 bars), then 3/4 with the bar starting at ppq 8
+        {
+            const bool three = ppq >= 8.0;
+            ph.sigNum = three ? 3 : 4; ph.sigDen = 4;
+            ph.barStart = three ? 8.0 + std::floor((ppq - 8.0) / 3.0 + 1e-12) * 3.0 : std::floor(ppq / 4.0 + 1e-12) * 4.0;
+            ph.ppq = ppq;
+            eng.captureBlock(ptrs, 2, 480); eng.capturePlayhead(&ph, 480); eng.pump();
+            ppq += 480 * qPerSample;
+        }
+        // beats at ppq 0..19; bars at 0, 4, then 8, 11, 14, 17
+        std::vector<int> barBeats;
+        for (std::uint64_t i = 0; i < eng.getBeatEventsSeen(); ++i) if (eng.getBeatLogEntry(i).isBar) barBeats.push_back((int) i);
+        check(eng.getBeatEventsSeen() == 20 && barBeats == std::vector<int>({ 0, 4, 8, 11, 14, 17 }), "4/4 -> 3/4 change: bars at beats 0,4,8,11,14,17");
+    }
+}
+
 static void test_waveform_ack_delivery()
 {
     section("waveform_ack_delivery");
@@ -4222,7 +4328,7 @@ static void test_stage3_multi_instance_and_project_reload()
         b.prepareToPlay(48000.0, 480);
 
         setChoice(a, "color_theme", 3);  a.apvts.state.setProperty(uiRowSplits, "300,60,238", nullptr);
-        a.apvts.state.setProperty(src1Name, "Kick", nullptr);  a.apvts.state.setProperty(uiWaveformSpan, 3, nullptr);  a.apvts.state.setProperty(uiWidth, 880, nullptr);
+        a.apvts.state.setProperty(src1Name, "Kick", nullptr);  a.apvts.state.setProperty(uiWaveformSpan, 4, nullptr);  a.apvts.state.setProperty(uiWidth, 880, nullptr);
         setChoice(b, "color_theme", 5);  b.apvts.state.setProperty(uiSgOrientation, "h", nullptr);
         b.apvts.state.setProperty(uiWidth, 770, nullptr);
 
@@ -4263,11 +4369,13 @@ static void test_stage3_multi_instance_and_project_reload()
         check(choiceIndex(c, "color_theme") == 3, "reload: theme restored");
         check(c.apvts.state.getProperty(uiRowSplits).toString() == "300,60,238", "reload: splits restored");
         check(c.apvts.state.getProperty(src1Name).toString() == "Kick", "reload: source name restored");
-        check((int) c.apvts.state.getProperty(uiWaveformSpan) == 3, "reload: waveform span restored");
+        check((int) c.apvts.state.getProperty(uiWaveformSpan) == 4, "reload: waveform span (bars) restored");
         { juce::ValueTree t("T"); t.setProperty(uiWaveformSpan, 9, nullptr); PRISMAudioProcessor::sanitizeState(t);
-          check((int) t.getProperty(uiWaveformSpan) == 12, "waveform span sanitizer: invalid -> 12");
-          t.setProperty(uiWaveformSpan, 24, nullptr); PRISMAudioProcessor::sanitizeState(t);
-          check((int) t.getProperty(uiWaveformSpan) == 24, "waveform span sanitizer: 24 accepted"); }
+          check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: invalid -> 8 bars");
+          t.setProperty(uiWaveformSpan, 12, nullptr); PRISMAudioProcessor::sanitizeState(t);
+          check((int) t.getProperty(uiWaveformSpan) == 8, "waveform span sanitizer: old seconds value (12) -> 8 bars");
+          t.setProperty(uiWaveformSpan, 16, nullptr); PRISMAudioProcessor::sanitizeState(t);
+          check((int) t.getProperty(uiWaveformSpan) == 16, "waveform span sanitizer: 16 bars accepted"); }
         check(ec->getWidth() == 880 && ec->getHeight() == (int) std::lround(880.0 * 36.0 / 55.0), "reload: editor size restored at 55:36");
 
         // state replaced while the editor is OPEN (host recalls a project): editor must follow without a crash
@@ -4370,6 +4478,7 @@ int main()
     test_waveform_band_separation();
     test_waveform_beat_flags();
     test_waveform_beat_flags_tempo_and_loop();
+    test_waveform_beat_events_host_grid();
     test_waveform_ack_delivery();
     test_waveform_editor_gating_and_wiring();
 

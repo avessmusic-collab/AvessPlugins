@@ -113,10 +113,18 @@ namespace prism
 
     void AnalysisEngine::capturePlayhead(juce::AudioPlayHead* playHead, int n) noexcept
     {
+        // Beat / bar events are derived from the HOST's authoritative fields (not from "integer ppq" or "ppq % 4"):
+        //   downbeat      = PositionInfo::ppqPositionOfLastBarStart
+        //   beat spacing  = 4 / timeSignature.denominator quarter notes   (6/8 -> 8th-note beats, 3/4 -> quarter beats)
+        //   bar length    = numerator * 4 / denominator quarter notes
+        // Each event's sample offset inside the block comes from the ppq delta and the tempo (sub-block accurate, +-1 frame).
+        // Negative ppq (count-in / pre-roll) emits nothing; a backwards jump (loop) forgets what was emitted (clean re-anchor).
         if (playHead == nullptr)
         {
             bpm.store(NAN, std::memory_order_relaxed);
-            lastBeatNumber = INT64_MIN;
+            sigNum.store(0, std::memory_order_relaxed);
+            sigDen.store(0, std::memory_order_relaxed);
+            lastEmittedPpq = -1.0e300;
             return;
         }
 
@@ -124,52 +132,68 @@ namespace prism
         if (! pos.hasValue())
         {
             bpm.store(NAN, std::memory_order_relaxed);
-            lastBeatNumber = INT64_MIN;
+            sigNum.store(0, std::memory_order_relaxed);
+            sigDen.store(0, std::memory_order_relaxed);
+            lastEmittedPpq = -1.0e300;
             return;
         }
 
         const auto tempo = pos->getBpm();
         bpm.store(tempo.hasValue() ? (float) *tempo : NAN, std::memory_order_relaxed);
 
+        int num = 4, den = 4;
+        bool hasTs = false;
+        if (const auto ts = pos->getTimeSignature())
+            if (ts->numerator > 0 && ts->denominator > 0)
+            {
+                num = ts->numerator;
+                den = ts->denominator;
+                hasTs = true;
+            }
+        sigNum.store(hasTs ? num : 0, std::memory_order_relaxed);
+        sigDen.store(hasTs ? den : 0, std::memory_order_relaxed);
+
         const auto ppqOpt = pos->getPpqPosition();
         if (! (pos->getIsPlaying() && tempo.hasValue() && ppqOpt.hasValue() && *tempo > 0.0
                && config.sampleRate > 0.0 && lastBlockWritten && n > 0))
         {
-            lastBeatNumber = INT64_MIN;
+            lastEmittedPpq = -1.0e300;
             prevPpq = -1.0e300;
             return;
         }
 
         const double p0 = *ppqOpt;
-        if (p0 < prevPpq - 1.0e-6)          // transport jumped backwards: forget which beats we emitted
-            lastBeatNumber = INT64_MIN;
-        const double ppqPerSample = *tempo / 60.0 / config.sampleRate;
-        const double p1 = p0 + (double) n * ppqPerSample;
+        if (p0 < prevPpq - 1.0e-6)          // transport jumped backwards (loop / locate): forget which beats we emitted
+            lastEmittedPpq = -1.0e300;
         prevPpq = p0;
 
-        double barQuarters = 0.0;
-        if (const auto ts = pos->getTimeSignature())
-            if (ts->denominator > 0)
-                barQuarters = (double) ts->numerator * 4.0 / (double) ts->denominator;
-
+        const double ppqPerSample = *tempo / 60.0 / config.sampleRate;
+        const double p1 = p0 + (double) n * ppqPerSample;
         const double halfSample = 0.5 * ppqPerSample;
-        std::int64_t beat = (std::int64_t) std::ceil(p0 - halfSample);
-        if (lastBeatNumber != INT64_MIN && beat <= lastBeatNumber)
-            beat = lastBeatNumber + 1;
+        const double unit = 4.0 / (double) den;               // quarter notes per beat
+        const double barQuarters = (double) num * unit;
 
-        for (int guard = 0; guard < 32 && (double) beat < p1 - halfSample; ++guard, ++beat)
+        double b0 = 0.0;                                       // a bar start (quarter notes)
+        if (const auto lb = pos->getPpqPositionOfLastBarStart())
+            b0 = *lb;
+        b0 += std::floor((p0 - b0) / barQuarters + 1.0e-12) * barQuarters;   // normalise: b0 <= p0 < b0 + bar (stale / future anchors, long blocks)
+
+        std::int64_t k = (std::int64_t) std::ceil((p0 - halfSample - b0) / unit - 1.0e-9);
+        for (int guard = 0; guard < 64; ++guard, ++k)
         {
-            const auto off = (std::int64_t) std::llround(((double) beat - p0) / ppqPerSample);
-            const auto clamped = (std::uint64_t) std::clamp<std::int64_t>(off, 0, n - 1);
+            const double bp = b0 + (double) k * unit;
+            if (bp >= p1 - halfSample)
+                break;
+            if (bp < -halfSample)                              // count-in / pre-roll: no events before ppq 0
+                continue;
+            if (bp <= lastEmittedPpq + 0.5 * unit)             // already emitted by the previous block
+                continue;
 
-            bool isBar = false;
-            if (barQuarters > 0.0)
-            {
-                const double q = (double) beat / barQuarters;
-                isBar = std::abs(q - std::round(q)) < 1.0e-6;
-            }
-            beatQueue.push({ lastBlockStart + clamped, isBar });
-            lastBeatNumber = beat;
+            const auto off = (std::int64_t) std::llround((bp - p0) / ppqPerSample);
+            const auto clamped = (std::uint64_t) std::clamp<std::int64_t>(off, 0, n - 1);
+            const std::int64_t kk = ((k % num) + num) % num;
+            beatQueue.push({ lastBlockStart + clamped, kk == 0 });
+            lastEmittedPpq = bp;
         }
     }
 
@@ -334,6 +358,8 @@ namespace prism
         snap->sequence   = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
         snap->sampleRate = config.sampleRate;
         snap->bpm        = bpm.load(std::memory_order_relaxed);
+        snap->timeSigNumerator   = sigNum.load(std::memory_order_relaxed);
+        snap->timeSigDenominator = sigDen.load(std::memory_order_relaxed);
 
         const double fs = config.sampleRate;
         const int mode = readAnalysisMode();
