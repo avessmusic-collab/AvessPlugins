@@ -3645,6 +3645,16 @@ static void test_waveform_live_column_and_ui_sources()
         check(any && indexOk, "liveColumnIndex == newest completed column + 1 in every snapshot");
         check(tracks && silentIsZero, "liveColumn carries the in-progress band peaks (tracks a loud signal, zero in silence)");
     }
+    {   // waveform style: "needles" (default) | "layers"; anything else -> needles
+        using namespace prism::ids;
+        juce::ValueTree t("T");
+        auto styleAfter = [&](const juce::var& in) { t.setProperty(uiWaveformStyle, in, nullptr); PRISMAudioProcessor::sanitizeState(t); return t.getProperty(uiWaveformStyle).toString(); };
+        check(styleAfter("layers") == "layers", "waveform style: layers accepted");
+        check(styleAfter("needles") == "needles", "waveform style: needles accepted");
+        check(styleAfter("bogus") == "needles" && styleAfter(7) == "needles" && styleAfter(juce::var()) == "needles", "waveform style: invalid -> needles");
+        juce::ValueTree fresh("T"); PRISMAudioProcessor::applyStateDefaults(fresh);
+        check(fresh.getProperty(uiWaveformStyle).toString() == "needles", "waveform style: default needles");
+    }
     {   // UI source selectors persist as {0,1}
         using namespace prism::ids;
         juce::ValueTree t("T");

@@ -199,6 +199,7 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
   <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
   <div class="sgsel" id="wfspan" style="left:244px;width:92px" title="Waveform span in bars (click to cycle 1 / 2 / 4 / 8 / 16 / 32)">SPAN 8 bars</div>
+  <div class="sgsel" id="wfstyle" style="left:344px;width:46px" title="Waveform style: needles (MiniMeters-like) / layers (CDJ bands)">NDL</div>
   <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#ff4b4b">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#ffb84d">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#5df2b8">&#9679;</span> highs</div>
   <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
 
@@ -932,10 +933,17 @@ var WF = { pps: 0, c: THEMES[0].band.slice() };
 var wfOff = null, wfCtx = null, wfW = 0, wfH = 0;
 var wfRing = [new Float32Array(WF_CAP * 4), new Float32Array(WF_CAP * 4)];
 var wfN = 0, wfT = 0, wfIdleAcc = 0;
+var WFSTYLE = 'needles';   // waveform style: 'needles' (default, MiniMeters-like) | 'layers' (CDJ nested bands)
 var WFTRANS = -1, wfWasFrozen = false;   // host transport: -1 unknown / no playhead (always scrolls), 0 paused (strip + grid frozen as one), 1 playing
 function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / wfSpanSec(); }
 function wfSpanText() { var v = WFSPAN, isInt = Math.abs(v - Math.round(v)) < 0.05, t = isInt ? String(Math.round(v)) : v.toFixed(1); return t + (isInt && Math.round(v) === 1 ? ' bar' : ' bars'); }
-function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + wfSpanText(); }
+function wfStylePaint() { var e = $('wfstyle'); if (e) { e.textContent = WFSTYLE === 'layers' ? 'LYR' : 'NDL'; e.classList.add('on'); e.style.setProperty('--c', SRC[0].color); } }
+function wfSetStyle(st, fromHost) {
+  st = st === 'layers' ? 'layers' : 'needles'; var changed = st !== WFSTYLE; WFSTYLE = st; wfStylePaint();
+  if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }
+  if (changed && !fromHost && typeof postUi === 'function') postUi();
+}
+function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + wfSpanText(); wfStylePaint(); }
 function wfSetSpan(s, fromHost, quiet) {   // span in BARS: continuous 0.5..32 (wheel zoom); non-finite -> 8
   s = +s; if (!isFinite(s)) s = 8; s = Math.min(32, Math.max(0.5, s));
   var changed = Math.abs(s - WFSPAN) > 1e-6; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
@@ -964,7 +972,30 @@ function wfBands(t, s, o) {
    lows extend beyond the mids by a rim. Each rim is proportional to its band energy but clamped (hairline .. ~0.25A),
    so all three colours are visible on every audible column and no layer balloons; overall height still tracks amplitude.
    Exact rekordbox blue/amber/cream = set BAND.low/mid/high to [38,92,214] / [214,150,52] / [250,244,230]. */
-function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in device px; on = onset 0..1 (visual height weighting)
+/* NEEDLES style (MiniMeters-like): ONE thin mirrored stroke per column, saturated on black, the colour carries the spectrum.
+   colour = (b^2 * low + m^2 * mid + h^2 * high) / sum (squared weights make the dominant band pop; theme trio, high NOT whitened), full saturation,
+   brightness 0.6..1.0 with amplitude (quiet strokes dimmer, never gray), outer 15% of the stroke lightened ~20% toward white (luminous crest).
+   Height = the combined amplitude with the same onset weighting as the layers; silent columns (<= 0.015) draw nothing. Stroke width = min(2, ppc - 1) device
+   px with a black gap when a column is >= 2 px wide (so at 1 px per column strokes pack, and the peak-held zoomed-out texture is dense like MiniMeters).
+   HONESTY: one flat stroke per column, no fabricated sub-column detail at high zoom. Lead columns (engine onset) start exactly at their onset position. */
+function wfDrawNeedle(g, x, w, mid, A, b, m, hi, on) {
+  b = clamp(b, 0, 1); m = clamp(m, 0, 1); hi = clamp(hi, 0, 1);
+  var peak = Math.max(b, m, hi); if (peak <= 0.015) return;
+  A *= WF_ONSET_BASE + WF_ONSET_GAIN * (on || 0);
+  var v = 0.75 * Math.max(b, 0.85 * m, 0.7 * hi) + 0.25 * Math.min(1, (b + m + hi) / 2);
+  var h = Math.min(A * (0.10 + 0.90 * v), mid * 0.97); if (h < 1) h = 1;
+  var wb = b * b, wm = m * m, wh = hi * hi, S = wb + wm + wh, L = BAND.low, M = BAND.mid, H = BAND.high;
+  var bri = 0.6 + 0.4 * clamp(peak / 0.7, 0, 1);
+  var r = (wb * L[0] + wm * M[0] + wh * H[0]) / S * bri, gg = (wb * L[1] + wm * M[1] + wh * H[1]) / S * bri, bl = (wb * L[2] + wm * M[2] + wh * H[2]) / S * bri;
+  var sw = w >= 2 ? Math.max(1, Math.min(2, Math.floor(w - 1))) : w;
+  g.globalAlpha = 1;
+  g.fillStyle = 'rgb(' + (r | 0) + ',' + (gg | 0) + ',' + (bl | 0) + ')'; g.fillRect(x, mid - h, sw, 2 * h);
+  var tip = Math.max(1, h * 0.15);
+  g.fillStyle = 'rgb(' + ((r + (255 - r) * 0.2) | 0) + ',' + ((gg + (255 - gg) * 0.2) | 0) + ',' + ((bl + (255 - bl) * 0.2) | 0) + ')';
+  g.fillRect(x, mid - h, sw, tip); g.fillRect(x, mid + h - tip, sw, tip);
+}
+function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {
+  if (WFSTYLE === 'needles') { wfDrawNeedle(g, x, w, mid, A, b, m, hi, on); return; }   // w = block width in device px; on = onset 0..1 (visual height weighting)
   /* FIXED layer identity in every situation, theme and path (normal, live edge, peak-held): OUTER = lows (theme low colour), MIDDLE = mids (theme mid
      colour), INNER = highs (theme high colour blended 70 % toward white). A band that is not meaningfully present (<= 0.015) draws NO layer at all and
      gets no forced hairline, so bassless content never has a bass-impersonating outer block: mids-only reads as a middle-weight amber wedge (slightly
@@ -1183,7 +1214,7 @@ function drawWaveform() {
   var o = cv.wf_cv, g = o.g; g.clearRect(0, 0, o.w, o.h);
   g.drawImage(wfOff, 0, 0, o.w, o.h);
   var cy = Math.round(o.h / 2);   // hairline centreline: 1 device px, 35% white, no glow
-  g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, cy, o.w, 1 / DPR);
+  if (WFSTYLE === 'layers') { g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, cy, o.w, 1 / DPR); }   // the needles style has no centreline (strokes on black)
   g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(o.w - 1, 0, 1, o.h);
   g.font = '9px ' + MONO; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(190,205,215,0.5)';
   g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + wfSpanText(), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
@@ -1230,7 +1261,7 @@ function applyLayout() {
   function an(id, l, t, w, al) { var e = $(id); e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.textAlign = al; }
   pane('pn_spec', X0, yS, MW, bS); pane('pn_wf', X0, yW, MW, bW); pane('pn_sg', xP1, yL, W1 + 2, bL); pane('pn_gn', xP2, yL, W2 + 2, bL); pane('pn_sc', xP3, yL, W3 + 2, bL);
   an('an_spec_l', X0 + 10, cS + 6, 320, 'left'); an('an_spec_r', X0 + 1 + SPX.pw - 9 - 300, cS + 6, 300, 'right');
-  an('an_wf_l', X0 + 172, yW + 6, 66, 'left'); setLeft('wfspan', X0 + 244); setTop('wfspan', yW + 2); an('an_sg_l', xP1 + 9, cL + 5, 140, 'left');
+  an('an_wf_l', X0 + 172, yW + 6, 66, 'left'); setLeft('wfspan', X0 + 244); setTop('wfspan', yW + 2); setLeft('wfstyle', X0 + 344); setTop('wfstyle', yW + 2); an('an_sg_l', xP1 + 9, cL + 5, 140, 'left');
   an('an_gn_l', xP2 + 10, cL + 6, 140, 'left'); an('an_gn_r', xP2 + W2 - 8 - 140, cL + 6, 140, 'right'); an('an_sc_r', xP3 + W3 - 8 - 220, cL + 5, 220, 'right');
   // ---- dividers sit on the shared borders
   ['dh1', 'dh2'].forEach(function (i) { setLeft(i, X0); $(i).style.width = MW + 'px'; });
@@ -1241,7 +1272,7 @@ function applyLayout() {
   if (!booting) { if (sgOff) drawSpectrogram(); if (wfOff) drawWaveform(); drawSpectrum(); }
 }
 function postUi() {
-  if (booting) return; var st = { row_splits: UI.rows.slice(), lower_col_splits: UI.cols.slice(), fullscreen: !!UI.fullscreen, spectrogram_orientation: sgOrient, gonio_source: P.gn_src, scope_source: P.sc_src };
+  if (booting) return; var st = { row_splits: UI.rows.slice(), lower_col_splits: UI.cols.slice(), fullscreen: !!UI.fullscreen, spectrogram_orientation: sgOrient, waveform_style: WFSTYLE, gonio_source: P.gn_src, scope_source: P.sc_src };
   try { if (window.__JUCE__ && window.__JUCE__.backend && window.__JUCE__.backend.emitEvent) { window.__JUCE__.backend.emitEvent('prismUiState', st); return; } } catch (e) { /* fall through */ }
   console.log('[PRISM -> JUCE] ui_state ' + JSON.stringify(st));
 }
@@ -1261,6 +1292,7 @@ function setFullscreen(on, instant) {
   })(t0);
 }
 $('fsbtn').addEventListener('click', function (e) { e.stopPropagation(); setFullscreen(!UI.fullscreen); });
+$('wfstyle').addEventListener('click', function (e) { e.stopPropagation(); wfSetStyle(WFSTYLE === 'needles' ? 'layers' : 'needles'); });
 $('wfspan').addEventListener('click', function (e) { e.stopPropagation(); wfSetSpan((function () { for (var q = 0; q < WF_SPANS.length; q++) if (WF_SPANS[q] > WFSPAN + 1e-6) return WF_SPANS[q]; return WF_SPANS[0]; })()); });   // next preset above the current value (continuous zoom values land on the next preset)
 /* Zoom on the lane itself: mouse wheel (and trackpad pinch = ctrl+wheel) over the waveform pane changes the span continuously, exponential steps
    (1.12x per wheel notch), clamped to 0.5..32 bars. The right edge ('now') is the anchor by construction, so it stays put. UI state only (no host
