@@ -963,14 +963,69 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi) {   // w = block width in device
   g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x, mid - hMid, w, 2 * hMid);
   g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x, mid - hCore, w, 2 * hCore);
 }
+/* ---- Musical grid (beat / bar lines) ----
+   Engine flags (1 = beat, 2 = bar) sit on the column that CONTAINS each beat's stream index, so a flag alone is quantised to
+   +-1 column (~12 ms) and carries no intra-column position. The page derives a continuous grid from them: anchor = the latest
+   flag, spacing = 84.333*60/bpm columns per beat (bpm from the playhead), beat positions kept as FLOAT column positions
+   (sub-column precision); every flag nudges the phase (gain 0.35, which dithers the quantisation out) and a flag more than one
+   column from the predicted line re-anchors the grid immediately (tempo jump / loop / seek). Lines are generated when their
+   column is delivered and stored (so history keeps the tempo that was valid then); lines falling in the <=1.2 extrapolated
+   columns are drawn predictively. No bpm, or no flag for 2.5 beats (transport stopped) => no grid is generated (honesty rule);
+   un-gridded flags still draw as plain ticks (at the column centre). Flags remain ground truth. */
+var wfFlagRing = new Uint8Array(WF_CAP), wfCover = new Uint8Array(WF_CAP);
+var WG_CAP = 1024, wgPos = new Float64Array(WG_CAP), wgBar = new Uint8Array(WG_CAP), wgCount = 0;
+var WG = { valid: false, s: 0, pn: 0, beatNo: 0, barBeat: 0, barKnown: false, bpb: 4, lastBarNo: null, lastFlagIdx: -1 };
+function wgIsBar(no) { return WG.barKnown && ((((no - WG.barBeat) % WG.bpb) + WG.bpb) % WG.bpb) === 0; }
+function wgAdd(pos, bar) {
+  wgPos[wgCount % WG_CAP] = pos; wgBar[wgCount % WG_CAP] = bar ? 1 : 0; wgCount++;
+  var c = Math.floor(pos); for (var d = -1; d <= 1; d++) if (c + d >= 0) wfCover[(c + d) % WF_CAP] = 1;   // suppress plain flag ticks next to a grid line
+}
+function wgOnColumn(i, flag, bpm) {   // called once per delivered column, after it was appended (wfN === i + 1)
+  if (!(bpm > 0)) { WG.valid = false; return; }
+  var s = WF_CPS * 60 / bpm;
+  if (WG.valid) WG.s = s;                                   // tempo change: new spacing from the next line on
+  if (flag) {
+    var c = i + 0.5;
+    if (!WG.valid) { WG.valid = true; WG.s = s; WG.pn = c; WG.beatNo = 0; WG.barKnown = flag === 2; WG.barBeat = 0; WG.lastBarNo = flag === 2 ? 0 : null; }
+    else {
+      var pprev = WG.pn - WG.s, cand = Math.abs(c - WG.pn) <= Math.abs(c - pprev) ? WG.pn : pprev, err = c - cand;
+      if (Math.abs(err) <= 1.0) {                           // consistent with the grid: refine the phase, keep bar identity
+        var no = cand === WG.pn ? WG.beatNo : WG.beatNo - 1;
+        WG.pn += err * 0.35;
+        if (flag === 2) {
+          if (WG.barKnown && WG.lastBarNo !== null) { var db = no - WG.lastBarNo; if (db >= 2 && db <= 12 && db !== WG.bpb) WG.bpb = db; }
+          WG.barKnown = true; WG.barBeat = ((no % WG.bpb) + WG.bpb) % WG.bpb; WG.lastBarNo = no;
+          if (cand === pprev && wgCount > 0) wgBar[(wgCount - 1) % WG_CAP] = 1;   // that line was already generated as a plain beat
+        }
+      } else {                                              // mismatch (loop jump / seek / tempo jump): snap to this flag
+        WG.pn = c; WG.beatNo = 0; WG.barKnown = flag === 2; WG.barBeat = 0; WG.lastBarNo = flag === 2 ? 0 : null;
+      }
+    }
+    WG.lastFlagIdx = i;
+  }
+  if (!WG.valid) return;
+  if (i - WG.lastFlagIdx > 2.5 * WG.s) { WG.valid = false; return; }   // no flag for 2.5 beats: transport stopped / no playhead
+  while (WG.pn < wfN) { wgAdd(WG.pn, wgIsBar(WG.beatNo)); WG.pn += WG.s; WG.beatNo++; }
+}
 function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1) {   // append one column (both sources, kept in lockstep)
   var o = (wfN % WF_CAP) * 4, r0 = wfRing[0], r1 = wfRing[1];
-  r0[o] = b0; r0[o + 1] = m0; r0[o + 2] = h0; r0[o + 3] = f0; r1[o] = b1; r1[o + 1] = m1; r1[o + 2] = h1; r1[o + 3] = f1; wfN++;
+  r0[o] = b0; r0[o + 1] = m0; r0[o + 2] = h0; r0[o + 3] = f0; r1[o] = b1; r1[o + 1] = m1; r1[o + 2] = h1; r1[o + 3] = f1;
+  wfFlagRing[wfN % WF_CAP] = f0 > f1 ? f0 : f1; wfCover[wfN % WF_CAP] = 0; wfN++;   // flags are playhead-derived, so shared by both sources
 }
 function wfFlushRun(g, x0, x1, ring, idx, mid, A, tick) {
-  var o = (idx % WF_CAP) * 4, w = x1 - x0, f = ring[o + 3];
+  var o = (idx % WF_CAP) * 4, w = x1 - x0, f = wfFlagRing[idx % WF_CAP];
   wfDrawBands(g, x0, w, mid, A, ring[o], ring[o + 1], ring[o + 2]);
-  if (tick && f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0, 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // beat / bar tick over the shapes
+  if (tick && f && !wfCover[idx % WF_CAP]) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0 + (w >> 1), 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // ungridded flag: column centre   // beat / bar tick over the shapes
+}
+function wfDrawGridLine(g, pos, bar, W, T, ppc) {
+  var x = W - (T - pos) * ppc; if (x < -2 || x > W + 1) return;
+  g.fillStyle = bar ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)';
+  var tw = Math.max(1, Math.round(DPR * 0.8)); g.fillRect(Math.round(x - tw / 2), 0, tw, wfH);
+}
+function wfDrawGrid(g, W, T, ppc) {
+  var k, n = Math.min(wgCount, WG_CAP), pos;
+  for (k = wgCount - 1; k >= wgCount - n; k--) { pos = wgPos[k % WG_CAP]; if (W - (T - pos) * ppc < -2) break; wfDrawGridLine(g, pos, wgBar[k % WG_CAP], W, T, ppc); }
+  if (WG.valid) { var p = WG.pn, no = WG.beatNo; while (p < T) { wfDrawGridLine(g, p, wgIsBar(no), W, T, ppc); p += WG.s; no++; } }   // predictive: extrapolated right edge
 }
 function wfRender() {
   if (!wfCtx) return;
@@ -989,10 +1044,11 @@ function wfRender() {
     for (x = 0; x < W; x++) {
       var i0 = Math.floor(T - (W - x) / ppc), i1 = Math.min(newest, Math.floor(T - (W - x - 1) / ppc - 1e-9)), b = 0, m = 0, h = 0, f = 0, i;
       if (i0 < lo) i0 = lo; if (i0 < 0) i0 = 0;
-      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (ring[o + 3] > f) f = ring[o + 3]; }
+      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (wfFlagRing[i % WF_CAP] > f && !wfCover[i % WF_CAP]) f = wfFlagRing[i % WF_CAP]; }   // flag survives peak-hold
       if (i1 >= i0) { wfDrawBands(g, x, 1, mid, A, b, m, h); if (f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x, 0, 1, wfH); } }
     }
   }
+  wfDrawGrid(g, W, T, ppc);
   if (window.__wfProbe && !window.__wfProbe.drawAt) { var no = (newest % WF_CAP) * 4; if (Math.max(ring[no], ring[no + 1], ring[no + 2]) > 0.05) window.__wfProbe.drawAt = Date.now(); }
 }
 function wfAlloc() { wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d', { willReadFrequently: true }); }
@@ -1013,7 +1069,7 @@ function wfDemoFill() {   // demo clock: columns "arrive" exactly like the engin
   while (wfDemoN < target) {
     var t = wfDemoN / WF_CPS, bi = Math.floor(t / BEAT), pb = Math.floor((wfDemoN - 1) / WF_CPS / BEAT), f = (bi !== pb) ? ((bi % 4 === 0) ? 2 : 1) : 0;
     wfBands(t, 0, wfDemoB0); wfBands(t, 1, wfDemoB1);
-    wfPushCol(wfDemoB0[0], wfDemoB0[1], wfDemoB0[2], f, wfDemoB1[0], wfDemoB1[1], wfDemoB1[2], f); wfDemoN++;
+    wfPushCol(wfDemoB0[0], wfDemoB0[1], wfDemoB0[2], f, wfDemoB1[0], wfDemoB1[1], wfDemoB1[2], f); wgOnColumn(wfN - 1, f, 60 / BEAT); wfDemoN++;
   }
 }
 function wfStep(dt) {
@@ -1022,7 +1078,8 @@ function wfStep(dt) {
   wfRender();
 }
 /* debug/measurement hook (read-only): geometry + the true-duration check used by the Stage 3 timing verification */
-window.__wfDebug = function () {
+window.__wfGrid = function () { var L = [], n = Math.min(wgCount, 40), k; for (k = wgCount - n; k < wgCount; k++) L.push([+wgPos[k % WG_CAP].toFixed(2), wgBar[k % WG_CAP]]); return { valid: WG.valid, s: WG.s, pn: WG.pn, bpb: WG.bpb, barKnown: WG.barKnown, count: wgCount, lines: L }; };
+window.__wfDebug = function (rowY) {
   var out = { W: wfW, H: wfH, span: WFSPAN, ppc: wfW / (WFSPAN * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
   var ring = wfRing[0], i, cur = 0;
   for (i = Math.max(0, wfN - WF_CAP); i <= wfN; i++) {
@@ -1030,7 +1087,7 @@ window.__wfDebug = function () {
     if (on) cur++; else if (cur) { out.runs.push({ cols: cur, ageOfNewestCol: wfN - i }); cur = 0; }
   }
   if (wfCtx && wfW > 0) {
-    var row = wfCtx.getImageData(0, Math.floor(wfH / 2), wfW, 1).data, run = 0, start = -1, best = null, x;
+    var row = wfCtx.getImageData(0, rowY === undefined ? Math.floor(wfH / 2) : rowY, wfW, 1).data, run = 0, start = -1, best = null, x;
     for (x = 0; x <= wfW; x++) { var a = x < wfW ? row[x * 4 + 3] : 0; if (a > 0) { if (!run) start = x; run++; } else if (run) { out.px.push({ start: start, width: run, endFromRight: wfW - (start + run) }); run = 0; } }
   }
   return out;

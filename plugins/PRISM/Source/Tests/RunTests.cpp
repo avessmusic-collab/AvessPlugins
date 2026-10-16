@@ -3359,6 +3359,59 @@ static void test_waveform_beat_flags()
     }
 }
 
+static void test_waveform_beat_flags_tempo_and_loop()
+{
+    section("waveform_beat_flags_tempo_and_loop");
+    // Timeline @48k: 0-5 s 120 bpm (ppq 0..10), 5-10 s 90 bpm (ppq 10..17.5), loop jump at 10 s back to ppq 2.25, then 90 bpm to 14 s.
+    // Odd block sizes. Flags must land on floor(column of each beat's true position) +-2 columns (+-1 away from the tempo/loop blocks),
+    // with bars (ppq % 4 == 0) as flag 2 - this is what the page's grid re-anchoring relies on.
+    const double fs = 48000.0, cps = 253.0 / 3.0;
+    struct Beat { double sec; bool bar; };
+    std::vector<Beat> truth;
+    for (int n = 0; n < 10; ++n) truth.push_back({ n * 0.5, n % 4 == 0 });
+    for (int n = 10; n <= 17; ++n) truth.push_back({ 5.0 + (n - 10.0) / 1.5, n % 4 == 0 });
+    for (int n = 3; n <= 8; ++n) truth.push_back({ 10.0 + (n - 2.25) / 1.5, n % 4 == 0 });
+
+    prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+    FakePlayHead ph;
+    const int sizes[4] = { 333, 477, 1021, 480 };
+    std::vector<float> buf(4096, 0.1f);
+    const float* ptrs[2] = { buf.data(), buf.data() };
+    const std::uint64_t total = (std::uint64_t) (14.0 * fs);
+    int bi = 0;
+    for (std::uint64_t pos = 0; pos < total; ++bi)
+    {
+        const int n = (int) std::min<std::uint64_t>((std::uint64_t) sizes[bi % 4], total - pos);
+        const double t = (double) pos / fs;
+        if (t < 5.0)        { ph.bpm = 120.0; ph.ppq = t * 2.0; }
+        else if (t < 10.0)  { ph.bpm = 90.0;  ph.ppq = 10.0 + (t - 5.0) * 1.5; }
+        else                { ph.bpm = 90.0;  ph.ppq = 2.25 + (t - 10.0) * 1.5; }
+        eng.captureBlock(ptrs, 2, n);
+        eng.capturePlayhead(&ph, n);
+        eng.pump();
+        pos += (std::uint64_t) n;
+    }
+    std::vector<std::pair<std::uint64_t, float>> flagged;
+    for (const auto& c : allColumns(eng.getWaveform(0))) if (c.flag != 0.0f) flagged.push_back({ c.index, c.flag });
+
+    bool countOk = flagged.size() == truth.size();
+    int maxDev = 0, kindBad = 0;
+    double meanBias = 0.0;
+    for (size_t k = 0; k < flagged.size() && k < truth.size(); ++k)
+    {
+        const double exact = truth[k].sec * cps;
+        const int dev = (int) std::abs((std::int64_t) flagged[k].first - (std::int64_t) std::floor(exact));
+        maxDev = std::max(maxDev, dev);
+        meanBias += ((double) flagged[k].first + 0.5) - exact;   // flag column centre minus true position (columns)
+        kindBad += flagged[k].second != (truth[k].bar ? 2.0f : 1.0f);
+    }
+    meanBias /= (double) std::max<size_t>(1, flagged.size());
+    std::printf("   [info] beat flags: %zu flagged / %zu true, max deviation %d col, mean (column centre - true pos) %.2f col\n", flagged.size(), truth.size(), maxDev, meanBias);
+    check(countOk, "tempo change + loop jump + odd blocks: every true beat flagged exactly once");
+    check(maxDev <= 2, "flag columns within +-2 columns of the true beat position through tempo change and loop jump");
+    check(kindBad == 0, "bars (ppq % 4 == 0) are flag 2 and beats flag 1 across tempo change and loop jump");
+}
+
 static void test_waveform_ack_delivery()
 {
     section("waveform_ack_delivery");
@@ -4316,6 +4369,7 @@ int main()
     test_waveform_column_rate();
     test_waveform_band_separation();
     test_waveform_beat_flags();
+    test_waveform_beat_flags_tempo_and_loop();
     test_waveform_ack_delivery();
     test_waveform_editor_gating_and_wiring();
 
