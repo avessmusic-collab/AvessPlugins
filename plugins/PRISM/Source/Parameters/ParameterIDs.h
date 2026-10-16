@@ -33,6 +33,8 @@ namespace prism::ids
     inline constexpr const char* uiLowerColSplits = "ui_lower_col_splits";
     inline constexpr const char* uiSgOrientation  = "ui_spectrogram_orientation";
     inline constexpr const char* uiWaveformSpan   = "ui_waveform_span";   // bars: 1 | 2 | 4 | 8 | 16 | 32 (default 8)
+    inline constexpr const char* uiGonioSource    = "ui_gonio_source";    // 0 | 1: which source the vectorscope shows (UI only)
+    inline constexpr const char* uiScopeSource    = "ui_scope_source";    // 0 | 1: which source the scope shows (UI only)
     inline constexpr const char* uiFullscreen     = "ui_fullscreen";
     inline constexpr const char* uiWidth          = "ui_width";
     inline constexpr const char* uiHeight         = "ui_height";

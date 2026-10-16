@@ -2647,11 +2647,75 @@ static void test_loudness_gap_handling()
     }
     // A gap sitting exactly at the end of a drained chunk is applied when the next chunk arrives: flush.
     fillBlock(); rig.eng->captureBlock(ptrs, 2, block); rig.eng->pump();
-    const auto s = rig.snap();
+    const auto early = rig.snap();
     check(rig.eng->getOverrunCount(0) == (std::uint64_t) expectedGaps, "forced overruns happened");
-    check(rig.eng->getLoudness(0).getGapCount() == (std::uint64_t) expectedGaps, "every discontinuity reached the loudness meter (filter state reset, in-flight block dropped)");
+    check(rig.eng->getLoudness(0).getGapCount() == (std::uint64_t) expectedGaps, "every discontinuity reached the loudness meter (filter state reset, in-flight windows dropped)");
+    check(std::isnan(early->momentaryLufs) && std::isnan(early->shortTermLufs),
+          "right after a gap M and S are NaN again: the moving windows restart, they never span the discontinuity");
+    check(std::isfinite(early->integratedLufs), "...while the committed integrated state survives the gap");
+
+    // Gap-free recovery (4 s > the 3 s short-term window): all three read the programme level again.
+    for (int b = 0; b < 95; ++b) { fillBlock(); rig.eng->captureBlock(ptrs, 2, block); rig.eng->pump(); }
+    const auto s = rig.snap();
     check(nearf(s->integratedLufs, -23.0, 0.2) && nearf(s->momentaryLufs, -23.0, 0.3) && nearf(s->shortTermLufs, -23.0, 0.3),
-          "levels stay correct across the gaps (no glitch, no NaN)");
+          "levels stay correct across the gaps and recover (no glitch, no NaN) once 3 s of gap-free audio exist");
+
+    // ---- Nothing in flight may blend pre- and post-gap audio ---------------------------------------------------
+    // 5 s of loud material (-20 LUFS), a forced gap, then QUIET material (-40 LUFS). A blended value would sit between
+    // -40 and -20; a correct one is exactly the post-gap level.
+    LoudRig g(48000.0, 2, 0, 12);
+    g.lufs(5.0, -20.0);
+    const double aLoud = g.ampForLufs(-20.0, 2), aQuiet = g.ampForLufs(-40.0, 2);
+    std::uint64_t gpos = g.pos;
+    auto capture = [&](double amp, int n) {
+        std::vector<float> b((size_t) n);
+        for (int i = 0; i < n; ++i) b[(size_t) i] = (float) (amp * std::sin(w * (double) (gpos + (std::uint64_t) i)));
+        const float* p[2] = { b.data(), b.data() };
+        g.eng->captureBlock(p, 2, n);
+        gpos += (std::uint64_t) n;
+    };
+    capture(aLoud, 2048); capture(aLoud, 2048);   // fill the 4096-frame ring with loud audio (pre-gap)
+    capture(aQuiet, 2048);                         // dropped: the discontinuity sits right after the loud frames
+    g.eng->pump();                                 // processes the two loud blocks; the gap is applied with the next chunk
+    auto& L = g.eng->getLoudness(0);
+    const auto lraBefore = L.getLraSampleCount(), blocksBefore = L.getGatedBlockCount();
+    check(g.eng->getOverrunCount(0) == 1 && lraBefore >= 20 && std::isfinite(L.shortTermLufs()) && nearf(L.shortTermLufs(), -20.0, 0.3),
+          "setup: loud material measured at -20 LUFS, one forced overrun");
+
+    std::uint64_t post = 0;   // frames of QUIET audio after the gap
+    auto feedQuiet = [&](std::uint64_t target) {
+        while (post < target)
+        {
+            const int n = (int) std::min<std::uint64_t>(2048, target - post);
+            capture(aQuiet, n);
+            g.eng->pump();
+            post += (std::uint64_t) n;
+        }
+    };
+
+    feedQuiet(4096);
+    check(L.getGapCount() == 1 && std::isnan(L.momentaryLufs()) && std::isnan(L.shortTermLufs()),
+          "85 ms after the gap: M and S are NaN (no blend with the loud pre-gap chunks)");
+
+    feedQuiet(39 * 480);   // 39 post-gap chunks
+    check(std::isnan(L.momentaryLufs()) && L.getGatedBlockCount() == blocksBefore, "39 post-gap chunks: M still NaN, no gating block yet");
+
+    feedQuiet(42 * 480);   // 42 post-gap chunks
+    char name[200];
+    std::snprintf(name, sizeof(name), "42 post-gap chunks: M = %.3f LUFS reflects ONLY the post-gap -40 LUFS audio (a blend with -20 would read > -30); first post-gap gating block added (%llu -> %llu)",
+                  L.momentaryLufs(), (unsigned long long) blocksBefore, (unsigned long long) L.getGatedBlockCount());
+    check(nearf(L.momentaryLufs(), -40.0, 0.3) && L.getGatedBlockCount() == blocksBefore + 1, name);
+    check(std::isnan(L.shortTermLufs()) && L.getLraSampleCount() == lraBefore, "...short-term still NaN and the LRA histogram has received nothing from the gap");
+
+    feedQuiet(299 * 480);
+    check(std::isnan(L.shortTermLufs()) && L.getLraSampleCount() == lraBefore, "299 post-gap chunks: still no short-term value and no cross-gap LRA sample");
+
+    feedQuiet(330 * 480);
+    const auto expectSamples = (std::uint64_t) ((330 - 300) / 10 + 1);   // LRA samples at 300, 310, 320, 330 post-gap chunks
+    std::snprintf(name, sizeof(name), "330 post-gap chunks: S = %.3f LUFS (post-gap only), LRA samples %llu -> %llu (+%llu expected, all built from post-gap audio)",
+                  L.shortTermLufs(), (unsigned long long) lraBefore, (unsigned long long) L.getLraSampleCount(), (unsigned long long) expectSamples);
+    check(nearf(L.shortTermLufs(), -40.0, 0.3) && L.getLraSampleCount() == lraBefore + expectSamples, name);
+    check(L.getGatedBlockCount() == blocksBefore + (std::uint64_t) ((330 - 40) / 10 + 1), "gating-block cadence after the gap: one block per 10 chunks starting at 40 (integrated handling unchanged)");
 }
 
 static void test_loudness_sources_and_publish()
@@ -3547,6 +3611,47 @@ static void test_waveform_beat_events_host_grid()
         std::vector<int> barBeats;
         for (std::uint64_t i = 0; i < eng.getBeatEventsSeen(); ++i) if (eng.getBeatLogEntry(i).isBar) barBeats.push_back((int) i);
         check(eng.getBeatEventsSeen() == 20 && barBeats == std::vector<int>({ 0, 4, 8, 11, 14, 17 }), "4/4 -> 3/4 change: bars at beats 0,4,8,11,14,17");
+    }
+}
+
+static void test_waveform_live_column_and_ui_sources()
+{
+    section("waveform_live_column_and_ui_sources");
+    {   // the in-progress column is published with its index (= newest completed + 1) and tracks the signal immediately
+        prism::AnalysisEngine eng(makeCfg(2, 0, 48000.0), 14);
+        std::vector<float> loud(480, 0.5f), quiet(480, 0.0f);
+        const float* pl[2] = { loud.data(), loud.data() };
+        const float* pq[2] = { quiet.data(), quiet.data() };
+        bool indexOk = true, tracks = false, silentIsZero = true, any = false;
+        for (int b = 0; b < 200; ++b)
+        {
+            eng.captureBlock(b < 100 ? pl : pq, 2, 480);
+            eng.pump();
+            const auto snap = eng.buildSnapshot();
+            const auto& src = snap->sources[0];
+            const auto cols = allColumns(eng.getWaveform(0));
+            if (src.liveColumnIndex >= 0 && ! cols.empty())
+            {
+                any = true;
+                indexOk &= src.liveColumnIndex == (std::int64_t) cols.back().index + 1;
+                if (b >= 5 && b < 100) tracks |= src.liveColumn[0] > 0.5f || src.liveColumn[1] > 0.5f || src.liveColumn[2] > 0.5f;
+            }
+        }
+        {   // after a long silence the live column is zero again (its peaks reset with every column)
+            eng.captureBlock(pq, 2, 480); eng.pump();
+            const auto snap = eng.buildSnapshot();
+            silentIsZero = snap->sources[0].liveColumn[0] == 0.0f && snap->sources[0].liveColumn[1] == 0.0f;
+        }
+        check(any && indexOk, "liveColumnIndex == newest completed column + 1 in every snapshot");
+        check(tracks && silentIsZero, "liveColumn carries the in-progress band peaks (tracks a loud signal, zero in silence)");
+    }
+    {   // UI source selectors persist as {0,1}
+        using namespace prism::ids;
+        juce::ValueTree t("T");
+        t.setProperty(uiGonioSource, 1, nullptr); t.setProperty(uiScopeSource, 1, nullptr); PRISMAudioProcessor::sanitizeState(t);
+        check((int) t.getProperty(uiGonioSource) == 1 && (int) t.getProperty(uiScopeSource) == 1, "gonio/scope source selectors: 1 accepted");
+        t.setProperty(uiGonioSource, 7, nullptr); t.setProperty(uiScopeSource, -3, nullptr); PRISMAudioProcessor::sanitizeState(t);
+        check((int) t.getProperty(uiGonioSource) == 0 && (int) t.getProperty(uiScopeSource) == 0, "gonio/scope source selectors: invalid -> 0");
     }
 }
 
@@ -4513,6 +4618,7 @@ int main()
     test_waveform_beat_flags();
     test_waveform_beat_flags_tempo_and_loop();
     test_waveform_beat_events_host_grid();
+    test_waveform_live_column_and_ui_sources();
     test_waveform_ack_delivery();
     test_waveform_editor_gating_and_wiring();
 

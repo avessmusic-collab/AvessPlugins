@@ -7,6 +7,7 @@
 
 #include "PluginEditor.h"
 #include "BinaryData.h"
+#include "UiStateUtil.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -42,19 +43,11 @@ namespace
         { "src2_solo",         Kind::Bool   }
     }};
 
-    // ValueTree (non-automatable) state entries, persisted inside apvts.state
-    constexpr const char* kSrcNameIds[2]  = { "src1_name", "src2_name" };
-    constexpr const char* kSrcNameDefs[2] = { "Ch1", "Ch2" };
-    constexpr int kMaxNameLength = 10;
+    using namespace prism::uistate;   // limits + int-list helpers shared with PluginProcessor.cpp
 
-    // Serialized UI state (layout splits / fullscreen / window size), also inside apvts.state
-    constexpr const char* kRowSplitsId = "ui_row_splits";        // "226,70,302"
-    constexpr const char* kColSplitsId = "ui_lower_col_splits";  // "296,266,272"
-    constexpr const char* kFullscreenId = "ui_fullscreen";
-    constexpr const char* kSgOrientId   = "ui_spectrogram_orientation";   // "v" | "h" (UI state, NOT a parameter)
-    constexpr const char* kWidthId  = "ui_width";
-    constexpr const char* kHeightId = "ui_height";
-    constexpr int kDefaultWidth = 1100, kDefaultHeight = 720, kMinWidth = 770, kMinHeight = 504;
+    // ValueTree (non-automatable) state entries, persisted inside apvts.state (ids from prism::ids: single source of truth)
+    constexpr const char* kSrcNameIds[2]  = { prism::ids::src1Name, prism::ids::src2Name };
+    constexpr const char* kSrcNameDefs[2] = { "Ch1", "Ch2" };
 
     static_assert (kParams.size() == 17, "gestureOpen in the header is sized for the 17 locked APVTS parameters");
 
@@ -65,36 +58,6 @@ namespace
         auto copy = st.createCopy();
         PRISMAudioProcessor::sanitizeState (copy);
         return copy;
-    }
-
-    juce::Array<int> parseInts (const juce::String& csv)
-    {
-        juce::Array<int> out;
-        for (auto& t : juce::StringArray::fromTokens (csv, ",", ""))
-            out.add (t.getIntValue());
-        return out;
-    }
-
-    juce::Array<int> intsFromVar (const juce::var& arr)
-    {
-        juce::Array<int> out;
-        if (auto* a = arr.getArray())
-            for (auto& e : *a) out.add ((int) e);
-        return out;
-    }
-
-    juce::String joinInts (const juce::Array<int>& v)
-    {
-        juce::StringArray parts;
-        for (int e : v) parts.add (juce::String (e));
-        return parts.joinIntoString (",");
-    }
-
-    juce::var intsToVar (const juce::Array<int>& v)
-    {
-        juce::Array<juce::var> out;
-        for (int e : v) out.add (e);
-        return out;
     }
 
     int findParamIndex (const juce::String& id)
@@ -286,7 +249,7 @@ PRISMAudioProcessorEditor::PRISMAudioProcessorEditor (PRISMAudioProcessor& p)
     setResizable (true, true);
 
     const auto st = sanitizedUiState (processorRef.apvts.state);
-    setSize ((int) st.getProperty (kWidthId, kDefaultWidth), (int) st.getProperty (kHeightId, kDefaultHeight));
+    setSize ((int) st.getProperty (prism::ids::uiWidth, kDefaultWidth), (int) st.getProperty (prism::ids::uiHeight, kDefaultHeight));
 
     setEngineActive (true);
     startTimerHz (60);   // analysis frames + parameter sync
@@ -327,8 +290,8 @@ void PRISMAudioProcessorEditor::resized()
     if (getWidth() >= kMinWidth)
     {
         auto& st = processorRef.apvts.state;
-        st.setProperty (kWidthId,  getWidth(),  nullptr);
-        st.setProperty (kHeightId, getHeight(), nullptr);
+        st.setProperty (prism::ids::uiWidth,  getWidth(),  nullptr);
+        st.setProperty (prism::ids::uiHeight, getHeight(), nullptr);
     }
 }
 
@@ -388,11 +351,13 @@ void PRISMAudioProcessorEditor::handleUiStateEvent (const juce::var& payload)
     tmp.setProperty (uiLowerColSplits, joinInts (intsFromVar (payload.getProperty ("lower_col_splits", {}))), nullptr);
     tmp.setProperty (uiSgOrientation,  payload.getProperty ("spectrogram_orientation", "v").toString(),      nullptr);
     tmp.setProperty (uiFullscreen,     (bool) payload.getProperty ("fullscreen", false),                      nullptr);
+    tmp.setProperty (uiGonioSource,    (int) payload.getProperty ("gonio_source", 0),                         nullptr);
+    tmp.setProperty (uiScopeSource,    (int) payload.getProperty ("scope_source", 0),                         nullptr);
     tmp.setProperty (uiWaveformSpan,   (int) payload.getProperty ("waveform_span", 8),                       nullptr);
     PRISMAudioProcessor::sanitizeState (tmp);
 
     auto& st = processorRef.apvts.state;
-    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan })
+    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiGonioSource, uiScopeSource })
         st.setProperty (id, tmp.getProperty (id), nullptr);
 }
 
@@ -437,11 +402,13 @@ juce::var PRISMAudioProcessorEditor::buildInitUi() const
 {
     const auto st = sanitizedUiState (processorRef.apvts.state);   // corrupt / out-of-range saved state never reaches the page
     auto* o = new juce::DynamicObject();
-    o->setProperty ("row_splits",       intsToVar (parseInts (st.getProperty (kRowSplitsId, "").toString())));
-    o->setProperty ("lower_col_splits", intsToVar (parseInts (st.getProperty (kColSplitsId, "").toString())));
-    o->setProperty ("fullscreen",       (bool) st.getProperty (kFullscreenId, false));
+    o->setProperty ("row_splits",       intsToVar (parseInts (st.getProperty (prism::ids::uiRowSplits, "").toString())));
+    o->setProperty ("lower_col_splits", intsToVar (parseInts (st.getProperty (prism::ids::uiLowerColSplits, "").toString())));
+    o->setProperty ("fullscreen",       (bool) st.getProperty (prism::ids::uiFullscreen, false));
     o->setProperty ("waveform_span",    (int) st.getProperty (prism::ids::uiWaveformSpan, 8));
-    o->setProperty ("spectrogram_orientation", st.getProperty (kSgOrientId, "v").toString() == "h" ? "h" : "v");
+    o->setProperty ("gonio_source",     (int) st.getProperty (prism::ids::uiGonioSource, 0));
+    o->setProperty ("scope_source",     (int) st.getProperty (prism::ids::uiScopeSource, 0));
+    o->setProperty ("spectrogram_orientation", st.getProperty (prism::ids::uiSgOrientation, "v").toString() == "h" ? "h" : "v");
     return juce::var (o);
 }
 
@@ -561,8 +528,8 @@ void PRISMAudioProcessorEditor::timerCallback()
     if (paramBridge->consumeRedirected())   // setStateInformation / replaceState happened
     {
         const auto st = sanitizedUiState (processorRef.apvts.state);
-        const int w = (int) st.getProperty (kWidthId,  kDefaultWidth);
-        const int h = (int) st.getProperty (kHeightId, kDefaultHeight);
+        const int w = (int) st.getProperty (prism::ids::uiWidth,  kDefaultWidth);
+        const int h = (int) st.getProperty (prism::ids::uiHeight, kDefaultHeight);
         if (w != getWidth() || h != getHeight()) setSize (w, h);
         wasHidden = true;   // force the full resync below
     }
@@ -660,6 +627,12 @@ bool PRISMAudioProcessorEditor::pushAnalysisFrameImpl()
     if (snap->barAnchorStreamFrame >= 0)   // additive + optional: the grid anchor (stream frame of the latest downbeat; exact in a double up to 2^53)
         frame->setProperty ("barAnchor", (double) snap->barAnchorStreamFrame);
     {
+        juce::Array<juce::var> live;   // in-progress column per source: [index, bass, mids, highs] (index -1 = none); additive + optional
+        for (const auto& s : snap->sources)
+            live.add (juce::Array<juce::var> { (double) s.liveColumnIndex, (double) s.liveColumn[0], (double) s.liveColumn[1], (double) s.liveColumn[2] });
+        frame->setProperty ("waveformLive", live);
+    }
+    {
         juce::Array<juce::var> first;   // absolute index of the first column in each source's waveform array (-1 = none): place by index, detect gaps
         for (const auto& s : snap->sources) first.add ((double) s.waveformFirstColumn);
         frame->setProperty ("waveformFirst", first);
@@ -693,14 +666,12 @@ std::shared_ptr<const prism::AnalysisSnapshot> PRISMAudioProcessorEditor::fetchL
 
 void PRISMAudioProcessorEditor::requestResetAll()
 {
-    processorRef.requestResetAll();   // integrated loudness, LRA, max true/sample peaks
-    lastSequence = 0;
+    processorRef.requestResetAll();   // integrated loudness, LRA, max true/sample peaks. lastSequence is NOT reset: delivered columns stay valid, and re-pushing the same snapshot would duplicate waveform columns
 }
 
 void PRISMAudioProcessorEditor::requestResetIntegrated()
 {
-    processorRef.requestResetIntegrated();   // integrated LUFS + LRA only
-    lastSequence = 0;
+    processorRef.requestResetIntegrated();   // integrated LUFS + LRA only (same: no forced re-push)
 }
 
 //==============================================================================

@@ -110,11 +110,15 @@ namespace prism
 
     void LoudnessMeter::notifyGap() noexcept
     {
+        // Policy: nothing in flight may span the discontinuity.
         st = {};
         acc[0] = acc[1] = 0.0;
-        chunkFill = 0;
-        blockChunks = 0;   // the in-flight 400 ms block is discarded
-        ++gaps;
+        chunkFill = 0;                 // partial 10 ms chunk discarded
+        blockChunks = 0;               // in-flight 400 ms gating block discarded (next one needs 40 post-gap chunks)
+        lraChunks = 0;                 // in-flight 3 s LRA window discarded (next sample needs 300 post-gap chunks)
+        ring.fill(0.0);                // momentary / short-term windows restart too: M is NaN for 400 ms and S for 3 s,
+        ringPos = ringFilled = 0;      //   so no M / S / LRA value is ever a blend of pre- and post-gap audio
+        ++gaps;                        // integrated / LRA HISTOGRAMS survive: only reset clears them
     }
 
     void LoudnessMeter::resetIntegrated() noexcept

@@ -50,8 +50,11 @@ namespace prism
         // Frames are expected sanitised (finite). r is ignored for mono.
         void process(const float* l, const float* r, int n) noexcept;
 
-        // Ring overrun: filter state and the partial chunk are discarded; the next gating block waits
-        // for 40 fresh chunks (the in-flight block is dropped). Integrated / LRA state survives.
+        // Ring overrun (stream discontinuity): filter state, the partial chunk, the chunk ring and BOTH in-flight
+        // windows (400 ms gating block, 3 s LRA window) are discarded, so nothing measured afterwards blends
+        // pre- and post-gap audio: momentary is NaN again until 40 post-gap chunks (400 ms), short-term and the
+        // next LRA sample until 300 (3 s), the next gating block until 40. The integrated / LRA histograms
+        // (already-committed blocks and samples) survive; only reset clears them.
         void notifyGap() noexcept;
 
         // reset_integrated: clears gating + LRA histograms only (momentary / short-term are moving windows).

@@ -1,29 +1,13 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "Parameters/ParameterLayout.h"
+#include "UiStateUtil.h"
 
 namespace
 {
-    constexpr int kMaxNameLength = 10;
+    using namespace prism::uistate;   // kMaxNameLength, kDefaultWidth/kMinWidth/kMaxWidth, parseInts, joinInts (shared with the editor)
     constexpr int kRowTotal = 598, kRowMinSpec = 120, kRowMinWave = 40, kRowMinLower = 100;
     constexpr int kColTotal = 834, kColMinSpectrogram = 224, kColMinOther = 180;
-    constexpr int kDefaultWidth = 1100, kMinWidth = 770, kMaxWidth = 8192;
-
-    juce::Array<int> parseInts(const juce::String& csv)
-    {
-        juce::Array<int> out;
-        for (auto& t : juce::StringArray::fromTokens(csv, ",", ""))
-            out.add(t.getIntValue());
-        return out;
-    }
-
-    juce::String joinInts(const juce::Array<int>& v)
-    {
-        juce::StringArray parts;
-        for (int e : v)
-            parts.add(juce::String(e));
-        return parts.joinIntoString(",");
-    }
 
     juce::String sanitizeRows(const juce::String& csv)
     {
@@ -77,6 +61,8 @@ void PRISMAudioProcessor::applyStateDefaults(juce::ValueTree& state)
     if (! state.hasProperty(uiLowerColSplits))  state.setProperty(uiLowerColSplits, "296,266,272", nullptr);
     if (! state.hasProperty(uiSgOrientation))   state.setProperty(uiSgOrientation, "v", nullptr);
     if (! state.hasProperty(uiWaveformSpan))    state.setProperty(uiWaveformSpan, 8, nullptr);
+    if (! state.hasProperty(uiGonioSource))     state.setProperty(uiGonioSource, 0, nullptr);
+    if (! state.hasProperty(uiScopeSource))     state.setProperty(uiScopeSource, 0, nullptr);
     if (! state.hasProperty(uiFullscreen))      state.setProperty(uiFullscreen, false, nullptr);
     if (! state.hasProperty(uiWidth))           state.setProperty(uiWidth, 1100, nullptr);
     if (! state.hasProperty(uiHeight))          state.setProperty(uiHeight, 720, nullptr);
@@ -98,6 +84,9 @@ void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)
     state.setProperty(uiSgOrientation, orient == "h" ? "h" : "v", nullptr);
 
     state.setProperty(uiFullscreen, (bool) state.getProperty(uiFullscreen, false), nullptr);
+
+    state.setProperty(uiGonioSource, (int) state.getProperty(uiGonioSource, 0) == 1 ? 1 : 0, nullptr);   // UI-only source selectors: {0, 1}
+    state.setProperty(uiScopeSource, (int) state.getProperty(uiScopeSource, 0) == 1 ? 1 : 0, nullptr);
 
     const int span = (int) state.getProperty(uiWaveformSpan, 8);   // bars: 1 | 2 | 4 | 8 | 16 | 32 (older builds stored seconds -> values outside the set reset to 8)
     state.setProperty(uiWaveformSpan, (span == 1 || span == 2 || span == 4 || span == 8 || span == 16 || span == 32) ? span : 8, nullptr);

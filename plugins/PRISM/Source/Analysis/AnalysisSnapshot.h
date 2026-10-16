@@ -27,6 +27,8 @@ namespace prism
         bool  hasSpectrum = false;
         std::array<float, kSpectrumPoints> spectrumDb {};
 
+        std::int64_t liveColumnIndex = -1;                    // in-progress column (not yet in waveformColumns): absolute index, -1 = none
+        std::array<float, 3> liveColumn {};                   // its band peaks so far: bass, mids, highs (0..1)
         std::int64_t waveformFirstColumn = -1;                // absolute column index of waveformColumns[0] (-1 = none); lets the page place columns by index
         int   waveformColumnCount = 0;                        // each column: bass, mids, highs (0..1), flag (0 none, 1 beat, 2 bar)
         std::array<std::array<float, 4>, kMaxWaveformColumns> waveformColumns {};

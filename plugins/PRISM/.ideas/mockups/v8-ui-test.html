@@ -198,7 +198,7 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="cap" id="cap_wf" style="left:44px;width:76px;top:316px">Waveform</div>
   <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
   <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
-  <div class="sgsel" id="wfspan" style="left:244px;width:92px" title="Waveform span in bars (click to cycle 2 / 4 / 8 / 16)">SPAN 8 bars</div>
+  <div class="sgsel" id="wfspan" style="left:244px;width:92px" title="Waveform span in bars (click to cycle 1 / 2 / 4 / 8 / 16 / 32)">SPAN 8 bars</div>
   <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#ff4b4b">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#ffb84d">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#5df2b8">&#9679;</span> highs</div>
   <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
 
@@ -206,6 +206,8 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="cap" id="cap_sg" style="left:44px;width:76px">Spectrogram</div>
   <div class="sgsel" id="sgs0" style="left:124px;width:36px">Ch1</div>
   <div class="sgsel" id="sgs1" style="left:164px;width:36px">Ch2</div>
+  <div class="sgsel" id="gns0" style="left:474px;width:36px">Ch1</div><div class="sgsel" id="gns1" style="left:514px;width:36px">Ch2</div>
+  <div class="sgsel" id="scs0" style="left:758px;width:36px">Ch1</div><div class="sgsel" id="scs1" style="left:798px;width:36px">Ch2</div>
   <div class="sgsel" id="sgo0" style="width:22px" title="Vertical waterfall (frequency across, time down)">V</div><div class="sgsel" id="sgo1" style="width:22px" title="Horizontal scroll (frequency up, time left)">H</div>
   <div class="cap" id="cap_gn" style="left:386px;width:300px">Vectorscope</div>
   <div class="cap" id="cap_sc" style="left:706px;width:350px">Scope</div>
@@ -303,7 +305,7 @@ var DPR = Math.min(2, window.devicePixelRatio || 1);
 
 /* ---------- State ---------- */
 var P = { fft_size: 4096, window: 'hann', smoothing: 35, spectrum_tilt: 0, display_range: -90, spectrogram_speed: 1,
-          peak_decay: 12, sg_src: 0, wf_src: 0, color_theme: 'Coral/Mint', freeze: false, analysis_mode: 'combined', preset: 'Studio', reduced_motion: false, glow_intensity: 55 };
+          peak_decay: 12, sg_src: 0, wf_src: 0, gn_src: 0, sc_src: 0, color_theme: 'Coral/Mint', freeze: false, analysis_mode: 'combined', preset: 'Studio', reduced_motion: false, glow_intensity: 55 };
 var THEMES = [
   { name: 'Coral/Mint',   c1: ['coral', '#ff7a66'],    c2: ['mint', '#5df2b8'],   neutral: '#e9e2dc', light: '#ffd2c9', band: ['#ff4b4b', '#ffb84d', '#5df2b8'] },
   { name: 'Cyan/Violet',  c1: ['cyan', '#00e5ff'],     c2: ['violet', '#b388ff'], neutral: '#d3e7ee', light: '#bff4ff', band: ['#8b62ff', '#d85ad0', '#00e5ff'] },
@@ -648,7 +650,7 @@ function drawGonio(dt) {
   g.globalCompositeOperation = 'source-over'; g.fillStyle = P.reduced_motion ? GLASS : 'rgba(10,12,14,0.13)'; g.fillRect(0, 0, o.w, o.h);
   g.globalCompositeOperation = 'lighter';
   for (var s = 0; s < 2; s++) {
-    var fn = s ? sampleSide : sampleMain, K = 900, stride = 3, sLL = 0, sRR = 0, sLR = 0, eM = 0, eS = 0, rgb = SRC[s].rgb.join(','), vis = effVisible(s);
+    var fn = s ? sampleSide : sampleMain, K = 900, stride = 3, sLL = 0, sRR = 0, sLR = 0, eM = 0, eS = 0, rgb = SRC[s].rgb.join(','), vis = effVisible(s) && s === P.gn_src;   // only the selected source is plotted (stats still use both)
     if (vis) g.fillStyle = 'rgba(' + rgb + ',' + (0.3 + 0.16 * P.glow_intensity / 100).toFixed(2) + ')';
     for (var k = 0; k < K; k++) {
       fn(tDemo + k * stride / FS, out2); var L = out2[0], Rv = out2[1];
@@ -683,7 +685,7 @@ function drawScope() {
   g.globalCompositeOperation = 'lighter'; g.lineJoin = 'round';
   var cy = SCP.T + SCP.ph / 2, gl = P.glow_intensity / 100;
   for (var s = 0; s < 2; s++) {
-    if (!effVisible(s)) continue; var fn = s ? sampleSide : sampleMain, buf = scHist[s], tmp = [0, 0];
+    if (!effVisible(s) || s !== P.sc_src) continue; var fn = s ? sampleSide : sampleMain, buf = scHist[s], tmp = [0, 0];
     for (var k = 0; k < 1800; k++) { fn(tDemo + k / FS, tmp); buf[k] = (tmp[0] + tmp[1]) * 0.5; }
     var trig = 0; for (var q = 1; q < 800; q++) if (buf[q - 1] < 0 && buf[q] >= 0 && buf[q + 12] > buf[q]) { trig = q; break; }
     g.beginPath();
@@ -782,6 +784,7 @@ function applySources() {
     chip.classList.toggle('off', !effVisible(i)); leg.classList.toggle('off', !effVisible(i)); $('chn' + i).textContent = shortName(i); $('lgn' + i).textContent = SRC[i].name; $('chc' + i).textContent = colorName(i);
     sgs.textContent = SRC[i].name; sgs.classList.toggle('on', P.sg_src === i); var sgo = $('sgo' + i); if (sgo) { sgo.style.setProperty('--c', SRC[0].color); sgo.classList.toggle('on', sgOrient === (i ? 'h' : 'v')); }
     var wfs = $('wfs' + i); wfs.style.setProperty('--c', SRC[i].color); wfs.textContent = SRC[i].name; wfs.classList.toggle('on', P.wf_src === i);
+    var gns = $('gns' + i), scs = $('scs' + i); gns.style.setProperty('--c', SRC[i].color); gns.textContent = SRC[i].name; gns.classList.toggle('on', P.gn_src === i); scs.style.setProperty('--c', SRC[i].color); scs.textContent = SRC[i].name; scs.classList.toggle('on', P.sc_src === i);
     $('solo' + i).classList.toggle('on', SRC[i].solo); var sdot = $('sd' + i); if (sdot) sdot.style.setProperty('--c', SRC[i].color);
     var pv = $('pv' + i), ps = $('ps' + i); if (pv) { pv.classList.toggle('on', SRC[i].visible); ps.classList.toggle('on', SRC[i].solo); }
   }
@@ -793,6 +796,8 @@ function applySources() {
   $('sgo' + i).addEventListener('click', function () { sgSetOrient(i ? 'h' : 'v'); });
   $('sgs' + i).addEventListener('click', function () { P.sg_src = i; applySources(); sgRefill(); });
   $('wfs' + i).addEventListener('click', function () { P.wf_src = i; applySources(); wfInit(); });
+  $('gns' + i).addEventListener('click', function () { P.gn_src = i; applySources(); cv.gn_cv.g.globalCompositeOperation = 'source-over'; cv.gn_cv.g.fillStyle = GLASS; cv.gn_cv.g.fillRect(0, 0, cv.gn_cv.w, cv.gn_cv.h); if (typeof postUi === 'function') postUi(); });   // UI-only: both sources' arrays are kept, the selected one is rendered
+  $('scs' + i).addEventListener('click', function () { P.sc_src = i; applySources(); cv.sc_cv.g.globalCompositeOperation = 'source-over'; cv.sc_cv.g.fillStyle = GLASS; cv.sc_cv.g.fillRect(0, 0, cv.sc_cv.w, cv.sc_cv.h); if (typeof postUi === 'function') postUi(); });
   $('solo' + i).addEventListener('click', function () { SRC[i].solo = !SRC[i].solo; Bridge.post('src' + (i + 1) + '_solo', SRC[i].solo); applySources(); });
 });
 
@@ -962,9 +967,9 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in de
   var hLow = Math.min(hMid + clamp(A * 0.34 * b, hl, A * 0.26), mid * 0.97);   // never past the lane
   var L = BAND.low, M = BAND.mid, H = BAND.high;
   g.globalAlpha = 1;
-  g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x, mid - hLow, w, 2 * hLow);
-  g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x, mid - hMid, w, 2 * hMid);
-  g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x, mid - hCore, w, 2 * hCore);
+  g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x + wfBandDx[0], mid - hLow, w, 2 * hLow);
+  g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x + wfBandDx[1], mid - hMid, w, 2 * hMid);
+  g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x + wfBandDx[2], mid - hCore, w, 2 * hCore);
 }
 /* ---- Unified time base + musical grid (computed, not estimated) ----
    ONE coordinate system for waveform and grid. Everything lives in COLUMN space (a column is a fixed slice of the audio
@@ -979,27 +984,30 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in de
    Every new anchor re-derives the lattice from scratch: no incremental phase, no nudging, no accumulation => zero drift. A small
    anchor history (tempo + meter that were true at each bar) draws past bars correctly across tempo changes. No anchor / no bpm => no
    grid (honesty rule); a lattice is never extended further than 1.25 bars past its last anchor (transport stopped). */
-var wfOffset = 0;          // engine absolute column index minus page column index (re-synced from waveformFirst on every batch)
+var wfOffset = 0;          // engine absolute column index minus page column index (re-based on genuine stream discontinuities)
+var wfSynthTail = 0;       // trailing SYNTHETIC (idle, wall-clock) columns in the ring: real data re-bases instead of overlapping them
 var wfAnchors = [], wfAnchorFrame = -1, WF_MAX_ANCHORS = 64;
 function wfColToX(col, W, T, ppc) { return W - (T - col) * ppc; }
 function wfXToCol(x, W, T, ppc) { return T - (W - x) / ppc; }
 function wfAnchorAdd(frame, fs, bpm, num, den) {   // frame: engine stream frame of a downbeat
   if (!(frame >= 0) || !(fs > 0) || !(bpm > 0) || frame === wfAnchorFrame) return;
   wfAnchorFrame = frame;
-  var d = den > 0 ? den : 4, a = { col: frame * 253 / (3 * fs) - wfOffset, cpb: WF_CPS * (60 / bpm) * (4 / d), num: num > 0 ? num : 4 };
+  var d = den > 0 ? den : 4, a = { col: frame * 253 / (3 * fs),   // ENGINE column space: independent of wfOffset, so re-basing can never displace anchors
+     cpb: WF_CPS * (60 / bpm) * (4 / d), num: num > 0 ? num : 4 };
   var last = wfAnchors.length ? wfAnchors[wfAnchors.length - 1] : null;
   if (last && a.col - last.col < 0.25 * a.cpb) wfAnchors[wfAnchors.length - 1] = a;   // jittery / duplicate downbeat (< 1/4 beat after the last): replace, never stack two bars
   else wfAnchors.push(a);
   if (wfAnchors.length > WF_MAX_ANCHORS) wfAnchors.shift();
 }
-function wfGridEach(left, right, ppc, cb) {   // calls cb(col, level) level: 0 bar, 1 beat, 2 sub (1/2 beat), 3 sub (1/4), 4 sub (1/8)
-  var n = wfAnchors.length, s, j;
+function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE columns; anchors live in engine space and are converted here. cb(col, level): 0 bar, 1 beat, 2 sub (1/2), 3 sub (1/4), 4 sub (1/8)
+  var n = wfAnchors.length, s, j, off = wfOffset;
+  left += off; right += off;
   for (s = 0; s < n; s++) {
     var a = wfAnchors[s], barCols = a.cpb * a.num;
     var lo = s === 0 ? a.col - 1.05 * barCols : a.col;
-    // segments are strictly half-open [anchor_i, anchor_i+1): the 1.25-bar extension applies ONLY to the newest anchor (no successor yet)
-    var hi = s < n - 1 ? wfAnchors[s + 1].col - 0.5 : Math.min(right, a.col + 1.25 * barCols);   // -0.5 col: the next anchor's own bar line is authoritative; the previous lattice never lands a near-duplicate beside it
-    if (s === 0) { lo = Math.max(lo, left); } else lo = Math.max(lo, left);
+    // segments are strictly half-open [anchor_i, anchor_i+1) and never longer than 1.25 bars
+    var hi = Math.min(s < n - 1 ? wfAnchors[s + 1].col - 0.5 : right, a.col + 1.25 * barCols);   // every segment is capped at 1.25 bars: a gap between anchors (idle / new session) never gets a spurious lattice   // -0.5 col: the next anchor's own bar line is authoritative; the previous lattice never lands a near-duplicate beside it
+    lo = Math.max(lo, left);
     if (hi <= left || lo >= right) continue;
     var f = -1, q;   // finest depth whose spacing is >= 7 device px (density gate); bars only if even beats are denser than that
     for (q = 3; q >= 0; q--) if (a.cpb / (1 << q) * ppc >= 7) { f = q; break; }
@@ -1013,12 +1021,19 @@ function wfGridEach(left, right, ppc, cb) {   // calls cb(col, level) level: 0 b
       else if ((((j % (per >> 1)) + (per >> 1)) % (per >> 1)) === 0) lvl = 2;
       else if (per >= 4 && (((j % (per >> 2)) + (per >> 2)) % (per >> 2)) === 0) lvl = 3;
       else lvl = 4;
-      cb(a.col + j * step, lvl);
+      cb(a.col + j * step - off, lvl);
     }
   }
 }
-var WF_GRID_STYLE = [ [0.62, 1.1], [0.34, 0.7], [0.20, 0.55], [0.13, 0.5], [0.08, 0.5] ];   // [alpha, css px width] per level: bar, beat, 1/2, 1/4, 1/8 of a beat
+var WF_GRID_STYLE = [ [0.32, 1.0], [0.18, 0.7], [0.11, 0.55], [0.07, 0.5], [0.045, 0.5] ];   // [alpha, css px width] per level: bar, beat, 1/2, 1/4, 1/8 of a beat; a quiet reference layer under the audio (no halo, nothing jumps out of the lane)
 var wfFlagRing = new Uint8Array(WF_CAP);
+/* Alignment constants (visual lane only).
+   WF_COL_CENTER: a column holds the peak of the interval [i, i+1); an onset inside it is uniformly distributed, so the unbiased time stamp of
+   the column is its CENTRE. Columns are therefore drawn centred (spanning [i+0.5, i+1.5)), which bounds the distance between a grid line (true time)
+   and the wedge's leading edge to +-0.5 column (the old start-drawn columns had 0..+1). This is a fixed sampling convention, not a fit to the grid.
+   WF_BAND_DELAY_MS: constant group delay of the engine's LR4 band filters (bass: 2 x Butterworth @200 Hz, gd(0) = 2*sqrt(2)/(2*pi*200) = 2.25 ms;
+   mids ~0.4 ms, highs ~0.1 ms). Each band layer is drawn that much earlier (latency compensation of a known constant, applied as a sub-column pixel shift). */
+var WF_COL_CENTER = 0.5, WF_BAND_DELAY_MS = [2.25, 0.4, 0.1], wfBandDx = [0, 0, 0];
 var wfOnsetRing = [new Float32Array(WF_CAP), new Float32Array(WF_CAP)], wfOnsetSt = [{ prev: 0, ref: 0.1, held: 0 }, { prev: 0, ref: 0.1, held: 0 }];
 /* Onset emphasis (VISUAL lane only: it scales the drawn height, no readout or measurement uses it).
    E = max band energy of the column; o = clamp((E - E_prev) / max(E_ref, 0.05), 0, 1) with E_ref a running mean (~0.3 s) so it adapts to level;
@@ -1029,6 +1044,10 @@ function wfOnset(s, b, m, h) {
   var st = wfOnsetSt[s], E = Math.max(b, m, h), o = Math.min(1, Math.max(0, (E - st.prev) / Math.max(st.ref, 0.05)));
   st.held = Math.max(o, st.held * 0.88); st.prev = E; st.ref += (E - st.ref) * 0.04;
   return st.held;
+}
+function wfOnsetPeek(s, b, m, h) {   // onset of an in-progress column, WITHOUT updating the running state
+  var st = wfOnsetSt[s], E = Math.max(b, m, h), o = Math.min(1, Math.max(0, (E - st.prev) / Math.max(st.ref, 0.05)));
+  return Math.max(o, st.held * 0.88);
 }
 function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1) {   // append one column (both sources, kept in lockstep)
   var o = (wfN % WF_CAP) * 4, r0 = wfRing[0], r1 = wfRing[1];
@@ -1052,7 +1071,6 @@ function wfDrawGrid(g, W, T, ppc) {
   }
   for (i = 0; i < out.length; i++) {
     var st = WF_GRID_STYLE[out[i][1]], tw = Math.max(1, Math.round(DPR * st[1])), xr = Math.round(out[i][0] - tw / 2);
-    if (out[i][1] === 0) { var h = Math.max(1, Math.round(DPR)); g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(xr - h, 0, tw + 2 * h, wfH); }   // soft halo: downbeats anchor the lane
     g.fillStyle = 'rgba(255,255,255,' + st[0] + ')'; g.fillRect(xr, 0, tw, wfH);
   }
 }
@@ -1060,14 +1078,16 @@ function wfRender() {
   if (!wfCtx) return;
   var g = wfCtx, W = wfW, newest = wfN - 1; g.clearRect(0, 0, W, wfH);
   if (newest < 0) return;
+  var liveV = null;   // the demo clock has no in-progress column
   var ring = wfRing[P.wf_src], ppc = W / (wfSpanSec() * WF_CPS), T = wfT, mid = wfH / 2, A = mid * 0.86, x, idx, lo = wfN - WF_CAP;
+  for (var bk = 0; bk < 3; bk++) wfBandDx[bk] = -Math.round(WF_BAND_DELAY_MS[bk] / 1000 * WF_CPS * ppc);   // filter-latency compensation (px)
   if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
     var rs = 0, ri = -1, real = false;
     for (x = 0; x <= W; x++) {
       var cur = -1, isReal = false;
-      if (x < W) { idx = Math.floor(wfXToCol(x + 0.5, W, T, ppc)); isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; }
+      if (x < W) { var cpos = wfXToCol(x + 0.5, W, T, ppc); idx = Math.floor(cpos - WF_COL_CENTER); isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; if (liveV && cpos >= wfN) { cur = -2; isReal = true; } }
       if (x === 0) { ri = cur; real = isReal; rs = 0; continue; }
-      if (cur !== ri || (x < W && isReal !== real)) { if (ri >= 0) wfFlushRun(g, rs, x, ring, ri, mid, A, real); rs = x; ri = cur; real = isReal; }
+      if (cur !== ri || (x < W && isReal !== real)) { if (ri >= 0) wfFlushRun(g, rs, x, ring, ri, mid, A, real); else if (ri === -2) wfDrawBands(g, rs, x - rs, mid, A, liveV.b, liveV.m, liveV.h, liveV.o); rs = x; ri = cur; real = isReal; }
     }
   } else {          // decimation (more than one column per device px): peak-hold over the covered columns
     for (x = 0; x < W; x++) {
@@ -1111,7 +1131,7 @@ function wfStep(dt) {
 window.__wfGrid = function (lo, hi) {   // measurement hook: anchors + lattice lines (col in PAGE column space) over [lo, hi] (default: visible window)
   var W = wfW, ppc = W / (wfSpanSec() * WF_CPS), L = [], l0 = lo === undefined ? wfXToCol(0, W, wfT, ppc) : lo, h0 = hi === undefined ? wfT : hi;
   wfGridEach(l0, h0, ppc, function (col, lvl) { L.push([col, lvl]); });
-  return { anchors: wfAnchors.map(function (a) { return [a.col, a.cpb, a.num]; }), offset: wfOffset, T: wfT, N: wfN, ppc: ppc, W: W, lines: L };
+  return { anchors: wfAnchors.map(function (a) { return [a.col - wfOffset, a.cpb, a.num]; }), offset: wfOffset, T: wfT, N: wfN, ppc: ppc, W: W, lines: L };
 };
 window.__wfDebug = function (rowY) {
   var out = { W: wfW, H: wfH, span: WFSPAN, spanSec: wfSpanSec(), ppc: wfW / (wfSpanSec() * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
@@ -1165,6 +1185,7 @@ function applyLayout() {
   // ---- lower row panes
   setLeft('cap_sg', xP1 + 9); setTop('cap_sg', yL + 6); setLeft('sgs0', xP1 + 88); setTop('sgs0', yL + 2); setLeft('sgs1', xP1 + 128); setTop('sgs1', yL + 2); setLeft('sgo0', xP1 + W1 - 50); setTop('sgo0', yL + 2); setLeft('sgo1', xP1 + W1 - 25); setTop('sgo1', yL + 2);
   setLeft('cap_gn', xP2 + 9); setTop('cap_gn', yL + 6); setLeft('cap_sc', xP3 + 9); setTop('cap_sc', yL + 6);
+  setLeft('gns0', xP2 + 88); setTop('gns0', yL + 2); setLeft('gns1', xP2 + 128); setTop('gns1', yL + 2); setLeft('scs0', xP3 + 52); setTop('scs0', yL + 2); setLeft('scs1', xP3 + 92); setTop('scs1', yL + 2);
   SGW = W1; SGH = Hl; setCv('sg_cv', W1, Hl, xP1 + 1, cL); setCv('sg_lbl', W1, Hl, xP1 + 1, cL); sgResize(); drawSgLabels();
   setCv('gn_cv', W2, Hl, xP2 + 1, cL); setCv('gn_grid', W2, Hl, xP2 + 1, cL);
   GN.cx = W2 / 2; GN.cy = Hl / 2; GN.R = Math.max(30, Math.floor(Math.min(W2, Hl) / 2) - 2);
@@ -1187,7 +1208,7 @@ function applyLayout() {
   if (!booting) { if (sgOff) drawSpectrogram(); if (wfOff) drawWaveform(); drawSpectrum(); }
 }
 function postUi() {
-  if (booting) return; var st = { row_splits: UI.rows.slice(), lower_col_splits: UI.cols.slice(), fullscreen: !!UI.fullscreen, spectrogram_orientation: sgOrient };
+  if (booting) return; var st = { row_splits: UI.rows.slice(), lower_col_splits: UI.cols.slice(), fullscreen: !!UI.fullscreen, spectrogram_orientation: sgOrient, gonio_source: P.gn_src, scope_source: P.sc_src };
   try { if (window.__JUCE__ && window.__JUCE__.backend && window.__JUCE__.backend.emitEvent) { window.__JUCE__.backend.emitEvent('prismUiState', st); return; } } catch (e) { /* fall through */ }
   console.log('[PRISM -> JUCE] ui_state ' + JSON.stringify(st));
 }
@@ -1319,6 +1340,23 @@ function loop(now) {
 
 /* ================= Boot ================= */
 updateTilt(); drawSpecGrid(); drawGnGrid(); drawScGrid(); drawSgLabels(); sgInit(); applyLayout(); if (UI.seedFs !== undefined) setFullscreen(UI.seedFs, true); paintStats();
+/* ---- devicePixelRatio tracking: dragging the window between 1x / 2x displays (or changing zoom) re-derives DPR, re-sizes every canvas'
+   backing store and re-renders through the normal layout path (the waveform re-projects from its kept history) ---- */
+function onDprChange() {
+  var nd = Math.min(2, window.devicePixelRatio || 1);
+  if (nd === DPR) return;
+  DPR = nd;
+  Object.keys(cv).forEach(function (k) { var o = cv[k]; o.el.width = Math.round(o.w * DPR); o.el.height = Math.round(o.h * DPR); o.g.setTransform(DPR, 0, 0, DPR, 0, 0); });
+  if (typeof applyLayout === 'function') applyLayout();
+  if (typeof wfResize === 'function') wfResize();
+  if (typeof KNOBS !== 'undefined') KNOBS.forEach(function (k) { k.draw(); });
+  needRedraw = true;
+  if (typeof drawWaveform === 'function' && !booting) drawWaveform();
+}
+function watchDpr() {   // matchMedia fires once when the resolution changes; re-arm after each change
+  try { var mq = window.matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)'); if (mq.addEventListener) mq.addEventListener('change', function () { onDprChange(); watchDpr(); }, { once: true }); } catch (e) { }
+}
+window.addEventListener('resize', onDprChange); watchDpr();
 window.addEventListener('resize', fitStage); fitStage();
 for (var pre = 0; pre < 60; pre++) { tDemo += 1 / 60; updateSpectra(1 / 60); updateMeters(1 / 60); }
 for (var pre2 = 0; pre2 < 480; pre2++) { tDemo += 1 / 60; updateSpectra(1 / 60); sgStep(1 / 60); updateMeters(1 / 60); }

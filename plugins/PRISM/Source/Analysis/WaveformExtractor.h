@@ -150,6 +150,16 @@ namespace prism
             return n;
         }
 
+        // The IN-PROGRESS column: its index and the band peaks accumulated so far (same -54..0 dBFS unit mapping). Worker thread only.
+        // Returns -1 (and zeros) when the partial column is not usable (dropped after a resync). The page draws it at the right edge so the
+        // strip does not wait for the column to complete (0..11.9 ms).
+        std::int64_t liveColumn(float out[3]) const noexcept
+        {
+            if (dropCurrent) { out[0] = out[1] = out[2] = 0.0f; return -1; }
+            out[0] = toUnit(peaks[0]); out[1] = toUnit(peaks[1]); out[2] = toUnit(peaks[2]);
+            return (std::int64_t) colsDone;
+        }
+
         static float toUnit(double peak) noexcept
         {
             if (! (peak > 0.0)) return 0.0f;

@@ -436,6 +436,11 @@ namespace prism
                 }
                 out.waveformColumnCount = n;
                 out.waveformFirstColumn = n > 0 ? (std::int64_t) cols[0].index : -1;
+                {   // in-progress column (published immediately; completes later into waveformColumns with the same index)
+                    float live3[3] = { 0.0f, 0.0f, 0.0f };
+                    out.liveColumnIndex = st.wave.liveColumn(live3);
+                    out.liveColumn = { live3[0], live3[1], live3[2] };
+                }
                 for (int i = 0; i < n; ++i)
                     out.waveformColumns[(size_t) i] = { cols[(size_t) i].bass, cols[(size_t) i].mid, cols[(size_t) i].high, cols[(size_t) i].flag };
                 const std::int64_t highest = n > 0 ? (std::int64_t) cols[(size_t) (n - 1)].index : st.ackedCol;
