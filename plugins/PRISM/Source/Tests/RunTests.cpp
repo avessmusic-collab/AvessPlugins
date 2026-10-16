@@ -4212,7 +4212,9 @@ static void test_stage3_multi_instance_and_project_reload()
         check(c.apvts.state.getProperty(src1Name).toString() == "Kick", "reload: source name restored");
         check((int) c.apvts.state.getProperty(uiWaveformSpan) == 3, "reload: waveform span restored");
         { juce::ValueTree t("T"); t.setProperty(uiWaveformSpan, 9, nullptr); PRISMAudioProcessor::sanitizeState(t);
-          check((int) t.getProperty(uiWaveformSpan) == 6, "waveform span sanitizer: invalid -> 6"); }
+          check((int) t.getProperty(uiWaveformSpan) == 12, "waveform span sanitizer: invalid -> 12");
+          t.setProperty(uiWaveformSpan, 24, nullptr); PRISMAudioProcessor::sanitizeState(t);
+          check((int) t.getProperty(uiWaveformSpan) == 24, "waveform span sanitizer: 24 accepted"); }
         check(ec->getWidth() == 880 && ec->getHeight() == (int) std::lround(880.0 * 36.0 / 55.0), "reload: editor size restored at 55:36");
 
         // state replaced while the editor is OPEN (host recalls a project): editor must follow without a crash

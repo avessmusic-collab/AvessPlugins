@@ -198,7 +198,7 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="cap" id="cap_wf" style="left:44px;width:76px;top:316px">Waveform</div>
   <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
   <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
-  <div class="sgsel" id="wfspan" style="left:244px;width:62px" title="Waveform span (click to cycle 3s / 6s / 12s)">SPAN 6s</div>
+  <div class="sgsel" id="wfspan" style="left:244px;width:62px" title="Waveform span (click to cycle 3s / 6s / 12s)">SPAN 12s</div>
   <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#ff4b4b">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#ffb84d">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#5df2b8">&#9679;</span> highs</div>
   <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
 
@@ -908,20 +908,27 @@ function applyTheme(name) {
 on('color_theme', function (n) { applyTheme(n); KNOBS.forEach(function (k) { k.draw(); }); if (!booting) drawMeter(0.001); });
 window.__PRISM_TEST = { gonio: function (L, R) { return gonioMap(L, R); }, tiltTest: function (t) { setParam('spectrum_tilt', t); }, gestures: function () { return (window.__gl || []).join(' | '); }, setOrient: function (o) { sgSetOrient(o); }, orient: function () { return sgOrient; }, dragKnob: function (i, dyPx) { KNOBS[i].nudge(dyPx); }, step: function (n) { stepping = true; for (var i = 0; i < n; i++) loop(last + 16.67); stepping = false; }, fullscreen: function (on) { setFullscreen(on, true); }, isFullscreen: function () { return UI.fullscreen; }, dragDivider: function (id, d) { dragStart(id); dragMove(d); dragEnd(); }, layout: function () { return JSON.stringify(UI); }, resetLayout: function () { UI.rows = LAYOUT_DEF.rows.slice(); UI.cols = LAYOUT_DEF.cols.slice(); applyLayout(); }, setTheme: function (n) { setParam('color_theme', n); }, themes: THEMES.map(function (t) { return t.name; }), open: function () { $('btn_set').click(); }, src: function () { return SRC.map(function (s) { return s.color; }); }, rootVar: function (n) { return document.documentElement.style.getPropertyValue(n); } };
 
-/* ================= v6: REKORDBOX-STYLE 3-BAND BEAT WAVEFORM ================= */
-var WF = { pps: 1012 / 6, c: THEMES[0].band.slice() };   // default 6 s span; band trio follows the colour theme
-/* ----- waveform zoom: visible span 3s / 6s / 12s (default 6s). The engine column rate is fixed (84.33/s); zoom is page-side
-   pixels-per-column only. Wide spans draw flat-topped blocks (value held per data column). ----- */
-var WFSPAN = 6, WF_SPANS = [3, 6, 12], WF_CPS = 1012 / 12;
+/* ================= v6: CDJ-STYLE 3-BAND BEAT WAVEFORM (demo clock drives the same real-time model as the plugin) ================= */
+/* ---- Timing model (real-time, anchored to the engine's column clock) ----
+   The engine emits columns at EXACTLY 253/3 = 84.333/s and every snapshot carries ALL columns newer than the last fetch.
+   The page therefore (1) appends every received column to a per-source ring IMMEDIATELY (no queue, no pacing, nothing dropped),
+   keeping an absolute column counter wfN (newest column = wfN-1); (2) renders the whole strip each frame from the ring, placing
+   column i at  x = W - (T - i) * pxPerCol  with pxPerCol = (W_device_px) / (span_s * 84.333), so a kick occupies exactly its
+   true duration at any span; (3) drives the sub-column scroll by a clock T that advances with wall time but is clamped to
+   [wfN, wfN + 1.2] and therefore re-syncs to the data on every batch and can never drift or fall behind. Columns beyond the
+   newest (the <=1.2 extrapolated ones) show the held newest value and are replaced as soon as real data arrives. */
+var WFSPAN = 12, WF_SPANS = [3, 6, 12, 24], WF_CPS = 253 / 3, WF_CAP = 4096;   // 4096 columns = 48.6 s > 24 s span
+var WF = { pps: 0, c: THEMES[0].band.slice() };
+var wfOff = null, wfCtx = null, wfW = 0, wfH = 0;
+var wfRing = [new Float32Array(WF_CAP * 4), new Float32Array(WF_CAP * 4)];
+var wfN = 0, wfT = 0, wfIdleAcc = 0;
 function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / WFSPAN; }
 function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + WFSPAN + 's'; }
 function wfSetSpan(s, fromHost) {
-  s = +s; if (WF_SPANS.indexOf(s) < 0) s = 6; var changed = s !== WFSPAN; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
-  if (changed && wfOff) { wfInit(); if (typeof drawWaveform === 'function' && !booting) drawWaveform(); }
-  if (changed && !fromHost && false) postUi();
+  s = +s; if (WF_SPANS.indexOf(s) < 0) s = 12; var changed = s !== WFSPAN; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
+  if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }   // history is kept: re-projection only
+  if (changed && !fromHost) { }
 }
-
-var wfOff = null, wfCtx = null, wfTmp = null, wfTctx = null, wfW = 0, wfH = 0, wfAcc = 0, wfLastBeat = -1, bandOut = [0, 0, 0];
 function wfBands(t, s, o) {
   var bt = t % BEAT, kenv = Math.exp(-bt / 0.15), half = t % (BEAT / 2), be = 0.35 + 0.65 * Math.exp(-half / 0.2);
   var beatIdx = Math.floor(t / BEAT), clap = (beatIdx % 2 === 1) ? Math.exp(-bt / 0.09) : 0;
@@ -943,7 +950,7 @@ function wfBands(t, s, o) {
    lows extend beyond the mids by a rim. Each rim is proportional to its band energy but clamped (hairline .. ~0.25A),
    so all three colours are visible on every audible column and no layer balloons; overall height still tracks amplitude.
    Exact rekordbox blue/amber/cream = set BAND.low/mid/high to [38,92,214] / [214,150,52] / [250,244,230]. */
-function wfDrawBands(g, x, mid, A, b, m, hi) {
+function wfDrawBands(g, x, w, mid, A, b, m, hi) {   // w = block width in device px
   b = clamp(b, 0, 1); m = clamp(m, 0, 1); hi = clamp(hi, 0, 1);
   if (Math.max(b, m, hi) < 0.02) return;                       // inaudible: draw nothing
   var hl = Math.max(1.5, DPR * 1.25);                          // hairline rim (device px)
@@ -952,41 +959,82 @@ function wfDrawBands(g, x, mid, A, b, m, hi) {
   var hLow = hMid + clamp(A * 0.34 * b, hl, A * 0.26);
   var L = BAND.low, M = BAND.mid, H = BAND.high;
   g.globalAlpha = 1;
-  g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x, mid - hLow, 1, 2 * hLow);
-  g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x, mid - hMid, 1, 2 * hMid);
-  g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x, mid - hCore, 1, 2 * hCore);
+  g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x, mid - hLow, w, 2 * hLow);
+  g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x, mid - hMid, w, 2 * hMid);
+  g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x, mid - hCore, w, 2 * hCore);
 }
-var wfHeldCi = -1, wfHeldBands = [0, 0, 0];
-function wfColumn(g, x, tw) {
-  var mid = wfH / 2, A = mid * 0.86, bi = Math.floor(tw / WF_BEAT()), ci = Math.floor(tw * WF_CPS), tick = 0;   // max band height ~86% of the half-lane
-  if (ci !== wfHeldCi) {   // new data column: sample the demo once and HOLD it across the block (flat-topped staircase)
-    wfHeldCi = ci; wfBands(ci / WF_CPS, P.wf_src, bandOut); wfHeldBands = [bandOut[0], bandOut[1], bandOut[2]];
-    if (bi !== wfLastBeat) { wfLastBeat = bi; tick = (bi % 4 === 0) ? 2 : 1; }
+function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1) {   // append one column (both sources, kept in lockstep)
+  var o = (wfN % WF_CAP) * 4, r0 = wfRing[0], r1 = wfRing[1];
+  r0[o] = b0; r0[o + 1] = m0; r0[o + 2] = h0; r0[o + 3] = f0; r1[o] = b1; r1[o + 1] = m1; r1[o + 2] = h1; r1[o + 3] = f1; wfN++;
+}
+function wfFlushRun(g, x0, x1, ring, idx, mid, A, tick) {
+  var o = (idx % WF_CAP) * 4, w = x1 - x0, f = ring[o + 3];
+  wfDrawBands(g, x0, w, mid, A, ring[o], ring[o + 1], ring[o + 2]);
+  if (tick && f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0, 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // beat / bar tick over the shapes
+}
+function wfRender() {
+  if (!wfCtx) return;
+  var g = wfCtx, W = wfW, newest = wfN - 1; g.clearRect(0, 0, W, wfH);
+  if (newest < 0) return;
+  var ring = wfRing[P.wf_src], ppc = W / (WFSPAN * WF_CPS), T = wfT, mid = wfH / 2, A = mid * 0.86, x, idx, lo = wfN - WF_CAP;
+  if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
+    var rs = 0, ri = -1, real = false;
+    for (x = 0; x <= W; x++) {
+      var cur = -1, isReal = false;
+      if (x < W) { idx = Math.floor(T - (W - x - 0.5) / ppc); isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; }
+      if (x === 0) { ri = cur; real = isReal; rs = 0; continue; }
+      if (cur !== ri || (x < W && isReal !== real)) { if (ri >= 0) wfFlushRun(g, rs, x, ring, ri, mid, A, real); rs = x; ri = cur; real = isReal; }
+    }
+  } else {          // decimation (more than one column per device px): peak-hold over the covered columns
+    for (x = 0; x < W; x++) {
+      var i0 = Math.floor(T - (W - x) / ppc), i1 = Math.min(newest, Math.floor(T - (W - x - 1) / ppc - 1e-9)), b = 0, m = 0, h = 0, f = 0, i;
+      if (i0 < lo) i0 = lo; if (i0 < 0) i0 = 0;
+      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (ring[o + 3] > f) f = ring[o + 3]; }
+      if (i1 >= i0) { wfDrawBands(g, x, 1, mid, A, b, m, h); if (f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x, 0, 1, wfH); } }
+    }
   }
-  wfDrawBands(g, x, mid, A, wfHeldBands[0], wfHeldBands[1], wfHeldBands[2]);
-  if (tick) { g.fillStyle = tick === 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x, 0, 1, wfH); }
+  if (window.__wfProbe && !window.__wfProbe.drawAt) { var no = (newest % WF_CAP) * 4; if (Math.max(ring[no], ring[no + 1], ring[no + 2]) > 0.05) window.__wfProbe.drawAt = Date.now(); }
 }
-function WF_BEAT() { return BEAT; }
+function wfAlloc() { wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d', { willReadFrequently: true }); }
+function wfRedraw() { wfRender(); }   // theme change
 function wfInit() {
-  wfW = Math.round(cv.wf_cv.w * DPR); wfH = Math.round(cv.wf_cv.h * DPR);
-  wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d');
-  wfTmp = document.createElement('canvas'); wfTmp.width = wfW; wfTmp.height = wfH; wfTctx = wfTmp.getContext('2d');
-  wfLastBeat = -1; wfHeldCi = -1; var ppx = WF.pps * DPR;
-  for (var k = 0; k < wfW; k++) wfColumn(wfCtx, k, tDemo + 60 - (wfW - 1 - k) / ppx);
+  wfW = Math.round(cv.wf_cv.w * DPR); wfH = Math.round(cv.wf_cv.h * DPR); wfAlloc(); wfDemoFill(); if (wfT < wfN) wfT = wfN; wfRender();
 }
 function wfResize() {
   wfUpdatePps();
   if (!wfOff) return;
-  var old = wfOff, ow = wfW, oh = wfH; wfW = Math.round(cv.wf_cv.w * DPR); wfH = Math.round(cv.wf_cv.h * DPR);
-  wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d'); wfCtx.drawImage(old, 0, 0, ow, oh, 0, 0, wfW, wfH);
-  wfTmp = document.createElement('canvas'); wfTmp.width = wfW; wfTmp.height = wfH; wfTctx = wfTmp.getContext('2d');
+  var nw = Math.round(cv.wf_cv.w * DPR), nh = Math.round(cv.wf_cv.h * DPR); if (nw === wfW && nh === wfH) return;
+  wfW = nw; wfH = nh; wfAlloc(); wfRender();
+}
+var wfDemoN = 0, wfDemoB0 = [0, 0, 0], wfDemoB1 = [0, 0, 0];
+function wfDemoFill() {   // demo clock: columns "arrive" exactly like the engine stream (84.333/s), so the same real-time model applies
+  var target = Math.floor((tDemo + 60) * WF_CPS);
+  if (wfDemoN === 0) wfDemoN = Math.max(0, target - 3000);
+  while (wfDemoN < target) {
+    var t = wfDemoN / WF_CPS, bi = Math.floor(t / BEAT), pb = Math.floor((wfDemoN - 1) / WF_CPS / BEAT), f = (bi !== pb) ? ((bi % 4 === 0) ? 2 : 1) : 0;
+    wfBands(t, 0, wfDemoB0); wfBands(t, 1, wfDemoB1);
+    wfPushCol(wfDemoB0[0], wfDemoB0[1], wfDemoB0[2], f, wfDemoB1[0], wfDemoB1[1], wfDemoB1[2], f); wfDemoN++;
+  }
 }
 function wfStep(dt) {
-  wfAcc += WF.pps * dt * DPR; var n = Math.floor(wfAcc); if (n < 1) return; wfAcc -= n; n = Math.min(n, wfW);
-  wfTctx.clearRect(0, 0, wfW, wfH); wfTctx.drawImage(wfOff, -n, 0);
-  wfCtx.clearRect(0, 0, wfW, wfH); wfCtx.drawImage(wfTmp, 0, 0);
-  var ppx = WF.pps * DPR; for (var k = 0; k < n; k++) wfColumn(wfCtx, wfW - n + k, tDemo + 60 - (n - 1 - k) / ppx);
+  wfDemoFill();
+  wfT = Math.min(wfN + 1.2, Math.max(wfN, wfT + dt * WF_CPS));
+  wfRender();
 }
+/* debug/measurement hook (read-only): geometry + the true-duration check used by the Stage 3 timing verification */
+window.__wfDebug = function () {
+  var out = { W: wfW, H: wfH, span: WFSPAN, ppc: wfW / (WFSPAN * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
+  var ring = wfRing[0], i, cur = 0;
+  for (i = Math.max(0, wfN - WF_CAP); i <= wfN; i++) {
+    var on = false; if (i < wfN) { var o = (i % WF_CAP) * 4; on = Math.max(ring[o], ring[o + 1], ring[o + 2]) >= 0.05; }
+    if (on) cur++; else if (cur) { out.runs.push({ cols: cur, ageOfNewestCol: wfN - i }); cur = 0; }
+  }
+  if (wfCtx && wfW > 0) {
+    var row = wfCtx.getImageData(0, Math.floor(wfH / 2), wfW, 1).data, run = 0, start = -1, best = null, x;
+    for (x = 0; x <= wfW; x++) { var a = x < wfW ? row[x * 4 + 3] : 0; if (a > 0) { if (!run) start = x; run++; } else if (run) { out.px.push({ start: start, width: run, endFromRight: wfW - (start + run) }); run = 0; } }
+  }
+  return out;
+};
 function drawWaveform() {
   var o = cv.wf_cv, g = o.g; g.clearRect(0, 0, o.w, o.h);
   g.drawImage(wfOff, 0, 0, o.w, o.h);

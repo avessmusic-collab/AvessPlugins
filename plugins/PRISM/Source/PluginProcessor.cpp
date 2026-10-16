@@ -76,7 +76,7 @@ void PRISMAudioProcessor::applyStateDefaults(juce::ValueTree& state)
     if (! state.hasProperty(uiRowSplits))       state.setProperty(uiRowSplits, "226,70,302", nullptr);
     if (! state.hasProperty(uiLowerColSplits))  state.setProperty(uiLowerColSplits, "296,266,272", nullptr);
     if (! state.hasProperty(uiSgOrientation))   state.setProperty(uiSgOrientation, "v", nullptr);
-    if (! state.hasProperty(uiWaveformSpan))    state.setProperty(uiWaveformSpan, 6, nullptr);
+    if (! state.hasProperty(uiWaveformSpan))    state.setProperty(uiWaveformSpan, 12, nullptr);
     if (! state.hasProperty(uiFullscreen))      state.setProperty(uiFullscreen, false, nullptr);
     if (! state.hasProperty(uiWidth))           state.setProperty(uiWidth, 1100, nullptr);
     if (! state.hasProperty(uiHeight))          state.setProperty(uiHeight, 720, nullptr);
@@ -99,8 +99,8 @@ void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)
 
     state.setProperty(uiFullscreen, (bool) state.getProperty(uiFullscreen, false), nullptr);
 
-    const int span = (int) state.getProperty(uiWaveformSpan, 6);
-    state.setProperty(uiWaveformSpan, (span == 3 || span == 6 || span == 12) ? span : 6, nullptr);
+    const int span = (int) state.getProperty(uiWaveformSpan, 12);
+    state.setProperty(uiWaveformSpan, (span == 3 || span == 6 || span == 12 || span == 24) ? span : 12, nullptr);
 
     // Window size: width >= 770, height locked to the 55:36 aspect (1100x720)
     const int w = juce::jlimit(kMinWidth, kMaxWidth, (int) state.getProperty(uiWidth, kDefaultWidth));
@@ -201,12 +201,17 @@ void PRISMAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     {
         if ((int) toneBuf.size() < numSamples) toneBuf.assign((size_t) numSamples, 0.0f);
         const double fs = getSampleRate() > 0.0 ? getSampleRate() : 48000.0, inc = juce::MathConstants<double>::twoPi * 1000.0 / fs;
+        int left = toneLeft.load(std::memory_order_relaxed);   // -1 = endless, 0 = silent, >0 = samples of tone remaining (sample-accurate bursts)
+        if (left > 0 && toneStartMs.load(std::memory_order_relaxed) == 0)
+            toneStartMs.store((long long) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
         for (int i = 0; i < numSamples; ++i)
         {
-            toneBuf[(size_t) i] = 0.25f * (float) std::sin(tonePhase);
+            const bool on = left < 0 || i < left;
+            toneBuf[(size_t) i] = on ? 0.25f * (float) std::sin(tonePhase) : 0.0f;
             tonePhase += inc;
             if (tonePhase > juce::MathConstants<double>::twoPi) tonePhase -= juce::MathConstants<double>::twoPi;
         }
+        if (left > 0) toneLeft.store(juce::jmax(0, left - numSamples), std::memory_order_relaxed);
         const float* ptrs[2] = { toneBuf.data(), toneBuf.data() };
         e->captureBlock(ptrs, 2, numSamples);
         e->capturePlayhead(getPlayHead(), numSamples);

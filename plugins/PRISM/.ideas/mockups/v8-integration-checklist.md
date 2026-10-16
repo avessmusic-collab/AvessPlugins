@@ -158,5 +158,6 @@ Do these in a real host (build with the default OFF debug flags; the installed V
 
 ### Layout / waveform notes (post-1.0.0 refinement)
 - Vertical order is now: readout columns -> **waveform** -> **spectrum** -> lower row. `ui_row_splits` keeps its positional meaning `[spectrum, waveform, lower]` (heights), so old saved states restore exactly; only the stacking changed. Divider `dh1` = waveform|spectrum, `dh2` = spectrum|lower. Minimums unchanged (waveform 40, spectrum 120, lower 100).
-- Waveform span 3s / 6s / 12s (default 6s), click the `SPAN` chip to cycle; persisted as `ui_waveform_span` (3|6|12, invalid -> 6) and sent as `waveform_span` in prismUiState / `__PRISM_INIT_UI`. Switching span clears the strip.
+- Waveform span 3s / 6s / 12s / 24s (default 12s), click the `SPAN` chip to cycle; persisted as `ui_waveform_span` (3|6|12|24, invalid -> 12) and sent as `waveform_span` in prismUiState / `__PRISM_INIT_UI`. Switching span re-projects the kept history (nothing is cleared).
+- Waveform timing model: every received column is appended immediately to a per-source ring (4096 columns); the strip is rendered from the ring with column i at x = W - (T - i) * W/(span*84.333), T = engine column clock clamped to [N, N+1.2]. A 1.000 s event is exactly W/span px wide at any span; the right edge is the newest delivered column.
 - [ ] Manual: confirm in a host that the span choice, the new stacking and the divider drags persist across project reload.

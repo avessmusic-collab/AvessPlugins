@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 #include <cstdint>
+#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -72,6 +73,8 @@ public:
    #if PRISM_DEBUG_TONE
     std::vector<float> toneBuf;
     double tonePhase = 0.0;
+    std::atomic<int> toneLeft { -1 };
+    std::atomic<long long> toneStartMs { 0 };
    #endif
 
     // Public: the v8 editor scaffolding accesses processorRef.apvts directly.

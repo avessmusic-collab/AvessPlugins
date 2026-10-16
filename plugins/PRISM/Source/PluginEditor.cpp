@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 
 namespace
 {
@@ -387,7 +388,7 @@ void PRISMAudioProcessorEditor::handleUiStateEvent (const juce::var& payload)
     tmp.setProperty (uiLowerColSplits, joinInts (intsFromVar (payload.getProperty ("lower_col_splits", {}))), nullptr);
     tmp.setProperty (uiSgOrientation,  payload.getProperty ("spectrogram_orientation", "v").toString(),      nullptr);
     tmp.setProperty (uiFullscreen,     (bool) payload.getProperty ("fullscreen", false),                      nullptr);
-    tmp.setProperty (uiWaveformSpan,   (int) payload.getProperty ("waveform_span", 6),                       nullptr);
+    tmp.setProperty (uiWaveformSpan,   (int) payload.getProperty ("waveform_span", 12),                       nullptr);
     PRISMAudioProcessor::sanitizeState (tmp);
 
     auto& st = processorRef.apvts.state;
@@ -439,7 +440,7 @@ juce::var PRISMAudioProcessorEditor::buildInitUi() const
     o->setProperty ("row_splits",       intsToVar (parseInts (st.getProperty (kRowSplitsId, "").toString())));
     o->setProperty ("lower_col_splits", intsToVar (parseInts (st.getProperty (kColSplitsId, "").toString())));
     o->setProperty ("fullscreen",       (bool) st.getProperty (kFullscreenId, false));
-    o->setProperty ("waveform_span",    (int) st.getProperty (prism::ids::uiWaveformSpan, 6));
+    o->setProperty ("waveform_span",    (int) st.getProperty (prism::ids::uiWaveformSpan, 12));
     o->setProperty ("spectrogram_orientation", st.getProperty (kSgOrientId, "v").toString() == "h" ? "h" : "v");
     return juce::var (o);
 }
@@ -498,10 +499,28 @@ void PRISMAudioProcessorEditor::timerCallback()
             {
                 const auto js = f.loadFileAsString();
                 f.deleteFile();
+               #if PRISM_DEBUG_TONE
+                if (js.startsWith ("//BURST"))   // "//BURST <ms>": exactly that many ms of tone (sample-accurate), then silence
+                {
+                    const double fs = processorRef.getSampleRate() > 0.0 ? processorRef.getSampleRate() : 48000.0;
+                    processorRef.toneStartMs.store (0);
+                    processorRef.toneLeft.store ((int) std::lround (fs * js.fromFirstOccurrenceOf ("//BURST", false, false).getDoubleValue() / 1000.0));
+                    std::fprintf (stderr, "PRISM_BURST armed epoch_ms=%lld\n", (long long) std::chrono::duration_cast<std::chrono::milliseconds> (std::chrono::system_clock::now().time_since_epoch()).count());
+                    std::fflush (stderr);
+                }
+                else if (js.startsWith ("//TONEON"))  { processorRef.toneLeft.store (-1); }
+                else if (js.startsWith ("//TONEOFF")) { processorRef.toneLeft.store (0); }
+                else
+               #endif
                 if (js.startsWith ("//DUMP"))   // print host-side truth: parameter values, ui state, latest snapshot meters
                 {
                     const auto snap = processorRef.getLatestAnalysisSnapshot();
-                    std::fprintf (stderr, "PRISM_DUMP params=%s ui=%s snap=%s\n",
+                    std::fprintf (stderr, "PRISM_DUMP toneStart=%lld params=%s ui=%s snap=%s\n",
+                       #if PRISM_DEBUG_TONE
+                        (long long) processorRef.toneStartMs.load(),
+                       #else
+                        0LL,
+                       #endif
                         juce::JSON::toString (buildInitParams(), true).replaceCharacters ("\n\r\t", "   ").toRawUTF8(),
                         juce::JSON::toString (buildInitUi(), true).replaceCharacters ("\n\r\t", "   ").toRawUTF8(),
                         snap == nullptr ? "null" : (juce::String ("seq=") + juce::String ((juce::int64) snap->sequence)
