@@ -1151,76 +1151,80 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in de
   if (hMid > 0) { g.globalAlpha = hLow > 0 ? 1 : 0.9; g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x + wfBandDx[1], mid - hMid, w, 2 * hMid); g.globalAlpha = 1; }
   if (hCore > 0) { g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x + wfBandDx[2], mid - hCore, w, 2 * hCore); }
 }
-/* ---- Unified time base + ONSET-ANCHORED beat grid (computed, not estimated) ----
+/* ---- Unified time base + ONSET-ANCHORED, CONTINUOUS beat grid (computed, not estimated) ----
    ONE coordinate system for waveform and grid. Everything lives in COLUMN space (a column is a fixed slice of the audio stream: engine column
    index = floor(streamFrame * 253 / (3 * fs)), 84.333 columns/s at ANY sample rate). The single time->pixel transform is
    wfColToX(col) = W - (T - col) * pxPerCol (and its inverse wfXToCol); columns and grid lines both go through it, T is shared per frame.
-   DJ-software model: a TRACK is a region of sound. Its grid anchor is the FIRST strong onset after silence (the engine's sample-accurate onsetFrac:
-   anchor = engineColumn + onsetFrac), NOT the host bar position. From that anchor lines propagate FORWARD at the host-bpm beat spacing
-       colsPerBeat = (253/3) * (60/bpm) * (4/den)           line j = anchor + j * colsPerBeat / 2^s     (s = subdivision depth, density gated)
-   until the sound ends: trailing silence >= 2 beats closes the track at the last sounding column (lines in the silence disappear); sound after
-   such a silence starts a NEW track and re-anchors. Bar weight every timeSigNumerator beats counted from the anchor (anchor = beat 1). Nothing is
-   drawn before the anchor. No bpm => no anchor/grid (honesty rule). A tempo / meter change appends a lattice segment on the next beat line. */
+   DJ-software model: the grid ANCHOR is the first strong onset after silence (the engine's sample-accurate onsetFrac: anchor = engineColumn +
+   onsetFrac) = beat 1, NOT the host bar position. From the anchor ONE unbroken lattice covers the ENTIRE lane: backward before the anchor, through
+   silences, forward to the right edge (beat spacing from host bpm and the time-signature denominator: cpb = (253/3)*(60/bpm)*(4/den)).
+   A new sound after >= 2 beats of silence re-anchors ONLY when its onset lands > 0.25 beat from the extrapolated lattice (a genuinely new musical
+   phase); if it agrees, the lattice is kept (the +-6 ms residual snap does the rest). A tempo / meter change appends a segment on the next beat line.
+   No bpm => no anchor => no grid (honesty rule). Bar weight every timeSig-numerator beats from the anchor. Density is Ableton-style (wfGridEach). */
 var wfOffset = 0;          // engine absolute column index minus page column index (re-based on genuine stream discontinuities)
 var WF_STALE_MS = 350;   // synthetic idle columns only when FRAMES stop arriving (silent playback still delivers real zero columns)
 var wfSynthTail = 0;       // trailing SYNTHETIC (idle, wall-clock) columns in the ring: real data re-bases instead of overlapping them
-var WF_SOUND = 0.015, WF_GAP_BEATS = 2, WF_ANCHOR_WAIT = 4, WF_MAX_TRACKS = 24;
-var wfTracks = [[], []];   // per source: [{ segs: [{col, cpb, num, b0}], end: null | engine col }]  (engine column space: a re-base can never displace them)
-var wfTrkSt = [{ silent: 1e9, last: -1, wait: false, from: 0, tr: null }, { silent: 1e9, last: -1, wait: false, from: 0, tr: null }];
+var WF_SOUND = 0.015, WF_GAP_BEATS = 2, WF_ANCHOR_WAIT = 4, WF_REANCHOR_BEATS = 0.25, WF_MAX_SEGS = 64;
+var wfSegs = [[], []];   // per source: lattice segments [{col, cpb, num, b0}] (engine column space: a re-base can never displace them)
+var wfTrkSt = [{ silent: 1e9, last: -1, wait: false, from: 0 }, { silent: 1e9, last: -1, wait: false, from: 0 }];
 function wfColsPerBeat(bpm, den) { return WF_CPS * (60 / bpm) * (4 / (den > 0 ? den : 4)); }
 function wfTrackStep(s, ecol, b, m, h, fr) {   // called once per pushed column (engine column index ecol), per source
-  var st = wfTrkSt[s], bpm = D.bpm, num = WFI.num > 0 ? WFI.num : 4, den = WFI.den > 0 ? WFI.den : 4, tr = st.tr;
+  var st = wfTrkSt[s], bpm = D.bpm, num = WFI.num > 0 ? WFI.num : 4, den = WFI.den > 0 ? WFI.den : 4, segs = wfSegs[s];
   var cpb = bpm ? wfColsPerBeat(bpm, den) : WF_CPS * 0.5, gap = WF_GAP_BEATS * cpb;
   if (Math.max(b, m, h) > WF_SOUND) {
-    if (st.silent >= gap) { st.tr = tr = null; st.wait = true; st.from = ecol; }   // new sound after a long silence: re-anchor
+    if (st.silent >= gap) { st.wait = true; st.from = ecol; }   // new sound after a long silence: candidate (re-)anchor
     st.silent = 0; st.last = ecol;
     if (st.wait && bpm && (fr >= 0 || ecol - st.from >= WF_ANCHOR_WAIT)) {   // first strong onset (sample-accurate) of the sound; a soft start anchors on its first column
       st.wait = false;
-      var tk = { segs: [{ col: ecol + (fr >= 0 ? fr : st.from - ecol), cpb: cpb, num: num, b0: 0 }], end: null };
-      wfTracks[s].push(tk); if (wfTracks[s].length > WF_MAX_TRACKS) wfTracks[s].shift(); st.tr = tr = tk;
-    }
-    if (tr && bpm) {   // tempo / meter change: a new segment starts on the next beat line (beat numbering continues)
-      var sg = tr.segs[tr.segs.length - 1];
-      if (Math.abs(cpb / sg.cpb - 1) > 0.01 || num !== sg.num) {
-        var nb = Math.max(1, Math.ceil((ecol - sg.col) / sg.cpb - 1e-9));
-        tr.segs.push({ col: sg.col + nb * sg.cpb, cpb: cpb, num: num, b0: sg.b0 + nb });
+      var oc = ecol + (fr >= 0 ? fr : st.from - ecol), lastSeg = segs.length ? segs[segs.length - 1] : null;
+      if (!lastSeg) segs.push({ col: oc, cpb: cpb, num: num, b0: 0 });
+      else {
+        var d = (oc - lastSeg.col) / lastSeg.cpb, off = Math.abs(d - Math.round(d));
+        if (off > WF_REANCHOR_BEATS && oc > lastSeg.col) segs.push({ col: oc, cpb: cpb, num: num, b0: 0 });   // new musical phase: re-anchor (beat 1 = this onset)
       }
+      if (segs.length > WF_MAX_SEGS) segs.shift();
     }
-  } else {
-    st.silent++;
-    if (tr && tr.end === null && st.silent >= gap) tr.end = st.last + 1;   // sound ended: the grid stops at the end of the last sounding column
+  }
+  else st.silent++;
+  if (segs.length && bpm) {   // tempo / meter change: a new segment starts on the next beat line (beat numbering continues)
+    var sg = segs[segs.length - 1];
+    if (ecol > sg.col && (Math.abs(cpb / sg.cpb - 1) > 0.01 || num !== sg.num)) {
+      var nb = Math.max(1, Math.ceil((ecol - sg.col) / sg.cpb - 1e-9));
+      segs.push({ col: sg.col + nb * sg.cpb, cpb: cpb, num: num, b0: sg.b0 + nb });
+    }
   }
 }
-function wfTrackReset() { for (var s = 0; s < 2; s++) { wfTrkSt[s].silent = 1e9; wfTrkSt[s].wait = false; wfTrkSt[s].tr = null; } }
+function wfTrackReset() { for (var s = 0; s < 2; s++) { wfTrkSt[s].silent = 1e9; wfTrkSt[s].wait = false; } }
 function wfColToX(col, W, T, ppc) { return W - (T - col) * ppc; }
 function wfXToCol(x, W, T, ppc) { return T - (W - x) / ppc; }
-function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE columns; tracks live in engine space and are converted here. cb(col, level): 0 bar, 1 beat, 2 sub (1/2), 3 sub (1/4), 4 sub (1/8)
-  var trs = wfTracks[P.wf_src], off = wfOffset, ti, si, j;
+/* Ableton-style density. Ladder in QUARTER-BEATS (u): 1/16 note (1), 1/8 (2), beat (4), half note (8, only if the bar has an even beat count),
+   1 bar (4*num), then bar groups 2, 4, 8, 16, 32 bars. At any zoom the FINEST level whose spacing is >= 7 device px is drawn, with a 3-tier
+   hierarchy: lvl 2 = that finest level (faint), lvl 1 = the next level up that is on the lattice (medium), lvl 0 = anything above that, and bars /
+   bar groups are never weaker than lvl 0 (strong). cb(col, lvl); lvl indexes WF_GRID_STYLE. */
+function wfLadder(num) {
+  var u = [1, 2, 4], bar = 4 * num, g;
+  if (num % 2 === 0 && num > 2) u.push(8);
+  for (g = 0; g <= 5; g++) u.push(bar * (1 << g));
+  return u.filter(function (v, i, a) { return i === 0 || v > a[i - 1]; });
+}
+function wfDensityLevel(lad, cpb, ppc) { for (var m = 0; m < lad.length; m++) if (lad[m] / 4 * cpb * ppc >= 7) return m; return lad.length - 1; }
+function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE columns; segments live in engine space and are converted here
+  var segs = wfSegs[P.wf_src], off = wfOffset, si, j;
   left += off; right += off;
-  for (ti = 0; ti < trs.length; ti++) {
-    var tk = trs[ti], endC = tk.end === null ? Infinity : tk.end;
-    for (si = 0; si < tk.segs.length; si++) {
-      var a = tk.segs[si], hiS = si + 1 < tk.segs.length ? tk.segs[si + 1].col : Infinity, hi = Math.min(hiS, endC, right), lo = Math.max(a.col, left);   // no lines before the anchor
-      if (hi <= left || lo >= right || hi <= lo - 1e-9) continue;
-      var f = -1, q;   // finest depth whose spacing is >= 7 device px (density gate); bars only if even beats are denser than that
-      for (q = 3; q >= 0; q--) if (a.cpb / (1 << q) * ppc >= 7) { f = q; break; }
-      var per = f >= 0 ? (1 << f) : 1, step = f >= 0 ? a.cpb / per : a.cpb * a.num, barSteps = f >= 0 ? a.num * per : 1;
-      var base = f >= 0 ? a.col : a.col + ((a.num - a.b0 % a.num) % a.num) * a.cpb;   // bars-only: first bar line inside the segment
-      var j0 = Math.ceil((lo - base) / step - 1e-9), j1 = Math.ceil((hi - base) / step - 1e-9) - 1;
-      for (j = j0; j <= j1; j++) {
-        var lvl, k = a.b0 * per + j;   // global subdivision index counted from the anchor
-        if (f < 0) lvl = 0;
-        else if ((((k % barSteps) + barSteps) % barSteps) === 0) lvl = 0;
-        else if ((((k % per) + per) % per) === 0) lvl = 1;
-        else if ((((k % (per >> 1)) + (per >> 1)) % (per >> 1)) === 0) lvl = 2;
-        else if (per >= 4 && (((k % (per >> 2)) + (per >> 2)) % (per >> 2)) === 0) lvl = 3;
-        else lvl = 4;
-        cb(base + j * step - off, lvl);
-      }
+  for (si = 0; si < segs.length; si++) {
+    var a = segs[si], lo = si === 0 ? left : Math.max(a.col, left), hi = Math.min(si + 1 < segs.length ? segs[si + 1].col - 0.5 : Infinity, right);   // first segment extends backward; the next segment's anchor is authoritative
+    if (hi <= lo) continue;
+    var lad = wfLadder(a.num), barIdx = lad.indexOf(4 * a.num), f = wfDensityLevel(lad, a.cpb, ppc), uf = lad[f], step = uf / 4 * a.cpb;   // bar-group levels are the ladder entries above barIdx
+    var j0 = Math.ceil((lo - a.col) / step - 1e-9), j1 = Math.ceil((hi - a.col) / step - 1e-9) - 1, nxt = Math.min(f + 1, lad.length - 1);
+    for (j = j0; j <= j1; j++) {
+      var q = a.b0 * 4 + j * uf, m = f, lvl;   // q: quarter-beats from the anchor (negative before it)
+      for (var mm = lad.length - 1; mm > f; mm--) if ((((q % lad[mm]) + lad[mm]) % lad[mm]) === 0) { m = mm; break; }
+      lvl = m === f ? 2 : (f >= barIdx ? (m === nxt ? 1 : 0) : (m >= barIdx ? 0 : 1));   // finest faint; below the bar level: sub-bar levels medium, bars / bar groups strong; zoomed out to bar groups: finest faint, next medium, rest strong
+      cb(a.col + j * step - off, lvl);
     }
   }
 }
-var WF_GRID_STYLE = [ [0.32, 1.0], [0.18, 0.7], [0.11, 0.55], [0.07, 0.5], [0.045, 0.5] ];   // [alpha, css px width] per level: bar, beat, 1/2, 1/4, 1/8 of a beat; a quiet reference layer under the audio (no halo, nothing jumps out of the lane)
+var WF_GRID_STYLE = [ [0.32, 1.0], [0.18, 0.8], [0.08, 0.6] ];   // [alpha, css px width] per tier: strong (bars / groups / 2 tiers above the finest), medium (next level up), faint (finest drawn level); a quiet reference layer under the audio
 var wfFlagRing = new Uint8Array(WF_CAP);
 var wfFracRing = [new Float32Array(WF_CAP).fill(-1), new Float32Array(WF_CAP).fill(-1)];   // per column per source: onset fraction inside the column (-1 = none)
 /* Alignment constants (visual lane only).
@@ -1381,7 +1385,7 @@ window.__wfPeek = function (src, engCol) { var i = engCol - wfOffset; return (i 
 window.__wfGrid = function (lo, hi) {   // measurement hook: anchors + lattice lines (col in PAGE column space) over [lo, hi] (default: visible window)
   var W = wfW, ppc = W / (wfSpanSec() * WF_CPS), L = [], l0 = lo === undefined ? wfXToCol(0, W, wfT, ppc) : lo, h0 = hi === undefined ? wfT : hi;
   wfGridEach(l0, h0, ppc, function (col, lvl) { L.push([col, lvl]); });
-  return { tracks: wfTracks[P.wf_src].map(function (k) { return { segs: k.segs.map(function (a) { return [a.col - wfOffset, a.cpb, a.num, a.b0]; }), end: k.end === null ? null : k.end - wfOffset }; }), offset: wfOffset, T: wfT, N: wfN, ppc: ppc, W: W, lines: L };
+  return { segs: wfSegs[P.wf_src].map(function (a) { return [a.col - wfOffset, a.cpb, a.num, a.b0]; }), offset: wfOffset, T: wfT, N: wfN, ppc: ppc, W: W, lines: L };
 };
 window.__wfDebug = function (rowY) {
   var out = { W: wfW, H: wfH, span: WFSPAN, spanSec: wfSpanSec(), ppc: wfW / (wfSpanSec() * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
