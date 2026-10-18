@@ -25,6 +25,8 @@ QUICK START
   true peak, stereo imaging and a beat-synced waveform
 - Route another track into PRISM's sidechain to compare on Ch2
 - Settings (gear): 7 color themes + presets
+- GRID chip on the waveform: beatgrid editing (set first beat, shift,
+  BPM fine-tune, warp markers); playhead right or centered
 - Press F for true fullscreen; mouse wheel over the waveform zooms
 
 Requires macOS 14.6+ and a VST3/AU host (Ableton Live, Logic, Reaper...).
