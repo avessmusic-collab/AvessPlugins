@@ -140,7 +140,9 @@ namespace prism
             return;
         }
 
-        transportState.store(pos->getIsPlaying() ? 1 : 0, std::memory_order_relaxed);   // host transport: lets the page freeze the strip while paused
+        // Host transport: lets the page freeze the strip while paused. A position WITHOUT any musical-time information (no ppq and no bpm: the JUCE Standalone
+        // player reports isPlaying = false forever) is 'unknown' (-1, the strip keeps scrolling); every real host supplies ppq and/or bpm.
+        transportState.store((pos->getPpqPosition().hasValue() || pos->getBpm().hasValue()) ? (pos->getIsPlaying() ? 1 : 0) : -1, std::memory_order_relaxed);
         const auto tempo = pos->getBpm();
         bpm.store(tempo.hasValue() ? (float) *tempo : NAN, std::memory_order_relaxed);
 

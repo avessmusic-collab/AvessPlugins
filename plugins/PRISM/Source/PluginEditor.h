@@ -73,6 +73,7 @@ public:
 
 private:
     class ParamBridge;   // APVTS + ValueTree listener -> lock-free dirty flags
+    class KioskHost;     // borderless top-level component that hosts the SAME WebView during true (OS) fullscreen
 
     void timerCallback() override;
     std::optional<juce::WebBrowserComponent::Resource> getResource (const juce::String& url);
@@ -81,6 +82,9 @@ private:
     void handleParamEvent   (const juce::var& payload);
     void handleUiStateEvent (const juce::var& payload);
     void handlePageReady();
+    void handleFullscreenEvent (const juce::var& payload);   // page -> C++: {on} true/false OS fullscreen request
+    void enterKiosk();                                        // reparent the WebView into a full-display kiosk window
+    void exitKiosk (bool notifyPage = true);                  // reparent it back into the editor and drop the kiosk
     void closeOpenGestures();
 
     // C++ -> JS
@@ -110,6 +114,9 @@ private:
 
     // 2) BRIDGE (declared after webView -> destroyed before it)
     std::unique_ptr<ParamBridge> paramBridge;
+
+    // 3) KIOSK host (declared after the WebView: destroyed before it; the destructor also reparents the WebView back first)
+    std::unique_ptr<KioskHost> kiosk;
 
     std::array<bool, 17> gestureOpen {};    // per-parameter: beginChangeGesture issued, endChangeGesture pending (kParams order)
     bool wasHidden = false;                 // view was hidden at least once since the last full resync

@@ -3786,6 +3786,10 @@ static void test_transport_state_published()
     ph.playing = true;  check(run(&ph) == 1, "playing -> 1");
     ph.playing = false; check(run(&ph) == 0, "paused -> 0 (page freezes)");
     ph.playing = true;  check(run(&ph) == 1, "resume -> 1");
+    {   // a position with no musical time at all (JUCE Standalone player: isPlaying false, no ppq, no bpm) is 'unknown', never 'paused'
+        FakePlayHead bare; bare.playing = false; bare.hasPpq = false; bare.hasBpm = false;
+        check(run(&bare) == -1, "no ppq and no bpm (Standalone-style position) -> -1, the strip keeps scrolling");
+    }
 }
 
 static void test_waveform_ack_delivery()

@@ -208,6 +208,51 @@ private:
 };
 
 //==============================================================================
+// KioskHost: borderless top-level component covering one display. TRUE FULLSCREEN works by reparenting the editor's existing WebBrowserComponent
+// into this component and asking JUCE for kiosk mode (menu bar / Dock hidden). It is the SAME WebView instance (no second browser, no page reload:
+// canvases, histories and JS state survive), and it always starts OFF: ui_fullscreen only restores the page's in-window presentation state on load,
+// a plugin never seizes the screen by itself. Esc / F / the corner button leave it (the page asks C++); the key listener below is a backup for Esc.
+//==============================================================================
+class PRISMAudioProcessorEditor::KioskHost : public juce::Component, private juce::KeyListener
+{
+public:
+    explicit KioskHost (PRISMAudioProcessorEditor& o) : owner (o)
+    {
+        setOpaque (true);
+        setWantsKeyboardFocus (true);
+        addKeyListener (this);
+    }
+
+    ~KioskHost() override { removeKeyListener (this); }
+
+    void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xff0a0c0e)); }   // the page background: letterbox bars look intentional
+
+    void resized() override
+    {
+        if (getNumChildComponents() > 0)
+            getChildComponent (0)->setBounds (getLocalBounds());
+    }
+
+    bool keyPressed (const juce::KeyPress& k) override { return handle (k); }
+
+private:
+    bool keyPressed (const juce::KeyPress& k, juce::Component*) override { return handle (k); }
+
+    bool handle (const juce::KeyPress& k)
+    {
+        if (k == juce::KeyPress::escapeKey)
+        {
+            juce::Component::SafePointer<PRISMAudioProcessorEditor> sp (&owner);
+            juce::MessageManager::callAsync ([sp] { if (sp != nullptr) sp->exitKiosk(); });
+            return true;
+        }
+        return false;
+    }
+
+    PRISMAudioProcessorEditor& owner;
+};
+
+//==============================================================================
 PRISMAudioProcessorEditor::PRISMAudioProcessorEditor (PRISMAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p)
 {
@@ -220,7 +265,8 @@ PRISMAudioProcessorEditor::PRISMAudioProcessorEditor (PRISMAudioProcessor& p)
         .withKeepPageLoadedWhenBrowserIsHidden()
         .withEventListener ("prismParam",   [this] (juce::var v) { handleParamEvent (v); })
         .withEventListener ("prismUiState", [this] (juce::var v) { handleUiStateEvent (v); })
-        .withEventListener ("prismReady",   [this] (juce::var)   { handlePageReady(); });
+        .withEventListener ("prismReady",   [this] (juce::var)   { handlePageReady(); })
+        .withEventListener ("prismFullscreen", [this] (juce::var v) { handleFullscreenEvent (v); });
     // reset_all / reset_integrated arrive ONLY through prismParam {id:"reset_all"|"reset_integrated"}
 
    #if JUCE_WINDOWS
@@ -258,6 +304,7 @@ PRISMAudioProcessorEditor::PRISMAudioProcessorEditor (PRISMAudioProcessor& p)
 PRISMAudioProcessorEditor::~PRISMAudioProcessorEditor()
 {
     stopTimer();
+    exitKiosk (false);     // host closed the window / project while in true fullscreen: reparent the WebView back and drop the kiosk cleanly
     setEngineActive (false);
     closeOpenGestures();   // never leave the host with an unbalanced beginChangeGesture
     // Members destroyed in reverse: paramBridge (stops touching the WebView) -> webView.
@@ -283,7 +330,7 @@ void PRISMAudioProcessorEditor::paint (juce::Graphics& g)
 
 void PRISMAudioProcessorEditor::resized()
 {
-    if (webView != nullptr)
+    if (webView != nullptr && kiosk == nullptr)    // while in true fullscreen the WebView belongs to the kiosk window
         webView->setBounds (getLocalBounds());
 
     // serialize window size with the plugin state
@@ -372,9 +419,82 @@ void PRISMAudioProcessorEditor::closeOpenGestures()
     }
 }
 
+void PRISMAudioProcessorEditor::handleFullscreenEvent (const juce::var& payload)
+{
+    // Deferred: never reparent the native WebView from inside its own script-message callback.
+    const bool on = (bool) payload.getProperty ("on", false);
+    juce::Component::SafePointer<PRISMAudioProcessorEditor> sp (this);
+    juce::MessageManager::callAsync ([sp, on] { if (sp != nullptr) { if (on) sp->enterKiosk(); else sp->exitKiosk(); } });
+}
+
+void PRISMAudioProcessorEditor::enterKiosk()
+{
+    if (kiosk != nullptr || webView == nullptr)
+        return;
+
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* d = displays.getDisplayForRect (getScreenBounds());   // the display that contains the editor
+    if (d == nullptr) d = displays.getPrimaryDisplay();
+    if (d == nullptr) return;
+
+    kiosk = std::make_unique<KioskHost> (*this);
+    kiosk->setBounds (d->totalArea);
+    kiosk->addToDesktop (0);                      // borderless top-level window
+    kiosk->setVisible (true);
+    juce::Desktop::getInstance().setKioskModeComponent (kiosk.get(), false);   // true fullscreen: menu bar / Dock hidden
+    kiosk->toFront (true);
+    kiosk->addAndMakeVisible (*webView);          // reparents the SAME WebView out of the editor (after the window is final)
+    kiosk->resized();
+    webView->setVisible (false);                  // nudge the native WKWebView so it re-evaluates its window visibility
+    webView->setVisible (true);
+    webView->grabKeyboardFocus();
+
+    juce::Component::SafePointer<PRISMAudioProcessorEditor> sp (this);
+    juce::Timer::callAfterDelay (150, [sp]
+    {
+        if (sp != nullptr && sp->webView != nullptr)
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("on", true);
+            sp->webView->emitEventIfBrowserIsVisible ("prismKiosk", juce::var (o));
+        }
+    });
+}
+
+void PRISMAudioProcessorEditor::exitKiosk (bool notifyPage)
+{
+    if (kiosk == nullptr)
+        return;
+
+    juce::Desktop::getInstance().setKioskModeComponent (nullptr);   // leave OS fullscreen first
+    if (webView != nullptr)
+        addAndMakeVisible (*webView);                                // reparent back into the editor (removed from the kiosk)
+    kiosk.reset();
+    resized();                                                       // editor layout restored: WebView fills the editor again
+    if (webView != nullptr)
+        webView->grabKeyboardFocus();
+
+    if (notifyPage && webView != nullptr)
+    {
+        juce::Component::SafePointer<PRISMAudioProcessorEditor> sp (this);
+        juce::Timer::callAfterDelay (100, [sp]
+        {
+            if (sp != nullptr && sp->webView != nullptr)
+            {
+                auto* o = new juce::DynamicObject();
+                o->setProperty ("on", false);
+                sp->webView->emitEventIfBrowserIsVisible ("prismKiosk", juce::var (o));
+            }
+        });
+    }
+}
+
 void PRISMAudioProcessorEditor::handlePageReady()
 {
     closeOpenGestures();   // a (re)loaded page cannot still be mid-drag
+   #if PRISM_DEBUG_CONTROL
+    { static int readyCount = 0; std::fprintf (stderr, "PRISM_READY n=%d\n", ++readyCount); std::fflush (stderr); }
+   #endif
     pageReady = true;
     lastSequence = 0;
     wasHidden = (webView == nullptr) || ! webView->isShowing();   // hidden -> the timer pushes the full init once visible
