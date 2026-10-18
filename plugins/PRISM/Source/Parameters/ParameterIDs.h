@@ -36,6 +36,8 @@ namespace prism::ids
     inline constexpr const char* uiGonioSource    = "ui_gonio_source";    // 0 | 1: which source the vectorscope shows (UI only)
     inline constexpr const char* uiScopeSource    = "ui_scope_source";    // 0 | 1: which source the scope shows (UI only)
     inline constexpr const char* uiWaveformStyle  = "ui_waveform_style";   // "rgb" (default; "needles" is an accepted alias) | "layers"
+    inline constexpr const char* uiPlayheadPos    = "ui_playhead_pos";    // "right" (default: 'now' at the lane's right edge) | "center" ('now' at the lane centre, audio scrolls through it)
+    inline constexpr const char* uiGridEdits      = "ui_grid_edits";      // OPAQUE page-owned string (compact per-source beat-grid edits, display only), sanitized to a safe charset and length-capped
     inline constexpr const char* uiFullscreen     = "ui_fullscreen";
     inline constexpr const char* uiWidth          = "ui_width";
     inline constexpr const char* uiHeight         = "ui_height";

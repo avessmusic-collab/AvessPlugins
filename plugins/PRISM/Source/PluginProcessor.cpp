@@ -60,6 +60,8 @@ void PRISMAudioProcessor::applyStateDefaults(juce::ValueTree& state)
     if (! state.hasProperty(uiGonioSource))     state.setProperty(uiGonioSource, 0, nullptr);
     if (! state.hasProperty(uiScopeSource))     state.setProperty(uiScopeSource, 0, nullptr);
     if (! state.hasProperty(uiFullscreen))      state.setProperty(uiFullscreen, false, nullptr);
+    if (! state.hasProperty(uiPlayheadPos))     state.setProperty(uiPlayheadPos, "right", nullptr);
+    if (! state.hasProperty(uiGridEdits))       state.setProperty(uiGridEdits, "", nullptr);
     if (! state.hasProperty(uiWidth))           state.setProperty(uiWidth, 1100, nullptr);
     if (! state.hasProperty(uiHeight))          state.setProperty(uiHeight, 720, nullptr);
 }
@@ -78,16 +80,18 @@ void PRISMAudioProcessor::applyUiStatePayload(juce::ValueTree& state, const juce
     if (payload.hasProperty ("waveform_style"))          tmp.setProperty (uiWaveformStyle,  payload.getProperty ("waveform_style", "rgb").toString(),               nullptr);
     if (payload.hasProperty ("gonio_source"))            tmp.setProperty (uiGonioSource,    (int) payload.getProperty ("gonio_source", 0),                         nullptr);
     if (payload.hasProperty ("scope_source"))            tmp.setProperty (uiScopeSource,    (int) payload.getProperty ("scope_source", 0),                         nullptr);
+    if (payload.hasProperty ("playhead_pos"))            tmp.setProperty (uiPlayheadPos,    payload.getProperty ("playhead_pos", "right").toString(),                  nullptr);
+    if (payload.hasProperty ("grid_edits"))              tmp.setProperty (uiGridEdits,      payload.getProperty ("grid_edits", "").toString(),                         nullptr);
     if (payload.hasProperty ("waveform_span"))           tmp.setProperty (uiWaveformSpan,   (double) payload.getProperty ("waveform_span", 8.0),                   nullptr);
 
     // Sanitize a copy that carries the current state for absent fields, then copy back only the present ones.
     auto& st = state;
     juce::ValueTree work ("PRISM_UI");
-    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiWaveformStyle, uiGonioSource, uiScopeSource })
+    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiWaveformStyle, uiGonioSource, uiScopeSource, uiPlayheadPos, uiGridEdits })
         work.setProperty (id, tmp.hasProperty (id) ? tmp.getProperty (id) : st.getProperty (id), nullptr);
     PRISMAudioProcessor::sanitizeState (work);
 
-    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiWaveformStyle, uiGonioSource, uiScopeSource })
+    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiWaveformStyle, uiGonioSource, uiScopeSource, uiPlayheadPos, uiGridEdits })
         if (tmp.hasProperty (id))
             st.setProperty (id, work.getProperty (id), nullptr);
 }
@@ -111,6 +115,9 @@ void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)
 
     state.setProperty(uiGonioSource, (int) state.getProperty(uiGonioSource, 0) == 1 ? 1 : 0, nullptr);   // UI-only source selectors: {0, 1}
     state.setProperty(uiScopeSource, (int) state.getProperty(uiScopeSource, 0) == 1 ? 1 : 0, nullptr);
+
+    state.setProperty(uiPlayheadPos, state.getProperty(uiPlayheadPos).toString() == "center" ? "center" : "right", nullptr);   // "right" | "center"
+    state.setProperty(uiGridEdits, sanitizeGridEdits(state.getProperty(uiGridEdits)), nullptr);   // opaque, charset + length capped
 
     state.setProperty(uiWaveformStyle, state.getProperty(uiWaveformStyle).toString() == "layers" ? "layers" : "rgb", nullptr);   // waveform style: "layers" | "rgb"; "needles" is an alias of rgb and anything else -> rgb
 

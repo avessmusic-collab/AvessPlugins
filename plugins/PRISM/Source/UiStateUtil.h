@@ -44,6 +44,20 @@ namespace prism::uistate
         return out;
     }
 
+    inline constexpr int kMaxGridEditsLength = 2048;   // ui_grid_edits: opaque, page-owned beat-grid edit blob (display-only; never read by DSP or meters)
+
+    // ui_grid_edits is OPAQUE to C++: only a safe charset (digits, lower-case letters, . - + : ; , | =) and a hard length cap are enforced here;
+    // the page parses it (compact "s0:sh=..;ov=..;sc=..;f=..;w=..,..|s1:..") and ignores anything it cannot read.
+    inline juce::String sanitizeGridEdits (const juce::var& v)
+    {
+        const auto s = v.toString().substring (0, kMaxGridEditsLength);
+        juce::String out;
+        for (auto c : s)
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || c == '.' || c == '-' || c == '+' || c == ':' || c == ';' || c == ',' || c == '|' || c == '=')
+                out += c;
+        return out;
+    }
+
     // Shared source-name sanitizer: trim, cap at kMaxNameLength, trim again; empty -> fallback.
     inline juce::String sanitizeName (const juce::var& v, const juce::String& fallback)
     {

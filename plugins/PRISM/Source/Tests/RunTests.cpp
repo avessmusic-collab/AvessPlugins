@@ -3648,6 +3648,20 @@ static void test_ui_state_partial_event()
           "partial event: absent fields keep their values");
     PRISMAudioProcessor::applyUiStatePayload(st, mk({ { "waveform_span", 9999.0 } }));
     check((double) st.getProperty(uiWaveformSpan) == 32.0 && st.getProperty(uiWaveformStyle).toString() == "layers", "partial event: present field still sanitized");
+    {   // playhead_pos + grid_edits (display-only ui state): accepted values, rejected values, charset + length cap, partial-event isolation
+        juce::ValueTree s2("T"); PRISMAudioProcessor::sanitizeState(s2);
+        check(s2.getProperty(uiPlayheadPos).toString() == "right" && s2.getProperty(uiGridEdits).toString().isEmpty(), "playhead_pos defaults to right, grid_edits to empty");
+        PRISMAudioProcessor::applyUiStatePayload(s2, mk({ { "playhead_pos", "center" } }));
+        check(s2.getProperty(uiPlayheadPos).toString() == "center", "playhead_pos: center accepted");
+        PRISMAudioProcessor::applyUiStatePayload(s2, mk({ { "playhead_pos", "left" } }));
+        check(s2.getProperty(uiPlayheadPos).toString() == "right", "playhead_pos: anything else -> right");
+        PRISMAudioProcessor::applyUiStatePayload(s2, mk({ { "grid_edits", "s0:sh=1.5;ov=128.01;sc=0.001;f=123456;w=1,2|s1:" } }));
+        check(s2.getProperty(uiGridEdits).toString() == "s0:sh=1.5;ov=128.01;sc=0.001;f=123456;w=1,2|s1:" && s2.getProperty(uiPlayheadPos).toString() == "right", "grid_edits: valid blob stored; absent playhead untouched");
+        PRISMAudioProcessor::applyUiStatePayload(s2, mk({ { "grid_edits", "A<b>\"x\" ok;1" } }));
+        check(s2.getProperty(uiGridEdits).toString() == "bx ok;1" || s2.getProperty(uiGridEdits).toString() == "bxok;1", "grid_edits: unsafe characters stripped");
+        PRISMAudioProcessor::applyUiStatePayload(s2, mk({ { "grid_edits", juce::String::repeatedString("1", 5000) } }));
+        check(s2.getProperty(uiGridEdits).toString().length() == prism::uistate::kMaxGridEditsLength, "grid_edits: length capped");
+    }
     check(prism::uistate::sanitizeName("  abcdefghijklmnop ", "Ch1") == "abcdefghij" && prism::uistate::sanitizeName("   ", "Ch2") == "Ch2", "shared name sanitizer: trim, cap, fallback");
 }
 

@@ -146,6 +146,11 @@ body.rm #demo i, body.rm #demo span { animation: none; }
 }
 .pop.open { opacity: 1; visibility: visible; transform: none; transition: opacity .18s ease, transform .18s ease, visibility 0s; }
 #pop_src { left: 485px; top: 541px; width: 360px; height: 134px; transform-origin: 100% 100%; }
+#pop_grid { left: 440px; top: 340px; width: 300px; padding: 12px 14px 12px; transform-origin: 0% 0%; }
+#pop_grid .prow { height: 26px; }
+#pop_grid .prow > label { width: 62px; }
+#pop_grid .seg button, #pop_grid .act { padding: 0 7px; }
+.sgsel.active { color: var(--c); background: rgba(255,255,255,0.07); }
 #pop_set { left: 445px; top: 286px; width: 400px; height: 389px; transform-origin: 100% 100%; }
 .pop h4 { margin: 0 0 12px; font-weight: normal; font-size: 11px; letter-spacing: 0.08em; color: var(--label); text-transform: uppercase; }
 .prow { display: flex; align-items: center; height: 28px; }
@@ -199,6 +204,7 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
   <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
   <div class="sgsel" id="wfspan" style="left:244px;width:92px" title="Waveform span in bars (click to cycle 1 / 2 / 4 / 8 / 16 / 32)">SPAN 8 bars</div>
+  <div class="sgsel" id="wfgrid" style="left:398px;width:46px" title="Beat-grid correction: set first beat, shift, bpm, stretch, warp marker, playhead position">GRID</div>
   <div class="sgsel" id="wfstyle" style="left:344px;width:46px" title="Waveform style: FLOW (smooth continuous waveform) / LYR (CDJ layers)">FLOW</div>
   <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#ff4b4b">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#ffb84d">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#5df2b8">&#9679;</span> highs</div>
   <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
@@ -262,6 +268,7 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <!-- popovers -->
   <div class="pop" id="pop_src"></div>
   <div class="pop" id="pop_set"></div>
+  <div class="pop" id="pop_grid"></div>
 </div>
 
 <script>
@@ -882,7 +889,7 @@ function slHtml(id) { return '<div class="sl" id="' + id + '"><div class="tr"><d
 
 /* ================= v2: POPOVER OPEN/CLOSE ================= */
 (function () {
-  var pairs = [['btn_src', 'pop_src'], ['btn_set', 'pop_set']];
+  var pairs = [['btn_src', 'pop_src'], ['btn_set', 'pop_set'], ['wfgrid', 'pop_grid']];
   function closeAll(except) { pairs.forEach(function (p) { if (p[1] !== except) { $(p[1]).classList.remove('open'); $(p[0]).classList.remove('active'); } }); }
   pairs.forEach(function (p) {
     $(p[0]).addEventListener('click', function (e) { e.stopPropagation(); closeAll(p[1]); var o = $(p[1]).classList.toggle('open'); $(p[0]).classList.toggle('active', o); });
@@ -891,7 +898,7 @@ function slHtml(id) { return '<div class="sl" id="' + id + '"><div class="tr"><d
   document.addEventListener('click', function () { closeAll(null); });
   document.addEventListener('keydown', function (e) {
     if ((e.key === 'p' || e.key === 'P') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target && e.target.tagName === 'INPUT')) { WFTRANS = WFTRANS === 0 ? 1 : 0; }   // demo: toggle the simulated host pause
-    if (e.key === 'Escape') { closeAll(null); if (UI.fullscreen) setFullscreen(false); }
+    if (e.key === 'Escape') { closeAll(null); if (wfPick) wfPickSet(null); if (UI.fullscreen) setFullscreen(false); }
     if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target && e.target.tagName === 'INPUT')) setFullscreen(!UI.fullscreen);
     if (e.code === 'Space') { e.preventDefault(); setParam('freeze', !P.freeze); }
   });
@@ -1072,6 +1079,7 @@ function wfRenderSmooth(g, W, T, ppc, ring, newest, lo, liveV, snap, mid, A) {
     }
     for (var pass = 0; pass < 2; pass++) { var prev = hpx[0]; for (x = 1; x < W - 1; x++) { var cur = hpx[x]; hpx[x] = 0.25 * prev + 0.5 * cur + 0.25 * hpx[x + 1]; prev = cur; } }
   }
+  if (wfNowFrac < 1) { var nx = Math.ceil(W * wfNowFrac); for (x = nx + 1; x < W; x++) hpx[x] = 0; }   // centre playhead: nothing ahead of 'now'
   // fill: top envelope left -> right, bottom envelope right -> left
   g.globalAlpha = 1;
   var grad = g.createLinearGradient(0, 0, W, 0), step = 6;
@@ -1124,7 +1132,7 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in de
 var wfOffset = 0;          // engine absolute column index minus page column index (re-based on genuine stream discontinuities)
 var WF_STALE_MS = 350;   // synthetic idle columns only when FRAMES stop arriving (silent playback still delivers real zero columns)
 var wfSynthTail = 0;       // trailing SYNTHETIC (idle, wall-clock) columns in the ring: real data re-bases instead of overlapping them
-var WF_SOUND = 0.015, WF_GAP_BEATS = 2, WF_ANCHOR_WAIT = 4, WF_REANCHOR_BEATS = 0.25, WF_MAX_SEGS = 64;
+var WF_NUM_PX = 40, WF_SOUND = 0.015, WF_GAP_BEATS = 2, WF_ANCHOR_WAIT = 4, WF_REANCHOR_BEATS = 0.25, WF_MAX_SEGS = 64;
 var wfSegs = [[], []];   // per source: lattice segments [{col, cpb, num, b0}] (engine column space: a re-base can never displace them)
 var wfTrkSt = [{ silent: 1e9, last: -1, wait: false, from: 0 }, { silent: 1e9, last: -1, wait: false, from: 0 }];
 function wfColsPerBeat(bpm, den) { return WF_CPS * (60 / bpm) * (4 / (den > 0 ? den : 4)); }
@@ -1137,10 +1145,10 @@ function wfTrackStep(s, ecol, b, m, h, fr) {   // called once per pushed column 
     if (st.wait && bpm && (fr >= 0 || ecol - st.from >= WF_ANCHOR_WAIT)) {   // first strong onset (sample-accurate) of the sound; a soft start anchors on its first column
       st.wait = false;
       var oc = ecol + (fr >= 0 ? fr : st.from - ecol), lastSeg = segs.length ? segs[segs.length - 1] : null;
-      if (!lastSeg) segs.push({ col: oc, cpb: cpb, num: num, b0: 0 });
+      if (!lastSeg) segs.push({ col: oc, cpb: cpb, num: num, b0: 0, bpm: bpm, den: den, mark: true });
       else {
         var d = (oc - lastSeg.col) / lastSeg.cpb, off = Math.abs(d - Math.round(d));
-        if (off > WF_REANCHOR_BEATS && oc > lastSeg.col) segs.push({ col: oc, cpb: cpb, num: num, b0: 0 });   // new musical phase: re-anchor (beat 1 = this onset)
+        if (off > WF_REANCHOR_BEATS && oc > lastSeg.col) segs.push({ col: oc, cpb: cpb, num: num, b0: 0, bpm: bpm, den: den, mark: true });   // new musical phase: re-anchor (beat 1 = this onset)
       }
       if (segs.length > WF_MAX_SEGS) segs.shift();
     }
@@ -1150,13 +1158,14 @@ function wfTrackStep(s, ecol, b, m, h, fr) {   // called once per pushed column 
     var sg = segs[segs.length - 1];
     if (ecol > sg.col && (Math.abs(cpb / sg.cpb - 1) > 0.01 || num !== sg.num)) {
       var nb = Math.max(1, Math.ceil((ecol - sg.col) / sg.cpb - 1e-9));
-      segs.push({ col: sg.col + nb * sg.cpb, cpb: cpb, num: num, b0: sg.b0 + nb });
+      segs.push({ col: sg.col + nb * sg.cpb, cpb: cpb, num: num, b0: sg.b0 + nb, bpm: bpm, den: den, mark: false });
     }
   }
 }
 function wfTrackReset() { for (var s = 0; s < 2; s++) { wfTrkSt[s].silent = 1e9; wfTrkSt[s].wait = false; } }
-function wfColToX(col, W, T, ppc) { return W - (T - col) * ppc; }
-function wfXToCol(x, W, T, ppc) { return T - (W - x) / ppc; }
+var wfNowFrac = 1;   // playhead position: 1 = 'now' at the lane's right edge (default), 0.5 = centre (audio scrolls through it; the right half is grid only)
+function wfColToX(col, W, T, ppc) { return W * wfNowFrac - (T - col) * ppc; }
+function wfXToCol(x, W, T, ppc) { return T - (W * wfNowFrac - x) / ppc; }
 /* Ableton-style density. Ladder in QUARTER-BEATS (u): 1/16 note (1), 1/8 (2), beat (4), half note (8, only if the bar has an even beat count),
    1 bar (4*num), then bar groups 2, 4, 8, 16, 32 bars. At any zoom the FINEST level whose spacing is >= 7 device px is drawn, with a 3-tier
    hierarchy: lvl 2 = that finest level (faint), lvl 1 = the next level up that is on the lattice (medium), lvl 0 = anything above that, and bars /
@@ -1168,19 +1177,86 @@ function wfLadder(num) {
   return u.filter(function (v, i, a) { return i === 0 || v > a[i - 1]; });
 }
 function wfDensityLevel(lad, cpb, ppc) { for (var m = 0; m < lad.length; m++) if (lad[m] / 4 * cpb * ppc >= 7) return m; return lad.length - 1; }
+/* ---- GRID CORRECTION (manual edits; DISPLAY ONLY: the lattice is drawn differently, no reading, meter or measurement uses it) ----
+   Per source, live-session UI state, persisted in prismUiState.grid_edits as a compact opaque string (C++ only enforces charset + length):
+     "s0:sh=<ms>;ov=<bpm>;sc=<fraction>;f=<engine col>;w=<col>,<col>|s1:..."
+   sh  = Shift Grid (ms, applied to every segment anchor);  ov = bpm override for the LATTICE only (0 = host);  sc = Expand/Contract (bpm scale, 0.001 = 0.1 %);
+   f   = Set First Beat (engine col of the snapped transient = beat 1 of a fresh anchor segment);  w = Add Warp Marker cols (each starts a manual segment at a
+   transient; beat numbering continues). The honest waveform is never moved. Engine-space columns (f, w) are dropped on a stream re-base. */
+var wfEdit = [{ sh: 0, ov: 0, sc: 0, first: null, warps: [] }, { sh: 0, ov: 0, sc: 0, first: null, warps: [] }];
+function wfEditIsDefault(e) { return !e.sh && !e.ov && !e.sc && e.first === null && !e.warps.length; }
+function wfEffSegs(s) {   // lattice segments after the manual edits (engine column space); the auto segments untouched
+  var e = wfEdit[s], base = wfSegs[s];
+  if (wfEditIsDefault(e)) return base;
+  var shC = e.sh / 1000 * WF_CPS, collapse = e.ov > 0 || e.sc !== 0, out = [], i, g;
+  function cpbOf(q) { return (e.ov > 0 || e.sc) ? wfColsPerBeat((e.ov > 0 ? e.ov : q.bpm) * (1 + e.sc), q.den) : q.cpb; }
+  for (i = 0; i < base.length; i++) { g = base[i]; if (collapse && !g.mark) continue; out.push({ col: g.col, cpb: cpbOf(g), num: g.num, b0: g.b0, mark: g.mark, bpm: g.bpm, den: g.den }); }
+  var host = (WFI.bpm && WFI.num > 0) ? { bpm: WFI.bpm, den: WFI.den > 0 ? WFI.den : 4, num: WFI.num > 0 ? WFI.num : 4 } : null;
+  if (e.first !== null) {
+    var ref = null; for (i = 0; i < out.length; i++) if (out[i].col <= e.first + 0.5) ref = out[i]; if (!ref) ref = out[0];
+    var tpl = ref || (host && { bpm: host.bpm, den: host.den, num: host.num, cpb: cpbOf({ bpm: host.bpm, den: host.den }) });
+    if (tpl) out = [{ col: e.first, cpb: tpl.cpb, num: tpl.num, b0: 0, mark: true, bpm: tpl.bpm, den: tpl.den }].concat(out.filter(function (q) { return q.col > e.first + 0.5; }));
+  }
+  var ws = e.warps.slice().sort(function (p, q) { return p - q; });
+  for (i = 0; i < ws.length; i++) {
+    var w = ws[i], prev = null, k; for (k = 0; k < out.length; k++) if (out[k].col <= w + 1e-9) prev = out[k]; if (!prev) prev = out[0]; if (!prev) break;
+    out.push({ col: w, cpb: prev.cpb, num: prev.num, b0: prev.b0 + Math.max(0, Math.round((w - prev.col) / prev.cpb)), mark: true, bpm: prev.bpm, den: prev.den });
+    out.sort(function (p, q) { return p.col - q.col; });
+  }
+  if (shC) for (i = 0; i < out.length; i++) out[i] = { col: out[i].col + shC, cpb: out[i].cpb, num: out[i].num, b0: out[i].b0, mark: out[i].mark, bpm: out[i].bpm, den: out[i].den };
+  return out;
+}
+function wfEditSerialize() {
+  var parts = [];
+  for (var s = 0; s < 2; s++) {
+    var e = wfEdit[s], f = function (v, d) { return String(+v.toFixed(d)); }, kv = [];
+    if (e.sh) kv.push('sh=' + f(e.sh, 3)); if (e.ov) kv.push('ov=' + f(e.ov, 3)); if (e.sc) kv.push('sc=' + f(e.sc, 5));
+    if (e.first !== null) kv.push('f=' + f(e.first, 3)); if (e.warps.length) kv.push('w=' + e.warps.map(function (w) { return f(w, 3); }).join(','));
+    parts.push('s' + s + ':' + kv.join(';'));
+  }
+  return wfEdit.every(wfEditIsDefault) ? '' : parts.join('|');
+}
+function wfEditParse(str) {   // tolerant: anything unreadable is ignored (the blob is opaque to the host)
+  var s0, i;
+  for (s0 = 0; s0 < 2; s0++) wfEdit[s0] = { sh: 0, ov: 0, sc: 0, first: null, warps: [] };
+  if (typeof str !== 'string' || !str) return;
+  str.split('|').forEach(function (part) {
+    var m = /^s([01]):(.*)$/.exec(part); if (!m) return; var e = wfEdit[+m[1]];
+    m[2].split(';').forEach(function (kv) {
+      var p = kv.split('='), v = p[1] === undefined ? NaN : +p[1];
+      if (p[0] === 'sh' && isFinite(v)) e.sh = clamp(v, -2000, 2000);
+      else if (p[0] === 'ov' && isFinite(v) && v >= 20 && v <= 999) e.ov = v;
+      else if (p[0] === 'sc' && isFinite(v)) e.sc = clamp(v, -0.2, 0.2);
+      else if (p[0] === 'f' && isFinite(v) && v >= 0) e.first = v;
+      else if (p[0] === 'w' && p[1]) p[1].split(',').forEach(function (x) { var w = +x; if (isFinite(w) && w >= 0 && e.warps.length < 64) e.warps.push(w); });
+    });
+  });
+}
+function wfEditChanged() { if (wfOff) { wfRender(); if (!booting) drawWaveform(); } if (typeof postUi === 'function') postUi(); if (typeof wfGridPaint === 'function') wfGridPaint(); }
+function wfSnapTransient(pageCol) {   // engine col of the strong transient nearest to pageCol (sample-accurate onsetFrac), or pageCol itself if none is close
+  var fr = wfFracRing[P.wf_src], best = null, bd = 1e9, i, c0 = Math.floor(pageCol);
+  for (i = c0 - 8; i <= c0 + 8; i++) {
+    if (i < 0 || i >= wfN || i < wfN - WF_CAP) continue;
+    var f = fr[i % WF_CAP]; if (f < 0) continue;
+    var d = Math.abs(i + f - pageCol); if (d < bd) { bd = d; best = i + f; }
+  }
+  return { col: (best === null ? pageCol : best) + wfOffset, snapped: best !== null };
+}
 function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE columns; segments live in engine space and are converted here
-  var segs = wfSegs[P.wf_src], off = wfOffset, si, j;
+  var segs = wfEffSegs(P.wf_src), off = wfOffset, si, j;
   left += off; right += off;
   for (si = 0; si < segs.length; si++) {
     var a = segs[si], lo = si === 0 ? left : Math.max(a.col, left), hi = Math.min(si + 1 < segs.length ? segs[si + 1].col - 0.5 : Infinity, right);   // first segment extends backward; the next segment's anchor is authoritative
     if (hi <= lo) continue;
-    var lad = wfLadder(a.num), barIdx = lad.indexOf(4 * a.num), f = wfDensityLevel(lad, a.cpb, ppc), uf = lad[f], step = uf / 4 * a.cpb;   // bar-group levels are the ladder entries above barIdx
+    var lad = wfLadder(a.num), barIdx = lad.indexOf(4 * a.num), f = wfDensityLevel(lad, a.cpb, ppc), uf = lad[f], step = uf / 4 * a.cpb, ln = barIdx;
+    while (ln < lad.length - 1 && lad[ln] / 4 * a.cpb * ppc < WF_NUM_PX) ln++;   // bar numbers: the finest bar / bar-group level that is >= 40 px apart   // bar-group levels are the ladder entries above barIdx
     var j0 = Math.ceil((lo - a.col) / step - 1e-9), j1 = Math.ceil((hi - a.col) / step - 1e-9) - 1, nxt = Math.min(f + 1, lad.length - 1);
     for (j = j0; j <= j1; j++) {
       var q = a.b0 * 4 + j * uf, m = f, lvl;   // q: quarter-beats from the anchor (negative before it)
       for (var mm = lad.length - 1; mm > f; mm--) if ((((q % lad[mm]) + lad[mm]) % lad[mm]) === 0) { m = mm; break; }
       lvl = m === f ? 2 : (f >= barIdx ? (m === nxt ? 1 : 0) : (m >= barIdx ? 0 : 1));   // finest faint; below the bar level: sub-bar levels medium, bars / bar groups strong; zoomed out to bar groups: finest faint, next medium, rest strong
-      cb(a.col + j * step - off, lvl);
+      var barQ = 4 * a.num, lab = (((q % lad[ln]) + lad[ln]) % lad[ln]) === 0 ? Math.round(q / barQ) + 1 : 0;
+      cb(a.col + j * step - off, lvl, lab > 0 ? lab : 0, !!a.mark && q === a.b0 * 4);
     }
   }
 }
@@ -1229,19 +1305,30 @@ function wfFlushRun(g, x0, x1, ring, idx, mid, A, tick, snapped) {
    column keep an exactly constant pixel distance while the strip scrolls (no +-1 px wobble from different rounding). */
 function wfGridLinesNow(W, T, ppc) {   // visible lines [x, level, col(page)], de-duplicated (2 device px), strongest level wins
   var L = [];
-  wfGridEach(wfXToCol(-4, W, T, ppc), T, ppc, function (col, lvl) { var x = wfColToX(col, W, T, ppc); if (x >= -4 && x <= W + 2) L.push([x, lvl, col]); });
+  wfGridEach(wfXToCol(-4, W, T, ppc), wfXToCol(W + 4, W, T, ppc), ppc, function (col, lvl, lab, anc) { var x = wfColToX(col, W, T, ppc); if (x >= -4 && x <= W + 2) L.push([x, lvl, col, lab, anc]); });   // the lattice continues past 'now' (visible in centre-playhead mode)
   L.sort(function (p, q) { return p[0] - q[0]; });
   var out = [], i, m = 2;   // belt and braces: never two lines within 2 device px; the stronger level (lower number) wins
   for (i = 0; i < L.length; i++) {
     var k = out.length - 1;
-    if (k >= 0 && L[i][0] - out[k][0] < m) { if (L[i][1] < out[k][1]) out[k] = L[i]; } else out.push(L[i]);
+    if (k >= 0 && L[i][0] - out[k][0] < m) { var lab = out[k][3] || L[i][3], anc = out[k][4] || L[i][4]; if (L[i][1] < out[k][1]) out[k] = L[i]; out[k] = [out[k][0], out[k][1], out[k][2], lab, anc]; } else out.push(L[i]);
   }
   return out;
 }
 function wfDrawGridLines(g, lines) {   // drawn FIRST (behind the waveform layers, centreline and playhead)
   for (var i = 0; i < lines.length; i++) {
-    var st = WF_GRID_STYLE[lines[i][1]], tw = Math.max(1, Math.round(DPR * st[1])), xr = Math.ceil(lines[i][0] - 0.5) - (tw >> 1);
-    g.fillStyle = 'rgba(255,255,255,' + st[0] + ')'; g.fillRect(xr, 0, tw, wfH);
+    var st = WF_GRID_STYLE[lines[i][1]], anc = lines[i][4], tw = Math.max(1, Math.round(DPR * (anc ? 1.6 : st[1]))), xr = Math.ceil(lines[i][0] - 0.5) - (tw >> 1);
+    g.fillStyle = 'rgba(255,255,255,' + (anc ? 0.6 : st[0]) + ')'; g.fillRect(xr, 0, tw, wfH);   // the downbeat (beat 1 of an anchor segment) is a brighter line
+  }
+}
+var wfAccent = null;
+function wfAccentCss() { if (!wfAccent) { var v = getComputedStyle(document.documentElement).getPropertyValue('--cyan-rgb').trim(); wfAccent = v ? 'rgb(' + v + ')' : '#ff7a66'; } return wfAccent; }
+function wfDrawBarMarks(g, lines, W) {   // drawn AFTER the waveform: bar numbers (tiny, muted, top of the lane) + the downbeat flag glyph (theme accent)
+  var fs = Math.max(8, Math.round(9 * DPR)), top = Math.round(2 * DPR), i, any = false;
+  g.font = fs + 'px ' + MONO; g.textBaseline = 'top'; g.textAlign = 'left';
+  for (i = 0; i < lines.length; i++) {
+    var ln = lines[i], x = Math.ceil(ln[0] - 0.5), off = 0;
+    if (ln[4]) { g.fillStyle = wfAccentCss(); g.beginPath(); g.moveTo(x, 0); g.lineTo(x + Math.round(8 * DPR), 0); g.lineTo(x, Math.round(8 * DPR)); g.closePath(); g.fill(); off = Math.round(9 * DPR); }
+    if (ln[3] > 0 && x < W - 12) { g.fillStyle = 'rgba(170,185,198,0.62)'; g.fillText(String(ln[3]), x + Math.round(3 * DPR) + off, top); }
   }
 }
 /* ---- DISPLAY ALIGNMENT (page only; DISPLAY ONLY: readouts, meters and all data are untouched) ----
@@ -1274,17 +1361,18 @@ function wfRender() {
   if (!wfCtx) return;
   var g = wfCtx, W = wfW, newest = wfN - 1; g.clearRect(0, 0, W, wfH);
   if (newest < 0) return;
-  var liveV = null;   // the demo clock has no in-progress column
+  var liveV = wfLiveFor(P.wf_src);
   var ring = wfRing[P.wf_src], ppc = W / (wfSpanSec() * WF_CPS), T = wfT, mid = wfH / 2, A = mid * 0.86, x, idx, lo = wfN - WF_CAP;
   for (var bk = 0; bk < 3; bk++) wfBandDx[bk] = -Math.round(WF_BAND_DELAY_MS[bk] / 1000 * WF_CPS * ppc);   // filter-latency compensation (px)
   var lines = wfGridLinesNow(W, T, ppc), snap = wfOnsetShifts(P.wf_src, newest, lo, W, T, ppc, lines);
   wfDrawGridLines(g, lines);   // grid FIRST: it sits behind the waveform layers
+  window.__wfLastSnap = snap.sh;   // measurement hook
   if (WFSTYLE === 'rgb') { wfRenderSmooth(g, W, T, ppc, ring, newest, lo, liveV, snap, mid, A); }   // smooth continuous waveform (style id 'rgb', chip FLOW)
   else if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
     var rs = 0, ri = -1, real = false;
     for (x = 0; x <= W; x++) {
       var cur = -1, isReal = false;
-      if (x < W) { var cpos = wfXToCol(x + 0.5, W, T, ppc); idx = Math.floor(cpos - WF_COL_CENTER); { var d1 = snap.sh[idx + 1]; if (d1 !== undefined && cpos - WF_COL_CENTER >= idx + 1 + d1) idx++; else { var d0 = snap.sh[idx]; if (d0 !== undefined && cpos - WF_COL_CENTER < idx + d0) idx--; } } isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; if (liveV && cpos >= wfN) { cur = -2; isReal = true; } }
+      if (x < W) { var cpos = wfXToCol(x + 0.5, W, T, ppc); idx = Math.floor(cpos - WF_COL_CENTER); { var d1 = snap.sh[idx + 1]; if (d1 !== undefined && cpos - WF_COL_CENTER >= idx + 1 + d1) idx++; else { var d0 = snap.sh[idx]; if (d0 !== undefined && cpos - WF_COL_CENTER < idx + d0) idx--; } } isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; if (liveV && cpos >= wfN) { cur = -2; isReal = true; } if (wfNowFrac < 1 && cpos > T) cur = -1; }
       if (x === 0) { ri = cur; real = isReal; rs = 0; continue; }
       if (cur !== ri || (x < W && isReal !== real)) { if (ri >= 0) wfFlushRun(g, rs, x, ring, ri, mid, A, real, snap.lead[ri] !== undefined); else if (ri === -2) wfDrawBands(g, rs, x - rs, mid, A, liveV.b, liveV.m, liveV.h, liveV.o); rs = x; ri = cur; real = isReal; }
     }
@@ -1296,10 +1384,11 @@ function wfRender() {
       if (i1 >= i0) { wfDrawBands(g, x, 1, mid, A, b, m, h, on); if (f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x, 0, 1, wfH); } }
     }
   }
-  if (window.__wfProbe && !window.__wfProbe.drawAt) { var no = (newest % WF_CAP) * 4; if (Math.max(ring[no], ring[no + 1], ring[no + 2]) > 0.05) window.__wfProbe.drawAt = Date.now(); }
+  wfDrawBarMarks(g, lines, W);
+  if (window.__wfProbe && !window.__wfProbe.drawAt) { var no = (newest % WF_CAP) * 4; if (Math.max(ring[no], ring[no + 1], ring[no + 2]) > 0.05 || (liveV && Math.max(liveV.b, liveV.m, liveV.h) > 0.05)) window.__wfProbe.drawAt = Date.now(); }
 }
 function wfAlloc() { wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d', { willReadFrequently: true }); }
-function wfRedraw() { wfRender(); }   // theme change
+function wfRedraw() { wfAccent = null; wfRender(); }   // theme change
 function wfInit() {
   wfW = Math.round(cv.wf_cv.w * DPR); wfH = Math.round(cv.wf_cv.h * DPR); wfAlloc(); wfDemoFill(); if (wfT < wfN) wfT = wfN; wfRender();
 }
@@ -1351,11 +1440,13 @@ window.__wfDebug = function (rowY) {
 function drawWaveform() {
   var o = cv.wf_cv, g = o.g; g.clearRect(0, 0, o.w, o.h);
   g.drawImage(wfOff, 0, 0, o.w, o.h);
-  var cy = Math.round(o.h / 2);   // hairline centreline: 1 device px, 35% white, no glow
+  var cy = Math.round(o.h / 2), nowX = Math.round(o.w * wfNowFrac);   // hairline centreline: 1 device px, 35% white, no glow
   if (WFSTYLE === 'layers') { g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, cy, o.w, 1 / DPR); }   // the RGB style has no centreline (bars on black)
-  g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(o.w - 1, 0, 1, o.h);
+  if (wfNowFrac < 1) { g.fillStyle = 'rgba(0,0,0,0.30)'; g.fillRect(nowX, 0, o.w - nowX, o.h); }   // centre playhead: the right half is 'ahead' (grid only), subtly dimmed
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(nowX - 1, 0, 1, o.h);
   g.font = '9px ' + MONO; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(190,205,215,0.5)';
-  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + wfSpanText(), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4);
+  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + wfSpanText(), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', nowX - 6, o.h - 4);
+  if (wfPick) { g.textAlign = 'center'; g.textBaseline = 'top'; g.fillStyle = 'rgba(255,235,200,0.85)'; g.fillText((wfPick === 'first' ? 'SET FIRST BEAT' : 'ADD WARP MARKER') + ': click the lane (esc cancels)', o.w / 2, 3); }
 }
 
 /* ================= v8: TILED PANE LAYOUT (drag-to-resize on shared borders) + FULLSCREEN ================= */
@@ -1399,7 +1490,7 @@ function applyLayout() {
   function an(id, l, t, w, al) { var e = $(id); e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.textAlign = al; }
   pane('pn_spec', X0, yS, MW, bS); pane('pn_wf', X0, yW, MW, bW); pane('pn_sg', xP1, yL, W1 + 2, bL); pane('pn_gn', xP2, yL, W2 + 2, bL); pane('pn_sc', xP3, yL, W3 + 2, bL);
   an('an_spec_l', X0 + 10, cS + 6, 320, 'left'); an('an_spec_r', X0 + 1 + SPX.pw - 9 - 300, cS + 6, 300, 'right');
-  an('an_wf_l', X0 + 172, yW + 6, 66, 'left'); setLeft('wfspan', X0 + 244); setTop('wfspan', yW + 2); setLeft('wfstyle', X0 + 344); setTop('wfstyle', yW + 2); an('an_sg_l', xP1 + 9, cL + 5, 140, 'left');
+  an('an_wf_l', X0 + 172, yW + 6, 66, 'left'); setLeft('wfspan', X0 + 244); setTop('wfspan', yW + 2); setLeft('wfstyle', X0 + 344); setTop('wfstyle', yW + 2); setLeft('wfgrid', X0 + 398); setTop('wfgrid', yW + 2); an('an_sg_l', xP1 + 9, cL + 5, 140, 'left');
   an('an_gn_l', xP2 + 10, cL + 6, 140, 'left'); an('an_gn_r', xP2 + W2 - 8 - 140, cL + 6, 140, 'right'); an('an_sc_r', xP3 + W3 - 8 - 220, cL + 5, 220, 'right');
   // ---- dividers sit on the shared borders
   ['dh1', 'dh2'].forEach(function (i) { setLeft(i, X0); $(i).style.width = MW + 'px'; });
@@ -1443,6 +1534,65 @@ document.addEventListener('wheel', function (e) {
   wfSetSpan(WFSPAN * Math.pow(1.12, steps), false, true);
   clearTimeout(wfZoomTimer); wfZoomTimer = setTimeout(function () { if (typeof postUi === 'function') postUi(); }, 300);
 }, { passive: false, capture: true });
+
+/* ---- GRID popover (display-only manual beat-grid edits; see wfEdit) + playhead position ---- */
+function wfLiveFor() { return null; }   // the mockup has no live-column feed
+var WFPLAY = 'right', wfPick = null;
+function wfPpc() { return wfW / (wfSpanSec() * WF_CPS); }
+function wfSetPlayhead(v, fromHost) {
+  v = v === 'center' ? 'center' : 'right'; var changed = v !== WFPLAY; WFPLAY = v; wfNowFrac = v === 'center' ? 0.5 : 1; wfGridPaint();
+  if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }
+  if (changed && !fromHost && typeof postUi === 'function') postUi();
+}
+function wfPickSet(m) { wfPick = m; var c = $('wf_cv'); if (c) c.style.cursor = m ? 'crosshair' : ''; if (m) { $('pop_grid').classList.remove('open'); $('wfgrid').classList.remove('active'); } if (wfOff && !booting) drawWaveform(); wfGridPaint(); }
+function wfApplyPick(clientX) {
+  var r = $('wf_cv').getBoundingClientRect(), x = (clientX - r.left) / r.width * wfW, col = wfXToCol(x, wfW, wfT, wfPpc()), sn = wfSnapTransient(col), e = wfEdit[P.wf_src];
+  if (wfPick === 'first') { e.first = sn.col; e.warps = []; }
+  else if (wfPick === 'warp') { if (e.warps.length >= 64) e.warps.shift(); e.warps.push(sn.col); }
+  wfPickSet(null); wfEditChanged(); return sn;
+}
+document.addEventListener('click', function (ev) {
+  if (!wfPick) return; var r = $('wf_cv').getBoundingClientRect();
+  if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) { wfPickSet(null); return; }
+  ev.preventDefault(); ev.stopPropagation(); wfApplyPick(ev.clientX);
+}, true);
+function wfGridPaint() {
+  var p = $('pop_grid'); if (!p || !p.firstChild) return;
+  var e = wfEdit[P.wf_src], host = WFI.bpm || 0, eff = (e.ov > 0 ? e.ov : host) * (1 + e.sc);
+  $('gd_sh').textContent = (e.sh > 0 ? '+' : '') + e.sh.toFixed(1) + ' ms';
+  $('gd_bpm').textContent = eff > 0 ? eff.toFixed(2) + (e.ov > 0 ? ' *' : '') : '---';
+  $('gd_sc').textContent = (e.sc > 0 ? '+' : '') + (e.sc * 100).toFixed(1) + ' %';
+  $('gd_info').textContent = (e.first !== null ? 'first beat set' : 'first beat auto') + ' / ' + e.warps.length + ' warp' + (e.warps.length === 1 ? '' : 's');
+  var pk = $('gd_first'), pw = $('gd_warp'); pk.classList.toggle('on', wfPick === 'first'); pw.classList.toggle('on', wfPick === 'warp');
+  $('gd_pr').classList.toggle('on', WFPLAY === 'right'); $('gd_pc').classList.toggle('on', WFPLAY === 'center');
+  $('wfgrid').classList.toggle('on', !wfEditIsDefault(e) || WFPLAY === 'center'); $('wfgrid').style.setProperty('--c', SRC[0].color);
+}
+(function () {
+  var p = $('pop_grid');
+  function B(id, txt, cls) { return '<button class="' + (cls || 'tg') + '" id="' + id + '">' + txt + '</button>'; }
+  p.innerHTML = '<h4>Beat grid <span id="gd_info" style="float:right;letter-spacing:0;text-transform:none"></span></h4>' +
+    '<div class="prow"><div class="ctl seg">' + B('gd_first', 'Set first beat') + B('gd_warp', 'Add warp marker') + '</div></div>' +
+    '<div class="prow"><label>Shift</label><div class="ctl seg">' + B('gd_m10', '-10') + B('gd_m1', '-1') + B('gd_p1', '+1') + B('gd_p10', '+10') + '<span id="gd_sh" style="margin-left:8px;color:var(--value)"></span></div></div>' +
+    '<div class="prow"><label>BPM</label><div class="ctl seg">' + B('gd_bm', '-.01') + B('gd_bp', '+.01') + B('gd_br', 'Host') + '<span id="gd_bpm" style="margin-left:8px;color:var(--value)"></span></div></div>' +
+    '<div class="prow"><label>Stretch</label><div class="ctl seg">' + B('gd_sm', '-0.1%') + B('gd_sp', '+0.1%') + '<span id="gd_sc" style="margin-left:8px;color:var(--value)"></span></div></div>' +
+    '<div class="prow"><label>Playhead</label><div class="ctl seg">' + B('gd_pr', 'Right') + B('gd_pc', 'Center') + '</div></div>' +
+    '<div class="acts" style="margin-top:6px;padding-top:8px"><button class="act" id="gd_clear">Clear edits</button></div>';
+  function ed() { return wfEdit[P.wf_src]; }
+  function on(id, fn) { $(id).addEventListener('click', function (ev) { ev.stopPropagation(); fn(); }); }
+  function shift(ms) { var e = ed(); e.sh = clamp(Math.round((e.sh + ms) * 1000) / 1000, -2000, 2000); wfEditChanged(); }
+  function bpm(d) { var e = ed(), base = e.ov > 0 ? e.ov : (WFI.bpm || 0); if (!(base > 0)) return; e.ov = clamp(Math.round((base + d) * 100) / 100, 20, 999); wfEditChanged(); }
+  function scale(d) { var e = ed(); e.sc = clamp(Math.round((e.sc + d) * 100000) / 100000, -0.2, 0.2); wfEditChanged(); }
+  on('gd_first', function () { wfPickSet(wfPick === 'first' ? null : 'first'); }); on('gd_warp', function () { wfPickSet(wfPick === 'warp' ? null : 'warp'); });
+  on('gd_m10', function () { shift(-10); }); on('gd_m1', function () { shift(-1); }); on('gd_p1', function () { shift(1); }); on('gd_p10', function () { shift(10); });
+  on('gd_bm', function () { bpm(-0.01); }); on('gd_bp', function () { bpm(0.01); }); on('gd_br', function () { ed().ov = 0; wfEditChanged(); });
+  on('gd_sm', function () { scale(-0.001); }); on('gd_sp', function () { scale(0.001); });
+  on('gd_pr', function () { wfSetPlayhead('right'); }); on('gd_pc', function () { wfSetPlayhead('center'); });
+  on('gd_clear', function () { wfEdit[P.wf_src] = { sh: 0, ov: 0, sc: 0, first: null, warps: [] }; wfEditChanged(); });
+  $('wfgrid').addEventListener('click', function () { var c = $('wfgrid'); p.style.left = c.style.left; p.style.top = (parseFloat(c.style.top) + 26) + 'px'; wfGridPaint(); });   // anchored under the chip wherever the layout puts it
+  wfGridPaint();
+})();
+// measurement hooks
+window.__wfEditApi = { edit: function (s) { return wfEdit[s === undefined ? P.wf_src : s]; }, serialize: wfEditSerialize, parse: wfEditParse, pick: function (m) { wfPickSet(m); }, click: function (pageCol) { var sn = wfSnapTransient(pageCol), e = wfEdit[P.wf_src]; if (wfPick === 'first') { e.first = sn.col; e.warps = []; } else if (wfPick === 'warp') e.warps.push(sn.col); wfPickSet(null); wfEditChanged(); return sn; }, playhead: wfSetPlayhead, effSegs: function () { return wfEffSegs(P.wf_src).map(function (a) { return [a.col - wfOffset, a.cpb, a.num, a.b0, a.mark ? 1 : 0]; }); }, lines: function () { var W = wfW, ppc = wfPpc(); return wfGridLinesNow(W, wfT, ppc).map(function (l) { return { x: l[0], lvl: l[1], col: l[2], label: l[3], anchor: !!l[4] }; }); } };
 
 var DRAG = null;
 function dragStart(id) { DRAG = { id: id, rows: UI.rows.slice(), cols: UI.cols.slice() }; $(id).classList.add('drag'); }

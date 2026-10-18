@@ -511,6 +511,8 @@ juce::var PRISMAudioProcessorEditor::buildInitUi() const
     o->setProperty ("fullscreen",       (bool) st.getProperty (prism::ids::uiFullscreen, false));
     o->setProperty ("waveform_span",    (double) st.getProperty (prism::ids::uiWaveformSpan, 8.0));
     o->setProperty ("waveform_style",   st.getProperty (prism::ids::uiWaveformStyle, "rgb").toString());
+    o->setProperty ("playhead_pos",     st.getProperty (prism::ids::uiPlayheadPos, "right").toString());
+    o->setProperty ("grid_edits",       st.getProperty (prism::ids::uiGridEdits, "").toString());
     o->setProperty ("gonio_source",     (int) st.getProperty (prism::ids::uiGonioSource, 0));
     o->setProperty ("scope_source",     (int) st.getProperty (prism::ids::uiScopeSource, 0));
     o->setProperty ("spectrogram_orientation", st.getProperty (prism::ids::uiSgOrientation, "v").toString() == "h" ? "h" : "v");
