@@ -532,9 +532,15 @@ function drawSpecGrid() {
   g.textAlign = 'left'; g.fillStyle = 'rgba(122,136,148,0.4)'; g.fillText('dbfs', SPX.pw + 8, SPX.T + SPX.ph + 13);
 }
 var hovIdx = -1, needRedraw = true;
+/* The visual tilt must not lift the silence floor: a silent channel sits at about -100 dB, and +4.5 dB/oct around 1 kHz would raise its high end into the
+   visible range as a rising diagonal. The tilt weight ramps from 0 at the floor (-100 dB) to 1 at -75 dB (smoothstep), so silent bins stay at the floor
+   (flat at the bottom) and a curve emerges from the floor cleanly into its tilted content. Applies to the curve, the peak-hold trace, the fill (same path)
+   and the hover ring; the inspector keeps showing the true untilted dBFS. */
+function tiltW(v) { var t = (v + 100) / 25; return t <= 0 ? 0 : (t >= 1 ? 1 : t * t * (3 - 2 * t)); }
+function tdb(v, i) { return v + tiltOff[i] * tiltW(v); }
 function curvePath(arr, tilt) {
   var p = new Path2D(), x, y;
-  for (var i = 0; i < N; i++) { x = i / (N - 1) * SPX.pw; y = yOf(arr[i] + (tilt ? tilt[i] : 0)); if (i) p.lineTo(x, y); else p.moveTo(x, y); }
+  for (var i = 0; i < N; i++) { x = i / (N - 1) * SPX.pw; y = yOf(tilt ? arr[i] + tilt[i] * tiltW(arr[i]) : arr[i]); if (i) p.lineTo(x, y); else p.moveTo(x, y); }
   return p;
 }
 function drawSpectrum() {
@@ -562,7 +568,7 @@ function drawSpectrum() {
   if (hovIdx >= 0) {
     var hx = Math.round(hovIdx / (N - 1) * SPX.pw) + 0.5;
     g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = 1; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(hx, SPX.T); g.lineTo(hx, bottom); g.stroke(); g.setLineDash([]);
-    for (s = 0; s < 2; s++) { if (!paths[s]) continue; g.beginPath(); g.arc(hx, yOf(specs[s].sm[hovIdx] + tiltOff[hovIdx]), 3.5, 0, TAU); g.lineWidth = 1.5; g.strokeStyle = SRC[s].color; g.stroke(); g.fillStyle = 'rgba(10,12,14,0.8)'; g.fill(); }
+    for (s = 0; s < 2; s++) { if (!paths[s]) continue; g.beginPath(); g.arc(hx, yOf(tdb(specs[s].sm[hovIdx], hovIdx)), 3.5, 0, TAU); g.lineWidth = 1.5; g.strokeStyle = SRC[s].color; g.stroke(); g.fillStyle = 'rgba(10,12,14,0.8)'; g.fill(); }
   }
 }
 function applyGlow() { /* glow is read per frame from P.glow_intensity */ }
@@ -1319,6 +1325,10 @@ window.__wfLiveInfo = function () { return { live: wfLive, offset: wfOffset, N: 
 window.__wfFrac = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfFracRing[src][i % WF_CAP] : null; };   // measurement hook: onset fraction of an ENGINE column
 window.__wfSetStyle = function (st) { wfSetStyle(st, true); };   // measurement hook
 window.__wfBandColors = function () { return { low: BAND.low.slice(), mid: BAND.mid.slice(), high: BAND.high.slice() }; };   // measurement hook
+window.__specStep = function (frames) { for (var k = 0; k < (frames || 60); k++) updateSpectra(1 / 60); drawSpectrum(); updateInsp(); };   // measurement hooks (spectrum pane)
+window.__specY = function (s) { var a = []; for (var i = 0; i < N; i++) a.push(+yOf(tdb(specs[s].sm[i], i)).toFixed(1)); return a; };
+window.__specRaw = function (s, i) { return specs[s].sm[i]; };
+window.__specInfo = function () { return { N: N, bottom: SPX.T + SPX.ph, top: SPX.T, freqs: Array.prototype.slice.call(freqs) }; };
 window.__wfOnset = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfOnsetRing[src][i % WF_CAP] : null; };   // measurement hook
 window.__wfPeek = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfRing[src][(i % WF_CAP) * 4] : null; };   // measurement hook: bass value of a source at an ENGINE column   // measurement hook: advance the strip clock without rAF
 window.__wfGrid = function (lo, hi) {   // measurement hook: anchors + lattice lines (col in PAGE column space) over [lo, hi] (default: visible window)
