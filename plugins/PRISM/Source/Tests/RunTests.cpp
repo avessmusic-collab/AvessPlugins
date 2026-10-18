@@ -4303,6 +4303,78 @@ static void test_integration_rate_and_layout_change()
     proc.releaseResources();
 }
 
+static void test_sidechain_enable_midrun_waveform_streams()
+{
+    section("sidechain_enable_midrun_waveform_streams");
+    PRISMAudioProcessor proc;
+    juce::MidiBuffer midi;
+    struct Rec { long long first[2]; int count[2]; long long live[2]; std::uint64_t seq; };
+    std::vector<Rec> before, after;
+    auto play = [&](int mainCh, int scCh, double seconds, std::vector<Rec>& log) {
+        juce::AudioBuffer<float> buf(mainCh + scCh, 480);
+        const double w = kTwoPi * 997.0 / 48000.0;
+        std::uint64_t pos = 0, lastSeq = 0;
+        const auto t0 = Clock::now();
+        while (msSince(t0) < seconds * 1000.0)
+        {
+            for (int i = 0; i < 480; ++i)
+                for (int c = 0; c < mainCh + scCh; ++c) buf.setSample(c, i, 0.3f * (float) std::sin(w * (double) (pos + (std::uint64_t) i)));
+            pos += 480;
+            proc.processBlock(buf, midi);
+            const auto s = proc.getLatestAnalysisSnapshot();
+            if (s != nullptr && s->sequence != lastSeq)
+            {
+                lastSeq = s->sequence;
+                Rec r {};
+                for (int k = 0; k < 2; ++k) { r.first[k] = (long long) s->sources[(size_t) k].waveformFirstColumn; r.count[k] = s->sources[(size_t) k].waveformColumnCount; r.live[k] = (long long) s->sources[(size_t) k].liveColumnIndex; }
+                r.seq = s->sequence; log.push_back(r);
+            }
+            sleepMs(4);
+        }
+    };
+    check(configure(proc, 2, 0, 48000.0, 480), "configure stereo, no sidechain");
+    proc.prepareToPlay(48000.0, 480);
+    proc.setEditorActive(true);
+    play(2, 0, 1.6, before);
+    check(! before.empty() && before.back().first[0] >= 0 && before.back().first[1] < 0, "before: source 0 streams columns, source 1 has none");
+    const long long endBefore = before.empty() ? 0 : before.back().first[0] + before.back().count[0];
+
+    proc.releaseResources();
+    check(configure(proc, 2, 2, 48000.0, 480), "enable the stereo sidechain mid-run");
+    proc.prepareToPlay(48000.0, 480);
+    play(2, 2, 1.6, after);
+    check(! after.empty(), "after the layout rebuild the editor keeps receiving snapshots");
+    bool bothValid = true, aligned = true, countsOk = true, noRegress = true, liveOk = true;
+    long long maxSkew = 0;
+    for (size_t i = 0; i < after.size(); ++i)
+    {
+        const auto& r = after[i];
+        if (r.count[0] > 0 && r.count[1] > 0)
+        {
+            bothValid &= r.first[0] >= 0 && r.first[1] >= 0;
+            maxSkew = std::max<long long>(maxSkew, std::llabs(r.first[0] - r.first[1]));
+        }
+        countsOk &= r.count[0] <= prism::kMaxWaveformColumns && r.count[1] <= prism::kMaxWaveformColumns && r.count[0] >= 0 && r.count[1] >= 0;
+        if (r.live[0] >= 0 && r.count[0] > 0) liveOk &= r.live[0] >= r.first[0] + r.count[0];
+        if (i > 0) for (int k = 0; k < 2; ++k)
+            if (r.count[k] > 0 && after[i - 1].count[k] > 0) noRegress &= r.first[k] >= after[i - 1].first[k] - 256;
+    }
+    aligned = maxSkew <= 512;
+    std::printf("      [engine transition] before: last first0=%lld count0=%d endCol=%lld | after: first0=%lld first1=%lld count=%d/%d maxSkew(first0,first1)=%lld seq %llu -> %llu\n",
+                before.empty() ? -1LL : before.back().first[0], before.empty() ? 0 : before.back().count[0], endBefore,
+                after.empty() ? -1LL : after.front().first[0], after.empty() ? -1LL : after.front().first[1],
+                after.empty() ? 0 : after.front().count[0], after.empty() ? 0 : after.front().count[1], maxSkew,
+                before.empty() ? 0ULL : (unsigned long long) before.back().seq, after.empty() ? 0ULL : (unsigned long long) after.front().seq);
+    check(bothValid, "after: both sources carry valid first indices");
+    check(aligned, "after: the two sources' column streams stay in ONE domain (|first0 - first1| <= 512)");
+    check(countsOk && liveOk, "after: per-snapshot column counts bounded; live column index follows the columns");
+    check(noRegress, "after: no source regresses within the new session");
+    // The page must see the REBUILT stream as a restart: its first index regresses behind the old session's end (when the old session was long enough).
+    check(after.empty() || after.front().first[0] < endBefore || endBefore < 300, "engine restart is visible as a regression of the column index (page re-bases)");
+    proc.setEditorActive(false);
+    proc.releaseResources();
+}
+
 static void test_integration_editor_mode_transitions()
 {
     section("integration_editor_mode_transitions");
@@ -5186,6 +5258,7 @@ int main()
     test_integration_parameter_storm();
     test_integration_rate_and_layout_change();
     test_integration_editor_mode_transitions();
+    test_sidechain_enable_midrun_waveform_streams();
     test_integration_reset_plumbing();
     test_integration_stress_all_engines();
     test_integration_profile_and_memory();

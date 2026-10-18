@@ -385,6 +385,14 @@ function fitTo(arr, n) {   // linear resample to n points
      meters: { loudness: {M,S,I,LRA}, peaks: [{sp,tp},{sp,tp}], stereo: [{corr,width,bal},{...}] }
    }
    ============================================================================ */
+var WF_ALIGN_MAX = 512, WF_RESTART_COLS = 256, wfDiverged = 0, wfPrevValid = 0, wfForceRestart = false, wfRestarts = 0;
+function wfRestartState() {   // the engine restarted: every structure keyed by ENGINE columns (anchors, edits, live column, onset state) is stale and is cleared coherently, per source
+  var s; wfRestarts++;
+  for (s = 0; s < 2; s++) { wfSegs[s].length = 0; wfLive[s] = null; wfOnsetSt[s] = { prev: 0, ref: 0.1, held: 0 }; }
+  wfTrackReset();
+  wfEdit.forEach(function (e) { e.first = null; e.warps = []; });
+  wfSynthTail = 0;
+}
 function wfIngest(a0, a1, first0, first1, stride) {   // stride: floats per column (4 = older engine; 5 adds the onset fraction)   // append every NEW column; place by absolute engine column index, per source
   var st = stride || 4, k0 = a0 ? Math.floor(a0.length / st) : 0, k1 = a1 ? Math.floor(a1.length / st) : 0, i, p = window.__wfProbe, hot = false;
   var v0 = first0 >= 0 && k0 > 0, v1 = first1 >= 0 && k1 > 0;
@@ -400,14 +408,27 @@ function wfIngest(a0, a1, first0, first1, stride) {   // stride: floats per colu
   }
   if (k0 > 0 && !v0) { first0 = first1; v0 = true; }    // a source without its own index is assumed aligned to the other one
   if (k1 > 0 && !v1) { first1 = first0; v1 = true; }
+  var expected = wfOffset + wfN;
+  if (v0 && v1 && Math.abs(first0 - first1) > WF_ALIGN_MAX) {   // the two sources' column streams are in DIFFERENT domains (e.g. one is a remnant of an old engine): follow the one that continues our timeline, never iterate across both
+    if (Math.abs(first0 - expected) <= Math.abs(first1 - expected)) { v1 = false; k1 = 0; } else { v0 = false; k0 = 0; }
+    wfDiverged++;
+  }
   var e0 = Infinity, e1 = -Infinity;                     // engine column range covered by this batch (each source keeps its OWN first index)
   if (v0) { e0 = Math.min(e0, first0); e1 = Math.max(e1, first0 + k0); }
   if (v1) { e0 = Math.min(e0, first1); e1 = Math.max(e1, first1 + k1); }
-  var expected = wfOffset + wfN, g = e0 - expected;
-  if (wfN === 0 || wfSynthTail > 0 || g > 2048 || g < -(WF_CAP >> 1)) {
+  if (!(e1 > e0)) return;
+  var g = e0 - expected, restart = false;
+  /* ENGINE RESTART (layout change / sample-rate change / host re-prepare rebuilds the engine: its column streams restart near 0 while the page's
+     mapping still points at the old session). Detected as the stream regressing past anything an ack-race re-send could carry (a few snapshots), a
+     source appearing or disappearing while the stream regresses at all, or a sample-rate change. The old mapping must NOT be treated as 'columns we
+     already have' (that froze the strip until the new engine caught up with the old session's length). */
+  var vset = (v0 ? 1 : 0) | (v1 ? 2 : 0);
+  if (wfN > 0 && (g < -WF_RESTART_COLS || (vset !== wfPrevValid && g < -20) || wfForceRestart)) { restart = true; wfRestartState(); }
+  wfPrevValid = vset; wfForceRestart = false;
+  if (e1 - e0 > 4096) e0 = e1 - 4096;                    // hard cap: no per-batch loop is ever longer than a few snapshots
+  if (restart || wfN === 0 || wfSynthTail > 0 || g > 2048 || g < -(WF_CAP >> 1)) {
     // genuine discontinuity (first batch, new session, long idle, trailing SYNTHETIC idle columns, far-backwards jump): re-base the
     // mapping. Anchors are stored in ENGINE column space, so nothing else needs shifting.
-    if (wfN > 0 && g < -(WF_CAP >> 1)) wfEdit.forEach(function (e) { e.first = null; e.warps = []; });   // stream restarted: engine-space manual anchors no longer mean anything
     wfOffset = e0 - wfN; wfSynthTail = 0; expected = e0;
   } else if (g > 0) {                                    // engine produced columns we never received (editor idle / drop): keep the elapsed time
     for (i = 0; i < g; i++) wfPushCol(0, 0, 0, 0, 0, 0, 0, 0);
@@ -421,10 +442,10 @@ function wfIngest(a0, a1, first0, first1, stride) {   // stride: floats per colu
   }
   if (p && hot && !p.dataAt) p.dataAt = Date.now();
 }
-function receiveAnalysisFrame(fr) {
+function receiveAnalysisFrameInner(fr) {
   if (!fr || typeof fr !== 'object') return;
   D.lastAt = performance.now(); D.hasData = true; D.live = fr.live !== false;
-  if (isNum(fr.sampleRate) && fr.sampleRate > 0) D.fs = fr.sampleRate;
+  if (isNum(fr.sampleRate) && fr.sampleRate > 0) { if (D.fs > 0 && fr.sampleRate !== D.fs) wfForceRestart = true; D.fs = fr.sampleRate; }
   if (fr.transport === -1 || fr.transport === 0 || fr.transport === 1) WFTRANS = fr.transport;
   D.bpm = isNum(fr.bpm) && fr.bpm > 0 ? fr.bpm : null;
   if (D.bpm) { var wasKnown = WFI.known; WFI.bpm = D.bpm; WFI.known = true; if (!wasKnown) wfSpanPaint(); }
@@ -440,10 +461,14 @@ function receiveAnalysisFrame(fr) {
     a = fr.waveform ? f32(fr.waveform[s]) : null;
     wfa[s] = a;
   }
-  if (fr.waveform) wfIngest(wfa[0], wfa[1], fr.waveformFirst ? fr.waveformFirst[0] : -1, fr.waveformFirst ? fr.waveformFirst[1] : -1, fr.waveformStride);
+  if (fr.waveform) { try { wfIngest(wfa[0], wfa[1], fr.waveformFirst ? fr.waveformFirst[0] : -1, fr.waveformFirst ? fr.waveformFirst[1] : -1, fr.waveformStride); } catch (err) { console.log('[PRISM] waveform ingest error, resyncing: ' + err); try { wfRestartState(); wfForceRestart = true; } catch (e2) { } } }   // the page must never die on an unexpected stream inconsistency: log, clear, re-base on the next batch
   if (fr.waveformLive) for (s = 0; s < 2; s++) { var wl = fr.waveformLive[s]; wfLive[s] = (wl && wl[0] >= 0) ? { e: wl[0], b: wl[1], m: wl[2], h: wl[3] } : null; if (wfLive[s] && window.__wfProbe && !window.__wfProbe.dataAt && s === 0 && Math.max(wl[1], wl[2], wl[3]) > 0.05) window.__wfProbe.dataAt = Date.now(); }
   var m = fr.meters;
   if (m) { D.loud = m.loudness || null; D.peaks = m.peaks || []; D.stereo = m.stereo || []; }
+}
+function receiveAnalysisFrame(fr) {   // the page must never die on one bad frame: log, resync the waveform stream, carry on
+  try { receiveAnalysisFrameInner(fr); }
+  catch (err) { console.log('[PRISM] frame error (ignored, stream resync): ' + err); try { wfRestartState(); wfForceRestart = true; } catch (e2) { } }
 }
 window.receiveAnalysisFrame = receiveAnalysisFrame;
 
@@ -1792,16 +1817,23 @@ function drawMeter(dt) {   // analog-style needle meter: momentary LUFS from the
 
 /* ================= Main loop ================= */
 var last = performance.now(), frame = 0;
-function loop(now) {
-  var dt = Math.min(0.05, (now - last) / 1000); last = now; frame++;
-  fpsCount++; fpsT += dt; if (fpsT >= 0.5) { fpsShown = Math.min(60, Math.round(fpsCount / fpsT)); fpsCount = 0; fpsT = 0; paintStats(); }
-  updateFlag();
-  if (!P.freeze) {
-    if (P.reduced_motion && (frame & 1)) { requestAnimationFrame(loop); return; }
-    updateSpectra(dt); sgStep(dt); wfStep(dt); drawSpectrogram(); drawWaveform(); drawSpectrum(); drawGonio(); drawScope(); updateMeters(dt); drawMeter(dt);
-    if ((frame % 4) === 0) { paintReadouts(); updateInsp(); }
-  } else if (needRedraw) { drawSpectrum(); updateInsp(); }
-  needRedraw = false; requestAnimationFrame(loop);
+var loopErrAt = 0;
+function loopGuard(name, fn, arg) { try { fn(arg); } catch (err) { var n = performance.now(); if (n - loopErrAt > 2000) { loopErrAt = n; console.log('[PRISM] ' + name + ' error (frame skipped): ' + err); } } }
+function loop(now) {   // an exception in any one painter must never stop the loop (that would freeze every pane and chip)
+  try {
+    var dt = Math.min(0.05, (now - last) / 1000); last = now; frame++;
+    fpsCount++; fpsT += dt; if (fpsT >= 0.5) { fpsShown = Math.min(60, Math.round(fpsCount / fpsT)); fpsCount = 0; fpsT = 0; paintStats(); }
+    updateFlag();
+    if (!P.freeze) {
+      if (!(P.reduced_motion && (frame & 1))) {
+        loopGuard('spectra', updateSpectra, dt); loopGuard('spectrogram', sgStep, dt); loopGuard('waveform step', wfStep, dt); loopGuard('spectrogram draw', drawSpectrogram); loopGuard('waveform draw', drawWaveform);
+        loopGuard('spectrum', drawSpectrum); loopGuard('gonio', drawGonio); loopGuard('scope', drawScope); loopGuard('meters', updateMeters, dt); loopGuard('meter', drawMeter, dt);
+        if ((frame % 4) === 0) { loopGuard('readouts', paintReadouts); loopGuard('inspector', updateInsp); }
+      }
+    } else if (needRedraw) { drawSpectrum(); updateInsp(); }
+    needRedraw = false;
+  } catch (err) { console.log('[PRISM] loop error: ' + err); }
+  requestAnimationFrame(loop);
 }
 
 /* ================= Boot ================= */
