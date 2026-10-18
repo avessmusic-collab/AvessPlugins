@@ -351,7 +351,7 @@ void PRISMAudioProcessorEditor::handleUiStateEvent (const juce::var& payload)
     tmp.setProperty (uiLowerColSplits, joinInts (intsFromVar (payload.getProperty ("lower_col_splits", {}))), nullptr);
     tmp.setProperty (uiSgOrientation,  payload.getProperty ("spectrogram_orientation", "v").toString(),      nullptr);
     tmp.setProperty (uiFullscreen,     (bool) payload.getProperty ("fullscreen", false),                      nullptr);
-    tmp.setProperty (uiWaveformStyle,  payload.getProperty ("waveform_style", "needles").toString(),                       nullptr);
+    tmp.setProperty (uiWaveformStyle,  payload.getProperty ("waveform_style", "rgb").toString(),                       nullptr);
     tmp.setProperty (uiGonioSource,    (int) payload.getProperty ("gonio_source", 0),                         nullptr);
     tmp.setProperty (uiScopeSource,    (int) payload.getProperty ("scope_source", 0),                         nullptr);
     tmp.setProperty (uiWaveformSpan,   (double) payload.getProperty ("waveform_span", 8.0),                       nullptr);
@@ -407,7 +407,7 @@ juce::var PRISMAudioProcessorEditor::buildInitUi() const
     o->setProperty ("lower_col_splits", intsToVar (parseInts (st.getProperty (prism::ids::uiLowerColSplits, "").toString())));
     o->setProperty ("fullscreen",       (bool) st.getProperty (prism::ids::uiFullscreen, false));
     o->setProperty ("waveform_span",    (double) st.getProperty (prism::ids::uiWaveformSpan, 8.0));
-    o->setProperty ("waveform_style",   st.getProperty (prism::ids::uiWaveformStyle, "needles").toString());
+    o->setProperty ("waveform_style",   st.getProperty (prism::ids::uiWaveformStyle, "rgb").toString());
     o->setProperty ("gonio_source",     (int) st.getProperty (prism::ids::uiGonioSource, 0));
     o->setProperty ("scope_source",     (int) st.getProperty (prism::ids::uiScopeSource, 0));
     o->setProperty ("spectrogram_orientation", st.getProperty (prism::ids::uiSgOrientation, "v").toString() == "h" ? "h" : "v");

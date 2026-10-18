@@ -61,7 +61,7 @@ void PRISMAudioProcessor::applyStateDefaults(juce::ValueTree& state)
     if (! state.hasProperty(uiLowerColSplits))  state.setProperty(uiLowerColSplits, "296,266,272", nullptr);
     if (! state.hasProperty(uiSgOrientation))   state.setProperty(uiSgOrientation, "v", nullptr);
     if (! state.hasProperty(uiWaveformSpan))    state.setProperty(uiWaveformSpan, 8, nullptr);
-    if (! state.hasProperty(uiWaveformStyle))   state.setProperty(uiWaveformStyle, "needles", nullptr);
+    if (! state.hasProperty(uiWaveformStyle))   state.setProperty(uiWaveformStyle, "rgb", nullptr);
     if (! state.hasProperty(uiGonioSource))     state.setProperty(uiGonioSource, 0, nullptr);
     if (! state.hasProperty(uiScopeSource))     state.setProperty(uiScopeSource, 0, nullptr);
     if (! state.hasProperty(uiFullscreen))      state.setProperty(uiFullscreen, false, nullptr);
@@ -89,7 +89,7 @@ void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)
     state.setProperty(uiGonioSource, (int) state.getProperty(uiGonioSource, 0) == 1 ? 1 : 0, nullptr);   // UI-only source selectors: {0, 1}
     state.setProperty(uiScopeSource, (int) state.getProperty(uiScopeSource, 0) == 1 ? 1 : 0, nullptr);
 
-    state.setProperty(uiWaveformStyle, state.getProperty(uiWaveformStyle).toString() == "layers" ? "layers" : "needles", nullptr);   // waveform style: "needles" | "layers", anything else -> needles
+    state.setProperty(uiWaveformStyle, state.getProperty(uiWaveformStyle).toString() == "layers" ? "layers" : "rgb", nullptr);   // waveform style: "layers" | "rgb"; "needles" is an alias of rgb and anything else -> rgb
 
     // waveform span in BARS: continuous (mouse-wheel zoom), clamped to [0.5, 32]; non-finite / missing -> 8 (old integer values stay valid)
     {
