@@ -43,4 +43,11 @@ namespace prism::uistate
             out.add(e);
         return out;
     }
+
+    // Shared source-name sanitizer: trim, cap at kMaxNameLength, trim again; empty -> fallback.
+    inline juce::String sanitizeName (const juce::var& v, const juce::String& fallback)
+    {
+        auto s = v.toString().trim().substring (0, kMaxNameLength).trim();
+        return s.isEmpty() ? fallback : s;
+    }
 } // namespace prism::uistate

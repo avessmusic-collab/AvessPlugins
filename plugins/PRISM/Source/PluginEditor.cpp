@@ -359,8 +359,7 @@ void PRISMAudioProcessorEditor::handleParamEvent (const juce::var& payload)
     {
         if (id == kSrcNameIds[i])
         {
-            auto name = value.toString().trim().substring (0, kMaxNameLength).trim();
-            if (name.isEmpty()) name = kSrcNameDefs[i];
+            const auto name = prism::uistate::sanitizeName (value, kSrcNameDefs[i]);
             processorRef.apvts.state.setProperty (kSrcNameIds[i], name, nullptr);
             return;
         }
@@ -390,23 +389,7 @@ void PRISMAudioProcessorEditor::handleParamEvent (const juce::var& payload)
 
 void PRISMAudioProcessorEditor::handleUiStateEvent (const juce::var& payload)
 {
-    using namespace prism::ids;
-
-    // Run the page's values through the processor's sanitizer before they enter the APVTS state.
-    juce::ValueTree tmp ("PRISM_UI");
-    tmp.setProperty (uiRowSplits,      joinInts (intsFromVar (payload.getProperty ("row_splits", {}))),       nullptr);
-    tmp.setProperty (uiLowerColSplits, joinInts (intsFromVar (payload.getProperty ("lower_col_splits", {}))), nullptr);
-    tmp.setProperty (uiSgOrientation,  payload.getProperty ("spectrogram_orientation", "v").toString(),      nullptr);
-    tmp.setProperty (uiFullscreen,     (bool) payload.getProperty ("fullscreen", false),                      nullptr);
-    tmp.setProperty (uiWaveformStyle,  payload.getProperty ("waveform_style", "rgb").toString(),                       nullptr);
-    tmp.setProperty (uiGonioSource,    (int) payload.getProperty ("gonio_source", 0),                         nullptr);
-    tmp.setProperty (uiScopeSource,    (int) payload.getProperty ("scope_source", 0),                         nullptr);
-    tmp.setProperty (uiWaveformSpan,   (double) payload.getProperty ("waveform_span", 8.0),                       nullptr);
-    PRISMAudioProcessor::sanitizeState (tmp);
-
-    auto& st = processorRef.apvts.state;
-    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiWaveformStyle, uiGonioSource, uiScopeSource })
-        st.setProperty (id, tmp.getProperty (id), nullptr);
+    PRISMAudioProcessor::applyUiStatePayload (processorRef.apvts.state, payload);
 }
 
 void PRISMAudioProcessorEditor::closeOpenGestures()

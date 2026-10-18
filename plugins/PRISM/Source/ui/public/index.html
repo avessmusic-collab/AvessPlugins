@@ -571,7 +571,6 @@ function drawSpectrum() {
     for (s = 0; s < 2; s++) { if (!paths[s]) continue; g.beginPath(); g.arc(hx, yOf(tdb(specs[s].sm[hovIdx], hovIdx)), 3.5, 0, TAU); g.lineWidth = 1.5; g.strokeStyle = SRC[s].color; g.stroke(); g.fillStyle = 'rgba(10,12,14,0.8)'; g.fill(); }
   }
 }
-function applyGlow() { /* glow is read per frame from P.glow_intensity */ }
 function shortName(i) { return SRC[i].name; }
 function tint(i, txt) { return '<span class="sv" style="color:' + SRC[i].color + ';--sg:rgba(' + SRC[i].rgb.join(',') + ',0.35)">' + txt + '</span>'; }
 function kv(l, v, u, si) { return '<i>' + l + '</i> ' + (si === undefined ? v + u : tint(si, v + u)); }
@@ -778,7 +777,7 @@ function drawScGrid() {
 }
 /* ================= READOUTS (measured values only; unavailable -> dashes, never fabricated) ================= */
 function resetMetersLocal(all) {   // optimistic local clear; the processor is the source of truth and the next frame confirms it
-  if (D.loud) D.loud = { M: D.loud.M, S: D.loud.S, I: null, LRA: 0 };
+  if (D.loud) D.loud = { M: D.loud.M, S: D.loud.S, I: null, LRA: null };
   if (all) { D.peaks = []; specs.forEach(function (s) { s.peak.set(s.sm); }); }
 }
 function updateMeters(dt) {   // light smoothing of the stereo readouts toward the host values
@@ -1057,14 +1056,14 @@ function wfColHeight(b, m, hi, on, A, mid) {   // combined amplitude with the on
 }
 function wfRenderSmooth(g, W, T, ppc, ring, newest, lo, liveV, snap, mid, A, phase) {
   phase = phase || 0; var cL = wfXToCol(0, W, T, ppc) - phase, cR = wfXToCol(W, W, T, ppc) - phase, i0 = Math.max(lo, 0, Math.floor(cL) - 2), i1 = Math.min(newest, Math.ceil(cR) + 2);
-  var Hc = [], Pc = [], Cc = [], segOf = [], segStart = [], segBound = [], on = wfOnsetRing[P.wf_src], i, j = 0, seg = -1;
+  var Hc = [], Pc = [], Cc = [], segStart = [], segBound = [], on = wfOnsetRing[P.wf_src], i, j = 0, seg = -1;
   for (i = i0; i <= i1; i++) {
     var o = (i % WF_CAP) * 4, b = ring[o], m = ring[o + 1], h = ring[o + 2], f = snap.sh[i], lead = snap.lead[i] !== undefined;
     if (lead || seg < 0) { seg++; segStart.push(j); segBound.push(lead ? i + f : -1e9); }
-    Hc.push(wfColHeight(b, m, h, on[i % WF_CAP], A, mid)); Pc.push(lead ? i + (1 + f) / 2 : i + 0.5); Cc.push(wfRgbMix(b, m, h)); segOf.push(seg); j++;
+    Hc.push(wfColHeight(b, m, h, on[i % WF_CAP], A, mid)); Pc.push(lead ? i + (1 + f) / 2 : i + 0.5); Cc.push(wfRgbMix(b, m, h)); j++;
   }
   if (liveV) {   // the in-progress column (real data up to the right edge)
-    Hc.push(wfColHeight(liveV.b, liveV.m, liveV.h, liveV.o, A, mid)); Pc.push((wfN + Math.max(wfN, T - phase)) / 2); Cc.push(wfRgbMix(liveV.b, liveV.m, liveV.h)); segOf.push(seg < 0 ? 0 : seg);
+    Hc.push(wfColHeight(liveV.b, liveV.m, liveV.h, liveV.o, A, mid)); Pc.push((wfN + (liveV.d || 0) + Math.max(wfN + (liveV.d || 0), T - phase)) / 2); Cc.push(wfRgbMix(liveV.b, liveV.m, liveV.h));
     if (seg < 0) { seg = 0; segStart.push(0); segBound.push(-1e9); }
   }
   var n = Hc.length; if (n === 0) return;
@@ -1153,6 +1152,7 @@ function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in de
    anchor history (tempo + meter that were true at each bar) draws past bars correctly across tempo changes. No anchor / no bpm => no
    grid (honesty rule); a lattice is never extended further than 1.25 bars past its last anchor (transport stopped). */
 var wfOffset = 0;          // engine absolute column index minus page column index (re-based on genuine stream discontinuities)
+var WF_STALE_MS = 350;   // synthetic idle columns only when FRAMES stop arriving (silent playback still delivers real zero columns)
 var wfSynthTail = 0;       // trailing SYNTHETIC (idle, wall-clock) columns in the ring: real data re-bases instead of overlapping them
 var wfAnchors = [], wfAnchorFrame = -1, WF_MAX_ANCHORS = 64;
 function wfColToX(col, W, T, ppc) { return W - (T - col) * ppc; }
@@ -1208,7 +1208,7 @@ var wfLive = [null, null];
 function wfLiveFor(s) {   // current live-column view for source s, or null
   var L = wfLive[s]; if (!L || !isLive()) return null;
   var d = L.e - (wfOffset + wfN); if (d < 0 || d > 2) return null;   // already completed / not contiguous with the ring
-  return { b: L.b, m: L.m, h: L.h, o: wfOnsetPeek(s, L.b, L.m, L.h) };
+  return { b: L.b, m: L.m, h: L.h, o: wfOnsetPeek(s, L.b, L.m, L.h), d: d };
 }
 var WF_COL_CENTER = 0, WF_BAND_DELAY_MS = [2.25, 0.4, 0.1], wfBandDx = [0, 0, 0];
 var wfOnsetRing = [new Float32Array(WF_CAP), new Float32Array(WF_CAP)], wfOnsetSt = [{ prev: 0, ref: 0.1, held: 0 }, { prev: 0, ref: 0.1, held: 0 }];
@@ -1305,7 +1305,7 @@ function wfPhaseUpdate(dt) {
    grid stays mathematically true, so an on-beat kick starts within ~1 ms of its line because BOTH are true. sh[col] = boundary shift in columns;
    lead[col] marks a column with a measured onset (its layers use no filter-delay shift: the onset time is already delay-free). */
 function wfOnsetShifts(src, newest, lo, W, T, ppc, lines, phase) {
-  var sh = {}, lead = {}, fr = wfFracRing[src], on = wfOnsetRing[src], tol = WF_SNAP_MS / 1000 * WF_CPS, i, k;
+  var sh = {}, lead = {}, endSh = {}, fr = wfFracRing[src], on = wfOnsetRing[src], tol = WF_SNAP_MS / 1000 * WF_CPS, i, k;
   var i0 = Math.max(lo, 1, Math.floor(wfXToCol(0, W, T, ppc) - phase) - 1), i1 = Math.min(newest, Math.ceil(wfXToCol(W, W, T, ppc) - phase) + 1);
   for (i = i0; i <= i1; i++) {
     var f = fr[i % WF_CAP]; if (f < 0) continue;
@@ -1313,10 +1313,11 @@ function wfOnsetShifts(src, newest, lo, W, T, ppc, lines, phase) {
     if (on[i % WF_CAP] >= 0.5 && lines && lines.length) {   // layer 2: residual snap to a line within +-6 ms (after the global offset)
       var bd = i + f + phase, best = null, bdist = 1e9;
       for (k = 0; k < lines.length; k++) { var dd = Math.abs(lines[k][2] - bd); if (dd < bdist) { bdist = dd; best = lines[k][2]; } }
-      if (best !== null && bdist <= tol) { var dl = best - bd; s = f + dl; if (dl > 0) sh[i + 1] = dl; }   // later line: translate the lead (start and end boundary), duration preserved
+      if (best !== null && bdist <= tol) { var dl = best - bd; s = f + dl; if (dl > 0) endSh[i + 1] = dl; }   // later line: translate the lead (start and end boundary), duration preserved
     }
     sh[i] = s;
   }
+  for (k in endSh) if (lead[k] === undefined) sh[k] = endSh[k];   // tie rule: a later onset's own start wins; otherwise the earlier lead's end carries its translation
   return { sh: sh, lead: lead };
 }
 function wfRender() {
@@ -1363,7 +1364,7 @@ function wfStep(dt) {
   if (WFTRANS === 0) { wfWasFrozen = true; return; }   // PAUSED: freeze the whole strip (T holds, no synthetic columns, grid and waveform move as one); incoming columns still fill the ring
   if (wfWasFrozen) { wfWasFrozen = false; wfT = wfN; wfPhaseReset(true); }   // resume: jump to the newest column (no fast-forward); the phase estimator restarts
   wfPhaseUpdate(dt);
-  if (!isLive()) { wfIdleAcc += dt * WF_CPS; while (wfIdleAcc >= 1) { wfIdleAcc -= 1; wfPushCol(0, 0, 0, 0, 0, 0, 0, 0); wfSynthTail++; } } else wfIdleAcc = 0;   // no data: scroll silence on the same clock
+  if (performance.now() - D.lastAt > WF_STALE_MS && WFTRANS !== 0) { wfIdleAcc += dt * WF_CPS; while (wfIdleAcc >= 1) { wfIdleAcc -= 1; wfPushCol(0, 0, 0, 0, 0, 0, 0, 0); wfSynthTail++; } } else wfIdleAcc = 0;   // no data: scroll silence on the same clock
   wfT = Math.min(wfN + (wfLiveFor(P.wf_src) ? 1.0 : 1.2), Math.max(wfN, wfT + dt * WF_CPS));   // live column present: the right edge shows real data, so never run ahead of the column   // monotonic, never behind the data, never more than 1.2 columns ahead
   wfRender();
 }

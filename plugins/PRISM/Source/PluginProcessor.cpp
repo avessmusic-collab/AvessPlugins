@@ -27,11 +27,6 @@ namespace
         return joinInts({ a, b, kColTotal - a - b });
     }
 
-    juce::String sanitizeName(const juce::var& v, const juce::String& fallback)
-    {
-        auto s = v.toString().trim().substring(0, kMaxNameLength).trim();
-        return s.isEmpty() ? fallback : s;
-    }
 }
 
 //==============================================================================
@@ -67,6 +62,34 @@ void PRISMAudioProcessor::applyStateDefaults(juce::ValueTree& state)
     if (! state.hasProperty(uiFullscreen))      state.setProperty(uiFullscreen, false, nullptr);
     if (! state.hasProperty(uiWidth))           state.setProperty(uiWidth, 1100, nullptr);
     if (! state.hasProperty(uiHeight))          state.setProperty(uiHeight, 720, nullptr);
+}
+
+void PRISMAudioProcessor::applyUiStatePayload(juce::ValueTree& state, const juce::var& payload)
+{
+    using namespace prism::ids;
+
+    // Run the page's values through the processor's sanitizer before they enter the APVTS state.
+    // Only fields PRESENT in the payload are written; absent ones keep their current value.
+    juce::ValueTree tmp ("PRISM_UI");
+    if (payload.hasProperty ("row_splits"))              tmp.setProperty (uiRowSplits,      joinInts (intsFromVar (payload.getProperty ("row_splits", {}))),       nullptr);
+    if (payload.hasProperty ("lower_col_splits"))        tmp.setProperty (uiLowerColSplits, joinInts (intsFromVar (payload.getProperty ("lower_col_splits", {}))), nullptr);
+    if (payload.hasProperty ("spectrogram_orientation")) tmp.setProperty (uiSgOrientation,  payload.getProperty ("spectrogram_orientation", "v").toString(),      nullptr);
+    if (payload.hasProperty ("fullscreen"))              tmp.setProperty (uiFullscreen,     (bool) payload.getProperty ("fullscreen", false),                      nullptr);
+    if (payload.hasProperty ("waveform_style"))          tmp.setProperty (uiWaveformStyle,  payload.getProperty ("waveform_style", "rgb").toString(),               nullptr);
+    if (payload.hasProperty ("gonio_source"))            tmp.setProperty (uiGonioSource,    (int) payload.getProperty ("gonio_source", 0),                         nullptr);
+    if (payload.hasProperty ("scope_source"))            tmp.setProperty (uiScopeSource,    (int) payload.getProperty ("scope_source", 0),                         nullptr);
+    if (payload.hasProperty ("waveform_span"))           tmp.setProperty (uiWaveformSpan,   (double) payload.getProperty ("waveform_span", 8.0),                   nullptr);
+
+    // Sanitize a copy that carries the current state for absent fields, then copy back only the present ones.
+    auto& st = state;
+    juce::ValueTree work ("PRISM_UI");
+    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiWaveformStyle, uiGonioSource, uiScopeSource })
+        work.setProperty (id, tmp.hasProperty (id) ? tmp.getProperty (id) : st.getProperty (id), nullptr);
+    PRISMAudioProcessor::sanitizeState (work);
+
+    for (auto* id : { uiRowSplits, uiLowerColSplits, uiSgOrientation, uiFullscreen, uiWaveformSpan, uiWaveformStyle, uiGonioSource, uiScopeSource })
+        if (tmp.hasProperty (id))
+            st.setProperty (id, work.getProperty (id), nullptr);
 }
 
 void PRISMAudioProcessor::sanitizeState(juce::ValueTree& state)

@@ -66,6 +66,8 @@ public:
     // Defaults for the state entries / UI state (used by state init and sanitizer)
     static void applyStateDefaults(juce::ValueTree& state);
     static void sanitizeState(juce::ValueTree& state);
+    // Page -> state: writes ONLY the ui fields present in the payload (each sanitized); absent fields are untouched.
+    static void applyUiStatePayload(juce::ValueTree& state, const juce::var& payload);
 
    #ifndef PRISM_DEBUG_TONE
     #define PRISM_DEBUG_TONE 0

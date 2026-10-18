@@ -59,6 +59,9 @@ namespace prism
         const WaveformExtractor& getWaveform(int source) const noexcept { return sources[(size_t) source].wave; }
         std::uint64_t getWaveformDroppedColumns(int source) const noexcept { return sources[(size_t) source].waveDropped; }
         std::int64_t getWaveformAckedColumn(int source) const noexcept { return sources[(size_t) source].ackedCol; }
+        // buildSnapshot() calls that found every pooled buffer still held by a consumer and had to allocate (0 in normal operation).
+        std::uint64_t getSnapshotPoolMisses() const noexcept { return snapshotPoolMisses; }
+        static constexpr int getSnapshotPoolSize() noexcept { return kSnapshotPoolSize; }
         // Call before the worker starts. Baselines the epochs: resets requested earlier are not re-applied.
         void attachControls(const ExternalControls& c) noexcept;
 
@@ -135,6 +138,15 @@ namespace prism
         int readAnalysisMode() const noexcept;
         SpectrumEngine::Params readSpectrumParams() const noexcept;
 
+        // Snapshot buffer pool. kSnapshotPoolSize ~100 KB buffers are preallocated; buildSnapshot() reuses one whose
+        // ONLY owner is the pool (use_count() == 1: the mailbox, the editor and the tests all hold shared_ptr copies of
+        // the same control block, so a held snapshot can never be recycled or modified). Empty pool -> allocate (never block).
+        static constexpr int kSnapshotPoolSize = 8;
+        std::shared_ptr<AnalysisSnapshot> acquireSnapshotBuffer();
+        std::array<std::shared_ptr<AnalysisSnapshot>, kSnapshotPoolSize> snapshotPool;
+        std::size_t poolCursor = 0;
+        std::uint64_t snapshotPoolMisses = 0;
+
         struct AckEntry
         {
             std::uint64_t sequence = 0;
@@ -158,6 +170,11 @@ namespace prism
         // audio-thread-only playhead state
         std::uint64_t lastBlockStart = 0;
         bool lastBlockWritten = false;
+        // Per-source stream position of the block just captured (ring write position before the write) and whether the
+        // block made it into that source's ring at all. Beat events are translated into each source's own stream with
+        // these (the source streams diverge after a ring drop / skipped source).
+        std::array<std::uint64_t, kSourceCount> blockStartBySrc {};
+        std::array<bool, kSourceCount> blockWrittenBySrc {};
         double prevPpq = -1.0e300;
         double lastEmittedPpq = -1.0e300;   // ppq of the last beat event pushed (dedup across blocks); reset on stop / jump
 

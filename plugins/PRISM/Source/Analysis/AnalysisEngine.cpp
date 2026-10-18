@@ -22,6 +22,8 @@ namespace prism
             s.wave.prepare(config.sampleRate, registry[i].numChannels);
         }
         spectrum.prepare(config.sampleRate);
+        for (auto& s : snapshotPool)
+            s = std::make_shared<AnalysisSnapshot>();   // zero-initialised ONCE; buildSnapshot() recycles them without re-zeroing
     }
 
     SpectrumEngine::Params AnalysisEngine::readSpectrumParams() const noexcept
@@ -64,6 +66,7 @@ namespace prism
     void AnalysisEngine::captureBlock(const float* const* chans, int numBufChannels, int n) noexcept
     {
         lastBlockWritten = false;
+        blockWrittenBySrc.fill(false);   // a source that is skipped below has no frames of this block in its stream
         if (n <= 0 || chans == nullptr)
             return;
 
@@ -103,6 +106,11 @@ namespace prism
 
             const std::uint64_t start = st.ring.producerPosition();
             const bool ok = st.ring.write(ptrs, n);
+            if (idx < kSourceCount)
+            {
+                blockStartBySrc[(size_t) idx] = start;
+                blockWrittenBySrc[(size_t) idx] = ok;
+            }
             if (idx == 0)
             {
                 lastBlockStart = start;
@@ -197,7 +205,12 @@ namespace prism
             const auto off = (std::int64_t) std::llround((bp - p0) / ppqPerSample);
             const auto clamped = (std::uint64_t) std::clamp<std::int64_t>(off, 0, n - 1);
             const std::int64_t kk = ((k % num) + num) % num;
-            beatQueue.push({ lastBlockStart + clamped, kk == 0 });
+            BeatEvent ev;
+            ev.frameIndex = lastBlockStart + clamped;   // source-0 stream (barAnchorStreamFrame stays anchored to source 0)
+            ev.isBar = kk == 0;
+            for (int s = 0; s < kSourceCount; ++s)      // the same instant in each source's own stream; -1 = block not in that stream
+                ev.sourceFrame[(size_t) s] = blockWrittenBySrc[(size_t) s] ? (std::int64_t) (blockStartBySrc[(size_t) s] + clamped) : -1;
+            beatQueue.push(ev);
             lastEmittedPpq = bp;
         }
     }
@@ -252,7 +265,15 @@ namespace prism
                     lastBarFrame = (std::int64_t) be.frameIndex;   // monotonic: a loop jump never moves the anchor backwards in stream time
                 if (editorWork)
                     for (int k = 0; k < registry.getActiveCount(); ++k)
-                        sources[(size_t) registry.getActiveIndex(k)].wave.markBeat(be.frameIndex, be.isBar);
+                    {
+                        // Each extractor's column clock counts ITS OWN ring stream, which diverges from source 0's after a
+                        // ring drop / skipped block on that source: use the event's position in that source's stream.
+                        const int idx = registry.getActiveIndex(k);
+                        const std::int64_t f = (idx < kSourceCount && be.sourceFrame[(size_t) idx] != BeatEvent::kUnmapped)
+                                                   ? be.sourceFrame[(size_t) idx] : (std::int64_t) be.frameIndex;
+                        if (f >= 0)   // -1: the block holding this beat is not part of that source's stream
+                            sources[(size_t) idx].wave.markBeat((std::uint64_t) f, be.isBar);
+                    }
             }
         }
 
@@ -359,16 +380,71 @@ namespace prism
         }
     }
 
+    std::shared_ptr<AnalysisSnapshot> AnalysisEngine::acquireSnapshotBuffer()
+    {
+        for (std::size_t n = 0; n < snapshotPool.size(); ++n)
+        {
+            const std::size_t i = (poolCursor + n) % snapshotPool.size();
+            auto& slot = snapshotPool[i];
+            // use_count() == 1: only the pool owns the buffer. Every other owner (mailbox, editor, tests) holds a copy of
+            // THIS control block, and a copy can only be made from an existing copy, so no new owner can appear.
+            if (slot.use_count() == 1)
+            {
+                { auto probe = slot; }   // acquire-RMW on the refcount: happens-after the last consumer's release-decrement, so their reads of the buffer are ordered before our writes
+                poolCursor = (i + 1) % snapshotPool.size();
+                return slot;
+            }
+        }
+        ++snapshotPoolMisses;                              // every buffer is still held downstream: allocate (never block, never overwrite a held snapshot)
+        return std::make_shared<AnalysisSnapshot>();
+    }
+
+    namespace
+    {
+        // Pooled buffers are NOT re-zeroed. Every scalar the editor reads is (re)assigned here on every build; array
+        // contents are only ever read up to their count fields (or, for the spectrum, only when hasSpectrum).
+        void resetSourceScalars(SourceSnapshot& s) noexcept
+        {
+            s.hasSpectrum = false;
+            s.liveColumnIndex = -1;
+            s.liveColumn = { 0.0f, 0.0f, 0.0f };
+            s.waveformFirstColumn = -1;
+            s.waveformColumnCount = 0;
+            s.gonioPairCount = 0;
+            s.scopeCount = 0;
+            s.truePeakMaxDb = -INFINITY;
+            s.samplePeakMaxDb = -INFINITY;
+            s.hasStereo = false;
+            s.correlation = 0.0f;
+            s.widthPercent = 0.0f;
+            s.balanceDb = 0.0f;
+        }
+    }
+
     std::shared_ptr<const AnalysisSnapshot> AnalysisEngine::buildSnapshot()
     {
-        auto snap = std::make_shared<AnalysisSnapshot>();
+        // No allocation and no 100 KB zero-fill in steady state: the buffer comes from the pool (see acquireSnapshotBuffer).
+        // FIELD AUDIT - every member of AnalysisSnapshot / SourceSnapshot is assigned below on every build:
+        //   AnalysisSnapshot: sequence, sampleRate, bpm, transportPlaying, barAnchorStreamFrame, timeSigNumerator/Denominator,
+        //                     signalPresent, momentary/shortTerm/integrated Lufs, loudnessRange, sources[].
+        //   SourceSnapshot:   hasSpectrum, liveColumnIndex, liveColumn, waveformFirstColumn, waveformColumnCount, gonioPairCount,
+        //                     scopeCount, truePeakMaxDb, samplePeakMaxDb, hasStereo, correlation, widthPercent, balanceDb
+        //                     (scalars: resetSourceScalars + the per-source block below)
+        //                     spectrumDb (written when hasSpectrum, zero-filled otherwise), waveformColumns[0, count),
+        //                     gonio[0, 2*pairs), scope[0, scopeCount) (prefixes; nothing reads past the counts).
+        auto holder = acquireSnapshotBuffer();
+        AnalysisSnapshot* snap = holder.get();
         snap->sequence   = sequence.fetch_add(1, std::memory_order_relaxed) + 1;
         snap->sampleRate = config.sampleRate;
         snap->bpm        = bpm.load(std::memory_order_relaxed);
-        snap->barAnchorStreamFrame = lastBarFrame;
+        snap->barAnchorStreamFrame = lastBarFrame;   // source-0 stream frame (the page anchors its grid to source 0; other sources' flags use their own streams)
         snap->transportPlaying = transportState.load(std::memory_order_relaxed);
         snap->timeSigNumerator   = sigNum.load(std::memory_order_relaxed);
         snap->timeSigDenominator = sigDen.load(std::memory_order_relaxed);
+        snap->signalPresent = false;
+        snap->momentaryLufs = snap->shortTermLufs = snap->integratedLufs = snap->loudnessRange = NAN;
+        for (auto& s : snap->sources)
+            resetSourceScalars(s);
 
         const double fs = config.sampleRate;
         const int mode = readAnalysisMode();
@@ -429,6 +505,8 @@ namespace prism
             snap->signalPresent = snap->signalPresent || st.framesSinceLoud < holdFrames;
 
             spectrum.publish(idx, out);
+            if (! out.hasSpectrum)
+                out.spectrumDb.fill(0.0f);   // a recycled buffer must not carry a previous curve while hasSpectrum is false
 
             {   // waveform columns: [bass, mids, highs, flag], oldest first
                 std::array<WaveformExtractor::Column, kMaxWaveformColumns> cols {};
@@ -511,7 +589,7 @@ namespace prism
             }
         }
         ackMap[(size_t) (snap->sequence % kAckMapSize)] = ackNow;
-        return snap;
+        return holder;   // shared_ptr<AnalysisSnapshot> -> shared_ptr<const AnalysisSnapshot>: immutable from here, the pool will not touch it while any consumer holds a copy
     }
 
     bool AnalysisEngine::takeNewFramesFlag() noexcept

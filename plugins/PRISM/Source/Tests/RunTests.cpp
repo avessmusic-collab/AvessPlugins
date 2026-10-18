@@ -14,6 +14,7 @@
 */
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "UiStateUtil.h"
 #include "Analysis/AnalysisEngine.h"
 #include "Analysis/AnalysisWorker.h"
 #include "Analysis/SnapshotMailbox.h"
@@ -46,10 +47,11 @@ namespace
     thread_local int tlsCountAllocs = 0;
     std::atomic<long> gAllocCount { 0 };
     std::atomic<long long> gAllocBytes { 0 };
+    std::atomic<int> gCountAllThreads { 0 };   // > 0: count allocations on EVERY thread (used to watch the analysis worker)
 
     inline void noteAlloc(std::size_t n) noexcept
     {
-        if (tlsCountAllocs != 0)
+        if (tlsCountAllocs != 0 || gCountAllThreads.load(std::memory_order_relaxed) != 0)
         {
             gAllocCount.fetch_add(1, std::memory_order_relaxed);
             gAllocBytes.fetch_add((long long) n, std::memory_order_relaxed);
@@ -82,6 +84,16 @@ namespace
         long long bytes() const { return gAllocBytes.load() - startBytes; }   // bytes requested through operator new since construction
         long start = 0;
         long long startBytes = 0;
+        bool open = true;
+    };
+
+    // Counts allocations on all threads (worker included) between construction and finish().
+    struct ScopedAllocCountAllThreads
+    {
+        ScopedAllocCountAllThreads() { start = gAllocCount.load(); gCountAllThreads.fetch_add(1); }
+        long finish() { gCountAllThreads.fetch_sub(1); open = false; return gAllocCount.load() - start; }
+        ~ScopedAllocCountAllThreads() { if (open) gCountAllThreads.fetch_sub(1); }
+        long start = 0;
         bool open = true;
     };
 }
@@ -3614,6 +3626,31 @@ static void test_waveform_beat_events_host_grid()
     }
 }
 
+static void test_ui_state_partial_event()
+{
+    section("ui_state_partial_event");
+    using namespace prism::ids;
+    juce::ValueTree st("T");
+    PRISMAudioProcessor::sanitizeState(st);
+    auto mk = [](std::initializer_list<std::pair<const char*, juce::var>> kv) {
+        auto* o = new juce::DynamicObject();
+        for (auto& p : kv) o->setProperty(p.first, p.second);
+        return juce::var(o);
+    };
+    PRISMAudioProcessor::applyUiStatePayload(st, mk({ { "waveform_style", "layers" }, { "waveform_span", 16.0 }, { "gonio_source", 1 }, { "fullscreen", true }, { "spectrogram_orientation", "h" } }));
+    const auto rows0 = st.getProperty(uiRowSplits).toString(), cols0 = st.getProperty(uiLowerColSplits).toString();
+    PRISMAudioProcessor::applyUiStatePayload(st, mk({ { "scope_source", 1 } }));
+    check((int) st.getProperty(uiScopeSource) == 1, "partial event: its own field updated");
+    check(st.getProperty(uiWaveformStyle).toString() == "layers" && (double) st.getProperty(uiWaveformSpan) == 16.0
+          && (int) st.getProperty(uiGonioSource) == 1 && (bool) st.getProperty(uiFullscreen)
+          && st.getProperty(uiSgOrientation).toString() == "h"
+          && st.getProperty(uiRowSplits).toString() == rows0 && st.getProperty(uiLowerColSplits).toString() == cols0,
+          "partial event: absent fields keep their values");
+    PRISMAudioProcessor::applyUiStatePayload(st, mk({ { "waveform_span", 9999.0 } }));
+    check((double) st.getProperty(uiWaveformSpan) == 32.0 && st.getProperty(uiWaveformStyle).toString() == "layers", "partial event: present field still sanitized");
+    check(prism::uistate::sanitizeName("  abcdefghijklmnop ", "Ch1") == "abcdefghij" && prism::uistate::sanitizeName("   ", "Ch2") == "Ch2", "shared name sanitizer: trim, cap, fallback");
+}
+
 static void test_waveform_live_column_and_ui_sources()
 {
     section("waveform_live_column_and_ui_sources");
@@ -4673,6 +4710,313 @@ static void test_stage3_multi_instance_and_project_reload()
     }
 }
 
+//==============================================================================
+// Review fixes: per-source beat-event streams + snapshot buffer pool
+static void test_beat_flags_follow_each_sources_own_stream()
+{
+    section("beat_flags_follow_each_sources_own_stream");
+    // Beat events carry the SOURCE-0 stream frame (barAnchorStreamFrame stays anchored to source 0: that is what the page's grid
+    // is drawn from) AND the same instant in every source's own stream. Source 1's column clock counts ITS ring: after a
+    // source-1-only ring drop or a skipped source-1 block it lags/leads source 0 for the rest of the session, and the flags
+    // must still land on the columns that contain the beat's AUDIO (a click rendered at exactly the beat), judged on source 1's
+    // own columns (column start + onsetFrac * length), like capture_skew_audio_vs_beat_events does for source 0.
+    for (int mode = 0; mode < 2; ++mode)
+    {
+        const double fs = 48000.0, bpm = 120.0;
+        const int block = 480;
+        prism::AnalysisEngine eng(makeCfg(2, 2, fs), 14);   // 16384-frame rings
+        FakePlayHead ph; ph.bpm = bpm; ph.hasBarStart = true; ph.barStart = 0.0;
+        const double qPerSample = bpm / 60.0 / fs;
+        const std::uint64_t total = (std::uint64_t) (fs * 8.0);
+        std::vector<std::uint64_t> beatSamples;   // beat n at frame n * 24000 = first frame of block 50 n
+        for (int n = 1; (double) n / qPerSample < (double) total - 0.2 * fs; ++n) beatSamples.push_back((std::uint64_t) std::llround((double) n / qPerSample));
+
+        std::vector<std::vector<float>> bufs(4, std::vector<float>((size_t) block));
+        const float* ptrs[4] = { bufs[0].data(), bufs[1].data(), bufs[2].data(), bufs[3].data() };
+        std::vector<float> filler(16000, 0.0f);
+        const float* fp[2] = { filler.data(), filler.data() };
+        int skippedBlocks = 0;
+        for (std::uint64_t pos = 0; pos < total; pos += (std::uint64_t) block)
+        {
+            const int blockIndex = (int) (pos / (std::uint64_t) block);
+            for (int i = 0; i < block; ++i)
+            {
+                float v = 0.0f; const std::uint64_t f = pos + (std::uint64_t) i;
+                for (auto b : beatSamples) if (f >= b && f < b + (std::uint64_t) (0.05 * fs))
+                {
+                    std::uint32_t h = (std::uint32_t) f * 2654435761u; h ^= h >> 15; h *= 2246822519u; h ^= h >> 13;
+                    v = (float) (0.7 * std::exp(-(double) (f - b) / (0.015 * fs)) * ((double) (h & 0xffff) / 32767.5 - 1.0));
+                }
+                for (auto& b : bufs) b[(size_t) i] = v;
+            }
+            ph.ppq = (double) pos * qPerSample;
+            ph.barStart = std::floor(ph.ppq / 4.0 + 1e-12) * 4.0;
+
+            int hostChannels = 4;
+            if (mode == 0 && blockIndex == 200)   // fill ring 1 only: this block is dropped for source 1 (and only source 1); the filler becomes 16000 silent frames of stream 1
+                eng.getRing(1).write(fp, 16000);
+            if (mode == 1 && blockIndex >= 156 && blockIndex < 246)   // host hands over a buffer without the sidechain channels: source 1 skipped for 90 blocks (0.9 s)
+            {
+                hostChannels = 2;
+                ++skippedBlocks;
+            }
+            eng.captureBlock(ptrs, hostChannels, block);
+            eng.capturePlayhead(&ph, block);
+            eng.pump();
+        }
+
+        const auto s0 = (std::int64_t) eng.getHistory(0).framesSeen(), s1 = (std::int64_t) eng.getHistory(1).framesSeen();
+        const std::int64_t expectedSkew = mode == 0 ? (16000 - block) : -(std::int64_t) skippedBlocks * block;   // source 1 frames minus source 0 frames
+        check(s1 - s0 == expectedSkew && (mode == 0 ? eng.getOverrunCount(1) == 1 && eng.getOverrunCount(0) == 0 : skippedBlocks == 90),
+              mode == 0 ? "setup (ring drop): source 1's stream is 15520 frames ahead of source 0's, the overrun is source-1-only"
+                        : "setup (skipped source): source 1's stream is 43200 frames behind source 0's");
+
+        const auto colsFor = [&](int src) { return allColumns(eng.getWaveform(src)); };
+        const auto cols0 = colsFor(0), cols1 = colsFor(1);
+        const auto colStart = [&](std::uint64_t k) { return (k * 3ull * (std::uint64_t) fs + 252ull) / 253ull; };
+
+        int valid1 = 0, invalid1 = 0, matched1 = 0, valid0 = 0, matched0 = 0;
+        double worstMs1 = 0.0, worstMs0 = 0.0;
+        for (std::uint64_t i = 0; i < eng.getBeatEventsSeen(); ++i)
+        {
+            const auto& ev = eng.getBeatLogEntry(i);
+            for (int src = 0; src < 2; ++src)
+            {
+                const std::int64_t f = ev.sourceFrame[(size_t) src];
+                if (f < 0) { if (src == 1) ++invalid1; continue; }
+                (src == 0 ? valid0 : valid1)++;
+                const std::uint64_t k = (std::uint64_t) f * 253ull / (3ull * (std::uint64_t) fs);
+                for (const auto& col : (src == 0 ? cols0 : cols1))
+                    if (col.index == k && col.onsetFrac >= 0.0f && col.flag != 0.0f)
+                    {
+                        const double len = (double) (colStart(k + 1) - colStart(k));
+                        const double onsetSample = (double) colStart(k) + (double) col.onsetFrac * len;
+                        const double ms = std::abs(onsetSample - (double) f) / fs * 1000.0;
+                        (src == 0 ? worstMs0 : worstMs1) = std::max(src == 0 ? worstMs0 : worstMs1, ms);
+                        (src == 0 ? matched0 : matched1)++;
+                    }
+            }
+        }
+        int flagged0 = 0, flagged1 = 0;
+        for (const auto& c : cols0) flagged0 += c.flag != 0.0f;
+        for (const auto& c : cols1) flagged1 += c.flag != 0.0f;
+
+        std::printf("   [info] %s: events %llu; source 0: %d/%d flagged at an audio onset (worst %.3f ms); source 1: %d/%d (worst %.3f ms), %d events outside its stream, %d flagged columns\n",
+                    mode == 0 ? "ring-1-only drop" : "skipped source 1", (unsigned long long) eng.getBeatEventsSeen(), matched0, valid0, worstMs0, matched1, valid1, worstMs1, invalid1, flagged1);
+        check(invalid1 >= 1, "beats inside the lost block have no position in source 1's stream (-1) and are not applied to it");
+        check(matched0 >= valid0 - 1 && worstMs0 <= 1.0 && flagged0 == valid0, "source 0: every beat flag sits on its audio onset within 1 ms; no extra flags");
+        char name[200];
+        std::snprintf(name, sizeof(name), "%s: source 1's flags land on source 1's OWN audio onsets within 1 ms (%d/%d), no stray flags (%d flagged columns)",
+                      mode == 0 ? "source-1-only ring drop" : "skipped source-1 blocks", matched1, valid1, flagged1);
+        check(valid1 >= 8 && matched1 >= valid1 - 1 && worstMs1 <= 1.0 && flagged1 == valid1, name);
+    }
+}
+
+namespace
+{
+    // Everything a consumer can read from a snapshot, as a deep value (for "the pool never changes a held snapshot").
+    prism::AnalysisSnapshot deepCopy(const prism::AnalysisSnapshot& s) { return s; }
+}
+
+static void test_snapshot_pool_reuse_and_isolation()
+{
+    section("snapshot_pool_reuse_and_isolation");
+    const double fs = 48000.0;
+    const auto data = makeProgramme(4, 120000, fs);
+    prism::AnalysisEngine eng(makeCfg(2, 2, fs), 14);
+    std::size_t pos = 0;
+    auto step = [&] {   // 480 frames of programme, pumped
+        const float* ptrs[4];
+        for (int c = 0; c < 4; ++c) ptrs[c] = data[(size_t) c].data() + (pos % 100000);
+        eng.captureBlock(ptrs, 4, 480);
+        eng.pump();
+        pos += 480;
+    };
+    for (int i = 0; i < 60; ++i) step();
+
+    {   // nothing held: the pool is cycled, nothing is allocated
+        std::vector<const void*> addrs;
+        for (int i = 0; i < 200; ++i)
+        {
+            step();
+            const auto s = eng.buildSnapshot();
+            if (std::find(addrs.begin(), addrs.end(), (const void*) s.get()) == addrs.end()) addrs.push_back(s.get());
+        }
+        char name[160];
+        std::snprintf(name, sizeof(name), "200 builds with nothing held cycle %zu distinct buffers (pool size %d), %llu allocation fallbacks", addrs.size(), prism::AnalysisEngine::getSnapshotPoolSize(),
+                      (unsigned long long) eng.getSnapshotPoolMisses());
+        check(addrs.size() <= (size_t) prism::AnalysisEngine::getSnapshotPoolSize() && addrs.size() >= 2 && eng.getSnapshotPoolMisses() == 0, name);
+    }
+
+    {   // an editor-like consumer holds a few snapshots for a long time: they never change and their buffers are never reused
+        std::vector<std::shared_ptr<const prism::AnalysisSnapshot>> held;
+        std::vector<prism::AnalysisSnapshot> copies;
+        for (int i = 0; i < 3; ++i)
+        {
+            for (int k = 0; k < 7; ++k) step();
+            held.push_back(eng.buildSnapshot());
+            copies.push_back(deepCopy(*held.back()));
+        }
+        bool distinct = held[0].get() != held[1].get() && held[1].get() != held[2].get() && held[0].get() != held[2].get();
+        bool buffersNeverReused = true;
+        for (int i = 0; i < 500; ++i)
+        {
+            step();
+            const auto s = eng.buildSnapshot();
+            for (const auto& h : held) buffersNeverReused &= s.get() != h.get();
+        }
+        bool unchanged = true;
+        for (size_t i = 0; i < held.size(); ++i)
+            unchanged &= held[i]->sequence == copies[i].sequence && diffSnapshots(*held[i], copies[i]).empty()
+                         && std::memcmp(held[i]->sources[0].scope.data(), copies[i].sources[0].scope.data(), sizeof(float) * (size_t) copies[i].sources[0].scopeCount) == 0;
+        check(distinct && buffersNeverReused, "3 held snapshots: 500 further builds never hand out a held buffer");
+        check(unchanged, "...and the held snapshots are bit-for-bit unchanged afterwards (immutable contract)");
+        check(eng.getSnapshotPoolMisses() == 0, "holding 3 of 8 buffers never exhausts the pool");
+    }
+
+    {   // every pooled buffer held: fall back to allocation (never block, never overwrite), then recover
+        std::vector<std::shared_ptr<const prism::AnalysisSnapshot>> all;
+        std::vector<prism::AnalysisSnapshot> copies;
+        for (int i = 0; i < prism::AnalysisEngine::getSnapshotPoolSize(); ++i)
+        {
+            step();
+            all.push_back(eng.buildSnapshot());
+            copies.push_back(deepCopy(*all.back()));
+        }
+        const auto missesBefore = eng.getSnapshotPoolMisses();
+        step();
+        const auto extra = eng.buildSnapshot();
+        bool notHeld = true;
+        for (const auto& h : all) notHeld &= extra.get() != h.get();
+        check(eng.getSnapshotPoolMisses() == missesBefore + 1 && notHeld && extra->sequence > all.back()->sequence && snapshotSane(*extra, fs),
+              "all 8 buffers held: the 9th build allocates a fresh snapshot (counted), valid, never touching a held one");
+        bool unchanged = true;
+        for (size_t i = 0; i < all.size(); ++i) unchanged &= diffSnapshots(*all[i], copies[i]).empty();
+        check(unchanged, "held snapshots untouched by the fallback build");
+
+        all.clear();
+        const auto missesAfterHold = eng.getSnapshotPoolMisses();
+        for (int i = 0; i < 20; ++i) { step(); (void) eng.buildSnapshot(); }
+        check(eng.getSnapshotPoolMisses() == missesAfterHold, "after the consumer lets go, the pool serves every build again");
+    }
+}
+
+static void test_snapshot_pool_no_stale_leakage()
+{
+    section("snapshot_pool_no_stale_leakage");
+    // Engine A drops every snapshot at once (its 8 buffers are recycled continuously, never re-zeroed). Engine B keeps every
+    // snapshot (never recycles: after 8 builds each build is a fresh, zero-initialised allocation). Both are fed identical audio and
+    // identical parameter changes and acknowledgements; EVERY snapshot of A must equal B's bit for bit on every field a consumer
+    // reads. Content is chosen so counts SHRINK between builds (hasSpectrum on -> off after a parameter change, silence, a silent
+    // sidechain, columns acked -> none pending): the places where a stale prefix could leak.
+    const double fs = 48000.0;
+    const auto data = makeProgramme(4, 70000, fs);
+    std::atomic<std::uint64_t> fetchedA { 0 }, fetchedB { 0 };
+    std::atomic<float> sizeA { 2.0f }, winA { 0.0f }, modeA { 2.0f }, sizeB { 2.0f }, winB { 0.0f }, modeB { 2.0f };
+    prism::AnalysisEngine A(makeCfg(2, 2, fs), 14), B(makeCfg(2, 2, fs), 14);
+    A.attachControls({ nullptr, nullptr, &modeA, &sizeA, &winA, &fetchedA });
+    B.attachControls({ nullptr, nullptr, &modeB, &sizeB, &winB, &fetchedB });
+
+    std::vector<std::shared_ptr<const prism::AnalysisSnapshot>> keepB;
+    std::mt19937 rng(11);
+    std::vector<std::vector<float>> buf(4, std::vector<float>(480));
+    bool same = true;
+    std::string firstDiff;
+    int shrinks = 0;
+    int prevSpectrum = 0, prevCols = 0;
+    for (int it = 0; it < 140; ++it)
+    {
+        const bool silent = (it % 40) >= 30;
+        const bool noSidechain = (it % 7) == 3;
+        for (int c = 0; c < 4; ++c)
+            for (int i = 0; i < 480; ++i)
+                buf[(size_t) c][(size_t) i] = silent || (noSidechain && c >= 2) ? 0.0f : data[(size_t) c][(size_t) (it * 480 + i) % data[0].size()];
+        const float* ptrs[4] = { buf[0].data(), buf[1].data(), buf[2].data(), buf[3].data() };
+        A.captureBlock(ptrs, 4, 480); A.pump();
+        B.captureBlock(ptrs, 4, 480); B.pump();
+
+        if (it % 17 == 5)   // identical parameter changes: hasSpectrum goes false until the new size has a full window
+        {
+            const float sz = (float) (rng() % 5), wn = (float) (rng() % 2), md = (float) (rng() % 3);
+            sizeA = sizeB = sz; winA = winB = wn; modeA = modeB = md;
+        }
+        const auto sa = A.buildSnapshot();
+        const auto sb = B.buildSnapshot();
+        keepB.push_back(sb);
+        if (it % 3 == 2) { fetchedA.store(sa->sequence); fetchedB.store(sb->sequence); }
+
+        const auto d = diffSnapshots(*sa, *sb);
+        if (! d.empty() && firstDiff.empty()) firstDiff = "iteration " + std::to_string(it) + ": " + d;
+        same &= d.empty();
+        shrinks += (sa->sources[0].hasSpectrum ? 0 : 1) * prevSpectrum + (sa->sources[0].waveformColumnCount < prevCols ? 1 : 0);
+        prevSpectrum = sa->sources[0].hasSpectrum ? 1 : 0;
+        prevCols = sa->sources[0].waveformColumnCount;
+    }
+    char name[240];
+    std::snprintf(name, sizeof(name), "140 snapshots from a recycled pool equal the never-recycled reference bit for bit%s%s", firstDiff.empty() ? "" : " -- first difference: ", firstDiff.c_str());
+    check(same, name);
+    checkf(shrinks > 0, "the scenario really shrank spectrum / column counts between builds (stale-prefix opportunities)", (double) shrinks);
+    check(A.getSnapshotPoolMisses() == 0 && B.getSnapshotPoolMisses() > 100, "A never needed an allocation; B (which holds everything) always did after the pool ran out");
+}
+
+static void test_snapshot_publish_allocates_nothing()
+{
+    section("snapshot_publish_allocates_nothing");
+    {   // the exact code the worker runs (pump + buildSnapshot), steady state, deterministic and single-threaded
+        const auto data = makeProgramme(4, 100000, 48000.0);
+        prism::AnalysisEngine eng(makeCfg(2, 2, 48000.0), 14);
+        std::size_t pos = 0;
+        auto cycle = [&] {
+            const float* ptrs[4];
+            for (int c = 0; c < 4; ++c) ptrs[c] = data[(size_t) c].data() + (pos % 90000);
+            eng.captureBlock(ptrs, 4, 800);
+            eng.pump();
+            (void) eng.buildSnapshot();
+            pos += 800;
+        };
+        for (int i = 0; i < 400; ++i) cycle();   // warm-up: lazily sized buffers, histories, first spectrum hops
+        long allocs;
+        {
+            ScopedAllocCount sc;
+            for (int i = 0; i < 600; ++i) cycle();   // 8 s of 60 Hz publishes
+            allocs = sc.finish();
+        }
+        checkf(allocs == 0, "600 steady-state publish cycles (capture + pump + buildSnapshot, 2 stereo sources, every analyzer live): zero allocations", (double) allocs);
+    }
+    {   // the real worker thread, editor open, ~1 s publish burst, allocations counted on EVERY thread
+        PRISMAudioProcessor proc;
+        check(configure(proc, 2, 2, 48000.0, 480), "configure");
+        proc.prepareToPlay(48000.0, 480);
+        proc.setEditorActive(true);
+        juce::AudioBuffer<float> buf(4, 480);
+        juce::MidiBuffer midi;
+        for (int c = 0; c < 4; ++c) for (int i = 0; i < 480; ++i) buf.setSample(c, i, 0.3f * std::sin(0.11f * (float) (i + 37 * c)));
+        auto run = [&](double ms) {
+            const auto t0 = Clock::now();
+            while (msSince(t0) < ms)
+            {
+                proc.processBlock(buf, midi);
+                (void) proc.getLatestAnalysisSnapshot();   // an editor that keeps up: holds at most one snapshot at a time
+                std::this_thread::sleep_for(std::chrono::milliseconds(4));
+            }
+        };
+        run(2000.0);   // warm-up
+        const auto publishedBefore = proc.getAnalysisWorker()->getPublishCount();
+        long allocs;
+        {
+            ScopedAllocCountAllThreads sc;
+            run(1200.0);
+            allocs = sc.finish();
+        }
+        const auto published = proc.getAnalysisWorker()->getPublishCount() - publishedBefore;
+        std::printf("      worker published %llu snapshots in the counted window, allocations on all threads: %ld\n", (unsigned long long) published, allocs);
+        check(published >= 30, "the worker really published during the counted window (>= 30 snapshots)");
+        checkf(allocs == 0, "worker + audio + message threads allocate nothing during a steady-state publish burst", (double) allocs);
+        proc.setEditorActive(false);
+        proc.releaseResources();
+    }
+}
+
 // Harness-only: PRISM_DUMP_FRAMES=<file> [PRISM_DUMP_BPM=120] writes engine-shaped snapshot data (as the editor would push it at 60 Hz) for page-side checks.
 static void dump_engine_frames(const char* path)
 {
@@ -4816,6 +5160,7 @@ int main()
     test_waveform_beat_flags_tempo_and_loop();
     test_waveform_beat_events_host_grid();
     test_waveform_live_column_and_ui_sources();
+    test_ui_state_partial_event();
     test_waveform_onset_fraction();
     test_transport_state_published();
     test_capture_skew_audio_vs_beat_events();
@@ -4830,6 +5175,12 @@ int main()
     test_integration_reset_plumbing();
     test_integration_stress_all_engines();
     test_integration_profile_and_memory();
+
+    // Review fixes (engine)
+    test_beat_flags_follow_each_sources_own_stream();
+    test_snapshot_pool_reuse_and_isolation();
+    test_snapshot_pool_no_stale_leakage();
+    test_snapshot_publish_allocates_nothing();
 
     // Phase 3.4
     test_stage3_multi_instance_and_project_reload();
