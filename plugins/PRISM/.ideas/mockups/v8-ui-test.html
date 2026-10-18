@@ -199,7 +199,7 @@ input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
   <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
   <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
   <div class="sgsel" id="wfspan" style="left:244px;width:92px" title="Waveform span in bars (click to cycle 1 / 2 / 4 / 8 / 16 / 32)">SPAN 8 bars</div>
-  <div class="sgsel" id="wfstyle" style="left:344px;width:46px" title="Waveform style: RGB (dense additive-colour bars) / LYR (CDJ layers)">RGB</div>
+  <div class="sgsel" id="wfstyle" style="left:344px;width:46px" title="Waveform style: FLOW (smooth continuous waveform) / LYR (CDJ layers)">FLOW</div>
   <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#ff4b4b">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#ffb84d">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#5df2b8">&#9679;</span> highs</div>
   <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
 
@@ -933,11 +933,11 @@ var WF = { pps: 0, c: THEMES[0].band.slice() };
 var wfOff = null, wfCtx = null, wfW = 0, wfH = 0;
 var wfRing = [new Float32Array(WF_CAP * 4), new Float32Array(WF_CAP * 4)];
 var wfN = 0, wfT = 0, wfIdleAcc = 0;
-var WFSTYLE = 'rgb';   // waveform style: 'rgb' (default: dense additive-colour bars; 'needles' is accepted as an alias) | 'layers' (CDJ nested bands)
+var WFSTYLE = 'rgb';   // waveform style: 'rgb' (default, chip FLOW: smooth continuous waveform with additive colour; 'needles' is an alias) | 'layers' (CDJ nested bands)
 var WFTRANS = -1, wfWasFrozen = false;   // host transport: -1 unknown / no playhead (always scrolls), 0 paused (strip + grid frozen as one), 1 playing
 function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / wfSpanSec(); }
 function wfSpanText() { var v = WFSPAN, isInt = Math.abs(v - Math.round(v)) < 0.05, t = isInt ? String(Math.round(v)) : v.toFixed(1); return t + (isInt && Math.round(v) === 1 ? ' bar' : ' bars'); }
-function wfStylePaint() { var e = $('wfstyle'); if (e) { e.textContent = WFSTYLE === 'layers' ? 'LYR' : 'RGB'; e.classList.add('on'); e.style.setProperty('--c', SRC[0].color); } }
+function wfStylePaint() { var e = $('wfstyle'); if (e) { e.textContent = WFSTYLE === 'layers' ? 'LYR' : 'FLOW'; e.classList.add('on'); e.style.setProperty('--c', SRC[0].color); } }
 function wfSetStyle(st, fromHost) {
   st = st === 'layers' ? 'layers' : 'rgb'; var changed = st !== WFSTYLE; WFSTYLE = st; wfStylePaint();
   if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }
@@ -972,15 +972,15 @@ function wfBands(t, s, o) {
    lows extend beyond the mids by a rim. Each rim is proportional to its band energy but clamped (hairline .. ~0.25A),
    so all three colours are visible on every audible column and no layer balloons; overall height still tracks amplitude.
    Exact rekordbox blue/amber/cream = set BAND.low/mid/high to [38,92,214] / [214,150,52] / [250,244,230]. */
-/* RGB style (Rekordbox / Serato RGB-mode look): dense, tightly packed, crisp vertical bars, symmetric about the centre, real data only.
-   COLOUR = additive frequency mix. Each band's theme anchor has three intensity tiers derived programmatically: deep (anchor x 0.55), bright (the anchor),
-   accent/hot (anchor lightened 25 % toward white); the tier follows the band's own energy (e < 0.5: deep -> bright, e >= 0.5: bright -> accent). The three tier
-   colours are then mixed with LINEAR energy weights (w = e / sum e) in linear-light RGB (gamma 2.2) and converted back, which gives the additive feel
-   (strong bass + mids = the lit blend between the two anchors, not a muddy average). Overall brightness scales 0.6..1.0 with the column's amplitude
-   (quiet bars dimmer, never gray). The spec's literal red/green/blue palettes are only the mapping model: the anchors are each theme's band trio.
-   Bar width = max(1, floor(w) - (w >= 3 ? 1 : 0)) device px, i.e. a 1 px gap only when a column is >= 3 px wide, otherwise fully packed; peak-held
-   per pixel when a column is under 1 px. Height = combined amplitude with the onset weighting; silent columns (<= 0.015) draw nothing. No sub-column
-   detail is fabricated: one flat bar per column. Lead columns start exactly at the engine onset position. */
+/* FLOW style (smooth continuous waveform; persisted id stays "rgb"): ONE mirrored filled envelope instead of bars.
+   GEOMETRY: every column contributes a control point (centre of its interval; the remaining part of the interval for an onset column) with the combined
+   amplitude + onset weighting; the envelope between points is a Catmull-Rom spline sampled per device pixel, clamped to [0, 97% of the half-lane]. A
+   transient (engine onset) starts a NEW spline segment at its true position column + onsetFrac, so its leading edge stays a crisp fast rise exactly where
+   the beat is while everything else flows. Silence drops to the centreline smoothly over ~1-2 columns (zero height = nothing drawn). Under 1 px per column the
+   per-pixel peak-held envelope (max over the covered columns, 1-2-1 smoothed twice) fills the same smooth shape. The path is anti-aliased by the canvas.
+   COLOUR: the approved additive mix (theme-trio anchors with deep/bright/accent tiers, linear energy weights, linear-light mixing, brightness with amplitude)
+   is computed per column and becomes a horizontal gradient (a stop every ~6 px, interpolated between column centres), so colour flows with the music; a
+   restrained vertical shade (slightly darker at the centreline) adds depth. Real data only: no fabricated detail between columns. */
 var wfTierKey = '', wfTier = null, WF_GLUT = null;
 function wfLin(c) { return Math.pow(c / 255, 2.2); }
 function wfTiers() {   // [band][deep, bright, accent][r, g, b] in linear light, rebuilt when the theme trio changes
@@ -992,12 +992,8 @@ function wfTiers() {   // [band][deep, bright, accent][r, g, b] in linear light,
   if (!WF_GLUT) { WF_GLUT = new Uint8Array(1025); for (var i = 0; i <= 1024; i++) WF_GLUT[i] = Math.round(255 * Math.pow(i / 1024, 1 / 2.2)); }
   return wfTier;
 }
-function wfDrawNeedle(g, x, w, mid, A, b, m, hi, on) {
-  b = clamp(b, 0, 1); m = clamp(m, 0, 1); hi = clamp(hi, 0, 1);
-  var peak = Math.max(b, m, hi); if (peak <= 0.015) return;
-  A *= WF_ONSET_BASE + WF_ONSET_GAIN * (on || 0);
-  var v = 0.75 * Math.max(b, 0.85 * m, 0.7 * hi) + 0.25 * Math.min(1, (b + m + hi) / 2);
-  var h = Math.min(A * (0.10 + 0.90 * v), mid * 0.97); if (h < 1) h = 1;
+function wfRgbMix(b, m, hi) {   // additive frequency mix -> [r, g, b] (0..255), or null for a silent column
+  var peak = Math.max(b, m, hi); if (peak <= 0.015) return null;
   var tiers = wfTiers(), e = [b, m, hi], S = b + m + hi, lr = 0, lg = 0, lb = 0, k;
   for (k = 0; k < 3; k++) {
     if (e[k] <= 0) continue;
@@ -1005,13 +1001,81 @@ function wfDrawNeedle(g, x, w, mid, A, b, m, hi, on) {
     lr += wgt * (tc[0] + (tn[0] - tc[0]) * f); lg += wgt * (tc[1] + (tn[1] - tc[1]) * f); lb += wgt * (tc[2] + (tn[2] - tc[2]) * f);
   }
   var bri = 0.6 + 0.4 * clamp(peak / 0.7, 0, 1);
-  var r = WF_GLUT[Math.min(1024, Math.round(lr * 1024))] * bri, gg = WF_GLUT[Math.min(1024, Math.round(lg * 1024))] * bri, bl = WF_GLUT[Math.min(1024, Math.round(lb * 1024))] * bri;
-  var bw = Math.max(1, Math.floor(w) - (w >= 3 ? 1 : 0));
-  g.globalAlpha = 1;
-  g.fillStyle = 'rgb(' + (r | 0) + ',' + (gg | 0) + ',' + (bl | 0) + ')'; g.fillRect(x, mid - h, bw, 2 * h);
+  return [WF_GLUT[Math.min(1024, Math.round(lr * 1024))] * bri, WF_GLUT[Math.min(1024, Math.round(lg * 1024))] * bri, WF_GLUT[Math.min(1024, Math.round(lb * 1024))] * bri];
 }
-function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {
-  if (WFSTYLE === 'rgb') { wfDrawNeedle(g, x, w, mid, A, b, m, hi, on); return; }   // w = block width in device px; on = onset 0..1 (visual height weighting)
+function wfColHeight(b, m, hi, on, A, mid) {   // combined amplitude with the onset weighting (0 for a silent column)
+  var peak = Math.max(b, m, hi); if (peak <= 0.015) return 0;
+  var v = 0.75 * Math.max(b, 0.85 * m, 0.7 * hi) + 0.25 * Math.min(1, (b + m + hi) / 2);
+  return Math.min(A * (WF_ONSET_BASE + WF_ONSET_GAIN * (on || 0)) * (0.10 + 0.90 * v), mid * 0.97);
+}
+function wfRenderSmooth(g, W, T, ppc, ring, newest, lo, liveV, snap, mid, A) {
+  var cL = wfXToCol(0, W, T, ppc), cR = wfXToCol(W, W, T, ppc), i0 = Math.max(lo, 0, Math.floor(cL) - 2), i1 = Math.min(newest, Math.ceil(cR) + 2);
+  var Hc = [], Pc = [], Cc = [], segOf = [], segStart = [], segBound = [], on = wfOnsetRing[P.wf_src], i, j = 0, seg = -1;
+  for (i = i0; i <= i1; i++) {
+    var o = (i % WF_CAP) * 4, b = ring[o], m = ring[o + 1], h = ring[o + 2], f = snap.sh[i], lead = f !== undefined;
+    if (lead || seg < 0) { seg++; segStart.push(j); segBound.push(lead ? i + f : -1e9); }
+    Hc.push(wfColHeight(b, m, h, on[i % WF_CAP], A, mid)); Pc.push(lead ? i + (1 + f) / 2 : i + 0.5); Cc.push(wfRgbMix(b, m, h)); segOf.push(seg); j++;
+  }
+  if (liveV) {   // the in-progress column (real data up to the right edge)
+    Hc.push(wfColHeight(liveV.b, liveV.m, liveV.h, liveV.o, A, mid)); Pc.push((wfN + Math.max(wfN, T)) / 2); Cc.push(wfRgbMix(liveV.b, liveV.m, liveV.h)); segOf.push(seg < 0 ? 0 : seg);
+    if (seg < 0) { seg = 0; segStart.push(0); segBound.push(-1e9); }
+  }
+  var n = Hc.length; if (n === 0) return;
+  (function () {   // light 1-2-1 low-pass of the control heights inside each segment (onset segments are NOT smoothed across), so the envelope reads organic rather than jittery
+    var sm = Hc.slice(), q, sg;
+    for (sg = 0; sg < segStart.length; sg++) { var s0 = segStart[sg], s1 = sg + 1 < segStart.length ? segStart[sg + 1] - 1 : n - 1; for (q = s0; q <= s1; q++) sm[q] = 0.25 * Hc[Math.max(s0, q - 1)] + 0.5 * Hc[q] + 0.25 * Hc[Math.min(s1, q + 1)]; }
+    Hc = sm;
+  })();
+  var last = null, k;   // silent columns borrow the nearest colour (their height is 0, so it only shapes the gradient near the edges of a sound)
+  for (k = 0; k < n; k++) { if (Cc[k]) last = Cc[k]; else if (last) Cc[k] = last; }
+  last = null; for (k = n - 1; k >= 0; k--) { if (Cc[k]) last = Cc[k]; else if (last) Cc[k] = last; }
+  if (!Cc[0]) return;   // all silent
+  var segEnd = []; for (k = 0; k < segStart.length; k++) segEnd.push(k + 1 < segStart.length ? segStart[k + 1] - 1 : n - 1);
+  var hpx = new Float32Array(W), cr = new Float32Array(W), cg = new Float32Array(W), cb = new Float32Array(W), x, maxH = mid * 0.97;
+  if (ppc >= 1) {
+    var s = 0, jj = 0;
+    for (x = 0; x < W; x++) {
+      var c = wfXToCol(x + 0.5, W, T, ppc);
+      while (s + 1 < segStart.length && segBound[s + 1] <= c) s++;
+      var js = segStart[s], je = segEnd[s]; if (jj < js) jj = js; if (jj > je) jj = je;
+      while (jj < je && Pc[jj + 1] <= c) jj++;
+      while (jj > js && Pc[jj] > c) jj--;
+      var hv, t0, c0, c1;
+      if (c <= Pc[js]) { hv = Hc[js]; c0 = c1 = Cc[js]; t0 = 0; }
+      else if (jj >= je) { hv = Hc[je]; c0 = c1 = Cc[je]; t0 = 0; }
+      else {
+        t0 = (c - Pc[jj]) / (Pc[jj + 1] - Pc[jj]);
+        var p0 = Hc[Math.max(js, jj - 1)], p1 = Hc[jj], p2 = Hc[jj + 1], p3 = Hc[Math.min(je, jj + 2)], t2 = t0 * t0, t3 = t2 * t0;
+        hv = 0.5 * ((2 * p1) + (-p0 + p2) * t0 + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+        c0 = Cc[jj]; c1 = Cc[jj + 1];
+      }
+      hpx[x] = Math.max(0, Math.min(maxH, hv)); cr[x] = c0[0] + (c1[0] - c0[0]) * t0; cg[x] = c0[1] + (c1[1] - c0[1]) * t0; cb[x] = c0[2] + (c1[2] - c0[2]) * t0;
+    }
+  } else {   // under 1 px per column: peak-held envelope per pixel, smoothed
+    var jx = 0;
+    for (x = 0; x < W; x++) {
+      var a0 = Math.floor(wfXToCol(x, W, T, ppc)), a1 = Math.floor(wfXToCol(x + 1, W, T, ppc) - 1e-9), best = -1, bj = -1, q;
+      for (q = a0; q <= a1; q++) { var jq = q - i0; if (jq < 0 || jq >= n) continue; if (Hc[jq] > best) { best = Hc[jq]; bj = jq; } }
+      if (bj < 0) { hpx[x] = 0; var cc = x > 0 ? [cr[x - 1], cg[x - 1], cb[x - 1]] : Cc[0]; cr[x] = cc[0]; cg[x] = cc[1]; cb[x] = cc[2]; continue; }
+      hpx[x] = Math.min(maxH, best); cr[x] = Cc[bj][0]; cg[x] = Cc[bj][1]; cb[x] = Cc[bj][2];
+    }
+    for (var pass = 0; pass < 2; pass++) { var prev = hpx[0]; for (x = 1; x < W - 1; x++) { var cur = hpx[x]; hpx[x] = 0.25 * prev + 0.5 * cur + 0.25 * hpx[x + 1]; prev = cur; } }
+  }
+  // fill: top envelope left -> right, bottom envelope right -> left
+  g.globalAlpha = 1;
+  var grad = g.createLinearGradient(0, 0, W, 0), step = 6;
+  for (x = 0; x < W; x += step) grad.addColorStop(x / W, 'rgb(' + (cr[x] | 0) + ',' + (cg[x] | 0) + ',' + (cb[x] | 0) + ')');
+  grad.addColorStop(1, 'rgb(' + (cr[W - 1] | 0) + ',' + (cg[W - 1] | 0) + ',' + (cb[W - 1] | 0) + ')');
+  g.beginPath(); g.moveTo(0, mid - hpx[0]);
+  for (x = 0; x < W; x++) g.lineTo(x + 0.5, mid - hpx[x]);
+  g.lineTo(W, mid - hpx[W - 1]); g.lineTo(W, mid + hpx[W - 1]);
+  for (x = W - 1; x >= 0; x--) g.lineTo(x + 0.5, mid + hpx[x]);
+  g.closePath(); g.fillStyle = grad; g.fill();
+  g.save(); g.clip();   // restrained vertical shade: a little darker at the centreline, full colour toward the peaks
+  var vg = g.createLinearGradient(0, 0, 0, wfH); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(0.5, 'rgba(0,0,0,0.20)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, wfH); g.restore();
+}
+function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in device px; on = onset 0..1 (visual height weighting)
   /* FIXED layer identity in every situation, theme and path (normal, live edge, peak-held): OUTER = lows (theme low colour), MIDDLE = mids (theme mid
      colour), INNER = highs (theme high colour blended 70 % toward white). A band that is not meaningfully present (<= 0.015) draws NO layer at all and
      gets no forced hairline, so bassless content never has a bass-impersonating outer block: mids-only reads as a middle-weight amber wedge (slightly
@@ -1159,7 +1223,8 @@ function wfRender() {
   for (var bk = 0; bk < 3; bk++) wfBandDx[bk] = -Math.round(WF_BAND_DELAY_MS[bk] / 1000 * WF_CPS * ppc);   // filter-latency compensation (px)
   var lines = wfGridLinesNow(W, T, ppc), snap = wfOnsetShifts(P.wf_src, newest, lo, W, T, ppc);
   wfDrawGridLines(g, lines);   // grid FIRST: it sits behind the waveform layers
-  if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
+  if (WFSTYLE === 'rgb') { wfRenderSmooth(g, W, T, ppc, ring, newest, lo, liveV, snap, mid, A); }   // smooth continuous waveform (style id 'rgb', chip FLOW)
+  else if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
     var rs = 0, ri = -1, real = false;
     for (x = 0; x <= W; x++) {
       var cur = -1, isReal = false;
