@@ -1,0 +1,81 @@
+name: PRISM Windows build + installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/PRISM/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/prism-windows.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Release, MSVC)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -A x64
+
+      - name: Build VST3 + tests
+        run: |
+          cmake --build build --config Release --target PRISM_VST3 --parallel
+          cmake --build build --config Release --target PRISM_Tests --parallel
+
+      - name: Run PRISM test suite (full, on Windows)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse build -Filter PRISM_Tests.exe | Select-Object -First 1
+          & $exe.FullName
+          if ($LASTEXITCODE -ne 0) { throw "PRISM_Tests failed with exit $LASTEXITCODE" }
+
+      - name: Locate built VST3 bundle
+        shell: pwsh
+        run: |
+          $vst3 = Get-ChildItem -Recurse -Directory build -Filter PRISM.vst3 | Select-Object -First 1
+          if (-not $vst3) { throw "PRISM.vst3 not found" }
+          echo "VST3_DIR=$($vst3.FullName)" >> $env:GITHUB_ENV
+          Get-ChildItem -Recurse $vst3.FullName | Select-Object FullName
+
+      - name: pluginval (strictness 5, Windows)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+          $pv = Get-ChildItem -Recurse pluginval -Filter pluginval.exe | Select-Object -First 1
+          & $pv.FullName --strictness-level 5 --validate-in-process --skip-gui-tests --validate "$env:VST3_DIR"
+          if ($LASTEXITCODE -ne 0) { throw "pluginval failed" }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Normalize artefact path for the installer script
+        shell: pwsh
+        run: |
+          # prism.iss expects build/plugins/PRISM/PRISM_artefacts/Release/VST3/PRISM.vst3
+          $expected = "build/plugins/PRISM/PRISM_artefacts/Release/VST3/PRISM.vst3"
+          if (-not (Test-Path $expected)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $expected) | Out-Null
+            Copy-Item -Recurse $env:VST3_DIR $expected
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" plugins\PRISM\installer\windows\prism.iss
+          Get-ChildItem plugins\PRISM\installer\windows\Output
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PRISM-Windows-Installer
+          path: plugins/PRISM/installer/windows/Output/*.exe
+          if-no-files-found: error
+
+      - name: Upload raw VST3 (debugging aid)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PRISM-Windows-VST3
+          path: ${{ env.VST3_DIR }}
