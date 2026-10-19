@@ -30,6 +30,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#if defined(_WIN32)
+ #include <malloc.h>
+#endif
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -69,10 +72,16 @@ namespace
     void* rawAllocAligned(std::size_t n, std::size_t align)
     {
         noteAlloc(n);
-        void* p = nullptr;
         if (align < sizeof(void*)) align = sizeof(void*);
+       #if defined(_WIN32)
+        void* p = _aligned_malloc(n != 0 ? n : 1, align);
+        if (p == nullptr)
+            throw std::bad_alloc();
+       #else
+        void* p = nullptr;
         if (posix_memalign(&p, align, n != 0 ? n : 1) != 0)
             throw std::bad_alloc();
+       #endif
         return p;
     }
 
@@ -108,10 +117,15 @@ void operator delete(void* p) noexcept                                { std::fre
 void operator delete[](void* p) noexcept                              { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept                   { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept                 { std::free(p); }
-void operator delete(void* p, std::align_val_t) noexcept              { std::free(p); }
-void operator delete[](void* p, std::align_val_t) noexcept            { std::free(p); }
-void operator delete(void* p, std::size_t, std::align_val_t) noexcept   { std::free(p); }
-void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+#if defined(_WIN32)
+ #define PRISM_ALIGNED_FREE(p) _aligned_free(p)
+#else
+ #define PRISM_ALIGNED_FREE(p) std::free(p)
+#endif
+void operator delete(void* p, std::align_val_t) noexcept              { PRISM_ALIGNED_FREE(p); }
+void operator delete[](void* p, std::align_val_t) noexcept            { PRISM_ALIGNED_FREE(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept   { PRISM_ALIGNED_FREE(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { PRISM_ALIGNED_FREE(p); }
 
 //==============================================================================
 namespace
