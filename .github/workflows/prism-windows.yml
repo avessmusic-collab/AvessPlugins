@@ -27,7 +27,7 @@ jobs:
 
       - name: Configure (Release, MSVC)
         shell: pwsh
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -A x64 "-DWEBVIEW2_PACKAGE_LOCATION=$env:WEBVIEW2_DIR"
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -A x64 "-DJUCE_WEBVIEW2_PACKAGE_LOCATION=$env:WEBVIEW2_DIR" "-DWEBVIEW2_PACKAGE_LOCATION=$env:WEBVIEW2_DIR"
 
       - name: Build VST3 + tests
         run: |
