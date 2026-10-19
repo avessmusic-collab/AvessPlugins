@@ -16,8 +16,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fetch WebView2 SDK (NuGet)
+        shell: pwsh
+        run: |
+          nuget install Microsoft.Web.WebView2 -OutputDirectory nuget_packages
+          $pkg = Get-ChildItem nuget_packages -Directory -Filter "Microsoft.Web.WebView2*" | Select-Object -First 1
+          if (-not $pkg) { throw "WebView2 package not found" }
+          echo "WEBVIEW2_DIR=$($pkg.FullName)" >> $env:GITHUB_ENV
+          echo "WebView2 SDK at $($pkg.FullName)"
+
       - name: Configure (Release, MSVC)
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -A x64
+        shell: pwsh
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -A x64 "-DWEBVIEW2_PACKAGE_LOCATION=$env:WEBVIEW2_DIR"
 
       - name: Build VST3 + tests
         run: |
