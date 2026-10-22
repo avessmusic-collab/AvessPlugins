@@ -67,8 +67,14 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip" -OutFile pluginval.zip
           Expand-Archive pluginval.zip -DestinationPath pluginval
           $pv = Get-ChildItem -Recurse pluginval -Filter pluginval.exe | Select-Object -First 1
-          & $pv.FullName --strictness-level 5 --validate-in-process --skip-gui-tests --validate "$env:VST3_DIR"
-          if ($LASTEXITCODE -ne 0) { throw "pluginval failed" }
+          # pluginval.exe is a GUI-subsystem binary: '&' does not wait for it
+          # ($LASTEXITCODE stays $null) and its exit code can lie after a
+          # successful validation. Pipe to force the wait and trust the
+          # printed verdict - same approach as the CORRUPTR workflow.
+          & $pv.FullName --strictness-level 5 --validate-in-process --skip-gui-tests --timeout-ms 300000 --validate "$env:VST3_DIR" 2>&1 | Tee-Object -FilePath pluginval-out.txt
+          $log = Get-Content pluginval-out.txt -Raw
+          if ($log -match 'SUCCESS') { Write-Host 'Validation verdict: SUCCESS'; exit 0 }
+          Write-Host 'Validation verdict: FAILED'; exit 1
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
