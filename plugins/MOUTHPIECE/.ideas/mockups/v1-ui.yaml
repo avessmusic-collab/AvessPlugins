@@ -1,0 +1,675 @@
+# MOUTHPIECE - UI design specification v1
+# Generated: 2026-10-22
+# Direction: Zynaptiq INTENSITY-inspired slate chassis / amber-gold glow, uniform small-to-medium knobs
+# Coordinates are in base-window pixels (1100x700); the UI scales 75-200% uniformly.
+
+window:
+  width: 1100
+  height: 700
+  resizable: true
+  min_scale: 0.75
+  max_scale: 2.0
+  scaling: uniform  # whole stage scaled with a single transform; layout is absolute at base size
+
+colors:
+  background: "#2b3240"      # chassis (soft-molded slate)
+  chassis_top: "#2f3646"
+  chassis_bottom: "#222733"
+  panel_top: "#343c4d"
+  panel_bottom: "#2b3341"
+  inset: "#141a22"           # recessed screens / step cells
+  primary: "#e8b84b"         # amber-gold: arcs, playheads, active steps, pitch curve
+  primary_hi: "#ffd982"
+  primary_dim: "#7a5e22"
+  text: "#e6e9f0"
+  label: "#8f99ad"           # letter-spaced uppercase labels
+  label_dim: "#5d6679"
+  secondary: "#586172"       # brushed metal mid
+  accent: "#e8b84b"
+
+vowel_palette:  # desaturated tints, warm -> cool; brightness encodes voiced ratio
+  A: "#b87c6b"   # clay
+  E: "#b59a6e"   # sand
+  I: "#7fa18f"   # sage
+  O: "#6f93a8"   # steel
+  U: "#8a7fae"   # dusty violet
+
+typography:
+  header: "Lato, Inter, Helvetica Neue, Arial, sans-serif"
+  body: "Lato, Inter, Helvetica Neue, Arial, sans-serif"
+  label: { size: 8.5px, weight: 600, letter_spacing: 0.1em, transform: uppercase }
+  value: { size: 10px, weight: 700 }
+  size: { large: 14px, medium: 11px, small: 9px }
+
+styling:
+  panels: 'raised neumorphic: vertical gradient, 1px top highlight, soft bottom shadow, radius 16'
+  insets: 'recessed screens: #141a22, inner shadow 0 2px 7px, radius 10'
+  knob: 'domed brushed-metal sphere (radial + conic brushing), amber arc ring r=17.5 w/ glow, gold position dot; ALL knobs diameter 40 (no hero knobs)'
+  knob_diameter: 40
+  buttons: 'pill recessed track with raised active thumb (sliding), LED dot for toggles'
+  texture: 'fractal-noise matte overlay @ 6% opacity'
+
+layout:
+  type: custom
+  panels:
+    - id: topbar
+      kind: plate
+      position: {x: 14, y: 14}
+      size: {width: 1072, height: 62}
+    - id: chopmap
+      kind: raised
+      position: {x: 16, y: 88}
+      size: {width: 788, height: 232}
+    - id: sequencer
+      kind: raised
+      position: {x: 16, y: 332}
+      size: {width: 788, height: 232}
+    - id: groove
+      kind: raised
+      position: {x: 16, y: 576}
+      size: {width: 788, height: 108}
+    - id: pitch
+      kind: raised
+      title: "PITCH"
+      position: {x: 820, y: 88}
+      size: {width: 264, height: 176}
+    - id: amp_env
+      kind: raised
+      title: "AMP ENV"
+      position: {x: 820, y: 272}
+      size: {width: 130, height: 92}
+    - id: vintage
+      kind: raised
+      title: "VINTAGE"
+      position: {x: 954, y: 272}
+      size: {width: 130, height: 92}
+    - id: filter
+      kind: raised
+      title: "FILTER"
+      position: {x: 820, y: 372}
+      size: {width: 264, height: 96}
+    - id: chop_gate
+      kind: raised
+      title: "CHOP GATE"
+      position: {x: 820, y: 476}
+      size: {width: 130, height: 92}
+    - id: saturation
+      kind: raised
+      title: "SATURATION"
+      position: {x: 954, y: 476}
+      size: {width: 130, height: 92}
+    - id: output
+      kind: raised
+      title: "OUTPUT"
+      position: {x: 820, y: 576}
+      size: {width: 264, height: 108}
+  displays:
+    - id: chop_map_screen
+      parent: chopmap
+      position: {x: 28, y: 100}
+      size: {width: 764, height: 208}
+      note: "waveform, colored slices, pitch curve w/ note names, per-voice playheads"
+    - id: groove_screen
+      parent: groove
+      position: {x: 234, y: 588}
+      size: {width: 200, height: 80}
+      note: "16-step timing/velocity feel of the selected groove template"
+    - id: output_meter
+      parent: output
+      position: {x: 900, y: 640}
+      size: {width: 172, height: 18}
+      note: "stereo output meter"
+
+sections:  # hierarchical view
+  top_bar: [dropzone, key_readout, sensitivity, mode, pitchMode, preset_browser]
+  chop_map: [vowel]
+  sequencer: [pattern, transport, midi_drag, step_grid]
+  groove: [groove, sliceSelect, monoPattern, latch, syncMode, swing, grooveAmt, humanize, seed]
+  right_column:
+    pitch: [transpose, fineTune, formant, guard, glide, scale, scaleRoot, pitchTarget]
+    amp_env: [attack, release]
+    vintage: [srReduce, bitDepth]
+    filter: [filterType, cutoff, reso, keyTrack]
+    chop_gate: [gateDepth, gateRelease]
+    saturation: [drive, satMix]
+    output: [output, limiter]
+
+controls:
+  - id: dropzone
+    type: custom
+    label: "File / drop zone"
+    parameter: null  # non-APVTS (ValueTree state / settings panel / UI-only)
+    note: "drop audio file (WAV, AIFF, FLAC, MP3); shows file name + meta"
+    position: {x: 154, y: 24}
+    size: {width: 180, height: 44}
+  - id: key_readout
+    type: custom
+    label: "Detected key"
+    parameter: null  # non-APVTS (ValueTree state / settings panel / UI-only)
+    note: "click to override detected key (non-APVTS, stored in state)"
+    position: {x: 346, y: 24}
+    size: {width: 80, height: 44}
+  - id: sensitivity
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "SENS"
+    parameter: null  # non-APVTS (ValueTree state / settings panel / UI-only)
+    range: [40, 250]
+    default: 60
+    demo_value: 60  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: ms
+    diameter: 40
+    position: {x: 438, y: 22}
+    size: {width: 100, height: 48}
+  - id: mode
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: segmented-pill
+    label: "Play mode"
+    parameter: "mode"
+    options: ["PATTERN", "PADS", "KEYS", "SPLIT"]
+    default: 0
+    demo_value: 0
+    position: {x: 550, y: 31}
+    size: {width: 224, height: 30}
+  - id: pitchMode
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: segmented-pill
+    label: "Pitch mode"
+    parameter: "pitchMode"
+    options: ["NATURAL", "CLASSIC"]
+    default: 0
+    demo_value: 0
+    position: {x: 786, y: 31}
+    size: {width: 116, height: 30}
+  - id: preset_browser
+    type: custom
+    label: "Preset browser"
+    parameter: null  # non-APVTS (ValueTree state / settings panel / UI-only)
+    note: "prev / name / next (.mouthpiece presets)"
+    position: {x: 914, y: 26}
+    size: {width: 154, height: 40}
+  - id: vowel
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: segmented-pill
+    label: "Vowel"
+    parameter: "vowel"
+    options: ["ANY", "A", "E", "I", "O", "U"]
+    default: 0
+    demo_value: 0
+    position: {x: 562, y: 106}
+    size: {width: 222, height: 22}
+  - id: pattern
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: segmented-pill
+    label: "Pattern"
+    parameter: "pattern"
+    options: ["A", "B", "C", "D", "E", "F", "G", "H"]
+    default: 0
+    demo_value: 0
+    position: {x: 28, y: 343}
+    size: {width: 268, height: 26}
+  - id: transport
+    type: button
+    juce_relay: WebToggleButtonRelay
+    style: pill-toggle-with-led
+    label: "HOST 120"
+    parameter: null  # non-APVTS (ValueTree state / settings panel / UI-only)
+    default: 1
+    demo_value: 1
+    position: {x: 308, y: 343}
+    size: {width: 84, height: 26}
+  - id: midi_drag
+    type: custom
+    label: "MIDI drag-out"
+    parameter: null  # non-APVTS (ValueTree state / settings panel / UI-only)
+    note: "drag the current pattern into the DAW as .mid (performExternalDragDropOfFiles)"
+    position: {x: 652, y: 343}
+    size: {width: 140, height: 26}
+  - id: step_grid
+    type: custom
+    label: "Step grid"
+    parameter: null  # non-APVTS (ValueTree state / settings panel / UI-only)
+    note: "16 steps x 7 lanes (Slice/Pitch/Velocity/Probability/Gate/Ratchet/Chord tone); ValueTree state, not APVTS"
+    position: {x: 116, y: 380}
+    size: {width: 668, height: 172}
+  - id: groove
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: dropdown
+    label: "Groove template"
+    parameter: "groove"
+    options: ["Straight", "2-Step", "Speed Garage", "Broken Beat", "User 1", "User 2", "User 3", "User 4"]
+    default: 0
+    demo_value: 1
+    position: {x: 28, y: 588}
+    size: {width: 194, height: 26}
+  - id: sliceSelect
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: dropdown
+    label: "Slice select"
+    parameter: "sliceSelect"
+    options: ["Fixed", "Cycle", "Random", "Best match"]
+    default: 0
+    demo_value: 0
+    position: {x: 28, y: 620}
+    size: {width: 194, height: 24}
+  - id: monoPattern
+    type: button
+    juce_relay: WebToggleButtonRelay
+    style: pill-toggle-with-led
+    label: "MONO"
+    parameter: "monoPattern"
+    default: 1
+    demo_value: 1
+    position: {x: 28, y: 652}
+    size: {width: 58, height: 24}
+  - id: latch
+    type: button
+    juce_relay: WebToggleButtonRelay
+    style: pill-toggle-with-led
+    label: "LATCH"
+    parameter: "latch"
+    default: 0
+    demo_value: 0
+    position: {x: 96, y: 652}
+    size: {width: 58, height: 24}
+  - id: syncMode
+    type: button
+    juce_relay: WebToggleButtonRelay
+    style: pill-toggle-with-led
+    label: "KEY SYNC"
+    parameter: "syncMode"
+    default: 0
+    demo_value: 0
+    position: {x: 164, y: 652}
+    size: {width: 58, height: 24}
+  - id: swing
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "SWING"
+    parameter: "swing"
+    range: [50, 75]
+    default: 50
+    demo_value: 60  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: pct
+    diameter: 40
+    position: {x: 448, y: 598}
+    size: {width: 52, height: 56}
+  - id: grooveAmt
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "AMOUNT"
+    parameter: "grooveAmt"
+    range: [0, 150]
+    default: 100
+    demo_value: 100  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: pct
+    diameter: 40
+    position: {x: 534, y: 598}
+    size: {width: 52, height: 56}
+  - id: humanize
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "HUMANIZE"
+    parameter: "humanize"
+    range: [0, 10]
+    default: 0
+    demo_value: 2.5  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: ms1
+    diameter: 40
+    position: {x: 620, y: 598}
+    size: {width: 52, height: 56}
+  - id: seed
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "SEED"
+    parameter: "seed"
+    range: [0, 999]
+    default: 0
+    demo_value: 7  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: int
+    diameter: 40
+    position: {x: 706, y: 598}
+    size: {width: 52, height: 56}
+  - id: transpose
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "TRANSPOSE"
+    parameter: "transpose"
+    range: [-24, 24]
+    default: 0
+    demo_value: 3  # value shown in the mockup
+    scale: lin
+    bipolar: true
+    format: st
+    diameter: 40
+    position: {x: 833, y: 114}
+    size: {width: 52, height: 56}
+  - id: fineTune
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "FINE TUNE"
+    parameter: "fineTune"
+    range: [-100, 100]
+    default: 0
+    demo_value: 0  # value shown in the mockup
+    scale: lin
+    bipolar: true
+    format: ct
+    diameter: 40
+    position: {x: 895, y: 114}
+    size: {width: 52, height: 56}
+  - id: formant
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "FORMANT"
+    parameter: "formant"
+    range: [-12, 12]
+    default: 0
+    demo_value: 1.5  # value shown in the mockup
+    scale: lin
+    bipolar: true
+    format: st
+    diameter: 40
+    position: {x: 957, y: 114}
+    size: {width: 52, height: 56}
+  - id: guard
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "GUARD"
+    parameter: "guard"
+    range: [0, 100]
+    default: 100
+    demo_value: 80  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: pct
+    diameter: 40
+    position: {x: 1019, y: 114}
+    size: {width: 52, height: 56}
+  - id: glide
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "GLIDE"
+    parameter: "glide"
+    range: [0, 500]
+    default: 0
+    demo_value: 45  # value shown in the mockup
+    scale: pow  # skew 2.5
+    bipolar: false
+    format: ms
+    diameter: 40
+    position: {x: 833, y: 184}
+    size: {width: 52, height: 56}
+  - id: scale
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: dropdown
+    label: "Scale"
+    parameter: "scale"
+    options: ["Auto (detected)", "Chromatic", "Major", "Natural minor", "Dorian", "Phrygian", "Harmonic minor", "Minor pentatonic", "Major pentatonic", "Custom"]
+    default: 0
+    demo_value: 0
+    position: {x: 900, y: 190}
+    size: {width: 172, height: 24}
+  - id: scaleRoot
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: dropdown
+    label: "Scale root"
+    parameter: "scaleRoot"
+    options: ["Auto", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    default: 0
+    demo_value: 0
+    position: {x: 900, y: 218}
+    size: {width: 90, height: 24}
+  - id: pitchTarget
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: dropdown
+    label: "Pitch target"
+    parameter: "pitchTarget"
+    options: ["Absolute", "Relative"]
+    default: 0
+    demo_value: 0
+    position: {x: 1002, y: 218}
+    size: {width: 70, height: 24}
+  - id: attack
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "ATTACK"
+    parameter: "attack"
+    range: [0, 200]
+    default: 1
+    demo_value: 3  # value shown in the mockup
+    scale: pow  # skew 2.0
+    bipolar: false
+    format: ms
+    diameter: 40
+    position: {x: 828, y: 298}
+    size: {width: 52, height: 56}
+  - id: release
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "RELEASE"
+    parameter: "release"
+    range: [1, 2000]
+    default: 40
+    demo_value: 180  # value shown in the mockup
+    scale: pow  # skew 3.0
+    bipolar: false
+    format: ms
+    diameter: 40
+    position: {x: 890, y: 298}
+    size: {width: 52, height: 56}
+  - id: srReduce
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "RATE"
+    parameter: "srReduce"
+    range: [4, 48]
+    default: 48
+    demo_value: 32  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: khz
+    diameter: 40
+    position: {x: 962, y: 298}
+    size: {width: 52, height: 56}
+  - id: bitDepth
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "BITS"
+    parameter: "bitDepth"
+    range: [8, 24]
+    default: 24
+    demo_value: 16  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: bit
+    diameter: 40
+    position: {x: 1024, y: 298}
+    size: {width: 52, height: 56}
+  - id: filterType
+    type: combo-box
+    juce_relay: WebComboBoxRelay
+    style: segmented-pill
+    label: "Filter type"
+    parameter: "filterType"
+    options: ["LP", "BP", "HP"]
+    default: 0
+    demo_value: 0
+    position: {x: 960, y: 378}
+    size: {width: 112, height: 18}
+  - id: cutoff
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "CUTOFF"
+    parameter: "cutoff"
+    range: [20, 20000]
+    default: 20000
+    demo_value: 5200  # value shown in the mockup
+    scale: log
+    bipolar: false
+    format: hz
+    diameter: 40
+    position: {x: 840, y: 398}
+    size: {width: 64, height: 56}
+  - id: reso
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "RESO"
+    parameter: "reso"
+    range: [0, 0.95]
+    default: 0
+    demo_value: 0.28  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: d2
+    diameter: 40
+    position: {x: 920, y: 398}
+    size: {width: 64, height: 56}
+  - id: keyTrack
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "KEY TRACK"
+    parameter: "keyTrack"
+    range: [0, 100]
+    default: 0
+    demo_value: 40  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: pct
+    diameter: 40
+    position: {x: 1000, y: 398}
+    size: {width: 64, height: 56}
+  - id: gateDepth
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "DEPTH"
+    parameter: "gateDepth"
+    range: [0, 100]
+    default: 0
+    demo_value: 35  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: pct
+    diameter: 40
+    position: {x: 828, y: 502}
+    size: {width: 52, height: 56}
+  - id: gateRelease
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "RELEASE"
+    parameter: "gateRelease"
+    range: [0, 50]
+    default: 8
+    demo_value: 8  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: ms1
+    diameter: 40
+    position: {x: 890, y: 502}
+    size: {width: 52, height: 56}
+  - id: drive
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "DRIVE"
+    parameter: "drive"
+    range: [0, 24]
+    default: 0
+    demo_value: 6  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: db1
+    diameter: 40
+    position: {x: 962, y: 502}
+    size: {width: 52, height: 56}
+  - id: satMix
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "MIX"
+    parameter: "satMix"
+    range: [0, 100]
+    default: 100
+    demo_value: 60  # value shown in the mockup
+    scale: lin
+    bipolar: false
+    format: pct
+    diameter: 40
+    position: {x: 1024, y: 502}
+    size: {width: 52, height: 56}
+  - id: output
+    type: rotary-knob
+    juce_relay: WebSliderRelay
+    label: "OUTPUT"
+    parameter: "output"
+    range: [-24, 24]
+    default: 0
+    demo_value: -1.5  # value shown in the mockup
+    scale: lin
+    bipolar: true
+    format: db1
+    diameter: 40
+    position: {x: 833, y: 604}
+    size: {width: 52, height: 56}
+  - id: limiter
+    type: button
+    juce_relay: WebToggleButtonRelay
+    style: pill-toggle-with-led
+    label: "LIMITER"
+    parameter: "limiter"
+    default: 1
+    demo_value: 1
+    position: {x: 900, y: 604}
+    size: {width: 80, height: 24}
+
+step_grid_spec:
+  steps: 16
+  cell: {width: 38, height: 22, pitch_x: 42, pitch_y: 25}
+  origin: {x: 116, y: 380}
+  lane_label_column: {x: 28, width: 80}
+  lanes:
+    - {id: slice, label: SLICE, input: 'click toggles step; vertical drag changes slice ref', range: [1, 12]}
+    - {id: pitch, label: PITCH, input: 'paint/drag', range: [-7, 7], unit: scale degrees}
+    - {id: velocity, label: VELOCITY, input: 'paint/drag', range: [0, 127]}
+    - {id: probability, label: PROB, input: 'paint/drag', range: [0, 100]}
+    - {id: gate, label: GATE, input: 'paint/drag; >1.0 ties into next step', range: [0.05, 2.0]}
+    - {id: ratchet, label: RATCHET, input: 'click cycles', range: [1, 4]}
+    - {id: chordTone, label: CHORD, input: 'click cycles', range: [0, 3]}
+  note: 'per-step values live in the ValueTree state (spec section 10), not APVTS'
+
+chop_map_spec:
+  slices_shown: 12
+  slice_fill: 'vowel tint, alpha = 0.08 + 0.26 * voiced_ratio'
+  waveform: 'mirrored gold trace with glow'
+  pitch_curve: 'amber stepped curve over slices with note names (C3 = MIDI 60), follows transpose'
+  playheads: 'one gold line per active voice (max 8)'
+
+lower_half_modes:
+  PATTERN: 'step grid + pattern A-H + groove panel (primary view)'
+  PADS: '4x4 pads, MIDI 36-51, slice name + pitch'
+  KEYS: 'keyboard (C2-B4) showing best-match slice per key'
+  SPLIT: 'pads left, keys right'
+
+not_surfaced_in_mockup:
+  - {id: catchWindow, reason: 'APVTS param 0-40 ms; proposed home: settings panel / advanced drawer'}
+
+mock_bridge:
+  window.Juce: 'getSliderState / getToggleState / getComboBoxState mocks backed by in-page state'
+  console: 'all parameter changes logged as [MOUTHPIECE] param <id> = <value>'
