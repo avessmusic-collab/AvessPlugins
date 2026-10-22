@@ -140,6 +140,10 @@ if(WIN32)
     endif()
     find_package(WebView2 REQUIRED)
     target_link_libraries(PRISM_Tests PRIVATE juce::juce_webview2)
+    # The analysis/stress tests use large stack buffers (sanitizer builds
+    # already need a 64MB stack); Windows' default 1MB overflows mid-suite
+    # with STATUS_STACK_OVERFLOW (0xC00000FD).
+    target_link_options(PRISM_Tests PRIVATE /STACK:0x4000000)
 endif()
 if(PRISM_TEST_SANITIZE)
     target_compile_options(PRISM_Tests PRIVATE -fsanitize=${PRISM_TEST_SANITIZE} -fno-omit-frame-pointer -g)
