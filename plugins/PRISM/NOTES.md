@@ -7,6 +7,7 @@
 
 ## Lifecycle Timeline
 
+- **2026-10-22 (Windows 1.0.0):** Windows CI pipeline green (run 39745658151): VST3 + test exe build (WebView2 static loader via JUCE FindWebView2 - package location must be the NuGet PARENT dir), full suite 565/565 on Windows (64MB /STACK; 3 timing races fixed incl. ack-seam fetch race), pluginval S5 SUCCESS (gate on printed verdict - pluginval.exe is GUI-subsystem, pwsh does not wait), Inno Setup installer built + archived to dist/. macOS install verified current (binaries 10-18 = latest product code) and standalone UI verified 60fps. Windows installer NOT yet smoke-tested on a real Windows machine (GUI tests skipped on headless CI).
 - **2026-10-16:** Full QA sweep: code review (8 findings, all fixed incl. grid re-base displacement, Reset column duplication, LRA cross-gap blending), pluginval S5 SUCCESS, ASan/UBSan 0 reports, TSAN 0 races, suite 509/509 x5 idle (all intermittents proven load-flakes). Waveform refined through 8 user rounds: CDJ nested-rim layers, bar-based spans 1-32, unified sample-time grid (worst error ~11us, zero drift), onset alignment w/ filter-delay compensation, live-edge column (~19ms modeled latency), quiet grid layer, Ch1/Ch2 on all panes.
 - **2026-10-14:** Creative brief finalized via /dream (plugin-ideation)
 - **2026-10-15 (v1.0.0, Stage 3 COMPLETE — plugin working & installed):** Real v8 UI embedded and live-data wired. Verified: tone-accurate displays (LUFS −12.03 on −12dBFS sine, TP/SP −12.04, corr +1.00, mono = vertical gonio M-line), frame push p99 1.32ms (<2ms gate), multi-instance isolation, host-chunk reload, reset semantics, 26-min flat soak, 463 tests green. MANUAL DAW TESTS PENDING — checklist in .ideas/mockups/v8-integration-checklist.md §10 (DAW matrix, automation feel, freeze visual / fullscreen persistence / HiDPI retest on unlocked screen, 1-hour soak, WebView CPU gate in visible session).
@@ -31,4 +32,4 @@ v1.0 scope: 2 stereo sources (main + sidechain — Ableton Live's routing ceilin
 
 Full vision: `plugins/PRISM/.ideas/creative-brief.md`
 - **Last Packaged:** 2026-10-18
-- **Distribution:** plugins/PRISM/dist/PRISM.pkg (3.6 MB)
+- **Distribution:** plugins/PRISM/dist/PRISM.pkg (3.6 MB, macOS); plugins/PRISM/dist/PRISM-1.0.0-Windows.exe (4.1 MB, Windows, CI-built 2026-10-22)
