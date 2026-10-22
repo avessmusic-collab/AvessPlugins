@@ -4810,11 +4810,14 @@ static void test_stage3_multi_instance_and_project_reload()
         juce::MemoryBlock chunkD;  d.getStateInformation(chunkD);
         c.setStateInformation(chunkD.getData(), (int) chunkD.getSize());
         pump(500);
-        // the editor follows on its timer tick; bounded extra wait for loaded CI runners
-        for (int i = 0; i < 40 && std::abs(ec->getWidth() - 1000) > 1; ++i) pump(100);
+        // The editor follows on its timer tick once its page is ready (the
+        // redirect stays pending until then); bounded extra wait for loaded CI
+        // runners. editorActive distinguishes "page never booted / not showing"
+        // from "booted but did not resize".
+        for (int i = 0; i < 100 && std::abs(ec->getWidth() - 1000) > 1; ++i) pump(100);
         checkf(choiceIndex(c, "color_theme") == 6 && std::abs(ec->getWidth() - 1000) <= 1,
-               "open editor follows setStateInformation (theme + size; got theme, width)",
-               (double) choiceIndex(c, "color_theme"), (double) ec->getWidth());
+               "open editor follows setStateInformation (theme + size; got width, editorActive)",
+               (double) ec->getWidth(), c.isEditorActive() ? 1.0 : 0.0);
 
         // corrupt chunk must not crash and must sanitize
         juce::MemoryBlock junk; junk.append("garbage", 7);
