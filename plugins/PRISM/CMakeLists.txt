@@ -129,6 +129,18 @@ target_compile_definitions(PRISM_Tests
         JUCE_STANDALONE_APPLICATION=1
         JUCE_MODAL_LOOPS_PERMITTED=1
 )
+if(WIN32)
+    # PRISM_Tests is a plain add_executable, so juce_add_plugin's NEEDS_WEBVIEW2
+    # handling never applies to it; with the root-level
+    # JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1, juce_gui_extra calls
+    # CreateCoreWebView2EnvironmentWithOptions directly and needs
+    # WebView2LoaderStatic.lib at link time (LNK2019 otherwise).
+    if(NOT ("${JUCE_CMAKE_UTILS_DIR}" IN_LIST CMAKE_MODULE_PATH))
+        list(APPEND CMAKE_MODULE_PATH "${JUCE_CMAKE_UTILS_DIR}")
+    endif()
+    find_package(WebView2 REQUIRED)
+    target_link_libraries(PRISM_Tests PRIVATE juce::juce_webview2)
+endif()
 if(PRISM_TEST_SANITIZE)
     target_compile_options(PRISM_Tests PRIVATE -fsanitize=${PRISM_TEST_SANITIZE} -fno-omit-frame-pointer -g)
     target_link_options(PRISM_Tests PRIVATE -fsanitize=${PRISM_TEST_SANITIZE})
