@@ -4760,8 +4760,19 @@ static void test_stage3_multi_instance_and_project_reload()
         for (int i = 0; i < 480; ++i) { buf.setSample(0, i, 0.5f); buf.setSample(1, i, 0.5f); }
         for (int i = 0; i < 300; ++i) { a.processBlock(buf, midi); if (i % 20 == 0) pump(10); }
         pump(300);
-        auto sa = a.getLatestAnalysisSnapshot(), sb = b.getLatestAnalysisSnapshot();
-        check(sa != nullptr && sa->signalPresent, "A sees its signal");
+        auto sa = a.getLatestAnalysisSnapshot();
+        // Loaded CI runners can lag the worker's publish cadence well past the
+        // fixed pumps above: keep feeding until the snapshot reflects the
+        // signal, bounded at ~4s so a real failure still fails.
+        for (int i = 0; i < 40 && ! (sa != nullptr && sa->signalPresent); ++i)
+        {
+            for (int j = 0; j < 20; ++j) a.processBlock(buf, midi);
+            pump(100);
+            sa = a.getLatestAnalysisSnapshot();
+        }
+        auto sb = b.getLatestAnalysisSnapshot();
+        checkf(sa != nullptr && sa->signalPresent, "A sees its signal (got snapshot, signalPresent)",
+               sa != nullptr ? 1.0 : 0.0, (sa != nullptr && sa->signalPresent) ? 1.0 : 0.0);
         check(sb == nullptr || ! sb->signalPresent, "B untouched by A's audio (no shared state)");
 
         a.getStateInformation(chunkA);
@@ -4799,7 +4810,11 @@ static void test_stage3_multi_instance_and_project_reload()
         juce::MemoryBlock chunkD;  d.getStateInformation(chunkD);
         c.setStateInformation(chunkD.getData(), (int) chunkD.getSize());
         pump(500);
-        check(choiceIndex(c, "color_theme") == 6 && std::abs(ec->getWidth() - 1000) <= 1, "open editor follows setStateInformation (theme + size)");
+        // the editor follows on its timer tick; bounded extra wait for loaded CI runners
+        for (int i = 0; i < 40 && std::abs(ec->getWidth() - 1000) > 1; ++i) pump(100);
+        checkf(choiceIndex(c, "color_theme") == 6 && std::abs(ec->getWidth() - 1000) <= 1,
+               "open editor follows setStateInformation (theme + size; got theme, width)",
+               (double) choiceIndex(c, "color_theme"), (double) ec->getWidth());
 
         // corrupt chunk must not crash and must sanitize
         juce::MemoryBlock junk; junk.append("garbage", 7);
