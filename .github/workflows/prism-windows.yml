@@ -29,12 +29,22 @@ jobs:
         shell: pwsh
         run: |
           $inc = Join-Path $env:WEBVIEW2_DIR "build\native\include"
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -A x64 "-DJUCE_WEBVIEW2_PACKAGE_LOCATION=$env:WEBVIEW2_DIR" "-DWEBVIEW2_PACKAGE_LOCATION=$env:WEBVIEW2_DIR" "-DCMAKE_CXX_FLAGS=/I$inc"
+          # JUCE's FindWebView2 globs <location>/*Microsoft.Web.WebView2*, so the
+          # location must be the PARENT of the package dir (nuget_packages), not
+          # the package dir itself - otherwise the glob matches the .nupkg file
+          # and the loader lib path silently resolves to ...-NOTFOUND (LNK1181).
+          $pkgRoot = Split-Path $env:WEBVIEW2_DIR -Parent
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -A x64 "-DJUCE_WEBVIEW2_PACKAGE_LOCATION=$pkgRoot" "-DCMAKE_CXX_FLAGS=/I$inc"
 
       - name: Build VST3 + tests
+        shell: pwsh
         run: |
+          # Fail fast: pwsh only propagates the LAST command's exit code, which
+          # previously hid a PRISM_VST3 link failure behind the tests build.
           cmake --build build --config Release --target PRISM_VST3 --parallel
+          if ($LASTEXITCODE -ne 0) { throw "PRISM_VST3 build failed" }
           cmake --build build --config Release --target PRISM_Tests --parallel
+          if ($LASTEXITCODE -ne 0) { throw "PRISM_Tests build failed" }
 
       - name: Run PRISM test suite (full, on Windows)
         shell: pwsh
