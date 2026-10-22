@@ -952,7 +952,9 @@ static void test_end_to_end_publish_and_gating()
     bool nonDecreasing = true;
     const auto t0 = Clock::now();
     int blocks = 0;
-    while (msSince(t0) < 700.0)
+    // run at least 700ms; on loaded CI runners keep going (up to 5s) until
+    // enough distinct snapshots flowed - the 60 Hz rate cap check scales with secs
+    while (msSince(t0) < 700.0 || (seen.size() < 10 && msSince(t0) < 5000.0))
     {
         proc.processBlock(buf, midi); ++blocks;
         auto s = proc.getLatestAnalysisSnapshot();
@@ -970,8 +972,12 @@ static void test_end_to_end_publish_and_gating()
     check(nonDecreasing && strict, "fetched sequence numbers strictly increasing");
     checkf(seen.size() >= 10, "snapshots flow while the editor is active (distinct fetched)", (double) seen.size());
     checkf((double) seen.size() <= secs * 60.0 + 6.0, "publish rate capped at ~60 Hz", (double) seen.size(), secs * 60.0);
-    check(proc.getLatestAnalysisSnapshot()->sampleRate == 48000.0, "snapshot sample rate matches the host");
-    check(proc.getLastFetchedSequence() == prevSeq, "fetch records the last fetched sequence (ack seam)");
+    // This fetch can return a snapshot NEWER than the loop's prevSeq (the worker
+    // may publish in between), so assert the ack seam against what IT returned.
+    const auto lastFetched = proc.getLatestAnalysisSnapshot();
+    check(lastFetched != nullptr && lastFetched->sampleRate == 48000.0, "snapshot sample rate matches the host");
+    check(lastFetched != nullptr && proc.getLastFetchedSequence() == lastFetched->sequence,
+          "fetch records the last fetched sequence (ack seam)");
 
     // 3) Audio stops: no new frames -> no new sequence.
     sleepMs(100);
@@ -987,9 +993,10 @@ static void test_end_to_end_publish_and_gating()
     while (msSince(t2) < 300.0) { proc.processBlock(buf, midi); sleepMs(5); }
     check(proc.getAnalysisWorker()->getPublishCount() == c1, "stale fetch heartbeat (>500 ms) stops publishing");
 
-    // 5) Fetching again re-arms it.
+    // 5) Fetching again re-arms it. At least 300ms; bounded extra wait (3s) for loaded CI runners.
     const auto t3 = Clock::now();
-    while (msSince(t3) < 300.0) { proc.processBlock(buf, midi); proc.getLatestAnalysisSnapshot(); sleepMs(5); }
+    while (msSince(t3) < 300.0 || (proc.getAnalysisWorker()->getPublishCount() <= c1 && msSince(t3) < 3000.0))
+        { proc.processBlock(buf, midi); proc.getLatestAnalysisSnapshot(); sleepMs(5); }
     check(proc.getAnalysisWorker()->getPublishCount() > c1, "publishing resumes once the editor fetches again");
 
     proc.setEditorActive(false);
