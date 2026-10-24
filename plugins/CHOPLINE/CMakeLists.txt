@@ -60,6 +60,10 @@ juce_add_plugin(CHOPLINE
 # plugin-only.
 set(CHOPLINE_ENGINE_SOURCES
     src/engine/Engine.cpp
+    src/engine/SampleStore.cpp
+    src/engine/SliceMap.cpp
+    src/engine/TransientDetector.cpp
+    src/engine/ChopVoice.cpp
     src/state/Parameters.cpp
 )
 
@@ -67,6 +71,8 @@ set(CHOPLINE_PLUGIN_SOURCES
     src/PluginProcessor.cpp
     src/PluginEditor.cpp
     src/ui/LookAndFeel.cpp
+    src/ui/WaveformDisplay.cpp
+    src/ui/SamplerStrip.cpp
 )
 
 target_sources(CHOPLINE PRIVATE
@@ -85,6 +91,7 @@ target_link_libraries(CHOPLINE
         juce::juce_audio_processors
         juce::juce_audio_utils
         juce::juce_core
+        juce::juce_cryptography
         juce::juce_data_structures
         juce::juce_dsp
         juce::juce_events
@@ -124,9 +131,19 @@ set_source_files_properties(
 # ---------------------------------------------------------------------------
 juce_add_console_app(CHOPLINE_Tests PRODUCT_NAME "CHOPLINE_Tests")
 
-target_sources(CHOPLINE_Tests PRIVATE
+set(CHOPLINE_TEST_SOURCES
     tests/SanityTests.cpp
     tests/ParameterLayoutTests.cpp
+    tests/TransientDetectorTests.cpp
+    tests/SliceMapTests.cpp
+    tests/SnapshotExchangeTests.cpp
+    tests/SampleStoreTests.cpp
+    tests/VoicePoolTests.cpp
+    tests/EngineTests.cpp
+)
+
+target_sources(CHOPLINE_Tests PRIVATE
+    ${CHOPLINE_TEST_SOURCES}
     ${CHOPLINE_ENGINE_SOURCES}
 )
 
@@ -136,8 +153,10 @@ target_link_libraries(CHOPLINE_Tests
     PRIVATE
         Catch2::Catch2WithMain
         juce::juce_audio_basics
+        juce::juce_audio_formats
         juce::juce_audio_processors
         juce::juce_core
+        juce::juce_cryptography
         juce::juce_data_structures
         juce::juce_dsp
         juce::juce_events
@@ -153,7 +172,7 @@ target_compile_definitions(CHOPLINE_Tests
 )
 
 set_source_files_properties(
-    tests/SanityTests.cpp tests/ParameterLayoutTests.cpp
+    ${CHOPLINE_TEST_SOURCES}
     PROPERTIES COMPILE_OPTIONS "${CHOPLINE_WERROR_FLAG}"
 )
 

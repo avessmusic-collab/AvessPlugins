@@ -1,6 +1,7 @@
 // CHOPLINE — PluginProcessor
-// Phase 0: silent passthrough shell. Owns the APVTS (empty layout for now)
-// and the Engine stub. MIDI is accepted (synth) but ignored until Phase 1.
+// Phase 1: owns the APVTS and the Engine (sampler, slicer, voice pool, MIDI
+// triggering). State persists the parameters plus the sample reference
+// (path + hash + optional embedded FLAC) and the slice map (spec §10).
 
 #pragma once
 
@@ -16,7 +17,7 @@ class ChoplineAudioProcessor final : public juce::AudioProcessor
 {
 public:
     ChoplineAudioProcessor();
-    ~ChoplineAudioProcessor() override = default;
+    ~ChoplineAudioProcessor() override;
 
     // AudioProcessor
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -43,10 +44,15 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState& getState() noexcept { return state; }
+    engine::Engine& getEngine() noexcept { return engine; }
 
 private:
     juce::AudioProcessorValueTreeState state;
     engine::Engine engine;
+    std::atomic<float>* baseNoteParam = nullptr;
+
+    // Guards the message-thread hop in setStateInformation against destruction.
+    std::shared_ptr<bool> aliveFlag = std::make_shared<bool> (true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChoplineAudioProcessor)
 };

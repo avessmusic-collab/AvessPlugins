@@ -5,7 +5,7 @@ is `SPEC.md` (user-authored); the locked visual direction is the v17 mockup
 (`.ideas/mockups/v17-ui.yaml`, see `.ideas/creative-brief.md` "UI Design — FINAL").
 Work phase by phase (spec §11) and STOP after each phase for user approval.
 
-**Current phase: 0 (Scaffold) — complete, awaiting approval.**
+**Current phase: 1 (Sampler) — complete, awaiting approval.**
 
 ## Build commands
 
@@ -70,6 +70,59 @@ Do NOT install to system plugin folders until the user asks.
   pwsh masks non-final exit codes, so check `$LASTEXITCODE` after every build
   step.
 
+## Decisions made (Phase 1 — Sampler)
+
+- **SENS is mode-dependent** (locked v17 "lean slicing controls" = one knob):
+  Transient → onset sensitivity; Grid → division of the sample BPM
+  (1/4·1/8·1/16·1/32 by quartile); Equal → slice count 2–64; Manual → unused.
+- **Slicing controls are ValueTree STATE, not APVTS** (v17 scope `slice_map`):
+  mode, SENS, min slice length, zero-cross snap, sample BPM and the markers
+  live in `SLICES`/`SAMPLE` children of the root. The only Phase 1 APVTS
+  parameter is `midiBaseNote` (choice C0–C3, default C1 = 36, Ableton naming).
+- **Markers are stored in seconds** (model, message thread); the audio thread
+  sees a `SliceMapSnapshot` in sample frames. A session-rate change re-resamples
+  in the background and the slice map survives untouched.
+- **Snapshot reclamation**: `SnapshotExchange` publishes generation-stamped
+  nodes; the audio thread acks the generation at block end; the message thread
+  frees a retired snapshot only when a NEWER generation was acked AND no voice
+  still reads it (per-stream atomic sample pointers). Consequence: loading a
+  new sample never cuts ringing voices — they finish on the old snapshot.
+- **Voice stealing**: a retrigger moves the running stream into an in-voice
+  2 ms fast-fading TAIL and starts the new note immediately — "steal oldest
+  with 2 ms fade" without delaying the new onset. 16 voices preallocated.
+- **Declick**: equal-power (sin) fades at chop start/end, per-chop 0–20 ms,
+  default 2 ms, applied at playback (never destructive), clamped to half the
+  chop length.
+- **FLAC blob cached at load** (24-bit, lossless-for-purpose): used for state
+  embedding (`embed` toggle in settings, default ON) and as the source for
+  session-rate re-resampling (original file read exactly once). Restore
+  prefers the embedded blob, falls back to path; path + MD5 hash stored for
+  the Phase-later relink dialog (spec §10).
+- **Note-off is ignored in Phase 1** (one-shot chop playback). Gate/Loop/Fit
+  playback modes and choke groups are Phase 3 per spec §6/§11.
+- **Strip A interactions** (per the Phase 1 brief): wheel zoom + scroll,
+  draggable markers in ALL modes, double-click add / alt-click delete in
+  Manual, click-to-audition, shift-click multi-select. NOTE: the v14/v17 YAML
+  says the strip is "exactly v12" with editing only in the chop overlay — the
+  overlay sample editor is a later phase; reconcile when it lands.
+- **Sample BPM** is detected at load (inter-onset-interval histogram, fallback
+  120) and user-editable in the '…' slicing flyout (spec §4 Grid mode).
+- **juce_cryptography** linked (MD5 file hash). JUCE 9 writer API:
+  `AudioFormatWriterOptions` (the old `createWriterFor` overload is deprecated
+  and -Werror fails on it).
+- **setStateInformation hops to the message thread** when called off-thread
+  (pluginval strictness 10 does this); `getStateInformation` is thread-safe via
+  the engine's model lock.
+- **Dev-only hooks** (Standalone builds, env vars, no effect in hosts):
+  `CHOPLINE_AUTOLOAD_SAMPLE=<path>` loads a file at startup;
+  `CHOPLINE_UI_SNAPSHOT=<path.png>` renders the editor to PNG ~6 s after open
+  (component snapshot — not a screen capture). Tests: hidden `[.smoke]` case
+  uses `CHOPLINE_SMOKE_FILE` / `CHOPLINE_SMOKE_OUT` for a real-vocal offline
+  render; never run by default/CI, no user paths committed.
+- **Allocation discipline is enforced by test**: `EngineTests.cpp` replaces
+  global new/delete in the test binary and asserts zero (de)allocations on the
+  calling thread across 1000 processed blocks with triggers (spec §8/§12).
+
 ## Known issues / notes
 
 - **auval not run locally**: validating an AU requires the component to be
@@ -78,8 +131,21 @@ Do NOT install to system plugin folders until the user asks.
   (disposable) runner and runs `auval -v aumu Chpl Manu`.
 - Local pluginval run is strictness 10 with GUI tests; CI adds
   `--skip-gui-tests` (headless runners).
-- Phase 0 editor label is the only UI; it uses the first LookAndFeel colour
-  tokens (paper / ink / label / accent / repeat) from the v17 mockup.
+- **Sample + slice snapshots publish independently** — after a load there is a
+  one-block window where a trigger can pair the new sample with the previous
+  slice snapshot. Voice bounds-clamping makes it safe (no crash/overread);
+  revisit with a shared serial if it ever becomes audible.
+- **macOS TCC in the Standalone**: loading a file from a protected folder
+  (Desktop/Documents) via a path the app did not get from a file chooser or
+  drag can block on the system permission prompt (found via the dev autoload
+  hook). Normal UI loads (chooser / drag-and-drop) carry consent and are fine.
+- **During a session-rate change**, ringing voices finish on the old-rate
+  snapshot (brief pitch offset); in practice `prepareToPlay` resets voices.
+- **Transient defaults by ear pending**: default SENS 55 / min 80 ms gave 9
+  chops on the 34 s dev vocal — musically plausible but tune with the user in
+  DAW testing (Phase 1 user test).
+- Waveform repaints the whole display on animated frames (playheads); fine at
+  60 fps on M-series — sub-region dirty rects are a Phase 5 polish item.
 
 ## Open questions
 

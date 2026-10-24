@@ -53,8 +53,20 @@ TEST_CASE ("Parameter layout instantiates and builds an APVTS", "[state][paramet
                                               juce::Identifier ("CHOPLINE"),
                                               chopline::params::createParameterLayout());
 
-    // Phase 0: the layout is intentionally empty.
-    REQUIRE (processor.getParameters().size() == 0);
+    // Phase 1: MIDI base note is the only automatable parameter (slicing
+    // controls are slice-map state per the locked v17 design).
+    REQUIRE (processor.getParameters().size() == 1);
+
+    auto* baseNote = apvts.getParameter (chopline::params::id::midiBaseNote);
+    REQUIRE (baseNote != nullptr);
+    REQUIRE (dynamic_cast<juce::AudioParameterChoice*> (baseNote) != nullptr);
+
+    // Default C1; choice→note mapping is stable (Ableton naming: C1 = 36).
+    const auto* choice = dynamic_cast<juce::AudioParameterChoice*> (baseNote);
+    REQUIRE (choice->getIndex() == 1);
+    REQUIRE (chopline::params::baseNoteForChoice (0) == 24);
+    REQUIRE (chopline::params::baseNoteForChoice (1) == 36);
+    REQUIRE (chopline::params::baseNoteForChoice (3) == 60);
 
     // State tree exists and carries the right root type for save/recall.
     REQUIRE (apvts.state.isValid());

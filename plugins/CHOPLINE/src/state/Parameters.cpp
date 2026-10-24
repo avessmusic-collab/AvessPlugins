@@ -1,4 +1,4 @@
-// CHOPLINE — Parameters implementation (Phase 0: empty layout).
+// CHOPLINE — Parameters implementation.
 
 #include "Parameters.h"
 
@@ -9,7 +9,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    // Phase 1+: add parameters here with juce::ParameterID { id, kParameterVersion }.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { id::midiBaseNote, kParameterVersion },
+        "MIDI Base Note",
+        juce::StringArray { "C0", "C1", "C2", "C3" },
+        1)); // default C1 = MIDI note 36 (chop 1)
 
     return layout;
 }

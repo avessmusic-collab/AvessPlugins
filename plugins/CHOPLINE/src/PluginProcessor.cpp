@@ -1,4 +1,4 @@
-// CHOPLINE — PluginProcessor implementation (Phase 0 silent shell).
+// CHOPLINE — PluginProcessor implementation (Phase 1).
 
 #include "PluginProcessor.h"
 
@@ -12,6 +12,21 @@ ChoplineAudioProcessor::ChoplineAudioProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       state (*this, nullptr, juce::Identifier ("CHOPLINE"), params::createParameterLayout())
 {
+    baseNoteParam = state.getRawParameterValue (params::id::midiBaseNote);
+
+    // Dev-only convenience for the Standalone app: CHOPLINE_AUTOLOAD_SAMPLE=<path>
+    // loads a file at startup (used for manual smoke testing; no effect in hosts).
+    if (wrapperType == wrapperType_Standalone)
+    {
+        const auto autoload = juce::SystemStats::getEnvironmentVariable ("CHOPLINE_AUTOLOAD_SAMPLE", {});
+        if (autoload.isNotEmpty() && juce::File::isAbsolutePath (autoload))
+            engine.loadFile (juce::File (autoload));
+    }
+}
+
+ChoplineAudioProcessor::~ChoplineAudioProcessor()
+{
+    *aliveFlag = false;
 }
 
 void ChoplineAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -36,8 +51,12 @@ void ChoplineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 {
     juce::ScopedNoDenormals noDenormals;
 
-    // Phase 0: the engine clears the buffer (silence) and ignores MIDI.
-    engine.process (buffer, midi);
+    engine::Engine::BlockContext context;
+    if (baseNoteParam != nullptr)
+        context.midiBaseNote = params::baseNoteForChoice (
+            static_cast<int> (baseNoteParam->load (std::memory_order_relaxed)));
+
+    engine.process (buffer, midi, context);
 }
 
 juce::AudioProcessorEditor* ChoplineAudioProcessor::createEditor()
@@ -51,15 +70,39 @@ void ChoplineAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto stateTree = state.copyState();
     stateTree.setProperty ("schemaVersion", params::kSchemaVersion, nullptr);
 
+    // Replace any stale engine children from a previous restore, then append
+    // the live sample reference + slice map (thread-safe inside the engine).
+    stateTree.removeChild (stateTree.getChildWithName (engine::Engine::sampleTag), nullptr);
+    stateTree.removeChild (stateTree.getChildWithName (engine::Engine::slicesTag), nullptr);
+    engine.serializeTo (stateTree);
+
     if (auto xml = stateTree.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
 void ChoplineAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        if (xml->hasTagName (state.state.getType()))
-            state.replaceState (juce::ValueTree::fromXml (*xml));
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (xml == nullptr || ! xml->hasTagName (state.state.getType()))
+        return;
+
+    const auto newState = juce::ValueTree::fromXml (*xml);
+    state.replaceState (newState);
+
+    // Engine restore touches message-thread structures; hosts (and pluginval at
+    // strictness 10) may call setStateInformation from other threads.
+    if (juce::MessageManager::getInstance()->isThisTheMessageThread())
+    {
+        engine.restoreFrom (newState);
+    }
+    else
+    {
+        juce::MessageManager::callAsync ([alive = aliveFlag, this, newState]
+        {
+            if (*alive)
+                engine.restoreFrom (newState);
+        });
+    }
 }
 
 } // namespace chopline
