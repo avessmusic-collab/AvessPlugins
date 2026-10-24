@@ -1,0 +1,105 @@
+name: CHOPLINE build + tests + pluginval
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/CHOPLINE/**"
+      - ".github/workflows/chopline.yml"
+  pull_request:
+    paths:
+      - "plugins/CHOPLINE/**"
+      - ".github/workflows/chopline.yml"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Release)
+        run: cmake -B plugins/CHOPLINE/build -S plugins/CHOPLINE -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release)
+        run: cmake --build plugins/CHOPLINE/build --config Release --parallel 3
+
+      - name: Run Catch2 tests
+        run: |
+          exe=$(find plugins/CHOPLINE/build/CHOPLINE_Tests_artefacts -name CHOPLINE_Tests -type f -perm +111 | head -1)
+          if [ -z "$exe" ]; then echo "CHOPLINE_Tests binary not found"; exit 1; fi
+          "$exe"
+
+      - name: pluginval (strictness 10, VST3)
+        run: |
+          curl -L "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip" -o pluginval.zip
+          unzip -q pluginval.zip -d pluginval-bin
+          pv=$(find pluginval-bin -name pluginval -type f -perm +111 | head -1)
+          vst3=$(find plugins/CHOPLINE/build/CHOPLINE_artefacts -name "CHOPLINE.vst3" -maxdepth 4 -type d | head -1)
+          if [ -z "$vst3" ]; then echo "CHOPLINE.vst3 not found"; exit 1; fi
+          # Judge by the printed verdict (house convention — see prism-windows.yml).
+          "$pv" --strictness-level 10 --validate-in-process --skip-gui-tests --timeout-ms 300000 --validate "$vst3" 2>&1 | tee pluginval-out.txt
+          if grep -q "SUCCESS" pluginval-out.txt; then
+            echo "Validation verdict: SUCCESS"
+          else
+            echo "Validation verdict: FAILED"; exit 1
+          fi
+
+      - name: auval (AU)
+        run: |
+          comp=$(find plugins/CHOPLINE/build/CHOPLINE_artefacts -name "CHOPLINE.component" -maxdepth 4 -type d | head -1)
+          if [ -z "$comp" ]; then echo "CHOPLINE.component not found"; exit 1; fi
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$comp" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -v aumu Chpl Manu
+
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Release, MSVC x64)
+        shell: pwsh
+        run: |
+          cmake -B plugins/CHOPLINE/build -S plugins/CHOPLINE -A x64
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+
+      - name: Build (Release)
+        shell: pwsh
+        run: |
+          # Fail fast: pwsh only propagates the LAST command's exit code
+          # (house lesson — see prism-windows.yml), so check each step.
+          cmake --build plugins/CHOPLINE/build --config Release --target CHOPLINE_VST3 --parallel
+          if ($LASTEXITCODE -ne 0) { throw "CHOPLINE_VST3 build failed" }
+          cmake --build plugins/CHOPLINE/build --config Release --target CHOPLINE_Standalone --parallel
+          if ($LASTEXITCODE -ne 0) { throw "CHOPLINE_Standalone build failed" }
+          cmake --build plugins/CHOPLINE/build --config Release --target CHOPLINE_Tests --parallel
+          if ($LASTEXITCODE -ne 0) { throw "CHOPLINE_Tests build failed" }
+
+      - name: Run Catch2 tests
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse plugins/CHOPLINE/build -Filter CHOPLINE_Tests.exe | Select-Object -First 1
+          if (-not $exe) { throw "CHOPLINE_Tests.exe not found" }
+          & $exe.FullName
+          if ($LASTEXITCODE -ne 0) { throw "CHOPLINE_Tests failed with exit $LASTEXITCODE" }
+
+      - name: pluginval (strictness 10, VST3)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval-bin
+          $pv = Get-ChildItem -Recurse pluginval-bin -Filter pluginval.exe | Select-Object -First 1
+          $vst3 = Get-ChildItem -Recurse -Directory plugins/CHOPLINE/build -Filter CHOPLINE.vst3 | Select-Object -First 1
+          if (-not $vst3) { throw "CHOPLINE.vst3 not found" }
+          # pluginval.exe is a GUI-subsystem binary: '&' does not wait for it
+          # ($LASTEXITCODE stays $null) and its exit code can lie after a
+          # successful validation. Pipe to force the wait and trust the
+          # printed verdict (house convention — see prism-windows.yml).
+          & $pv.FullName --strictness-level 10 --validate-in-process --skip-gui-tests --timeout-ms 300000 --validate "$($vst3.FullName)" 2>&1 | Tee-Object -FilePath pluginval-out.txt
+          $log = Get-Content pluginval-out.txt -Raw
+          if ($log -match 'SUCCESS') { Write-Host 'Validation verdict: SUCCESS'; exit 0 }
+          Write-Host 'Validation verdict: FAILED'; exit 1
