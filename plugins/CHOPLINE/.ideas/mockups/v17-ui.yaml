@@ -1,0 +1,2565 @@
+# CHOPLINE v17 = v16 with darker ink / elements only (colour + stroke weight; layout, controls, interactions identical to v16). v16 = v15 restyled to the Sonisto wireframe reference (flat light cards, hairline-grid displays, flat notch knobs, tiny uppercase lettering, mini toggles) + narrower FX modules with titles / bypass inside the cards + compact envelope. Structure / controls / interactions unchanged from v15.
+# NOTE: production UI is NATIVE JUCE; v17-ui-test.html is a visual/interaction reference only. Positions are absolute window px at 100% (1100x720).
+plugin: CHOPLINE
+version: 17
+supersedes: v16 (v1-v16 kept untouched on disk / in git history)
+source_spec: plugins/CHOPLINE/.ideas/chopline-spec.md
+window:
+  width: 1100
+  height: 720
+  resizable: true
+  scale_range:
+  - 0.75
+  - 2.0
+  fixed_aspect: true
+  edge_padding: 15
+pages:
+  nav_control: page_nav
+  main:
+    layers:
+    - header
+    - main
+    popovers:
+    - fl_slice
+    - fl_mastermore
+    - fl_set
+    - overlay
+  fx:
+    layers:
+    - header
+    - fx
+    popovers: []
+  persistence: page is UI-only state; switching closes open flyouts/overlay, keeps selection, pattern, transport, BR hold state
+  layout_fx: 'TWO centred columns (even 82 px outer gutters, 16 px between): CHOP 360w | MASTER 560w (v15: 400 / 658). Every module is a hairline white card with its title top-left INSIDE the card (10 px
+    from the edge) and its bypass mini-toggle top-right INSIDE the card (10 px from the right edge, 5 px from the top). CHOP = PLAYBACK 114 + compact ENVELOPE 288 (v15: 471; AHDSR display 332x176, five
+    50x54 knobs on one row). MASTER = FILTER / DISTORTION (560 wide) / WIDTH | OUTPUT (274 each, 12 px apart) / DELAY / REVERB: five rows of 108 px, 15 px gaps, 14 px content margins. The CHOP / MASTER
+    column containers are transparent (no card) so the module cards are the only surfaces.'
+styling:
+  style: wireframe_light_flat
+  lineage: 'v16 reskins v15 to the Sonisto Audio Projects ''wireframe exploration'' reference (/Users/avess/Desktop/original-677a34aca661cff2d68698309c8db99b.webp): flat paper-white / very light grey rounded
+    cards on a light grey page, hairline borders, very soft small shadows (no neumorphism), light hairline-grid displays instead of dark screens, small flat white knobs with a crisp dark notch, tiny wide-tracked
+    uppercase labels, mono value pills, iOS-style mini toggles, thin faders with rounded dark caps, side-by-side card modules. Supersedes the v12-v15 CORRUPTR-derived cool-grey + dark-screen tokens; the
+    blue accent #3a6df0 and Beat Repeat red #ff5a4f are kept.'
+  fonts:
+    ui: Inter, -apple-system, 'Segoe UI', 'SF Pro Text', sans-serif
+    mono: '''SF Mono'', ''JetBrains Mono'', ui-monospace, Menlo, monospace'
+  colors:
+    page: '#dcdcde'
+    chassis: '#e8e8ea (flat plate 1088x708 at 6,6, radius 26, 1px inner hairline)'
+    card: '#f7f7f8 (panels: MAIN strips, bottom bar, flyouts #fafafa)'
+    cell: '#fdfdfd (FX module cards, 1px hairline, radius 12)'
+    hairline: rgba(0,0,0,.14) (controls, cells, displays, panels); rgba(0,0,0,.10) tray
+    grid: rgba(0,0,0,.10) 22px hairline grid on displays (12px on box mini-waveforms)
+    display: '#fcfcfd near-white + hairline grid + 1px hairline border, radius 10; curves / waveforms are dark strokes (#0d0d0f, 1.7-1.9px), nodes are ring circles (white fill, dark stroke)'
+    text: '#0d0d0f (ink)'
+    text_dim: '#48484c'
+    text_faint: '#3a3a3e (secondary); labels / section titles #2a2a2e (tiny uppercase)'
+    text_tertiary: '#a4a4aa (dim / disabled stays visibly lighter)'
+    knob: 'face #fdfdfd, 1.1px rgba(0,0,0,.55) outline, notch #0d0d0f 2.2px, track rgba(0,0,0,.22) 1.4px, value arc #0d0d0f 2px, no gradient / shadow'
+    toggle: 'iOS-style mini switch 24x14: off #c4c4c9, on #0d0d0f, white 10px thumb'
+    segment_active: '#0d0d0f fill, white text'
+    pill: '#ffffff, 1px hairline, shadow 0 1px 1px rgba(0,0,0,.05)'
+    accent_blue: '#3a6df0 - THIN accent only: selection ring / outline, playhead hairline (1.5px), cutoff marker, ceiling marker, MIDI dot, GR meter, loop / START-END flags in the sample editor'
+    accent_red: '#ff5a4f - Beat Repeat hold ONLY (HOLD fill, armed ring 1px, REPEAT HOLD badge outline, hold playhead)'
+  chop_identity: 'greyscale only: 8 distinct shades + the index number + the mini waveform'
+  chop_shades_on_displays:
+  - '#0d0d0f'
+  - '#7a7a7a'
+  - '#2e2e2e'
+  - '#969696'
+  - '#4a4a4a'
+  - '#aaaaaa'
+  - '#1c1c1c'
+  - '#868686'
+  chop_shades_on_cards:
+  - '#161616'
+  - '#929292'
+  - '#3c3c3c'
+  - '#b4b4b4'
+  - '#5e5e5e'
+  - '#cfcfcf'
+  - '#2a2a2a'
+  - '#a0a0a0'
+  lettering:
+    labels: '8-8.5px uppercase, letter-spacing .12-.24em, #2a2a2e (VOLUME / PAN / RATE style)'
+    values: 'mono pill: 9px mono, 1px hairline, white, radius 999 (shown on hover / drag in place of the label)'
+    section_titles: '8.5px 600 uppercase .24em; FX column titles #2a2a2e with a small glyph'
+    group_labels_rotated: not used in v16 (titles sit top-left inside each card as requested)
+  knobs:
+    main: 40px dial, label at 46
+    compact: 50x54 cell, 36px dial
+    tick_dots: none (kept off; only where useful)
+  faders_meters: thin 4px rounded tracks (rgba(0,0,0,.16)) with a #0d0d0f rounded cap; GR track turns blue while limiting
+  boxes:
+    card: white 1px hairline, radius 11, 1px soft shadow
+    filled: faint grey tint of the chop shade + index chip + mini waveform on a small hairline-grid window
+    tray: '#efeff1 hairline tray'
+    playhead: 1.5px blue hairline (red while Beat Repeat holds)
+    selected: 1.5px blue outline + blue ring on the index chip of the selected chop
+    playing: pressed grey + inset hairline
+  beat_repeat_hold:
+    header_badge: white pill with 1px red outline 'REPEAT HOLD' (both pages)
+    panel: '1px red ring on the MAIN bottom-bar card; HOLD pad fills #ff5a4f'
+  bypass_toggle: iOS-style mini toggle top-right inside the module card; dark = active, grey = bypassed; bypassed module dims to 45%
+  radius:
+    panel: 16
+    cell: 12
+    display: 10
+    box: 11
+    pill: 999
+  window_note: tokens mirrored as CSS custom properties in v17-ui-test.html (:root, the v16 block + v17 override block)
+interaction:
+  page_nav:
+  - click_segmented_MAIN_FX
+  - Tab_toggles
+  - M_main
+  - F_fx
+  - state_preserved_across_switch
+  - transport_keeps_running
+  shared_params: 'MAIN bottom bar and FX page share ONE value: master_filter_cutoff, master_dist_drive, master_width, master_output, master_ceiling, master_delay_rtn, master_verb_rtn, bpm, chop_mode / chop_reverse
+    / chop_warp / chop_release (overlay <-> FX). Beat Repeat has a single instance (MAIN bottom bar) so it has no mirrors.'
+  hold_pad: removed with the FX BR column. MAIN HOLD button stays a latching toggle; H key is momentary on either page (header badge shows REPEAT HOLD on both pages)
+  chop_fx_target: CHOP FX always edits the selected chop (same selection as MAIN); prev/next arrows in the panel bar and keys 1-8 change it
+  env_display: 'AHDSR display: drag the 4 handles; values shown only for the hovered / dragged handle; knobs below mirror the handles'
+  bypass: dot per chop-FX cell and per master section; bypass dims the section
+  knob:
+  - drag_vertical
+  - shift_fine_drag
+  - double_click_reset
+  - mouse_wheel
+  - right_click_midi_learn
+  - value_shown_on_hover_or_drag
+  keyboard:
+    space: transport_preview
+    1-8: select_chop
+    escape: close_flyout_or_overlay
+    tab: toggle_page
+    m: main_page
+    f: fx_page
+    h: beat_repeat_hold
+    enter: open_chop_sample_editor
+    MOCKUP_ONLY_q_w_e_r_t_y_u_i: fire chops 1-8 as simulated MIDI notes (base + 0..7); NOT a product element
+  bpm_readout: 'BPM is NOT in the header; small light hairline readout in MASTER: MAIN master panel title row (x915,y603) and FX MASTER panel bar (x955,y65), mirrored'
+  chop_editing_without_panel: 'select = click strip chop / filled box / FX-page CHOP arrows / keys 1-8; edit = double-click a filled box or strip chop, the ''...'' button next to the chop chip, or Enter:
+    opens the overlay whose top is the chop sample editor (see chop_sample_editor), below it mode, reverse, snap, warp, readouts and the knob row'
+  main_page_unchanged:
+  - strip
+  - boxes
+  - note_length
+  - lane_strip
+  - flyouts
+  - chop_detail_overlay
+  note_length_button: ONE compact button (64x24) in the grid row replacing the 1/4-1/8-1/16 pills and the separate T / D toggles. Shows the value ("1/16"). Click cycles 1/4 > 1/8 > 1/16 (wrap, T/D variant
+    kept); click-and-hold, right-click or the caret opens a menu with all 9 values incl. T and D variants. Tooltip "Note length".
+note_length_model:
+  straight:
+    1/4: 4
+    1/8: 8
+    1/16: 16
+  triplet:
+    1/4T: 6
+    1/8T: 12
+    1/16T: 24
+  dotted:
+    1/4.: 3 (last box 2/3 wide)
+    1/8.: 6 (last box 1/3 wide)
+    1/16.: 11 (last box 2/3 wide)
+  events_are_time_based: true
+  max_boxes: 24 (12 columns x 2 rows)
+  menu_values: 1/4 1/4T 1/4D 1/8 1/8T 1/8D 1/16 1/16T 1/16D (value string = base + optional T or D suffix; dotted displays as "D")
+layers:
+- id: header
+  layer: header
+  title: ''
+  rect:
+    x: 0
+    y: 0
+    w: 1100
+    h: 54
+  always_visible: true
+  note: 'header: wordmark | presets | MIDI activity dot | (hold badge) | MAIN|FX | gear. No pattern button (v14), NO play button - transport is host-driven (AudioPlayHead)'
+- id: strip_a
+  layer: main
+  title: ''
+  rect:
+    x: 15
+    y: 60
+    w: 1070
+    h: 138
+  visible_when: page == MAIN
+  title_note: untitled in v8 (section titles cut)
+- id: strip_b
+  layer: main
+  title: ''
+  rect:
+    x: 15
+    y: 206
+    w: 1070
+    h: 379
+  visible_when: page == MAIN
+  title_note: untitled in v8 (section titles cut)
+- id: br
+  layer: main
+  title: BEAT REPEAT
+  rect:
+    x: 15
+    y: 593
+    w: 500
+    h: 112
+  visible_when: page == MAIN
+- id: master
+  layer: main
+  title: MASTER
+  rect:
+    x: 523
+    y: 593
+    w: 562
+    h: 112
+  visible_when: page == MAIN
+- id: fl_slice
+  layer: fl_slice
+  title: SLICING
+  rect:
+    x: 785
+    y: 110
+    w: 300
+    h: 104
+  opens_on: header/section icon ('...' or gear); outside click dismisses; exclusive with other flyouts
+- id: fl_mastermore
+  layer: fl_mastermore
+  title: MASTER - MORE
+  rect:
+    x: 815
+    y: 479
+    w: 270
+    h: 106
+  opens_on: header/section icon ('...' or gear); outside click dismisses; exclusive with other flyouts
+- id: fl_set
+  layer: fl_set
+  title: SETTINGS
+  rect:
+    x: 815
+    y: 62
+    w: 270
+    h: 154
+  opens_on: header/section icon ('...' or gear); outside click dismisses; exclusive with other flyouts
+- id: overlay
+  layer: overlay
+  title: ''
+  rect:
+    x: 150
+    y: 120
+    w: 800
+    h: 468
+  opens_on: '''...'' button beside the chop chip (lane row), double-click a filled box or a strip chop, Enter on the selected chop; Esc/scrim/close dismisses. Top of the overlay is the chop SAMPLE EDITOR
+    (from v13).'
+- id: fx_chop
+  layer: fx
+  title: CHOP
+  rect:
+    x: 82
+    y: 60
+    w: 360
+    h: 645
+  visible_when: page == FX
+  container: transparent column (title row only); module cards are the surfaces
+- id: fx_master
+  layer: fx
+  title: MASTER
+  rect:
+    x: 458
+    y: 60
+    w: 560
+    h: 645
+  visible_when: page == FX
+  container: transparent column (title row only); module cards are the surfaces
+sections:
+- id: c_play
+  parent: fx_chop
+  title: PLAYBACK
+  rect:
+    x: 82
+    y: 92
+    w: 360
+    h: 114
+  title_position: top-left inside the card, 10 px from the left edge
+- id: c_env
+  parent: fx_chop
+  title: ENVELOPE
+  rect:
+    x: 82
+    y: 221
+    w: 360
+    h: 288
+  title_position: top-left inside the card, 10 px from the left edge
+- id: m_filt
+  parent: fx_master
+  title: FILTER
+  rect:
+    x: 458
+    y: 92
+    w: 560
+    h: 108
+  bypass_param: master_filter_on
+  title_position: top-left inside the card, 10 px from the left edge
+  bypass_position: top-right inside the card, 10 px from the right edge, 5 px from the top (28x20 mini-toggle, 24x14 switch)
+- id: m_dist
+  parent: fx_master
+  title: DISTORTION
+  rect:
+    x: 458
+    y: 215
+    w: 560
+    h: 108
+  bypass_param: master_dist_on
+  title_position: top-left inside the card, 10 px from the left edge
+  bypass_position: top-right inside the card, 10 px from the right edge, 5 px from the top (28x20 mini-toggle, 24x14 switch)
+- id: m_width
+  parent: fx_master
+  title: WIDTH
+  rect:
+    x: 458
+    y: 338
+    w: 274
+    h: 108
+  bypass_param: master_width_on
+  title_position: top-left inside the card, 10 px from the left edge
+  bypass_position: top-right inside the card, 10 px from the right edge, 5 px from the top (28x20 mini-toggle, 24x14 switch)
+- id: m_out
+  parent: fx_master
+  title: OUTPUT
+  rect:
+    x: 744
+    y: 338
+    w: 274
+    h: 108
+  bypass_param: master_limiter_on
+  title_position: top-left inside the card, 10 px from the left edge
+  bypass_position: top-right inside the card, 10 px from the right edge, 5 px from the top (28x20 mini-toggle, 24x14 switch)
+- id: m_delay
+  parent: fx_master
+  title: DELAY
+  rect:
+    x: 458
+    y: 461
+    w: 560
+    h: 108
+  bypass_param: master_delay_on
+  title_position: top-left inside the card, 10 px from the left edge
+  bypass_position: top-right inside the card, 10 px from the right edge, 5 px from the top (28x20 mini-toggle, 24x14 switch)
+- id: m_verb
+  parent: fx_master
+  title: REVERB
+  rect:
+    x: 458
+    y: 584
+    w: 560
+    h: 108
+  bypass_param: master_verb_on
+  title_position: top-left inside the card, 10 px from the left edge
+  bypass_position: top-right inside the card, 10 px from the right edge, 5 px from the top (28x20 mini-toggle, 24x14 switch)
+controls:
+- id: wordmark
+  type: label
+  layer: header
+  panel: header
+  position:
+    x: 15
+    y: 15
+  size:
+    width: 110
+    height: 24
+  label: chopline
+  decorative: true
+  scope: ui
+- id: preset_prev
+  type: button
+  layer: header
+  panel: header
+  position:
+    x: 140
+    y: 15
+  size:
+    width: 24
+    height: 24
+  glyph: prev
+  scope: ui
+- id: preset_name
+  type: combo
+  layer: header
+  panel: header
+  position:
+    x: 174
+    y: 15
+  size:
+    width: 220
+    height: 24
+  label: Preset
+  options:
+  - Chops / Vowel Hop
+  - Chops / Staccato Verse
+  - Glitch / Tape Stutter Run
+  - Stutter / Syllable Roll
+  - Tape / Slow Wobble
+  - Granular / Breath Cloud
+  default: Chops / Vowel Hop
+  scope: ui
+- id: preset_next
+  type: button
+  layer: header
+  panel: header
+  position:
+    x: 404
+    y: 15
+  size:
+    width: 24
+    height: 24
+  glyph: next
+  scope: ui
+- id: bpm
+  type: field
+  layer: main
+  panel: master
+  position:
+    x: 915
+    y: 603
+  size:
+    width: 106
+    height: 20
+  label: BPM
+  default: 124
+  range:
+  - 40
+  - 240
+  unit: ''
+  decimals: 1
+  style: small dark inset screen readout
+  scope: host_readonly
+- id: fx_bpm
+  type: field
+  layer: fx
+  panel: fx_master
+  position:
+    x: 906
+    y: 65
+  size:
+    width: 112
+    height: 18
+  label: BPM
+  default: 124
+  range:
+  - 40
+  - 240
+  unit: ''
+  decimals: 1
+  mirror_of: bpm
+  scope: host_readonly
+- id: br_badge
+  type: label
+  layer: header
+  panel: header
+  position:
+    x: 790
+    y: 15
+  size:
+    width: 154
+    height: 24
+  label: Beat Repeat hold badge (visible only while HOLD is on)
+  decorative: true
+  scope: ui
+- id: settings
+  type: button
+  layer: header
+  panel: header
+  position:
+    x: 1057
+    y: 15
+  size:
+    width: 28
+    height: 24
+  label: Settings
+  glyph: gear
+  scope: ui
+- id: waveform
+  type: display
+  layer: main
+  panel: strip_a
+  position:
+    x: 27
+    y: 72
+  size:
+    width: 830
+    height: 114
+  label: Sample strip
+  kind: waveform
+  scope: slice_map
+- id: sampler_load
+  type: button
+  layer: main
+  panel: strip_a
+  position:
+    x: 873
+    y: 72
+  size:
+    width: 148
+    height: 28
+  label: Load
+  scope: ui
+- id: slice_more
+  type: button
+  layer: main
+  panel: strip_a
+  position:
+    x: 1031
+    y: 72
+  size:
+    width: 42
+    height: 28
+  label: More slicing
+  glyph: dots
+  scope: ui
+- id: slice_mode
+  type: combo
+  layer: main
+  panel: strip_a
+  position:
+    x: 873
+    y: 110
+  size:
+    width: 200
+    height: 28
+  label: Slice mode
+  options:
+  - Transient
+  - Grid
+  - Equal
+  - Manual
+  default: Transient
+  prefix: SLICE
+  scope: slice_map
+- id: slice_sensitivity
+  accent_knob: black
+  type: knob
+  layer: main
+  panel: strip_a
+  position:
+    x: 873
+    y: 148
+  size:
+    width: 140
+    height: 40
+  label: SENS
+  default: 55
+  range:
+  - 0
+  - 100
+  unit: '%'
+  compact: true
+  scope: slice_map
+- id: note_duration
+  type: button
+  variant: cycle_button_with_menu
+  layer: main
+  panel: strip_b
+  position:
+    x: 27
+    y: 228
+  size:
+    width: 64
+    height: 24
+  label: Note length
+  tooltip: Note length
+  options:
+  - 1/4
+  - 1/4T
+  - 1/4D
+  - 1/8
+  - 1/8T
+  - 1/8D
+  - 1/16
+  - 1/16T
+  - 1/16D
+  default: 1/16
+  scope: pattern_model
+  min_size_exception: 'user-requested compact button (64x24: value + caret); the 60x24 button minimum is met in width, caret zone 14 px'
+  interaction:
+    click: cycle the base length 1/4 -> 1/8 -> 1/16 -> 1/4 (wrap); an active T or D variant is kept while cycling
+    click_and_hold: menu with all 9 values (380 ms)
+    right_click: same menu
+    caret_zone: right 14 px opens the menu
+    menu_items: 1/4 1/4T 1/4D 1/8 1/8T 1/8D 1/16 1/16T 1/16D
+    shows: current value in SF Mono, e.g. 1/16 or 1/8T
+  replaces: v12 note_duration seg (1/4 1/8 1/16) + note_triplet + note_dotted toggles
+- id: pattern_length
+  type: combo
+  layer: main
+  panel: strip_b
+  position:
+    x: 103
+    y: 226
+  size:
+    width: 100
+    height: 28
+  label: Pattern length
+  options:
+  - 1 bar
+  - 2 bars
+  - 4 bars
+  default: 1 bar
+  prefix: ''
+  scope: pattern_model
+- id: bar_page
+  type: seg
+  layer: main
+  panel: strip_b
+  position:
+    x: 213
+    y: 226
+  size:
+    width: 140
+    height: 28
+  label: Bar page
+  options:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+  default: '1'
+  visible_when: pattern_length > 1 bar
+  scope: ui
+- id: swing
+  accent_knob: black
+  type: knob
+  layer: main
+  panel: strip_b
+  position:
+    x: 943
+    y: 220
+  size:
+    width: 130
+    height: 40
+  label: SWING
+  default: 0
+  range:
+  - 0
+  - 75
+  unit: '%'
+  compact: true
+  scope: apvts
+- id: step_boxes
+  type: display
+  layer: main
+  panel: strip_b
+  position:
+    x: 27
+    y: 270
+  size:
+    width: 1046
+    height: 190
+  label: Boxes
+  kind: boxes
+  scope: pattern_model
+- id: lane_tab
+  type: seg
+  layer: main
+  panel: strip_b
+  position:
+    x: 27
+    y: 472
+  size:
+    width: 300
+    height: 24
+  label: Lane
+  options:
+  - VEL
+  - PITCH
+  - PROB
+  - RATCHET
+  default: VEL
+  scope: ui
+- id: step_lane
+  type: display
+  layer: main
+  panel: strip_b
+  position:
+    x: 27
+    y: 506
+  size:
+    width: 1046
+    height: 68
+  label: Per-step lane
+  kind: lane
+  scope: pattern_model
+- id: chop_chip
+  type: readout
+  layer: main
+  panel: strip_b
+  position:
+    x: 893
+    y: 474
+  size:
+    width: 124
+    height: 20
+  label: chop
+  blue_ring_swatch: true
+  scope: selection
+  note: swatch + 'CHOP nn' only (use counts cut)
+- id: chop_more
+  type: button
+  layer: main
+  panel: strip_b
+  position:
+    x: 1027
+    y: 474
+  size:
+    width: 46
+    height: 20
+  label: Chop settings (opens the chop overlay)
+  glyph: dots
+  scope: ui
+- id: chop_pitch
+  accent_knob: black
+  type: knob
+  layer: overlay
+  panel: overlay
+  position:
+    x: 166
+    y: 512
+  size:
+    width: 52
+    height: 60
+  label: PITCH
+  default: 0
+  range:
+  - -24
+  - 24
+  unit: ' st'
+  bipolar: true
+  step: 1
+  scope: per_chop
+- id: chop_mode
+  type: combo
+  layer: overlay
+  panel: overlay
+  position:
+    x: 166
+    y: 434
+  size:
+    width: 160
+    height: 28
+  label: Mode
+  options:
+  - One-shot
+  - Gate
+  - Loop
+  - Fit step
+  default: Gate
+  prefix: MODE
+  scope: per_chop
+- id: chop_reverse
+  type: toggle
+  layer: overlay
+  panel: overlay
+  position:
+    x: 336
+    y: 434
+  size:
+    width: 110
+    height: 28
+  label: Reverse
+  default: false
+  scope: per_chop
+- id: br_hold
+  type: button
+  layer: main
+  panel: br
+  position:
+    x: 27
+    y: 626
+  size:
+    width: 120
+    height: 28
+  label: HOLD
+  accent: beat_repeat_red
+  toggle: true
+  scope: apvts
+- id: br_auto
+  type: toggle
+  layer: main
+  panel: br
+  position:
+    x: 27
+    y: 664
+  size:
+    width: 120
+    height: 28
+  label: AUTO
+  default: false
+  accent: beat_repeat_red
+  scope: apvts
+- id: br_interval
+  type: combo
+  layer: main
+  panel: br
+  position:
+    x: 161
+    y: 626
+  size:
+    width: 130
+    height: 28
+  label: Interval
+  options:
+  - 1/4
+  - 1/2
+  - 1 bar
+  - 2 bars
+  - 4 bars
+  default: 1/2
+  prefix: EVERY
+  scope: apvts
+- id: br_grid
+  type: combo
+  layer: main
+  panel: br
+  position:
+    x: 161
+    y: 664
+  size:
+    width: 130
+    height: 28
+  label: Grid
+  options:
+  - 1/2
+  - 1/4
+  - 1/8
+  - 1/16
+  - 1/32
+  - 1/64
+  - 1/8T
+  - 1/16T
+  - 1/32T
+  default: 1/16
+  prefix: GRID
+  scope: apvts
+- id: br_chance
+  accent_knob: black
+  type: knob
+  layer: main
+  panel: br
+  position:
+    x: 347
+    y: 637
+  size:
+    width: 50
+    height: 54
+  label: CHANCE
+  default: 60
+  range:
+  - 0
+  - 100
+  unit: '%'
+  accent: beat_repeat_red
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: br_decay
+  type: knob
+  layer: main
+  panel: br
+  position:
+    x: 453
+    y: 637
+  size:
+    width: 50
+    height: 54
+  label: DECAY
+  default: 25
+  range:
+  - 0
+  - 100
+  unit: '%'
+  accent: beat_repeat_red
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_more
+  type: button
+  layer: main
+  panel: master
+  position:
+    x: 1033
+    y: 603
+  size:
+    width: 40
+    height: 20
+  label: More master
+  glyph: dots
+  scope: ui
+- id: master_filter_cutoff
+  type: knob
+  layer: main
+  panel: master
+  position:
+    x: 576
+    y: 637
+  size:
+    width: 50
+    height: 54
+  label: FILTER
+  range:
+  - 0
+  - 100
+  default: 100
+  unit: ''
+  hz_log_display: true
+  scope: apvts
+  note: master filter cutoff, 20 Hz-20 kHz log display (0-100 normalised); MAIN master bar knob, mirrored by fx_master_filter_cutoff
+  compact_cell: true
+  dial_diameter: 36
+- id: master_dist_drive
+  type: knob
+  layer: main
+  panel: master
+  position:
+    x: 700
+    y: 637
+  size:
+    width: 50
+    height: 54
+  label: DIST
+  default: 10
+  unit: '%'
+  range:
+  - 0
+  - 100
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+  note: MAIN bottom-bar knob; shared value with fx_master_dist_drive (FX DRIVE)
+- id: master_width
+  type: knob
+  layer: main
+  panel: master
+  position:
+    x: 824
+    y: 637
+  size:
+    width: 50
+    height: 54
+  label: WIDTH
+  default: 100
+  range:
+  - 0
+  - 200
+  unit: '%'
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_output
+  accent_knob: black
+  type: knob
+  layer: main
+  panel: master
+  position:
+    x: 948
+    y: 637
+  size:
+    width: 50
+    height: 54
+  label: OUT
+  default: 0
+  range:
+  - -24
+  - 12
+  unit: ' dB'
+  bipolar: true
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_limiter
+  type: display
+  layer: main
+  panel: master
+  position:
+    x: 1051
+    y: 641
+  size:
+    width: 22
+    height: 40
+  label: Limiter
+  kind: limiter
+  scope: ui
+- id: slice_min_len
+  type: knob
+  layer: fl_slice
+  panel: fl_slice
+  position:
+    x: 797
+    y: 142
+  size:
+    width: 52
+    height: 60
+  label: MIN LEN
+  default: 80
+  range:
+  - 20
+  - 500
+  unit: ' ms'
+  scope: slice_map
+- id: slice_zero_cross
+  type: toggle
+  layer: fl_slice
+  panel: fl_slice
+  position:
+    x: 859
+    y: 160
+  size:
+    width: 140
+    height: 28
+  label: Snap zero-X
+  default: true
+  scope: slice_map
+- id: master_ceiling
+  type: knob
+  layer: fl_mastermore
+  panel: fl_mastermore
+  position:
+    x: 827
+    y: 511
+  size:
+    width: 52
+    height: 60
+  label: CEILING
+  default: -0.3
+  range:
+  - -12
+  - 0
+  unit: ' dB'
+  bipolar: false
+  scope: apvts
+- id: master_delay_rtn
+  type: knob
+  layer: fl_mastermore
+  panel: fl_mastermore
+  position:
+    x: 889
+    y: 511
+  size:
+    width: 52
+    height: 60
+  label: DLY RTN
+  default: 0
+  range:
+  - 0
+  - 100
+  unit: '%'
+  scope: apvts
+- id: master_verb_rtn
+  type: knob
+  layer: fl_mastermore
+  panel: fl_mastermore
+  position:
+    x: 951
+    y: 511
+  size:
+    width: 52
+    height: 60
+  label: VERB RTN
+  default: 0
+  range:
+  - 0
+  - 100
+  unit: '%'
+  scope: apvts
+- id: quality
+  type: seg
+  layer: fl_set
+  panel: fl_set
+  position:
+    x: 827
+    y: 98
+  size:
+    width: 246
+    height: 28
+  label: Quality
+  options:
+  - Eco
+  - HQ
+  default: HQ
+  scope: apvts
+- id: cpu_meter
+  type: display
+  layer: fl_set
+  panel: fl_set
+  position:
+    x: 827
+    y: 138
+  size:
+    width: 246
+    height: 24
+  label: CPU
+  kind: cpu
+  scope: ui
+- id: overlay_chip
+  type: readout
+  layer: overlay
+  panel: overlay
+  position:
+    x: 166
+    y: 136
+  size:
+    width: 150
+    height: 18
+  label: chop
+  scope: selection
+- id: overlay_close
+  type: button
+  layer: overlay
+  panel: overlay
+  position:
+    x: 906
+    y: 134
+  size:
+    width: 28
+    height: 20
+  label: Close
+  glyph: close
+  scope: ui
+- id: chop_warp
+  type: seg
+  layer: overlay
+  panel: overlay
+  position:
+    x: 606
+    y: 434
+  size:
+    width: 328
+    height: 28
+  label: Warp
+  options:
+  - Varispeed
+  - Stretch
+  - Granular
+  - Freeze
+  default: Varispeed
+  scope: per_chop
+- id: chop_release
+  type: knob
+  layer: overlay
+  panel: overlay
+  position:
+    x: 309
+    y: 512
+  size:
+    width: 52
+    height: 60
+  label: RELEASE
+  default: 80
+  range:
+  - 5
+  - 500
+  unit: ' ms'
+  scope: per_chop
+- id: chop_delay
+  type: knob
+  layer: overlay
+  panel: overlay
+  position:
+    x: 452
+    y: 512
+  size:
+    width: 52
+    height: 60
+  label: DELAY
+  default: 0
+  range:
+  - 0
+  - 100
+  unit: '%'
+  scope: per_chop
+- id: chop_verb
+  type: knob
+  layer: overlay
+  panel: overlay
+  position:
+    x: 595
+    y: 512
+  size:
+    width: 52
+    height: 60
+  label: VERB
+  default: 0
+  range:
+  - 0
+  - 100
+  unit: '%'
+  scope: per_chop
+- id: chop_unison
+  type: knob
+  layer: overlay
+  panel: overlay
+  position:
+    x: 738
+    y: 512
+  size:
+    width: 52
+    height: 60
+  label: UNISON
+  default: 1
+  range:
+  - 1
+  - 4
+  unit: x
+  step: 1
+  scope: per_chop
+- id: page_nav
+  type: seg
+  layer: header
+  panel: header
+  position:
+    x: 956
+    y: 15
+  size:
+    width: 91
+    height: 24
+  label: Page
+  options:
+  - MAIN
+  - FX
+  default: MAIN
+  scope: ui
+- id: fx_chop_chip
+  type: readout
+  layer: fx
+  panel: fx_chop
+  position:
+    x: 254
+    y: 63
+  size:
+    width: 116
+    height: 18
+  label: chop
+  scope: selection
+- id: fx_chop_prev
+  type: button
+  layer: fx
+  panel: fx_chop
+  position:
+    x: 382
+    y: 62
+  size:
+    width: 24
+    height: 20
+  label: Previous chop
+  glyph: prev
+  scope: ui
+- id: fx_chop_next
+  type: button
+  layer: fx
+  panel: fx_chop
+  position:
+    x: 418
+    y: 62
+  size:
+    width: 24
+    height: 20
+  label: Next chop
+  glyph: next
+  scope: ui
+- id: chop_editor
+  type: display
+  layer: overlay
+  panel: overlay
+  position:
+    x: 166
+    y: 164
+  size:
+    width: 768
+    height: 260
+  label: Chop sample editor
+  kind: editor
+  scope: per_chop
+  note: 'Large zoomed waveform of JUST the selected chop (view = chop +/-30%, clamped to the neighbour slices). Dark screen. Neighbour slices dimmed, trimmed chop bright on a faint blue tint, dashed slice
+    markers, S/E flags, fade-in/out corner grips + wedge envelopes, loop brace (Loop mode only), ruler in seconds (SF Mono 9px), direction chevron, white audition playhead. Handles blue (#5b87f5, hover
+    #a9bffa); red never used here.'
+- id: chop_snap
+  type: toggle
+  layer: overlay
+  panel: overlay
+  position:
+    x: 456
+    y: 434
+  size:
+    width: 140
+    height: 28
+  label: Snap zero-X
+  default: true
+  scope: slice_map
+  mirror_of: slice_zero_cross
+- id: ed_start
+  type: readout
+  layer: overlay
+  panel: overlay
+  position:
+    x: 166
+    y: 472
+  size:
+    width: 120
+    height: 26
+  label: START
+  scope: per_chop
+  font: SF Mono 10.5px
+  note: label (faint) + value (ink 600); value turns blue while its handle is dragged
+- id: ed_end
+  type: readout
+  layer: overlay
+  panel: overlay
+  position:
+    x: 296
+    y: 472
+  size:
+    width: 104
+    height: 26
+  label: END
+  scope: per_chop
+  font: SF Mono 10.5px
+  note: label (faint) + value (ink 600); value turns blue while its handle is dragged
+- id: ed_len
+  type: readout
+  layer: overlay
+  panel: overlay
+  position:
+    x: 410
+    y: 472
+  size:
+    width: 120
+    height: 26
+  label: LENGTH
+  scope: per_chop
+  font: SF Mono 10.5px
+  note: label (faint) + value (ink 600); value turns blue while its handle is dragged
+- id: ed_fin
+  type: readout
+  layer: overlay
+  panel: overlay
+  position:
+    x: 540
+    y: 472
+  size:
+    width: 130
+    height: 26
+  label: FADE IN
+  scope: per_chop
+  font: SF Mono 10.5px
+  note: label (faint) + value (ink 600); value turns blue while its handle is dragged
+- id: ed_fout
+  type: readout
+  layer: overlay
+  panel: overlay
+  position:
+    x: 680
+    y: 472
+  size:
+    width: 138
+    height: 26
+  label: FADE OUT
+  scope: per_chop
+  font: SF Mono 10.5px
+  note: label (faint) + value (ink 600); value turns blue while its handle is dragged
+- id: ed_loop
+  type: readout
+  layer: overlay
+  panel: overlay
+  position:
+    x: 828
+    y: 472
+  size:
+    width: 106
+    height: 26
+  label: LOOP
+  scope: per_chop
+  font: SF Mono 10.5px
+  note: label (faint) + value (ink 600); value turns blue while its handle is dragged
+- id: chop_loop_xfade
+  type: knob
+  layer: overlay
+  panel: overlay
+  position:
+    x: 882
+    y: 512
+  size:
+    width: 52
+    height: 60
+  label: XFADE
+  default: 10
+  range:
+  - 0
+  - 200
+  unit: ' ms'
+  scope: per_chop
+  note: loopXfade; dimmed unless mode = Loop; mirrors the crossfade diamond
+- id: midi_in
+  type: label
+  layer: header
+  panel: header
+  position:
+    x: 452
+    y: 15
+  size:
+    width: 54
+    height: 24
+  label: MIDI
+  scope: ui
+  kind: midi_activity
+  decor: true
+  tooltip: MIDI in
+  note: 'tiny unobtrusive activity dot + "MIDI" caption (SF Mono 9px, faint). Idle = light grey dot (#c7c7cc); lights BLUE (#3a6df0 + soft glow) for ~220 ms on every incoming note-on. Production: driven
+    from processBlock via a lock-free flag polled by the editor timer.'
+- id: midi_base
+  type: combo
+  layer: fl_set
+  panel: fl_set
+  position:
+    x: 827
+    y: 174
+  size:
+    width: 246
+    height: 28
+  label: MIDI base note
+  prefix: Base note
+  options:
+  - C0
+  - C1
+  - C2
+  - C3
+  default: C1
+  scope: apvts
+  note: chop N plays from base + N. Default C1 = MIDI note 36 (Ableton naming, C3 = 60). Mockup maps C0/C1/C2/C3 = 24/36/48/60.
+- id: fx_chop_mode
+  type: combo
+  layer: fx
+  panel: c_play
+  position:
+    x: 96
+    y: 128
+  size:
+    width: 158
+    height: 28
+  label: Mode
+  default: Gate
+  options:
+  - One-shot
+  - Gate
+  - Loop
+  - Fit step
+  prefix: MODE
+  mirror_of: chop_mode
+  scope: per_chop
+  note: FX-page mirror of the overlay control (same per-chop parameter, separate attachment)
+- id: fx_chop_reverse
+  type: toggle
+  layer: fx
+  panel: c_play
+  position:
+    x: 270
+    y: 128
+  size:
+    width: 158
+    height: 28
+  label: Reverse
+  default: false
+  mirror_of: chop_reverse
+  scope: per_chop
+  note: FX-page mirror of the overlay control (same per-chop parameter, separate attachment)
+- id: fx_chop_warp
+  type: seg
+  layer: fx
+  panel: c_play
+  position:
+    x: 96
+    y: 166
+  size:
+    width: 332
+    height: 28
+  label: Warp
+  default: Varispeed
+  options:
+  - Varispeed
+  - Stretch
+  - Granular
+  - Freeze
+  mirror_of: chop_warp
+  scope: per_chop
+  note: FX-page mirror of the overlay control (same per-chop parameter, separate attachment)
+- id: chop_env
+  type: display
+  layer: fx
+  panel: c_env
+  position:
+    x: 96
+    y: 253
+  size:
+    width: 332
+    height: 176
+  label: AHDSR envelope (drag handles)
+  kind: env
+  scope: per_chop
+- id: chop_attack
+  type: knob
+  layer: fx
+  panel: c_env
+  position:
+    x: 96
+    y: 441
+  size:
+    width: 50
+    height: 54
+  label: ATTACK
+  default: 2
+  range:
+  - 0
+  - 500
+  unit: ' ms'
+  scope: per_chop
+  compact_cell: true
+  dial_diameter: 36
+- id: chop_hold
+  type: knob
+  layer: fx
+  panel: c_env
+  position:
+    x: 167
+    y: 441
+  size:
+    width: 50
+    height: 54
+  label: HOLD
+  default: 0
+  range:
+  - 0
+  - 500
+  unit: ' ms'
+  scope: per_chop
+  compact_cell: true
+  dial_diameter: 36
+- id: chop_decay
+  type: knob
+  layer: fx
+  panel: c_env
+  position:
+    x: 237
+    y: 441
+  size:
+    width: 50
+    height: 54
+  label: DECAY
+  default: 160
+  range:
+  - 5
+  - 1000
+  unit: ' ms'
+  scope: per_chop
+  compact_cell: true
+  dial_diameter: 36
+- id: chop_sustain
+  type: knob
+  layer: fx
+  panel: c_env
+  position:
+    x: 308
+    y: 441
+  size:
+    width: 50
+    height: 54
+  label: SUSTAIN
+  default: 100
+  range:
+  - 0
+  - 100
+  unit: '%'
+  scope: per_chop
+  compact_cell: true
+  dial_diameter: 36
+- id: fx_chop_release
+  type: knob
+  layer: fx
+  panel: c_env
+  position:
+    x: 378
+    y: 441
+  size:
+    width: 50
+    height: 54
+  label: RELEASE
+  default: 80
+  range:
+  - 5
+  - 500
+  unit: ' ms'
+  mirror_of: chop_release
+  scope: per_chop
+  compact_cell: true
+  dial_diameter: 36
+- id: master_filter_on
+  type: toggle
+  layer: fx
+  panel: m_filt
+  position:
+    x: 980
+    y: 97
+  size:
+    width: 28
+    height: 20
+  label: Master filter on
+  default: true
+  glyph: mini_toggle
+  bypass_dot_for: m_filt
+  scope: apvts
+  note: 'module bypass: iOS-style mini toggle (v15: round power button)'
+- id: master_filter_type
+  type: seg
+  layer: fx
+  panel: m_filt
+  position:
+    x: 472
+    y: 145
+  size:
+    width: 120
+    height: 28
+  label: Filter type
+  options:
+  - LP
+  - BP
+  - HP
+  default: LP
+  scope: apvts
+- id: fx_master_filter_cutoff
+  type: knob
+  layer: fx
+  panel: m_filt
+  position:
+    x: 608
+    y: 132
+  size:
+    width: 50
+    height: 54
+  label: CUTOFF
+  range:
+  - 0
+  - 100
+  default: 100
+  unit: ''
+  hz_log_display: true
+  mirror_of: master_filter_cutoff
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_filter_reso
+  type: knob
+  layer: fx
+  panel: m_filt
+  position:
+    x: 670
+    y: 132
+  size:
+    width: 50
+    height: 54
+  label: RESO
+  range:
+  - 0
+  - 100
+  default: 10
+  unit: '%'
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: filter_curve
+  type: display
+  layer: fx
+  panel: m_filt
+  position:
+    x: 732
+    y: 132
+  size:
+    width: 272
+    height: 54
+  label: Filter response
+  kind: filter_curve
+  scope: ui
+- id: master_dist_on
+  type: toggle
+  layer: fx
+  panel: m_dist
+  position:
+    x: 980
+    y: 220
+  size:
+    width: 28
+    height: 20
+  label: Master Distortion on
+  default: true
+  glyph: mini_toggle
+  scope: apvts
+  bypass_dot_for: m_dist
+  note: 'module bypass: iOS-style mini toggle (v15: round power button)'
+- id: master_dist_type
+  type: combo
+  layer: fx
+  panel: m_dist
+  position:
+    x: 472
+    y: 253
+  size:
+    width: 150
+    height: 24
+  label: Dist type
+  default: Tape
+  options:
+  - Soft clip
+  - Hard clip
+  - Tape
+  - Fold
+  - Bitcrush
+  - Downsample
+  prefix: DIST
+  scope: apvts
+  note: MASTER-bus distortion type; default Tape = the absorbed v14 master tape saturation (tanh with a small DC offset, drive default 10 %)
+- id: master_dist_autogain
+  type: toggle
+  layer: fx
+  panel: m_dist
+  position:
+    x: 472
+    y: 287
+  size:
+    width: 150
+    height: 24
+  label: AUTO GAIN
+  default: true
+  scope: apvts
+  note: output compensation so the type/drive change keeps the level; with it off the transfer curve is drawn with the extra drive gain
+- id: fx_master_dist_drive
+  type: knob
+  layer: fx
+  panel: m_dist
+  position:
+    x: 638
+    y: 255
+  size:
+    width: 50
+    height: 54
+  label: DRIVE
+  default: 10
+  unit: '%'
+  range:
+  - 0
+  - 100
+  mirror_of: master_dist_drive
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_dist_mix
+  type: knob
+  layer: fx
+  panel: m_dist
+  position:
+    x: 700
+    y: 255
+  size:
+    width: 50
+    height: 54
+  label: MIX
+  default: 100
+  unit: '%'
+  range:
+  - 0
+  - 100
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: dist_curve
+  type: display
+  layer: fx
+  panel: m_dist
+  position:
+    x: 762
+    y: 253
+  size:
+    width: 242
+    height: 58
+  label: Transfer curve
+  kind: dist_curve
+  scope: ui
+  note: master transfer curve fills the 296x58 dark screen; reacts to type, drive, mix, auto gain, bypass (dimmed)
+- id: fx_master_width
+  type: knob
+  layer: fx
+  panel: m_width
+  position:
+    x: 472
+    y: 378
+  size:
+    width: 50
+    height: 54
+  label: WIDTH
+  default: 100
+  range:
+  - 0
+  - 200
+  unit: '%'
+  mirror_of: master_width
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_mono
+  type: knob
+  layer: fx
+  panel: m_width
+  position:
+    x: 534
+    y: 378
+  size:
+    width: 50
+    height: 54
+  label: MONO <
+  default: 120
+  range:
+  - 20
+  - 300
+  unit: ' Hz'
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_width_on
+  type: toggle
+  layer: fx
+  panel: m_width
+  position:
+    x: 694
+    y: 343
+  size:
+    width: 28
+    height: 20
+  label: Stereo Width on
+  default: true
+  glyph: mini_toggle
+  bypass_dot_for: m_width
+  scope: apvts
+  note: 'module bypass: iOS-style mini toggle (v15: round power button)'
+- id: width_scope
+  type: display
+  layer: fx
+  panel: m_width
+  position:
+    x: 596
+    y: 378
+  size:
+    width: 122
+    height: 54
+  label: Stereo field
+  kind: width_scope
+  scope: ui
+- id: master_limiter_on
+  type: toggle
+  layer: fx
+  panel: m_out
+  position:
+    x: 980
+    y: 343
+  size:
+    width: 28
+    height: 20
+  label: Output + Limiter on
+  default: true
+  glyph: mini_toggle
+  bypass_dot_for: m_out
+  scope: apvts
+  note: 'module bypass: iOS-style mini toggle (v15: round power button)'
+- id: fx_master_output
+  accent_knob: black
+  type: knob
+  layer: fx
+  panel: m_out
+  position:
+    x: 758
+    y: 378
+  size:
+    width: 50
+    height: 54
+  label: OUT
+  default: 0
+  range:
+  - -24
+  - 12
+  unit: ' dB'
+  bipolar: true
+  mirror_of: master_output
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: fx_master_ceiling
+  type: knob
+  layer: fx
+  panel: m_out
+  position:
+    x: 820
+    y: 378
+  size:
+    width: 50
+    height: 54
+  label: CEILING
+  default: -0.3
+  range:
+  - -12
+  - 0
+  unit: ' dB'
+  bipolar: false
+  mirror_of: master_ceiling
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: out_meter
+  type: display
+  layer: fx
+  panel: m_out
+  position:
+    x: 882
+    y: 378
+  size:
+    width: 122
+    height: 54
+  label: Output + gain reduction meter
+  kind: out_meter
+  scope: ui
+- id: master_delay_on
+  type: toggle
+  layer: fx
+  panel: m_delay
+  position:
+    x: 980
+    y: 466
+  size:
+    width: 28
+    height: 20
+  label: Tempo Delay on
+  default: true
+  glyph: mini_toggle
+  bypass_dot_for: m_delay
+  scope: apvts
+  note: 'module bypass: iOS-style mini toggle (v15: round power button)'
+- id: master_delay_time
+  type: combo
+  layer: fx
+  panel: m_delay
+  position:
+    x: 472
+    y: 514
+  size:
+    width: 120
+    height: 28
+  label: Delay time
+  options:
+  - 1/16
+  - 1/8
+  - 1/8.
+  - 1/4
+  - 1/4.
+  - 1/2
+  - 1/8T
+  - 1/4T
+  default: 1/8.
+  prefix: ''
+  scope: apvts
+- id: master_delay_fb
+  type: knob
+  layer: fx
+  panel: m_delay
+  position:
+    x: 608
+    y: 501
+  size:
+    width: 50
+    height: 54
+  label: FEEDBACK
+  default: 35
+  range:
+  - 0
+  - 95
+  unit: '%'
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: fx_master_delay_rtn
+  type: knob
+  layer: fx
+  panel: m_delay
+  position:
+    x: 670
+    y: 501
+  size:
+    width: 50
+    height: 54
+  label: RETURN
+  default: 0
+  range:
+  - 0
+  - 100
+  unit: '%'
+  mirror_of: master_delay_rtn
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: delay_taps
+  type: display
+  layer: fx
+  panel: m_delay
+  position:
+    x: 732
+    y: 501
+  size:
+    width: 272
+    height: 54
+  label: Delay taps
+  kind: delay_taps
+  scope: ui
+- id: master_verb_on
+  type: toggle
+  layer: fx
+  panel: m_verb
+  position:
+    x: 980
+    y: 589
+  size:
+    width: 28
+    height: 20
+  label: Plate Reverb on
+  default: true
+  glyph: mini_toggle
+  bypass_dot_for: m_verb
+  scope: apvts
+  note: 'module bypass: iOS-style mini toggle (v15: round power button)'
+- id: master_verb_decay
+  type: knob
+  layer: fx
+  panel: m_verb
+  position:
+    x: 472
+    y: 624
+  size:
+    width: 50
+    height: 54
+  label: DECAY
+  default: 40
+  range:
+  - 0
+  - 100
+  unit: '%'
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: master_verb_damp
+  type: knob
+  layer: fx
+  panel: m_verb
+  position:
+    x: 534
+    y: 624
+  size:
+    width: 50
+    height: 54
+  label: DAMP
+  default: 50
+  range:
+  - 0
+  - 100
+  unit: '%'
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: fx_master_verb_rtn
+  type: knob
+  layer: fx
+  panel: m_verb
+  position:
+    x: 596
+    y: 624
+  size:
+    width: 50
+    height: 54
+  label: RETURN
+  default: 0
+  range:
+  - 0
+  - 100
+  unit: '%'
+  mirror_of: master_verb_rtn
+  scope: apvts
+  compact_cell: true
+  dial_diameter: 36
+- id: verb_tail
+  type: display
+  layer: fx
+  panel: m_verb
+  position:
+    x: 658
+    y: 624
+  size:
+    width: 346
+    height: 54
+  label: Reverb tail
+  kind: verb_tail
+  scope: ui
+v4_composition:
+  vs_v3: 'Added: page_nav (MAIN | FX) in the header; the whole FX layer (3 panels, 9 sections, ~70 controls). Changed on MAIN: header badge shortened to ''REPEAT HOLD'' (120w) to make room for the nav;
+    br_interval gains ''4 bars''; br_grid gains 1/2, 1/4, 1/64, 1/8T, 1/32T; chop_dist_type gains Hard clip + Downsample; chop overlay ''FILTER'' knob is now the filter CUTOFF (log Hz display); master_ceiling
+    default -0.3 dBFS (spec). Everything else on MAIN is byte-for-byte v3 behaviour.'
+  fx_structure:
+    chop_fx:
+    - 'playback: mode / reverse / warp (mirrors of the overlay controls)'
+    - 'amp_env: attack/hold/decay/sustain/release + draggable AHDSR display'
+    master:
+    - 'filter: type LP/BP/HP + cutoff 20Hz-20kHz log + resonance + response curve'
+    - 'distortion (v15, replaces tilt + saturation): type soft clip / hard clip / tape / fold / bitcrush / downsample + drive + mix + auto gain + transfer-curve display + bypass'
+    - stereo_width+mono_below
+    - tempo_delay
+    - plate_reverb
+    - output+limiter(-0.3 dBFS)
+    beat_repeat: MAIN bottom bar only (see not_surfaced_in_mockup for the parameters that left the view)
+  mirrored_params_main_to_fx:
+  - bpm
+  - master_filter_cutoff
+  - master_dist_drive
+  - master_width
+  - master_output
+  - master_ceiling
+  - master_delay_rtn
+  - master_verb_rtn
+  mirrored_params_overlay_to_fx:
+  - chop_mode
+  - chop_reverse
+  - chop_warp
+  - chop_release
+  overlay_only_chop_params:
+  - chop_pitch
+  - chop_delay
+  - chop_verb
+  - chop_unison
+  - chop_loop_xfade
+  vs_v7: 'v8 = v7 simplified: single pattern button; FX page CHOP + MASTER only (BEAT REPEAT column removed, its FX-only params listed in not_surfaced_in_mockup); global declutter.'
+  vs_v10: 'v11: filter is MASTER-only (chop filter cutoff/reso/type/slope/env-amt + chop-overlay CUTOFF + master HP removed); new master FILTER section; FX page re-spaced (CHOP 460 / MASTER 598, 2-col grid);
+    text-overflow audit.'
+  vs_v14: 'v15: distortion is a MASTER section (replaces saturation); tilt/TONE removed; per-chop distortion + overlay drive/dist-type removed; FX columns rebalanced (CHOP 400 / MASTER 658); compact knob
+    cells 50x54 (36 px dial, v14 52x60 / 40 px); displays 54 high (v14 60); even 14 px cell margins; MAIN master bar = FILTER DIST WIDTH OUT.'
+note_for_production: Pages are two juce::Component children toggled by setVisible; both stay alive so the playhead/meters never stop. Mirrored controls (master chain, overlay<->FX chop params) attach to
+  the same APVTS parameter through separate attachments; Beat Repeat has ONE set of controls (MAIN bottom bar). The pattern button is a juce::TextButton cycling the pattern parameter with a PopupMenu on
+  hold / right-click / caret.
+validation:
+  controls_checked: 104
+  sections_checked: 8
+  errors: 0
+  warnings: 0
+  selftest: 'v15 scenarios run individually (reflow assertions updated for the narrower columns; palette / skin assertions rewritten for the wireframe tokens) + light (display legibility: strip, lane, box
+    minis, six FX graphics, envelope ring nodes, meter, editor all draw dark strokes on light grid panels) + titlein (every module title top-left and bypass top-right inside its card, equal insets, columns
+    narrower + centred, content hugs the cards) + envcompact; ov* overflow audits on MAIN, FX, flyouts, overlay, menus, knob values; colour scan greys + blue + BR red only'
+  skin_checks:
+  - no_viewport_units
+  - html_body_100pct
+  - user_select_none
+  - contextmenu_disabled
+  - no_colour_literal_outside_grey_blue_or_beat_repeat_red
+  - screenshots_main_fx_overlay
+not_surfaced_in_mockup:
+  why: v8 FX page no longer has a BEAT REPEAT column; Beat Repeat is surfaced ONLY in the MAIN bottom bar (HOLD AUTO EVERY GRID CHANCE DECAY). These APVTS parameters still exist in the build (defaults/ranges
+    below) and are candidates for a settings/advanced drawer.
+  parameters:
+  - id: br_mode
+    type: seg
+    label: Mode
+    scope: apvts
+    options:
+    - Auto
+    - Manual
+    - 'Off'
+    default: Manual
+    note: production keeps the Auto/Manual/Off choice; the mock's AUTO toggle drives Auto<->Manual, Off moves to settings/advanced
+  - id: br_freeze
+    type: toggle
+    label: FREEZE
+    scope: apvts
+    default: false
+    note: advanced candidate
+  - id: br_rnd_grid
+    type: toggle
+    label: RND GRID
+    scope: apvts
+    default: false
+    note: advanced candidate (random grid per repeat)
+  - id: br_offset
+    type: combo
+    label: Offset
+    scope: apvts
+    options:
+    - '0'
+    - '1'
+    - '2'
+    - '3'
+    - '4'
+    - '5'
+    - '6'
+    - '7'
+    - '8'
+    - '9'
+    - '10'
+    - '11'
+    - '12'
+    - '13'
+    - '14'
+    - '15'
+    default: '0'
+    note: settings/advanced candidate
+  - id: br_gate
+    type: combo
+    label: Gate
+    scope: apvts
+    options:
+    - 1/16
+    - 1/8
+    - 1/4
+    - 1/2
+    - 1 bar
+    - 2 bars
+    - 4 bars
+    default: 1/2
+    note: settings/advanced candidate (repeat window length)
+  - id: br_pdecay
+    type: knob
+    label: P.DECAY
+    scope: apvts
+    range:
+    - 0
+    - 12
+    default: 0
+    unit: ' st'
+    step: 0.5
+    note: advanced candidate (pitch decay per repeat)
+  - id: br_accel
+    type: knob
+    label: ACCEL
+    scope: apvts
+    range:
+    - 0
+    - 100
+    default: 0
+    unit: '%'
+    note: advanced candidate (repeat acceleration)
+  - id: br_sweep
+    type: knob
+    label: SWEEP
+    scope: apvts
+    range:
+    - 0
+    - 100
+    default: 50
+    unit: '%'
+    note: advanced candidate (filter sweep amount)
+  - id: br_reverse
+    type: seg
+    label: Reverse repeats
+    scope: apvts
+    options:
+    - 'Off'
+    - Alternate
+    - All
+    default: 'Off'
+    note: advanced candidate (Off/Alternate/All)
+  - id: br_filter_mode
+    type: seg
+    label: Repeat filter
+    scope: apvts
+    options:
+    - 'Off'
+    - LP
+    - HP
+    default: 'Off'
+    note: advanced candidate (Off/LP/HP sweep over the gate)
+  - id: br_mix
+    type: seg
+    label: Mix mode
+    scope: apvts
+    options:
+    - Mix
+    - Insert
+    - Gate
+    default: Mix
+    note: advanced candidate (Mix/Insert/Gate)
+  - id: br_preview
+    type: display
+    label: Repeat preview
+    scope: ui
+    kind: br_preview
+    note: display only; dropped (repeat preview readout)
+  deferred_pattern_slots:
+    why: 'user feedback v14 "remove abcdefg": the 8-slot pattern system was DELIBERATELY deferred, not forgotten. The UI shows ONE pattern. Do not build the UI for it in the first pass; keep the model able
+      to hold slots.'
+    removed_control:
+      id: pattern_slot
+      type: button (cycle + dropdown), header 40x24
+      options:
+      - A
+      - B
+      - C
+      - D
+      - E
+      - F
+      - G
+      - H
+      default: A
+      scope: apvts
+    spec_reference: 'chopline-spec.md section 4/5: "8 pattern slots (A-H), switchable live (at bar end or now), plus MIDI note switching"'
+    removed_shortcuts: Shift+1..8 = pattern A..H
+    later_options: advanced drawer / settings, or MIDI-note pattern switching; v12 button design (single button, click cycles, hold/right-click/caret dropdown) is the reference if it returns
+user_feedback_v8: pattern, change how the menu looks. make it a single button with drop down or cycle through it. there is too much info everywhere. make it a bit more simple. remove beat repeat settings
+  from fx tab
+user_feedback_v7: make a dropdown menu for pattern. keep the bpm to master only
+user_feedback_v6: 'the setup is too complex, remove abcdefg above change the pattern selection, make it a drop down menu, remove 1/32, remove chop menu; then: remove colours, keep black white, maybe gold
+  and gray'
+transport:
+  source: host (AudioPlayHead) - no in-plugin transport control
+  playhead_animation: display-only, follows host position
+mockup_only:
+- id: demo_transport_hook
+  note: Space toggles a simulated host transport in v14-ui-test.html so the animation can be previewed. NOT a product element.
+- id: demo_hint
+  note: 'near-invisible footer text ''demo: space = simulate host transport | Q-I = MIDI notes (chops 1-8)'' in the HTML only. NOT a product element.'
+- id: demo_midi_keys
+  note: Q W E R T Y U I fire chops 1-8 as simulated MIDI note-ons (see midi.mockup_only_stand_in). NOT a product element.
+removed_from_design:
+  note: 'v11 build contract: these v10 items no longer exist. Filter is an APVTS-global (master) parameter set only; there is NO per-chop filter and NO master high-pass.'
+  per_chop_filter:
+  - id: chop_filter
+    was: CUTOFF knob (overlay + FX mirror fx_chop_filter)
+  - id: chop_ftype
+    was: LP/BP/HP seg
+  - id: chop_fslope
+    was: 12/24 dB seg
+  - id: chop_reso
+    was: RESO knob
+  - id: chop_envamt
+    was: ENV AMT knob (filter env amount)
+  - id: chop_filt_on
+    was: filter bypass dot
+  - id: filt_curve
+    was: per-chop response display
+  - id: fx_chop_filter
+    was: FX mirror of chop_filter
+  master_high_pass:
+  - id: master_hp
+    was: HP knob 20-500 Hz in TILT + HP section
+  removed_apvts_or_per_chop_params:
+  - chop_filter
+  - chop_ftype
+  - chop_fslope
+  - chop_reso
+  - chop_envamt
+  - chop_filt_on
+  - master_hp
+  new_master_params:
+  - master_filter_on (bool, default true)
+  - master_filter_type (LP|BP|HP, default LP)
+  - master_filter_cutoff (20 Hz-20 kHz log, default 20 kHz)
+  - master_filter_reso (0-100 %, default 10)
+  slope_note: 12/24 dB slope removed with the per-chop filter; master filter is fixed 12 dB/oct (re-add master_filter_slope later if wanted).
+  v14_removed:
+    pattern_slots_A_to_H: moved to not_surfaced_in_mockup.deferred_pattern_slots
+    note_triplet / note_dotted toggles: folded into the single note_duration button (T / D menu variants)
+    note_duration seg pills: replaced by the single button
+    chop_preview: replaced by the chop sample editor
+    strip_blue_band: v14 Strip A has no band above the waveform (v13 mini-map band dropped)
+  v15_removed:
+    per_chop_distortion:
+    - id: chop_dist_type
+      was: overlay DIST type combo (6 types)
+    - id: chop_drive
+      was: overlay DRIVE knob
+    - id: fx_chop_dist_type
+      was: FX CHOP mirror of chop_dist_type
+    - id: fx_chop_drive
+      was: FX CHOP DRIVE knob (mirror of chop_drive)
+    - id: chop_dist_tone
+      was: TONE knob of the chop distortion
+    - id: chop_dist_mix
+      was: chop distortion MIX
+    - id: chop_dist_out
+      was: chop distortion OUT
+    - id: chop_autogain
+      was: chop distortion AUTO GAIN
+    - id: chop_dist_on
+      was: chop distortion bypass dot
+    - id: dist_curve (chop)
+      was: per-chop transfer curve; the id dist_curve now lives in the MASTER DISTORTION section
+    - id: c_dist
+      was: FX CHOP DISTORTION cell
+    tilt_tone:
+    - id: master_tone
+      was: MAIN bottom-bar TONE knob (tilt EQ)
+    - id: fx_master_tone
+      was: FX TILT knob
+    - id: master_tone_on
+      was: tilt bypass dot
+    - id: tone_curve
+      was: tilt response display
+    - id: m_tone
+      was: FX TILT section
+    master_saturation:
+    - id: master_sat
+      was: MAIN SAT knob
+    - id: fx_master_sat
+      was: FX saturation DRIVE knob
+    - id: master_sat_mix
+      was: saturation MIX
+    - id: master_sat_on
+      was: saturation bypass dot
+    - id: sat_curve
+      was: saturation curve display
+    - id: m_sat
+      was: FX SATURATION section
+    removed_apvts_or_per_chop_params:
+    - chop_drive
+    - chop_dist_type
+    - chop_dist_tone
+    - chop_dist_mix
+    - chop_dist_out
+    - chop_autogain
+    - chop_dist_on
+    - master_tone
+    - master_tone_on
+    - master_sat
+    - master_sat_mix
+    - master_sat_on
+    new_master_params_apvts_globals:
+    - master_dist_type (Soft clip | Hard clip | Tape | Fold | Bitcrush | Downsample, default Tape)
+    - master_dist_drive (0-100 %, default 10)
+    - master_dist_mix (0-100 %, default 100)
+    - master_dist_autogain (bool, default true)
+    - master_dist_on (bool, default true; bypass dot)
+    saturation_equivalence: 'the old master tape saturation (tanh with a small DC offset, drive default 10 %, mix 100 %) is absorbed: it IS the ''Tape'' type of the master distortion; defaults chosen so
+      a fresh instance sounds like v14''s master saturation. master_sat -> master_dist_drive (type Tape), master_sat_mix -> master_dist_mix, master_sat_on -> master_dist_on.'
+    main_bar_change: MAIN MASTER bar was TONE FILTER SAT WIDTH OUT; now FILTER DIST WIDTH OUT (+ BPM readout, more button, limiter lamp)
+    chop_distortion_in_dsp: per-chop distortion stage deleted from the chop chain; the master chain order is filter -> distortion -> width -> delay/reverb -> output limiter.
+user_feedback_v11: move filter only to master lemove the high pas and make the filter sectionb there, give space to all modules so eerything firs perfectly and no letters a[re cut off]
+user_feedback_v12: use the colours we used in CORRUPTR (reskin only; nothing else changes)
+midi:
+  plugin_format: VST3 + AU instrument (juce::AudioProcessor, acceptsMidi = true, isSynth = true) with stereo output; optional sidechain bus reserved for Phase 6. Standalone build also provided. Compatible
+    with Ableton Live and every major host (Logic, Cubase, Reaper, Bitwig, FL Studio, Studio One, ...).
+  host_integration: tempo / transport / bar position read from AudioPlayHead (host-synced; no in-plugin transport). MIDI input from the host track. Drag-out MIDI of the pattern per spec.
+  map:
+    chop_trigger: 'chop N plays from MIDI note base + N (spec section 4 "C1 + N"); N is the 0-based chop index shown as chop N+1. Default base C1 = MIDI note 36 (Ableton naming: C3 = 60). Example: note
+      36 -> chop 1, 37 -> chop 2, ..., 47 -> chop 12.'
+    velocity: 'velocity-sensitive: note velocity scales chop gain through the per-chop chain (same path as the pattern step velocity lane)'
+    base_note: 'configurable: Settings flyout combo midi_base (C0 / C1 / C2 / C3, default C1); stored as an APVTS parameter'
+    beat_repeat_notes: 'spec section 7: MIDI performance notes, one per grid size (C3 = 1/4, C#3 = 1/8, ...) - not surfaced in the mockup'
+    transport_stopped: chop MIDI triggers still play while the host transport is stopped (spec section 8)
+    out_of_range: notes outside base .. base + chopCount - 1 are ignored by the chop trigger
+  ui:
+    activity_dot: 'header control midi_in (x452 y15 54x24): idle light grey, lights blue ~220 ms on every note-on'
+    strip_feedback: the triggered strip chop flashes blue; boxes of that chop flash
+  mockup_only_stand_in: computer keys Q W E R T Y U I fire chops 1-8 (notes base..base+7), logging "[CHOPLINE] midi note <n> -> chop <k>". Key repeat and Cmd/Ctrl/Alt chords ignored. NOT a product element.
+chop_sample_editor:
+  origin: chop-editor overlay taken from v13 only; v13 strip changes (mini-map band, always-visible marker grips, double-click-adds-marker, wheel zoom) are NOT part of v14 - Strip A is exactly v12 (clean
+    strip, no band, nothing above the waveform, nothing drawn above it)
+  state_note: ALL fields are SliceMap / per-chop model state saved with the plugin state, NOT APVTS parameters. Only the existing chop params (pitch, release, delay, verb, unison, mode, reverse, warp) stay
+    APVTS; midi_base is APVTS. Per-chop drive / distortion no longer exist (v15).
+  per_chop_model_fields:
+    startOffset:
+      type: 'signed seconds (production: signed frames)'
+      default: 0
+      meaning: fine-trim of the chop start relative to its slice marker; negative = reaches back into the previous slice
+      limits: effective start in [previous chop marker, effective end - minLen]; minLen = slice_min_len (20-500 ms, default 80)
+      ui: START flag; readout START
+      snap: zero-cross snap when slice_zero_cross is on
+    endOffset:
+      type: 'signed seconds (production: signed frames)'
+      default: 0
+      meaning: fine-trim of the chop end relative to its next slice marker; positive = reaches into the next slice
+      limits: effective end in [effective start + minLen, end of next chop]
+      ui: END flag; readout END + LENGTH
+      snap: same as startOffset
+    fadeInMs:
+      type: float ms
+      range:
+      - 0
+      - 20
+      default: 2
+      meaning: equal-power declick fade at chop start, non-destructive
+      ui: fade-in corner grip, 0.5 ms steps; readout FADE IN
+      mockup_mapping: 'handle travel stylised: 54 px = 20 ms'
+    fadeOutMs:
+      type: float ms
+      range:
+      - 0
+      - 20
+      default: 2
+      meaning: equal-power declick fade at chop end
+      ui: fade-out corner grip; readout FADE OUT
+    loopStart:
+      type: normalised 0..1 of the trimmed chop
+      default: 0.25
+      meaning: loop start when playback mode = Loop (spec section 6)
+      limits: loopStart <= loopEnd - 0.05
+      ui: brace start bar + bottom grip (Loop mode only)
+    loopEnd:
+      type: normalised 0..1 of the trimmed chop
+      default: 0.75
+      meaning: loop end
+      ui: brace end bar + bottom grip
+    loopXfade:
+      type: ms
+      range:
+      - 0
+      - 200
+      default: 10
+      meaning: crossfaded loop point; clamped to half the loop length
+      ui: crossfade diamond on the brace + XFADE knob (mirrored)
+      mockup_mapping: diamond travel 60 px = 200 ms
+  overlay_rect:
+    x: 150
+    y: 120
+    w: 800
+    h: 468
+  order_top_to_bottom:
+  - chip + close (y136)
+  - sample editor 768x260 (y164)
+  - 'row: MODE | REVERSE | SNAP ZERO-X | WARP seg (y434)'
+  - 'readouts: START END LENGTH FADE IN FADE OUT LOOP (y472)'
+  - 'knobs: PITCH RELEASE DELAY VERB UNISON XFADE, evenly spaced over the 768 px width (y512; DRIVE and DIST type removed in v15)'
+  handles:
+    start_end: blue flags (S right of the start line, E left of the end line), +/-7 px hit zone; move inside neighbour-slice limits; double-click resets
+    fades: down-pointing triangles at the top corners, wedge envelopes; drag 0-20 ms
+    loop_brace: 'only when mode = Loop: translucent band, brace line, start/end bars with bottom grips, crossfade diamond + X glyph'
+    direction: chevron points left when Reverse is on
+    audition: click inside the editor waveform = audition from that point (white playhead sweeps; reverse backwards; Loop wraps in the brace; 2.6 s cap) + console log; production triggers the chop voice
+      from that position
+  view: chop +/-30%, clamped to the neighbour slices; refit on open / chop change
+  replaces: chop_preview display (removed)
+  colour_rules: blue = selection/handles/loop; red remains Beat-Repeat-only
+user_feedback_v14: remove abcdefg, make compact one button to choose the note durations. make it a vst compatible with ableton and every other daw. make it trigger sound from midi notes too. remove the
+  blue strip above the sampler. use mockup 12 we made before it was better
+layout_fit_pass_v15:
+  rules:
+  - compact knob cell 50x54 with a 36 px dial (was 52x60 / 40 px); applies to FX page, MAIN bottom bar (BR + MASTER)
+  - master displays 54 high (dist 58), was 60
+  - master cells 108 high with 15 px gaps; CHOP cells PLAYBACK 114 + ENVELOPE 471; last cell ends 13 px above the panel edge, 10 px side margins
+  - 'every cell: content margins 14 px left / right, 12-14 px bottom, 30-40 px top (below the title); content centred on one line per row; 8-10 px between stacked controls'
+  - 'MAIN bottom bar: BEAT REPEAT rows y628/664 (bottom margin 13), knobs 56 px gaps; MASTER knobs FILTER DIST WIDTH OUT evenly spaced (centres 124 px apart)'
+  - 'overlay knob row: PITCH RELEASE DELAY VERB UNISON XFADE at 143 px pitch (no drive / dist type)'
+  no_truncation: 'audit run after the size-down: ov* scenarios on MAIN, FX, three flyouts, overlay (first + last chop), every combo menu + note-length dropdown, every knob/field at min/mid/max, every combo
+    option; 0 hits'
+user_feedback_v15: move distortion to saturation remove tilt. make so every module fits perfectly. make em a bit smaller so they fit.
+v16_changes:
+  skin: 'wireframe-light (Sonisto reference): flat cards, hairline borders, light hairline-grid displays (strip, lane, box minis, editor, filter / transfer / width / delay / reverb / envelope / meter),
+    flat knobs with a dark notch, tiny uppercase wide-tracked labels, mono value pills, iOS mini toggles, thin faders; monochrome + thin blue + BR red'
+  fx_fit: 'modules narrower (CHOP 400 -> 360, MASTER 658 -> 560), centred with 82 px gutters; every module title top-left and bypass mini-toggle top-right INSIDE the card (10 px from the edge); content
+    hugs the card (14 px margins, all spans re-laid: filter display 272, dist curve 242, width|output halves 274 with 122 px displays, delay display 272, reverb tail 346)'
+  envelope: ENVELOPE card 380x471 -> 360x288; AHDSR display 352x359 -> 332x176; five 50x54 knobs on one row
+  unchanged: structure, controls, parameters, interactions, keyboard (Tab/M/F/H/Space/Q-I/1-8/Enter/Esc), MIDI demo, Space transport demo, mirrors, overlay behaviour and sample editor all identical to v15
+user_feedback_v16: use textures knobs and letters like in this image. make fx modules a bit narrower, the titles and on off buttons are way too far outside. make envelope module a bit smaller
