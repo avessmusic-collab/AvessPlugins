@@ -1,0 +1,1670 @@
+# CHOPLINE UI mockup v7 - design spec (v6 + plain pattern dropdown without prev/next chevrons + BPM readout in MASTER only)
+# v7 = v6 with: (1) pattern selector is just the dropdown pill (chevron buttons removed; Shift+1-8 stays), (2) BPM readout removed from the header and added to MASTER
+#   (MAIN bottom-bar MASTER panel title row + FX MASTER column bar, mirrored), header reflowed: wordmark | presets | pattern dropdown | play | (hold badge) | MAIN|FX | gear.
+# Everything else is v6 (skin tokens, durations, chop chip/overlay, mirrors, HOLD, keyboard, transport, mock Juce bridge).
+#
+# --- v6 header follows ---
+# CHOPLINE UI mockup v6 - design spec (v5 SIMPLIFIED: pattern dropdown, no 1/32, no CHOP panel on MAIN, monochrome + gold palette)
+#
+# NOTE: the production UI is NATIVE JUCE (custom LookAndFeel, juce::Component), NOT WebView.
+# v6-ui-test.html is a visual direction + interaction reference only, not production code.
+# Positions are absolute window pixels at 100% scale (1100x720); the real editor scales 75%-200%, fixed aspect.
+# v6 = v5 with: (1) A-H pattern buttons replaced by a stepper dropdown "Pattern A" with prev/next chevrons, (2) note length 1/4 1/8 1/16 only (1/32 removed;
+#   Beat Repeat grid keeps 1/32 + 1/64), (3) CHOP panel removed from MAIN's bottom bar (BEAT REPEAT + MASTER now wider; boxes/lane strip got the height),
+#   (4) palette stripped to black / white / greys + ONE muted gold accent (no chop hues, no cyan, no gold).
+# Everything else is v5: layout, skin, FX page, mirrored params, transport continuity, HOLD behaviours, keyboard, mock Juce bridge.
+
+plugin: CHOPLINE
+version: 7
+supersedes: v6 (v1-v6 kept in repo untouched)
+source_spec: plugins/CHOPLINE/.ideas/chopline-spec.md
+user_feedback_v7: "make a dropdown menu for pattern. keep the bpm to master only"
+user_feedback_v6: "the setup is too complex, remove abcdefg above change the pattern selection, make it a drop down menu, remove 1/32, remove chop menu; then: remove colours, keep black white, maybe gold and gray"
+
+window:
+  width: 1100
+  height: 720
+  resizable: true
+  scale_range: [0.75, 2.0]
+  fixed_aspect: true
+  edge_padding: 15
+
+pages:
+  nav_control: page_nav   # segmented MAIN | FX in the header; keyboard: Tab toggles, M = main, F = fx
+  main: {layers: [header, main], popovers: [fl_slice, fl_mastermore, fl_set, overlay]}   # overlay now also hosts pitch / drive / mode / reverse (they lived in the removed CHOP panel)
+  fx: {layers: [header, fx], popovers: []}
+  persistence: page is UI-only state; switching closes open flyouts/overlay, keeps selection, pattern, transport, BR hold state
+  layout_fx: "three columns inside the 15px edge frame: BEAT REPEAT 330w | CHOP FX 360w | MASTER 364w, 8px gutters, full height (y 60-705)"
+
+styling:
+  style: light_neumorphic_hardware_dark_screens
+  palette: monochrome_plus_gold   # NO hue anywhere except the single gold accent
+  colors:
+    page: "#d3d3d3"
+    chassis: "linear #f3f3f3 -> #e4e4e4 (rounded plate 1088x708 at 6,6, radius 30)"
+    card: "linear #fafafa -> #f1f1f1 (raised, radius 18, soft drop shadow + 1px white inner highlight)"
+    well: "#dddddd (recessed: segmented tracks, trays, cells; inner shadow + white under-lip)"
+    screen: "radial #363636 -> #1d1d1d -> #131313 (inset, radius 14, 7.5% top gloss, canvas content gets a 3px soft white glow)"
+    text: "#303030"
+    text_dim: "#5b5b5b"
+    text_faint: "#727272"   # ~4:1 on cards - small labels only
+    screen_text: "#f2f2f2"
+    screen_text_faint: "rgba(201,201,201,.62)"
+    knob_arc: "#4f4f4f"
+    black_accent_knob: "#111111 -> #6b6b6b dome (one per section)"
+    gold: "#b8913f"            # THE accent: selection, playhead, active/filled states, Beat Repeat activity
+    gold_ink: "#7a5c1c"        # gold text on white
+    gold_on_screen: "#d4b062 (glow #dcc283)"
+    gold_tint: "#faf7ef -> #f4eedd (armed Beat Repeat card), pad #fbf8f0 -> #f1e8cf"
+  chop_identity: "greyscale only: 8 distinct shades + the index number + the mini waveform; alternate light/dark so neighbours separate; ink colour auto-contrasts"
+  chop_shades_on_screens: ["#f5f6f8", "#8f959f", "#d3d6dc", "#6f7580", "#e6e8ec", "#a3a9b3", "#bfc3cb", "#5d636e"]   # rendered neutral (desaturated) in the build
+  chop_shades_on_white: ["#2f333b", "#9ba1ac", "#555b67", "#c2c6ce", "#747a86", "#dadde2", "#3f444e", "#adb2bb"]
+  selection_without_hue: "selected chop = gold top bar + gold outline on the strip, gold ring around its index chip on every box that uses it, gold ring on the selected step, gold-ringed swatch in the chop chip"
+  fonts:
+    primary: "Inter, SF Pro Text, -apple-system, Helvetica Neue, sans-serif"
+    numeric: "JetBrains Mono, SF Mono, ui-monospace, monospace"
+    labels: "sentence case, 9.5px, mid-grey; panel + section titles caps with 0.16-0.24em tracking"
+  limiter_led: "light grey = ok, gold = hot (was green/red)"
+  meters: "grey -> white -> gold ramp (no green/yellow/red)"
+  radii_px: {panel: 18, cell: 14, screen: 14, pill: 999, box: 12, icon_button: 9}
+  knob: {diameter: 40, dome: "matte white radial gradient, soft drop shadow, faint ridge ring, thin grey needle", arc: "thin 2px outer ring, value arc dark grey (gold on Beat Repeat)", sweep_deg: 270, bipolar_arc_from_centre: true,
+         accent_knob: "ONE black dome per section: swing, slice_sensitivity, chop_pitch, br_chance / fx_br_chance, chop_dist_mix, master_sat_mix, master_output / fx_master_output"}
+  sliders: "no continuous sliders exist in the v4 structure; the slider language (thin track + white pill thumb) is not used. Meters (cpu, output) use thin tracks."
+  segmented: "recessed pill track, selected = raised white pill with dark text (gold ink on Beat Repeat)"
+  combo: "raised white pill with up/down chevrons (stepper look)"
+  mini_switch: "ADV-style 26x14 track + white thumb; used for auto, freeze, rnd grid, auto gain, reverse, snap zero-X; gold track on Beat Repeat"
+  bypass_toggle: "20px raised round button with power glyph; dark = section active, light grey = bypassed; bypassed section dims to 42%"
+  boxes: {tray: "recessed light tray", card: "raised white card", filled: "grey-shade chip with index + mini waveform on a small dark inset", playing: "soft pressed + gold edge glow", selected: "2px gold outline (selected step) + gold ring on index chips of the selected chop", playhead: "gold line (brighter + glow while repeat-hold) on the boxes, gold-hi on the lane screen"}
+  beat_repeat_hold: {panel: "gold ring glow + warm tint on light card", pad: "306x100 gold-tinted raised pad, gold fill pressed", header_badge: "dark pill screen with gold glow 'REPEAT HOLD' - both pages", fx_header_screen: "gold glow while holding"}
+  fx_module_header: {size: "314/344/348 x 22 dark screen inside the panel bar", content: "glowing icon + letter-spaced name + status; CHOP header also carries the chop chip and prev/next arrows", note: "BR / MASTER headers have no arrows (nothing to step through)"}
+
+interaction:
+  page_nav: [click_segmented_MAIN_FX, Tab_toggles, M_main, F_fx, state_preserved_across_switch, transport_keeps_running]
+  shared_params: "MAIN bottom bar and FX page edit the same value (br_hold, br_auto<->br_mode, br_interval, br_grid, br_chance, br_decay, master_tone, master_sat, master_width, master_output, master_ceiling, master_delay_rtn, master_verb_rtn)"
+  hold_pad: "FX pad is momentary (press = repeat, release = stop); Shift+click latches; H key does the same on either page; MAIN HOLD button stays a latching toggle; ignored while mode = Off"
+  chop_fx_target: "CHOP FX always edits the selected chop (same selection as MAIN); prev/next arrows in the panel bar and keys 1-8 change it"
+  env_display: "AHDSR display: drag the 4 handles (attack end, hold end, decay end + sustain level, release end); stage slots use a sqrt time scale; knobs below mirror the handles"
+  bypass: "dot per chop-FX cell and per master section; bypass dims the section"
+  knob: [drag_vertical, shift_fine_drag, double_click_reset, mouse_wheel, right_click_midi_learn]
+  keyboard: {space: transport_preview, '1-8': select_chop, 'shift+1-8': pattern_A_to_H, escape: close_flyout_or_overlay, tab: toggle_page, m: main_page, f: fx_page, h: beat_repeat_hold}
+  pattern_selector: "header plain dropdown pill [Pattern A updown] (no prev/next chevron buttons); click = menu of Pattern A-H; Shift+1-8 jumps (plain 1-8 stays chop select)"
+  bpm_readout: "BPM is NOT in the header; small dark inset readout in MASTER: MAIN master panel title row (x915,y596) and FX MASTER panel bar (x832,y65), mirrored; host-synced, display-only in production, editable in the mock for demo"
+  chop_editing_without_panel: "select = click strip chop / filled box / FX-page CHOP arrows / keys 1-8; edit = double-click a filled box (or strip chop), or the '...' button next to the chop chip, opens the overlay (warp, pitch, drive, cutoff, release, delay, verb, unison, mode, dist type, reverse, preview); full per-chop FX on the FX page CHOP column"
+  main_page_unchanged: [strip, boxes, note_length, lane_strip, flyouts, chop_detail_overlay]
+
+note_length_model:
+  straight: {"1/4": 4, "1/8": 8, "1/16": 16}     # 1/32 removed in v6 (Beat Repeat grid is a different parameter and keeps 1/32, 1/64)
+  triplet: {"1/4T": 6, "1/8T": 12, "1/16T": 24}
+  dotted: {"1/4.": "3 (last box 2/3 wide)", "1/8.": "6 (last box 1/3 wide)", "1/16.": "11 (last box 2/3 wide)"}
+  events_are_time_based: true   # stored as ticks; box count is only a view of the current length
+  max_boxes: 24 (12 columns x 2 rows)
+
+layers:  # header is always visible; main and fx are mutually exclusive pages; flyouts/overlay are popovers over main
+
+  - id: header
+    layer: header
+    title: ""
+    rect: {x: 0, y: 0, w: 1100, h: 54}
+    always_visible: true  # both pages
+  - id: strip_a
+    layer: main
+    title: "SAMPLE"
+    rect: {x: 15, y: 60, w: 1070, h: 152}
+    visible_when: page == MAIN
+  - id: strip_b
+    layer: main
+    title: "PATTERN"
+    rect: {x: 15, y: 220, w: 1070, h: 365}
+    visible_when: page == MAIN
+  - id: br
+    layer: main
+    title: "BEAT REPEAT"
+    rect: {x: 15, y: 593, w: 500, h: 112}
+    visible_when: page == MAIN
+  - id: master
+    layer: main
+    title: "MASTER"
+    rect: {x: 523, y: 593, w: 562, h: 112}
+    visible_when: page == MAIN
+  - id: fl_slice
+    layer: fl_slice
+    title: "SLICING"
+    rect: {x: 785, y: 122, w: 300, h: 166}
+    opens_on: header/section icon ('...' or gear); outside click dismisses; exclusive with other flyouts
+  - id: fl_mastermore
+    layer: fl_mastermore
+    title: "MASTER - MORE"
+    rect: {x: 815, y: 479, w: 270, h: 106}
+    opens_on: header/section icon ('...' or gear); outside click dismisses; exclusive with other flyouts
+  - id: fl_set
+    layer: fl_set
+    title: "SETTINGS"
+    rect: {x: 815, y: 62, w: 270, h: 114}
+    opens_on: header/section icon ('...' or gear); outside click dismisses; exclusive with other flyouts
+  - id: overlay
+    layer: overlay
+    title: ""
+    rect: {x: 280, y: 150, w: 540, h: 344}
+    opens_on: "'...' button beside the chop chip (lane row), double-click filled box or strip chop; Esc/scrim/close dismisses"
+    # Esc/scrim/close dismisses
+  - id: fx_br
+    layer: fx
+    title: "BEAT REPEAT"
+    rect: {x: 15, y: 60, w: 330, h: 645}
+    visible_when: page == FX
+  - id: fx_chop
+    layer: fx
+    title: "CHOP FX"
+    rect: {x: 353, y: 60, w: 360, h: 645}
+    visible_when: page == FX
+  - id: fx_master
+    layer: fx
+    title: "MASTER"
+    rect: {x: 721, y: 60, w: 364, h: 645}
+    visible_when: page == FX
+
+sections:  # grouped cells inside the FX page panels (each may carry a bypass dot)
+  - id: c_dist
+    parent: fx_chop
+    title: "DISTORTION"
+    rect: {x: 361, y: 92, w: 344, h: 146}
+    bypass_param: chop_dist_on
+  - id: c_filt
+    parent: fx_chop
+    title: "FILTER"
+    rect: {x: 361, y: 246, w: 344, h: 146}
+    bypass_param: chop_filt_on
+  - id: c_env
+    parent: fx_chop
+    title: "AMP ENVELOPE  (AHDSR)"
+    rect: {x: 361, y: 400, w: 344, h: 297}
+  - id: m_tone
+    parent: fx_master
+    title: "1  TILT EQ + HP"
+    rect: {x: 729, y: 92, w: 348, h: 96}
+    bypass_param: master_tone_on
+  - id: m_sat
+    parent: fx_master
+    title: "2  TAPE SATURATION"
+    rect: {x: 729, y: 192, w: 348, h: 96}
+    bypass_param: master_sat_on
+  - id: m_width
+    parent: fx_master
+    title: "3  STEREO WIDTH"
+    rect: {x: 729, y: 292, w: 348, h: 96}
+    bypass_param: master_width_on
+  - id: m_delay
+    parent: fx_master
+    title: "4  TEMPO DELAY"
+    rect: {x: 729, y: 392, w: 348, h: 96}
+    bypass_param: master_delay_on
+  - id: m_verb
+    parent: fx_master
+    title: "5  PLATE REVERB"
+    rect: {x: 729, y: 492, w: 348, h: 96}
+    bypass_param: master_verb_on
+  - id: m_out
+    parent: fx_master
+    title: "6  OUTPUT + LIMITER"
+    rect: {x: 729, y: 592, w: 348, h: 96}
+    bypass_param: master_limiter_on
+
+controls:
+  - id: wordmark
+    type: label
+    layer: header
+    panel: header
+    position: {x: 15, y: 15}
+    size: {width: 110, height: 24}
+    label: "chopline"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: preset_prev
+    type: button  # icon button
+    layer: header
+    panel: header
+    position: {x: 140, y: 15}
+    size: {width: 24, height: 24}
+    glyph: "prev"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: preset_name
+    type: combo
+    layer: header
+    panel: header
+    position: {x: 174, y: 15}
+    size: {width: 220, height: 24}
+    label: "Preset"
+    options: ["Chops / Vowel Hop", "Chops / Staccato Verse", "Glitch / Tape Stutter Run", "Stutter / Syllable Roll", "Tape / Slow Wobble", "Granular / Breath Cloud"]
+    default: "Chops / Vowel Hop"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: preset_next
+    type: button  # icon button
+    layer: header
+    panel: header
+    position: {x: 404, y: 15}
+    size: {width: 24, height: 24}
+    glyph: "next"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: pattern_slot
+    type: combo   # v7: plain dropdown pill only (v6 prev/next chevrons removed); stepper glyph inside the pill
+    layer: header
+    panel: header
+    position: {x: 460, y: 15}
+    size: {width: 140, height: 24}
+    label: "Pattern"
+    options: ["Pattern A", "Pattern B", "Pattern C", "Pattern D", "Pattern E", "Pattern F", "Pattern G", "Pattern H"]
+    default: "Pattern A"
+    prefix: ""
+    scope: apvts  # APVTS global (automatable, stable parameter ID) - stored value is the slot letter A-H
+  - id: transport_play
+    type: toggle
+    layer: header
+    panel: header
+    position: {x: 632, y: 15}
+    size: {width: 80, height: 24}
+    label: "Play"
+    default: false
+    glyph: "play"
+    scope: mock_only  # mock only: production uses host transport
+  - id: bpm
+    type: field
+    layer: main
+    panel: master   # v7: BPM lives in MASTER only (not the header)
+    position: {x: 915, y: 596}
+    size: {width: 106, height: 22}
+    label: "BPM"
+    default: 124
+    range: [40, 240]
+    unit: ""
+    decimals: 1   # shows "124.0"
+    style: "small dark inset screen readout"
+    scope: host_readonly  # read from AudioPlayHead (display-only in production; mock lets you edit for demo)
+  - id: fx_bpm
+    type: field
+    layer: fx
+    panel: fx_master   # inside the MASTER panel bar (dark screen), left of the status text
+    position: {x: 832, y: 65}
+    size: {width: 112, height: 18}
+    label: "BPM"
+    default: 124
+    range: [40, 240]
+    unit: ""
+    decimals: 1
+    mirror_of: "bpm"
+    scope: host_readonly  # read from AudioPlayHead
+  - id: br_badge
+    type: label
+    layer: header
+    panel: header
+    position: {x: 728, y: 15}
+    size: {width: 154, height: 24}
+    label: "Beat Repeat hold badge (visible only while HOLD is on)"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: settings
+    type: button  # icon button
+    layer: header
+    panel: header
+    position: {x: 1057, y: 15}
+    size: {width: 28, height: 24}
+    label: "Settings"
+    glyph: "gear"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: waveform
+    type: display
+    layer: main
+    panel: strip_a
+    position: {x: 27, y: 90}
+    size: {width: 830, height: 110}
+    label: "Sample strip"
+    kind: "waveform"
+    scope: slice_map  # SliceMap / sampler model state
+  - id: sampler_load
+    type: button
+    layer: main
+    panel: strip_a
+    position: {x: 873, y: 90}
+    size: {width: 148, height: 28}
+    label: "Load sample"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: slice_more
+    type: button  # icon button
+    layer: main
+    panel: strip_a
+    position: {x: 1031, y: 90}
+    size: {width: 42, height: 28}
+    label: "More slicing"
+    glyph: "dots"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: slice_mode
+    type: combo
+    layer: main
+    panel: strip_a
+    position: {x: 873, y: 128}
+    size: {width: 200, height: 28}
+    label: "Slice mode"
+    options: ["Transient", "Grid", "Equal", "Manual"]
+    default: "Transient"
+    prefix: "SLICE"
+    scope: slice_map  # SliceMap / sampler model state
+  - id: slice_sensitivity
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: main
+    panel: strip_a
+    position: {x: 873, y: 166}
+    size: {width: 110, height: 40}
+    label: "SENS"
+    default: 55
+    range: [0, 100]
+    unit: "%"
+    compact: true
+    scope: slice_map  # SliceMap / sampler model state
+  - id: sampler_file
+    type: readout
+    layer: main
+    panel: strip_a
+    position: {x: 993, y: 166}
+    size: {width: 80, height: 40}
+    label: "file"
+    scope: sample_state  # sample store state
+  - id: note_duration
+    type: seg
+    layer: main
+    panel: strip_b
+    position: {x: 27, y: 254}
+    size: {width: 210, height: 40}
+    label: "Note length"
+    options: ["1/4", "1/8", "1/16"]
+    captions: ["quarter", "eighth", "16th"]
+    default: "1/16"
+    hero: true
+    scope: pattern_model  # PatternModel state (per pattern slot)
+  - id: note_triplet
+    type: toggle
+    layer: main
+    panel: strip_b
+    position: {x: 247, y: 254}
+    size: {width: 40, height: 40}
+    label: "T"
+    default: false
+    tip: "Triplet"
+    scope: pattern_model  # PatternModel state (per pattern slot)
+  - id: note_dotted
+    type: toggle
+    layer: main
+    panel: strip_b
+    position: {x: 297, y: 254}
+    size: {width: 40, height: 40}
+    label: "D"
+    default: false
+    tip: "Dotted"
+    scope: pattern_model  # PatternModel state (per pattern slot)
+  - id: pattern_length
+    type: combo
+    layer: main
+    panel: strip_b
+    position: {x: 377, y: 260}
+    size: {width: 100, height: 28}
+    label: "Pattern length"
+    options: ["1 bar", "2 bars", "4 bars"]
+    default: "1 bar"
+    prefix: ""
+    scope: pattern_model  # PatternModel state (per pattern slot)
+  - id: bar_page
+    type: seg
+    layer: main
+    panel: strip_b
+    position: {x: 487, y: 260}
+    size: {width: 140, height: 28}
+    label: "Bar page"
+    options: ["1", "2", "3", "4"]
+    default: "1"
+    visible_when: "pattern_length > 1 bar"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: grid_hint
+    type: label
+    layer: main
+    panel: strip_b
+    position: {x: 717, y: 254}
+    size: {width: 216, height: 40}
+    label: "hint"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: swing
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: main
+    panel: strip_b
+    position: {x: 943, y: 254}
+    size: {width: 130, height: 40}
+    label: "SWING"
+    default: 0
+    range: [0, 75]
+    unit: "%"
+    compact: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: step_boxes
+    type: display
+    layer: main
+    panel: strip_b
+    position: {x: 27, y: 304}
+    size: {width: 1046, height: 163}
+    label: "Boxes"
+    kind: "boxes"
+    scope: pattern_model  # PatternModel state (per pattern slot)
+  - id: lane_tab
+    type: seg
+    layer: main
+    panel: strip_b
+    position: {x: 27, y: 477}
+    size: {width: 260, height: 24}
+    label: "Lane"
+    options: ["VEL", "PITCH", "PROB", "RATCHET"]
+    default: "VEL"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: lane_info
+    type: label
+    layer: main
+    panel: strip_b
+    position: {x: 303, y: 477}
+    size: {width: 540, height: 24}
+    label: "lane description"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: step_lane
+    type: display
+    layer: main
+    panel: strip_b
+    position: {x: 27, y: 511}
+    size: {width: 1046, height: 68}
+    label: "Per-step lane"
+    kind: "lane"
+    scope: pattern_model  # PatternModel state (per pattern slot)
+  - id: chop_chip
+    type: readout
+    layer: main
+    panel: strip_b
+    position: {x: 853, y: 480}
+    size: {width: 164, height: 18}
+    label: "chop"
+    gold_ring_swatch: true
+    scope: selection  # UI selection state  (v6: moved from the removed CHOP panel to the lane row)
+  - id: chop_more
+    type: button  # icon button
+    layer: main
+    panel: strip_b
+    position: {x: 1027, y: 478}
+    size: {width: 46, height: 20}
+    label: "Chop settings (opens the chop overlay)"
+    glyph: "dots"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: chop_pitch
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: overlay
+    panel: overlay
+    position: {x: 296, y: 232}
+    size: {width: 52, height: 66}
+    label: "PITCH"
+    default: 0
+    range: [-24, 24]
+    unit: " st"
+    bipolar: true
+    step: 1
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+    # v6: moved into the chop overlay (CHOP panel removed from MAIN)
+  - id: chop_drive
+    type: knob
+    layer: overlay
+    panel: overlay
+    position: {x: 372, y: 232}
+    size: {width: 52, height: 66}
+    label: "DRIVE"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+    # v6: moved into the chop overlay (CHOP panel removed from MAIN)
+  - id: chop_mode
+    type: combo
+    layer: overlay
+    panel: overlay
+    position: {x: 296, y: 308}
+    size: {width: 150, height: 28}
+    label: "Mode"
+    options: ["One-shot", "Gate", "Loop", "Fit step"]
+    default: "Gate"
+    prefix: "MODE"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+    # v6: moved into the chop overlay (CHOP panel removed from MAIN)
+  - id: chop_reverse
+    type: toggle
+    layer: overlay
+    panel: overlay
+    position: {x: 616, y: 308}
+    size: {width: 188, height: 28}
+    label: "Reverse"
+    default: false
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+    # v6: moved into the chop overlay (CHOP panel removed from MAIN)
+  - id: br_hold
+    type: button
+    layer: main
+    panel: br
+    position: {x: 27, y: 629}
+    size: {width: 120, height: 28}
+    label: "HOLD"
+    accent: "gold"
+    toggle: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_auto
+    type: toggle
+    layer: main
+    panel: br
+    position: {x: 27, y: 667}
+    size: {width: 120, height: 28}
+    label: "AUTO"
+    default: false
+    accent: "gold"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_interval
+    type: combo
+    layer: main
+    panel: br
+    position: {x: 161, y: 629}
+    size: {width: 130, height: 28}
+    label: "Interval"
+    options: ["1/4", "1/2", "1 bar", "2 bars", "4 bars"]
+    default: "1/2"
+    prefix: "EVERY"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_grid
+    type: combo
+    layer: main
+    panel: br
+    position: {x: 161, y: 667}
+    size: {width: 130, height: 28}
+    label: "Grid"
+    options: ["1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "1/8T", "1/16T", "1/32T"]
+    default: "1/16"
+    prefix: "GRID"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_chance
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: main
+    panel: br
+    position: {x: 351, y: 629}
+    size: {width: 52, height: 66}
+    label: "CHANCE"
+    default: 60
+    range: [0, 100]
+    unit: "%"
+    accent: "gold"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_decay
+    type: knob
+    layer: main
+    panel: br
+    position: {x: 441, y: 629}
+    size: {width: 52, height: 66}
+    label: "DECAY"
+    default: 25
+    range: [0, 100]
+    unit: "%"
+    accent: "gold"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_more
+    type: button  # icon button
+    layer: main
+    panel: master
+    position: {x: 1033, y: 595}
+    size: {width: 40, height: 20}
+    label: "More master"
+    glyph: "dots"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: master_tone
+    type: knob
+    layer: main
+    panel: master
+    position: {x: 535, y: 629}
+    size: {width: 52, height: 66}
+    label: "TONE"
+    default: 0
+    range: [-100, 100]
+    unit: "%"
+    bipolar: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_sat
+    type: knob
+    layer: main
+    panel: master
+    position: {x: 655, y: 629}
+    size: {width: 52, height: 66}
+    label: "SAT"
+    default: 10
+    range: [0, 100]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_width
+    type: knob
+    layer: main
+    panel: master
+    position: {x: 775, y: 629}
+    size: {width: 52, height: 66}
+    label: "WIDTH"
+    default: 100
+    range: [0, 200]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_output
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: main
+    panel: master
+    position: {x: 895, y: 629}
+    size: {width: 52, height: 66}
+    label: "OUT"
+    default: 0
+    range: [-24, 12]
+    unit: " dB"
+    bipolar: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_limiter
+    type: display
+    layer: main
+    panel: master
+    position: {x: 1051, y: 637}
+    size: {width: 22, height: 40}
+    label: "Limiter"
+    kind: "limiter"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: slice_min_len
+    type: knob
+    layer: fl_slice
+    panel: fl_slice
+    position: {x: 797, y: 154}
+    size: {width: 52, height: 66}
+    label: "MIN LEN"
+    default: 80
+    range: [20, 500]
+    unit: " ms"
+    scope: slice_map  # SliceMap / sampler model state
+  - id: slice_zero_cross
+    type: toggle
+    layer: fl_slice
+    panel: fl_slice
+    position: {x: 859, y: 173}
+    size: {width: 140, height: 28}
+    label: "Snap zero-X"
+    default: true
+    scope: slice_map  # SliceMap / sampler model state
+  - id: slice_hint
+    type: label
+    layer: fl_slice
+    panel: fl_slice
+    position: {x: 797, y: 232}
+    size: {width: 276, height: 44}
+    label: "hint"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: master_ceiling
+    type: knob
+    layer: fl_mastermore
+    panel: fl_mastermore
+    position: {x: 827, y: 511}
+    size: {width: 52, height: 66}
+    label: "CEILING"
+    default: -0.3
+    range: [-12, 0]
+    unit: " dB"
+    bipolar: false
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_delay_rtn
+    type: knob
+    layer: fl_mastermore
+    panel: fl_mastermore
+    position: {x: 889, y: 511}
+    size: {width: 52, height: 66}
+    label: "DLY RTN"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_verb_rtn
+    type: knob
+    layer: fl_mastermore
+    panel: fl_mastermore
+    position: {x: 951, y: 511}
+    size: {width: 52, height: 66}
+    label: "VERB RTN"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: quality
+    type: seg
+    layer: fl_set
+    panel: fl_set
+    position: {x: 827, y: 98}
+    size: {width: 246, height: 28}
+    label: "Quality"
+    options: ["Eco", "HQ"]
+    default: "HQ"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: cpu_meter
+    type: display
+    layer: fl_set
+    panel: fl_set
+    position: {x: 827, y: 138}
+    size: {width: 246, height: 24}
+    label: "CPU"
+    kind: "cpu"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: overlay_chip
+    type: readout
+    layer: overlay
+    panel: overlay
+    position: {x: 296, y: 153}
+    size: {width: 150, height: 18}
+    label: "chop"
+    scope: selection  # UI selection state
+  - id: overlay_close
+    type: button  # icon button
+    layer: overlay
+    panel: overlay
+    position: {x: 776, y: 152}
+    size: {width: 28, height: 20}
+    label: "Close"
+    glyph: "close"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: chop_warp
+    type: seg
+    layer: overlay
+    panel: overlay
+    position: {x: 296, y: 188}
+    size: {width: 508, height: 28}
+    label: "Warp"
+    options: ["Varispeed", "Stretch", "Granular", "Freeze"]
+    default: "Varispeed"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_filter
+    type: knob
+    layer: overlay
+    panel: overlay
+    position: {x: 448, y: 232}
+    size: {width: 52, height: 66}
+    label: "CUTOFF"
+    default: 100
+    range: [0, 100]
+    unit: ""
+    hz_log_display: true
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_release
+    type: knob
+    layer: overlay
+    panel: overlay
+    position: {x: 524, y: 232}
+    size: {width: 52, height: 66}
+    label: "RELEASE"
+    default: 80
+    range: [5, 500]
+    unit: " ms"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_delay
+    type: knob
+    layer: overlay
+    panel: overlay
+    position: {x: 600, y: 232}
+    size: {width: 52, height: 66}
+    label: "DELAY"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_verb
+    type: knob
+    layer: overlay
+    panel: overlay
+    position: {x: 676, y: 232}
+    size: {width: 52, height: 66}
+    label: "VERB"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_unison
+    type: knob
+    layer: overlay
+    panel: overlay
+    position: {x: 752, y: 232}
+    size: {width: 52, height: 66}
+    label: "UNISON"
+    default: 1
+    range: [1, 4]
+    unit: "x"
+    step: 1
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_dist_type
+    type: combo
+    layer: overlay
+    panel: overlay
+    position: {x: 456, y: 308}
+    size: {width: 150, height: 28}
+    label: "Dist type"
+    options: ["Soft clip", "Hard clip", "Tape", "Fold", "Bitcrush", "Downsample"]
+    default: "Soft clip"
+    prefix: "DIST"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_preview
+    type: display
+    layer: overlay
+    panel: overlay
+    position: {x: 296, y: 348}
+    size: {width: 508, height: 130}
+    label: "Chop preview"
+    kind: "preview"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: page_nav
+    type: seg
+    layer: header
+    panel: header
+    position: {x: 956, y: 15}
+    size: {width: 91, height: 24}
+    label: "Page"
+    options: ["MAIN", "FX"]
+    default: "MAIN"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: br_mode
+    type: seg
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 92}
+    size: {width: 306, height: 28}
+    label: "Mode"
+    options: ["Auto", "Manual", "Off"]
+    default: "Manual"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_br_hold
+    type: button
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 130}
+    size: {width: 306, height: 100}
+    label: "HOLD"
+    accent: "gold"
+    toggle: true
+    mirror_of: "br_hold"
+    pad_momentary: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_freeze
+    type: toggle
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 240}
+    size: {width: 148, height: 28}
+    label: "FREEZE"
+    default: false
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_rnd_grid
+    type: toggle
+    layer: fx
+    panel: fx_br
+    position: {x: 185, y: 240}
+    size: {width: 148, height: 28}
+    label: "RND GRID"
+    default: false
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_br_interval
+    type: combo
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 280}
+    size: {width: 148, height: 28}
+    label: "Interval"
+    options: ["1/4", "1/2", "1 bar", "2 bars", "4 bars"]
+    default: "1/2"
+    prefix: "EVERY"
+    mirror_of: "br_interval"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_offset
+    type: combo
+    layer: fx
+    panel: fx_br
+    position: {x: 185, y: 280}
+    size: {width: 148, height: 28}
+    label: "Offset"
+    options: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]
+    default: "0"
+    prefix: "OFFSET"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_br_grid
+    type: combo
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 318}
+    size: {width: 148, height: 28}
+    label: "Grid"
+    options: ["1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "1/8T", "1/16T", "1/32T"]
+    default: "1/16"
+    prefix: "GRID"
+    mirror_of: "br_grid"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_gate
+    type: combo
+    layer: fx
+    panel: fx_br
+    position: {x: 185, y: 318}
+    size: {width: 148, height: 28}
+    label: "Gate"
+    options: ["1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars"]
+    default: "1/2"
+    prefix: "GATE"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_br_chance
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 356}
+    size: {width: 52, height: 66}
+    label: "CHANCE"
+    default: 60
+    range: [0, 100]
+    unit: "%"
+    accent: "gold"
+    mirror_of: "br_chance"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_br_decay
+    type: knob
+    layer: fx
+    panel: fx_br
+    position: {x: 89, y: 356}
+    size: {width: 52, height: 66}
+    label: "DECAY"
+    default: 25
+    range: [0, 100]
+    unit: "%"
+    accent: "gold"
+    mirror_of: "br_decay"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_pdecay
+    type: knob
+    layer: fx
+    panel: fx_br
+    position: {x: 151, y: 356}
+    size: {width: 52, height: 66}
+    label: "P.DECAY"
+    default: 0
+    range: [0, 12]
+    unit: " st"
+    accent: "gold"
+    step: 0.5
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_accel
+    type: knob
+    layer: fx
+    panel: fx_br
+    position: {x: 213, y: 356}
+    size: {width: 52, height: 66}
+    label: "ACCEL"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    accent: "gold"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_sweep
+    type: knob
+    layer: fx
+    panel: fx_br
+    position: {x: 275, y: 356}
+    size: {width: 52, height: 66}
+    label: "SWEEP"
+    default: 50
+    range: [0, 100]
+    unit: "%"
+    accent: "gold"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: cap_br_rev
+    type: label
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 434}
+    size: {width: 306, height: 14}
+    label: "REVERSE REPEATS"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: br_reverse
+    type: seg
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 450}
+    size: {width: 306, height: 28}
+    label: "Reverse repeats"
+    options: ["Off", "Alternate", "All"]
+    default: "Off"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: cap_br_flt
+    type: label
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 488}
+    size: {width: 306, height: 14}
+    label: "REPEAT FILTER  (sweeps over the gate)"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: br_filter_mode
+    type: seg
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 504}
+    size: {width: 306, height: 28}
+    label: "Repeat filter"
+    options: ["Off", "LP", "HP"]
+    default: "Off"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: cap_br_mix
+    type: label
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 542}
+    size: {width: 306, height: 14}
+    label: "MIX MODE"
+    decorative: true
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: br_mix
+    type: seg
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 558}
+    size: {width: 306, height: 28}
+    label: "Mix mode"
+    options: ["Mix", "Insert", "Gate"]
+    default: "Mix"
+    gold_theme: true
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: br_preview
+    type: display
+    layer: fx
+    panel: fx_br
+    position: {x: 27, y: 598}
+    size: {width: 306, height: 96}
+    label: "Repeat preview"
+    kind: "br_preview"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: fx_chop_chip
+    type: readout
+    layer: fx
+    panel: fx_chop
+    position: {x: 437, y: 63}
+    size: {width: 180, height: 18}
+    label: "chop"
+    scope: selection  # UI selection state
+  - id: fx_chop_prev
+    type: button  # icon button
+    layer: fx
+    panel: fx_chop
+    position: {x: 627, y: 62}
+    size: {width: 24, height: 20}
+    label: "Previous chop"
+    glyph: "prev"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: fx_chop_next
+    type: button  # icon button
+    layer: fx
+    panel: fx_chop
+    position: {x: 661, y: 62}
+    size: {width: 24, height: 20}
+    label: "Next chop"
+    glyph: "next"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: chop_dist_on
+    type: toggle
+    layer: fx
+    panel: c_dist
+    position: {x: 677, y: 93}
+    size: {width: 20, height: 20}
+    label: "Distortion on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "c_dist"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: fx_chop_dist_type
+    type: combo
+    layer: fx
+    panel: c_dist
+    position: {x: 373, y: 120}
+    size: {width: 150, height: 28}
+    label: "Dist type"
+    options: ["Soft clip", "Hard clip", "Tape", "Fold", "Bitcrush", "Downsample"]
+    default: "Soft clip"
+    prefix: "DIST"
+    mirror_of: "chop_dist_type"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_autogain
+    type: toggle
+    layer: fx
+    panel: c_dist
+    position: {x: 533, y: 120}
+    size: {width: 100, height: 28}
+    label: "AUTO GAIN"
+    default: true
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: fx_chop_drive
+    type: knob
+    layer: fx
+    panel: c_dist
+    position: {x: 373, y: 160}
+    size: {width: 52, height: 66}
+    label: "DRIVE"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    mirror_of: "chop_drive"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_dist_tone
+    type: knob
+    layer: fx
+    panel: c_dist
+    position: {x: 435, y: 160}
+    size: {width: 52, height: 66}
+    label: "TONE"
+    default: 0
+    range: [-100, 100]
+    unit: "%"
+    bipolar: true
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_dist_mix
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: fx
+    panel: c_dist
+    position: {x: 497, y: 160}
+    size: {width: 52, height: 66}
+    label: "MIX"
+    default: 100
+    range: [0, 100]
+    unit: "%"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_dist_out
+    type: knob
+    layer: fx
+    panel: c_dist
+    position: {x: 559, y: 160}
+    size: {width: 52, height: 66}
+    label: "OUT"
+    default: 0
+    range: [-12, 12]
+    unit: " dB"
+    bipolar: true
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: dist_curve
+    type: display
+    layer: fx
+    panel: c_dist
+    position: {x: 621, y: 164}
+    size: {width: 72, height: 56}
+    label: "Transfer curve"
+    kind: "dist_curve"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: chop_filt_on
+    type: toggle
+    layer: fx
+    panel: c_filt
+    position: {x: 677, y: 247}
+    size: {width: 20, height: 20}
+    label: "Filter on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "c_filt"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_ftype
+    type: seg
+    layer: fx
+    panel: c_filt
+    position: {x: 373, y: 274}
+    size: {width: 130, height: 28}
+    label: "Filter type"
+    options: ["LP", "BP", "HP"]
+    default: "LP"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_fslope
+    type: seg
+    layer: fx
+    panel: c_filt
+    position: {x: 513, y: 274}
+    size: {width: 120, height: 28}
+    label: "Slope"
+    options: ["12 dB", "24 dB"]
+    default: "12 dB"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: fx_chop_filter
+    type: knob
+    layer: fx
+    panel: c_filt
+    position: {x: 373, y: 314}
+    size: {width: 52, height: 66}
+    label: "CUTOFF"
+    default: 100
+    range: [0, 100]
+    unit: ""
+    mirror_of: "chop_filter"
+    hz_log_display: true
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_reso
+    type: knob
+    layer: fx
+    panel: c_filt
+    position: {x: 435, y: 314}
+    size: {width: 52, height: 66}
+    label: "RESO"
+    default: 10
+    range: [0, 100]
+    unit: "%"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_envamt
+    type: knob
+    layer: fx
+    panel: c_filt
+    position: {x: 497, y: 314}
+    size: {width: 52, height: 66}
+    label: "ENV AMT"
+    default: 0
+    range: [-100, 100]
+    unit: "%"
+    bipolar: true
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: filt_curve
+    type: display
+    layer: fx
+    panel: c_filt
+    position: {x: 559, y: 318}
+    size: {width: 134, height: 58}
+    label: "Filter response"
+    kind: "filt_curve"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: chop_env
+    type: display
+    layer: fx
+    panel: c_env
+    position: {x: 373, y: 428}
+    size: {width: 320, height: 168}
+    label: "AHDSR envelope (drag handles)"
+    kind: "env"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_attack
+    type: knob
+    layer: fx
+    panel: c_env
+    position: {x: 373, y: 612}
+    size: {width: 52, height: 66}
+    label: "ATTACK"
+    default: 2
+    range: [0, 500]
+    unit: " ms"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_hold
+    type: knob
+    layer: fx
+    panel: c_env
+    position: {x: 435, y: 612}
+    size: {width: 52, height: 66}
+    label: "HOLD"
+    default: 0
+    range: [0, 500]
+    unit: " ms"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_decay
+    type: knob
+    layer: fx
+    panel: c_env
+    position: {x: 497, y: 612}
+    size: {width: 52, height: 66}
+    label: "DECAY"
+    default: 160
+    range: [5, 1000]
+    unit: " ms"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: chop_sustain
+    type: knob
+    layer: fx
+    panel: c_env
+    position: {x: 559, y: 612}
+    size: {width: 52, height: 66}
+    label: "SUSTAIN"
+    default: 100
+    range: [0, 100]
+    unit: "%"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: fx_chop_release
+    type: knob
+    layer: fx
+    panel: c_env
+    position: {x: 621, y: 612}
+    size: {width: 52, height: 66}
+    label: "RELEASE"
+    default: 80
+    range: [5, 500]
+    unit: " ms"
+    mirror_of: "chop_release"
+    scope: per_chop  # per-chop SliceMap state in plugin state, not APVTS
+  - id: master_tone_on
+    type: toggle
+    layer: fx
+    panel: m_tone
+    position: {x: 1049, y: 93}
+    size: {width: 20, height: 20}
+    label: "Tilt Eq + Hp on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "m_tone"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_master_tone
+    type: knob
+    layer: fx
+    panel: m_tone
+    position: {x: 737, y: 118}
+    size: {width: 52, height: 66}
+    label: "TILT"
+    default: 0
+    range: [-100, 100]
+    unit: "%"
+    bipolar: true
+    mirror_of: "master_tone"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_hp
+    type: knob
+    layer: fx
+    panel: m_tone
+    position: {x: 799, y: 118}
+    size: {width: 52, height: 66}
+    label: "HP"
+    default: 20
+    range: [20, 500]
+    unit: " Hz"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: tone_curve
+    type: display
+    layer: fx
+    panel: m_tone
+    position: {x: 871, y: 123}
+    size: {width: 198, height: 56}
+    label: "Tilt + HP response"
+    kind: "tone_curve"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: master_sat_on
+    type: toggle
+    layer: fx
+    panel: m_sat
+    position: {x: 1049, y: 193}
+    size: {width: 20, height: 20}
+    label: "Tape Saturation on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "m_sat"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_master_sat
+    type: knob
+    layer: fx
+    panel: m_sat
+    position: {x: 737, y: 218}
+    size: {width: 52, height: 66}
+    label: "DRIVE"
+    default: 10
+    range: [0, 100]
+    unit: "%"
+    mirror_of: "master_sat"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_sat_mix
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: fx
+    panel: m_sat
+    position: {x: 799, y: 218}
+    size: {width: 52, height: 66}
+    label: "MIX"
+    default: 100
+    range: [0, 100]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: sat_curve
+    type: display
+    layer: fx
+    panel: m_sat
+    position: {x: 871, y: 223}
+    size: {width: 198, height: 56}
+    label: "Saturation curve"
+    kind: "sat_curve"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: master_width_on
+    type: toggle
+    layer: fx
+    panel: m_width
+    position: {x: 1049, y: 293}
+    size: {width: 20, height: 20}
+    label: "Stereo Width on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "m_width"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_master_width
+    type: knob
+    layer: fx
+    panel: m_width
+    position: {x: 737, y: 318}
+    size: {width: 52, height: 66}
+    label: "WIDTH"
+    default: 100
+    range: [0, 200]
+    unit: "%"
+    mirror_of: "master_width"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_mono
+    type: knob
+    layer: fx
+    panel: m_width
+    position: {x: 799, y: 318}
+    size: {width: 52, height: 66}
+    label: "MONO <"
+    default: 120
+    range: [20, 300]
+    unit: " Hz"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: width_scope
+    type: display
+    layer: fx
+    panel: m_width
+    position: {x: 871, y: 323}
+    size: {width: 198, height: 56}
+    label: "Stereo field"
+    kind: "width_scope"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: master_delay_on
+    type: toggle
+    layer: fx
+    panel: m_delay
+    position: {x: 1049, y: 393}
+    size: {width: 20, height: 20}
+    label: "Tempo Delay on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "m_delay"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_delay_time
+    type: combo
+    layer: fx
+    panel: m_delay
+    position: {x: 737, y: 432}
+    size: {width: 120, height: 28}
+    label: "Delay time"
+    options: ["1/16", "1/8", "1/8.", "1/4", "1/4.", "1/2", "1/8T", "1/4T"]
+    default: "1/8."
+    prefix: ""
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_delay_fb
+    type: knob
+    layer: fx
+    panel: m_delay
+    position: {x: 867, y: 418}
+    size: {width: 52, height: 66}
+    label: "FEEDBACK"
+    default: 35
+    range: [0, 95]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_master_delay_rtn
+    type: knob
+    layer: fx
+    panel: m_delay
+    position: {x: 929, y: 418}
+    size: {width: 52, height: 66}
+    label: "RETURN"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    mirror_of: "master_delay_rtn"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: delay_taps
+    type: display
+    layer: fx
+    panel: m_delay
+    position: {x: 991, y: 423}
+    size: {width: 78, height: 56}
+    label: "Delay taps"
+    kind: "delay_taps"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: master_verb_on
+    type: toggle
+    layer: fx
+    panel: m_verb
+    position: {x: 1049, y: 493}
+    size: {width: 20, height: 20}
+    label: "Plate Reverb on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "m_verb"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_verb_decay
+    type: knob
+    layer: fx
+    panel: m_verb
+    position: {x: 737, y: 518}
+    size: {width: 52, height: 66}
+    label: "DECAY"
+    default: 40
+    range: [0, 100]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: master_verb_damp
+    type: knob
+    layer: fx
+    panel: m_verb
+    position: {x: 799, y: 518}
+    size: {width: 52, height: 66}
+    label: "DAMP"
+    default: 50
+    range: [0, 100]
+    unit: "%"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_master_verb_rtn
+    type: knob
+    layer: fx
+    panel: m_verb
+    position: {x: 861, y: 518}
+    size: {width: 52, height: 66}
+    label: "RETURN"
+    default: 0
+    range: [0, 100]
+    unit: "%"
+    mirror_of: "master_verb_rtn"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: verb_tail
+    type: display
+    layer: fx
+    panel: m_verb
+    position: {x: 923, y: 523}
+    size: {width: 146, height: 56}
+    label: "Reverb tail"
+    kind: "verb_tail"
+    scope: ui  # UI-only state (not persisted to the processor)
+  - id: master_limiter_on
+    type: toggle
+    layer: fx
+    panel: m_out
+    position: {x: 1049, y: 593}
+    size: {width: 20, height: 20}
+    label: "Output + Limiter on"
+    default: true
+    glyph: "dot"
+    bypass_dot_for: "m_out"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_master_output
+    accent_knob: black  # v5: the section's one black dome
+    type: knob
+    layer: fx
+    panel: m_out
+    position: {x: 737, y: 618}
+    size: {width: 52, height: 66}
+    label: "OUT"
+    default: 0
+    range: [-24, 12]
+    unit: " dB"
+    bipolar: true
+    mirror_of: "master_output"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: fx_master_ceiling
+    type: knob
+    layer: fx
+    panel: m_out
+    position: {x: 799, y: 618}
+    size: {width: 52, height: 66}
+    label: "CEILING"
+    default: -0.3
+    range: [-12, 0]
+    unit: " dB"
+    bipolar: false
+    mirror_of: "master_ceiling"
+    scope: apvts  # APVTS global (automatable, stable parameter ID)
+  - id: out_meter
+    type: display
+    layer: fx
+    panel: m_out
+    position: {x: 871, y: 623}
+    size: {width: 198, height: 56}
+    label: "Output + gain reduction meter"
+    kind: "out_meter"
+    scope: ui  # UI-only state (not persisted to the processor)
+
+v4_composition:
+  vs_v3: "Added: page_nav (MAIN | FX) in the header; the whole FX layer (3 panels, 9 sections, ~70 controls). Changed on MAIN: header badge shortened to 'REPEAT HOLD' (120w) to make room for the nav; br_interval gains '4 bars'; br_grid gains 1/2, 1/4, 1/64, 1/8T, 1/32T; chop_dist_type gains Hard clip + Downsample; chop overlay 'FILTER' knob is now the filter CUTOFF (log Hz display); master_ceiling default -0.3 dBFS (spec). Everything else on MAIN is byte-for-byte v3 behaviour."
+  fx_structure:
+    beat_repeat: [br_mode, br_hold, br_freeze, br_rnd_grid, br_interval, br_offset, br_grid, br_gate, br_chance, br_decay, br_pdecay, br_accel, br_sweep, br_reverse, br_filter_mode, br_mix, br_preview]
+    chop_fx: [dist: type/drive/tone/mix/out/auto_gain, filter: type/slope/cutoff/reso/env_amt, amp_env: attack/hold/decay/sustain/release + draggable AHDSR display]
+    master: [tilt_eq+hp, tape_saturation, stereo_width+mono_below, tempo_delay, plate_reverb, output+limiter(-0.3 dBFS)]
+  mirrored_params_main_to_fx: [bpm, br_hold, br_auto/br_mode, br_interval, br_grid, br_chance, br_decay, master_tone, master_sat, master_width, master_output, master_ceiling, master_delay_rtn, master_verb_rtn]
+  mirrored_params_overlay_to_fx: [chop_drive, chop_dist_type, chop_filter, chop_release]   # v6: CHOP mirrors now pair the overlay with the FX page only
+  overlay_only_chop_params: [chop_pitch, chop_mode, chop_reverse, chop_warp, chop_delay, chop_verb, chop_unison]
+
+note_for_production: |
+  Pages are two juce::Component children toggled by setVisible; both stay alive so the playhead/meters never stop. Mirrored controls attach to the same
+  APVTS parameter (or the same per-chop SliceMap field) through separate attachments. Per-chop FX fields live in the SliceMap like pitch/drive. The AHDSR
+  display is a custom Component with 4 draggable handles writing the same five per-chop fields as the knobs below it.
+
+validation:
+  tool: python validator over this YAML (yq unavailable); bounds, 15px edge padding, overlap per page (header+main, header+fx, each popover, overlay), panel overlap + edge, containment in section/panel, min sizes, mirror consistency (type/options/range/unit/default/scope), 10px gaps
+  controls_checked: 134
+  sections_checked: 9
+  errors: 0
+  warnings: 3   # intentional 2px gaps between decorative captions and the control they label (same as v4/v5)
+  selftest: "snap harness (WKWebView) - all scenarios PASS: skin + monochrome/gold scan, plain pattern dropdown (no chevrons), BPM absent from header + mirrored in both MASTER views, 3-way length, bottom bar without CHOP, overlay reachability, plus every still-applicable v6 scenario (fxhold run separately)"
+  skin_checks: [no_viewport_units, html_body_100pct, user_select_none, contextmenu_disabled, no_colour_literal_outside_grey_or_gold, screenshots_main_fx_overlay]
