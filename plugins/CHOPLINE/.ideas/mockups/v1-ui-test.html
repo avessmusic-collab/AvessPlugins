@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CHOPLINE UI Mockup v1</title>
+<!--
+  CHOPLINE v1 mockup - flat modern pro.
+  VISUAL DIRECTION + INTERACTION REFERENCE ONLY. The production UI is native JUCE (custom LookAndFeel), not WebView.
+  Everything is inline; window.Juce is a mock bridge; parameter changes log as "[CHOPLINE] param <id> = ...".
+-->
+<style>
+:root {
+  --bg: #0d0e11; --header: #0a0b0e; --panel: #121419; --surface: #0f1115;
+  --line: #22262e; --line2: #2d323c; --text: #e6e8ec; --dim: #8b92a0; --faint: #586070;
+  --accent: #2bd4e6; --amber: #ffa21f; --track: #272b34;
+  --ui: Inter, "SF Pro Text", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+}
+html, body { height: 100%; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  user-select: none; -webkit-user-select: none; cursor: default; overflow: hidden;
+  background: #08090b; color: var(--text); font-family: var(--ui); font-size: 11px;
+  -webkit-font-smoothing: antialiased;
+}
+#viewport { position: relative; width: 100%; height: 100%; overflow: hidden; }
+#stage { position: absolute; left: 0; top: 0; width: 1100px; height: 720px; background: var(--bg); transform-origin: 0 0; }
+.panel { position: absolute; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; transition: border-color .08s; }
+.panel.br-on { border-color: var(--amber); }
+.pbar { position: absolute; left: 0; right: 0; top: 0; height: 24px; border-bottom: 1px solid var(--line); }
+.ptitle { position: absolute; left: 12px; top: 0; line-height: 24px; font-size: 10px; letter-spacing: .14em; font-weight: 600; color: var(--dim); }
+.pstatus { position: absolute; right: 12px; top: 0; line-height: 24px; font-size: 10px; letter-spacing: .08em; font-family: var(--mono); color: var(--faint); }
+#header { position: absolute; left: 0; top: 0; width: 1100px; height: 54px; background: var(--header); border-bottom: 1px solid var(--line); }
+.ctl { position: absolute; }
+canvas { display: block; }
+.disp { position: absolute; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.disp canvas { position: absolute; left: 0; top: 0; }
+
+/* wordmark */
+#wordmark { font-size: 17px; font-weight: 650; letter-spacing: -.025em; line-height: 24px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+#wordmark i { display: inline-flex; gap: 2px; align-items: flex-end; height: 14px; }
+#wordmark i b { display: block; width: 3px; border-radius: 1px; }
+
+/* knob */
+.knob { text-align: center; cursor: ns-resize; }
+.knob svg { position: absolute; left: 6px; top: 0; }
+.knob .kv { position: absolute; left: -4px; right: -4px; top: 42px; font: 10px/12px var(--mono); color: var(--dim); }
+.knob .kl { position: absolute; left: -4px; right: -4px; top: 54px; font-size: 9.5px; line-height: 12px; letter-spacing: .07em; color: var(--faint); font-weight: 600; }
+.knob.active .kv, .knob:hover .kv { color: var(--text); }
+.knob.amber.active .kv, .knob.amber:hover .kv { color: var(--amber); }
+
+/* combo / segmented / toggle / button / field */
+.combo { background: var(--surface); border: 1px solid var(--line2); border-radius: 4px; display: flex; align-items: center; padding: 0 8px; gap: 6px; cursor: pointer; }
+.combo:hover { border-color: #3c4250; }
+.combo .pf { font-size: 9px; letter-spacing: .1em; color: var(--faint); font-weight: 600; }
+.combo .cv { flex: 1; font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combo .ch { width: 6px; height: 6px; border-right: 1.5px solid var(--dim); border-bottom: 1.5px solid var(--dim); transform: rotate(45deg) translate(-1px, -1px); }
+.menu { position: absolute; z-index: 50; background: #171a20; border: 1px solid var(--line2); border-radius: 4px; padding: 3px; max-height: 300px; overflow: auto; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+.menu div { height: 22px; line-height: 22px; padding: 0 9px; border-radius: 3px; font-size: 11px; color: var(--text); white-space: nowrap; }
+.menu div:hover { background: #232832; }
+.menu div.on { color: var(--accent); }
+.seg { display: flex; background: var(--surface); border: 1px solid var(--line2); border-radius: 4px; padding: 2px; gap: 2px; }
+.seg.gap { background: transparent; border: 0; padding: 0; gap: 4px; }
+.seg b { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 10.5px; color: var(--dim); border-radius: 3px; cursor: pointer; padding: 0 6px; white-space: nowrap; border: 1px solid transparent; }
+.seg.gap b { background: var(--surface); border: 1px solid var(--line2); font-family: var(--mono); font-size: 11px; font-weight: 600; }
+.seg b:hover { color: var(--text); }
+.seg b.on { background: #232832; color: var(--text); }
+.seg.gap b.on { background: rgba(43,212,230,.14); border-color: var(--accent); color: var(--accent); }
+.seg.amber b.on { background: rgba(255,162,31,.16); color: var(--amber); }
+.seg.tabs b { font-size: 10px; letter-spacing: .08em; font-weight: 600; }
+.seg.tabs b.on { box-shadow: inset 0 -2px 0 var(--lc, var(--accent)); background: #1b1f26; }
+.btn, .tgl { display: flex; align-items: center; justify-content: center; gap: 6px; background: var(--surface); border: 1px solid var(--line2); border-radius: 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--dim); cursor: pointer; text-transform: uppercase; }
+.btn:hover, .tgl:hover { color: var(--text); border-color: #3c4250; }
+.btn:active { background: #1b1f26; }
+.tgl.on { color: var(--accent); border-color: var(--accent); background: rgba(43,212,230,.10); }
+.tgl.amber.on, .btn.amber.on { color: var(--amber); border-color: var(--amber); background: rgba(255,162,31,.14); }
+.btn.amber { color: var(--amber); border-color: rgba(255,162,31,.45); }
+.btn.amber.on { color: #1a1105; background: var(--amber); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.field, .btn, .tgl { white-space: nowrap; }
+.field { background: var(--surface); border: 1px solid var(--line2); border-radius: 4px; display: flex; align-items: center; justify-content: space-between; padding: 0 7px; cursor: ew-resize; overflow: hidden; }
+.field:hover { border-color: #3c4250; }
+.field .fl { font-size: 9px; letter-spacing: .1em; color: var(--faint); font-weight: 600; }
+.field .fv { font: 10px var(--mono); color: var(--text); }
+.field .fb { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); opacity: .7; }
+.readout { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; display: flex; align-items: center; padding: 0 8px; gap: 7px; font: 10.5px var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; }
+.readout .sw { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+#cpu { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+#cpu .cl { font-size: 9px; letter-spacing: .1em; color: var(--faint); font-weight: 600; }
+#cpu .cb { flex: 1; height: 4px; background: var(--track); border-radius: 2px; overflow: hidden; }
+#cpu .cb i { display: block; height: 100%; width: 10%; background: var(--accent); }
+#cpu .cv { font: 10.5px var(--mono); color: var(--dim); width: 36px; text-align: right; }
+#lane_readout { font: 10.5px var(--mono); color: var(--dim); line-height: 24px; letter-spacing: .02em; }
+#ghost { position: absolute; z-index: 60; pointer-events: none; display: none; padding: 3px 7px; border-radius: 3px; font: 600 10.5px var(--mono); color: #0d0e11; }
+</style>
+</head>
+<body>
+<div id="viewport"><div id="stage"><div id="header"></div></div></div>
+
+<script>
+"use strict";
+const CFG = {"panels":[{"id":"header","title":"","x":0,"y":0,"w":1100,"h":54,"kind":"header"},{"id":"strip_a","title":"SAMPLER","x":15,"y":60,"w":1070,"h":166},{"id":"strip_b","title":"GRID","x":15,"y":234,"w":1070,"h":242},{"id":"inspector","title":"CHOP INSPECTOR","x":15,"y":484,"w":470,"h":221},{"id":"beat_repeat","title":"BEAT REPEAT","x":493,"y":484,"w":300,"h":221},{"id":"master","title":"MASTER","x":801,"y":484,"w":284,"h":221}],"controls":[{"id":"wordmark","type":"label","label":"chopline","panel":"header","x":15,"y":15,"w":110,"h":24,"decor":true,"scope":"ui"},{"id":"preset_prev","type":"button","label":"","panel":"header","x":140,"y":15,"w":24,"h":24,"scope":"ui","accent":null,"glyph":"prev"},{"id":"preset_name","type":"combo","label":"Preset","panel":"header","x":174,"y":15,"w":188,"h":24,"options":["Chops / Vowel Hop","Chops / Staccato Verse","Glitch / Tape Stutter Run","Stutter / Syllable Roll","Tape / Slow Wobble","Granular / Breath Cloud"],"def":0,"prefix":"","scope":"ui"},{"id":"preset_next","type":"button","label":"","panel":"header","x":372,"y":15,"w":24,"h":24,"scope":"ui","accent":null,"glyph":"next"},{"id":"pattern_slot","type":"slots","label":"Pattern slot","panel":"header","x":410,"y":15,"w":220,"h":24,"options":["A","B","C","D","E","F","G","H"],"def":0,"scope":"apvts","accent":null},{"id":"bpm","type":"field","label":"BPM","panel":"header","x":646,"y":15,"w":84,"h":24,"min":40,"max":240,"def":124,"unit":"","dec":0,"scope":"host_readonly","bipolar":false,"scale":"lin","step":1},{"id":"transport_play","type":"toggle","label":"","panel":"header","x":740,"y":15,"w":28,"h":24,"def":0,"scope":"mock_only","accent":null,"glyph":"play"},{"id":"quality","type":"seg","label":"Quality","panel":"header","x":784,"y":15,"w":96,"h":24,"options":["Eco","HQ"],"def":1,"scope":"apvts","accent":null},{"id":"settings","type":"button","label":"","panel":"header","x":896,"y":15,"w":28,"h":24,"scope":"ui","accent":null,"glyph":"gear"},{"id":"cpu_meter","type":"display","kind":"cpu","label":"cpu_meter","panel":"header","x":940,"y":15,"w":145,"h":24,"scope":"ui"},{"id":"minimap","type":"display","kind":"minimap","label":"minimap","panel":"strip_a","x":27,"y":88,"w":830,"h":22,"scope":"ui"},{"id":"waveform","type":"display","kind":"waveform","label":"waveform","panel":"strip_a","x":27,"y":120,"w":830,"h":94,"scope":"ui"},{"id":"sampler_load","type":"button","label":"Load","panel":"strip_a","x":873,"y":88,"w":92,"h":24,"scope":"ui","accent":null,"glyph":null},{"id":"sampler_file","type":"readout","label":"file","panel":"strip_a","x":975,"y":88,"w":98,"h":24,"text":"vox_124.wav","scope":"sample_state"},{"id":"slice_mode","type":"seg","label":"Slice mode","panel":"strip_a","x":873,"y":122,"w":200,"h":24,"options":["Transient","Grid","Equal","Manual"],"def":0,"scope":"slice_map","accent":null},{"id":"slice_sensitivity","type":"knob","label":"SENS","panel":"strip_a","x":873,"y":156,"w":52,"h":66,"min":0,"max":100,"def":55,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"slice_map","step":null,"accent":null},{"id":"slice_min_len","type":"knob","label":"MIN LEN","panel":"strip_a","x":935,"y":156,"w":52,"h":66,"min":20,"max":500,"def":80,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"slice_map","step":null,"accent":null},{"id":"slice_zero_cross","type":"toggle","label":"Zero-X","panel":"strip_a","x":997,"y":177,"w":76,"h":24,"def":1,"scope":"slice_map","accent":null,"glyph":null},{"id":"grid_resolution","type":"combo","label":"Resolution","panel":"strip_b","x":92,"y":238,"w":72,"h":24,"options":["1/4","1/8","1/16","1/32"],"def":2,"prefix":"","scope":"pattern_model"},{"id":"grid_feel","type":"seg","label":"Feel","panel":"strip_b","x":174,"y":238,"w":96,"h":24,"options":["Str","Trip","Dot"],"def":0,"scope":"pattern_model","accent":null},{"id":"pattern_length","type":"seg","label":"Pattern length","panel":"strip_b","x":280,"y":238,"w":132,"h":24,"options":["1 bar","2 bars","4 bars"],"def":1,"scope":"pattern_model","accent":null},{"id":"swing","type":"field","label":"SWING","panel":"strip_b","x":422,"y":238,"w":110,"h":24,"min":0,"max":75,"def":0,"unit":"%","dec":0,"scope":"apvts","bipolar":false,"scale":"lin","step":null},{"id":"randomize","type":"button","label":"Random","panel":"strip_b","x":905,"y":238,"w":76,"h":24,"scope":"pattern_model","accent":null,"glyph":null},{"id":"lane_collapse","type":"toggle","label":"Lanes","panel":"strip_b","x":991,"y":238,"w":82,"h":24,"def":1,"scope":"ui","accent":null,"glyph":"chev"},{"id":"step_lane","type":"display","kind":"grid","label":"step_lane","panel":"strip_b","x":27,"y":272,"w":1046,"h":70,"scope":"ui"},{"id":"lane_tab","type":"seg","label":"Lane tab","panel":"strip_b","x":27,"y":352,"w":576,"h":24,"options":["Velocity","Pitch","Ratchet","Probability","Stretch","Drive","Filter","Pan"],"def":0,"scope":"ui","accent":null},{"id":"lane_readout","type":"label","label":"","panel":"strip_b","x":619,"y":352,"w":340,"h":24,"decor":true,"scope":"ui"},{"id":"lane_reset","type":"button","label":"Reset lane","panel":"strip_b","x":973,"y":352,"w":100,"h":24,"scope":"pattern_model","accent":null,"glyph":null},{"id":"lane_editor","type":"display","kind":"lane","label":"lane_editor","panel":"strip_b","x":27,"y":386,"w":1046,"h":78,"scope":"per_step"},{"id":"chop_chip","type":"readout","label":"chop","panel":"inspector","x":27,"y":514,"w":96,"h":24,"scope":"selection"},{"id":"chop_playback","type":"combo","label":"chop_playback","panel":"inspector","x":133,"y":514,"w":100,"h":24,"options":["One-shot","Gate","Loop","Fit step"],"def":1,"prefix":"","scope":"per_chop"},{"id":"chop_reverse","type":"toggle","label":"REV","panel":"inspector","x":243,"y":514,"w":60,"h":24,"def":0,"scope":"per_chop","accent":null,"glyph":null},{"id":"chop_choke","type":"combo","label":"chop_choke","panel":"inspector","x":313,"y":514,"w":100,"h":24,"options":["Off","1","2","3","4"],"def":1,"prefix":"CHOKE","scope":"per_chop"},{"id":"insp_tab","type":"seg","label":"Inspector tab","panel":"inspector","x":27,"y":548,"w":262,"h":24,"options":["WARP","PITCH","DIST","FILTER","ENV"],"def":0,"scope":"ui","accent":null},{"id":"chop_gain","type":"field","label":"GAIN","panel":"inspector","x":299,"y":548,"w":92,"h":24,"min":-24,"max":12,"def":0,"unit":" dB","dec":1,"scope":"per_chop","bipolar":false,"scale":"lin","step":null},{"id":"chop_pan","type":"field","label":"PAN","panel":"inspector","x":401,"y":548,"w":72,"h":24,"min":-100,"max":100,"def":0,"unit":"pan","dec":0,"scope":"per_chop","bipolar":true,"scale":"lin","step":null},{"id":"warp_mode","type":"combo","label":"warp_mode","panel":"inspector","x":27,"y":582,"w":100,"h":24,"options":["Varispeed","Stretch","Granular","Freeze"],"def":1,"prefix":"","scope":"per_chop","vis_tab":"WARP"},{"id":"warp_speed","type":"knob","label":"SPEED","panel":"inspector","x":137,"y":582,"w":52,"h":66,"min":-24,"max":24,"def":0,"unit":" st","dec":1,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Varispeed"},{"id":"warp_tape_stop","type":"knob","label":"STOP","panel":"inspector","x":199,"y":582,"w":52,"h":66,"min":0,"max":2000,"def":0,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Varispeed"},{"id":"warp_tape_start","type":"knob","label":"START","panel":"inspector","x":261,"y":582,"w":52,"h":66,"min":0,"max":2000,"def":0,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Varispeed"},{"id":"warp_time","type":"knob","label":"TIME","panel":"inspector","x":137,"y":582,"w":52,"h":66,"min":0.25,"max":4,"def":1,"unit":"x","dec":2,"scale":"log","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Stretch"},{"id":"warp_formant_shift","type":"knob","label":"FORMANT","panel":"inspector","x":199,"y":582,"w":52,"h":66,"min":-12,"max":12,"def":0,"unit":" st","dec":1,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Stretch"},{"id":"warp_formant_preserve","type":"toggle","label":"Formant keep","panel":"inspector","x":27,"y":616,"w":100,"h":24,"def":1,"scope":"per_chop","accent":null,"glyph":null,"vis_tab":"WARP","vis_wm":"Stretch"},{"id":"gran_size","type":"knob","label":"GRAIN","panel":"inspector","x":137,"y":582,"w":52,"h":66,"min":5,"max":200,"def":60,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Granular"},{"id":"gran_density","type":"knob","label":"DENSITY","panel":"inspector","x":199,"y":582,"w":52,"h":66,"min":0,"max":100,"def":60,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Granular"},{"id":"gran_pos_jitter","type":"knob","label":"POS JIT","panel":"inspector","x":261,"y":582,"w":52,"h":66,"min":0,"max":100,"def":15,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Granular"},{"id":"gran_pitch_jitter","type":"knob","label":"PCH JIT","panel":"inspector","x":323,"y":582,"w":52,"h":66,"min":0,"max":100,"def":0,"unit":" ct","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Granular"},{"id":"gran_spray","type":"knob","label":"SPRAY","panel":"inspector","x":385,"y":582,"w":52,"h":66,"min":0,"max":100,"def":10,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Granular"},{"id":"freeze_pos","type":"knob","label":"POSITION","panel":"inspector","x":137,"y":582,"w":52,"h":66,"min":0,"max":100,"def":40,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Freeze"},{"id":"freeze_grain","type":"knob","label":"GRAIN","panel":"inspector","x":199,"y":582,"w":52,"h":66,"min":5,"max":200,"def":80,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"WARP","vis_wm":"Freeze"},{"id":"pitch_coarse","type":"knob","label":"COARSE","panel":"inspector","x":27,"y":582,"w":52,"h":66,"min":-24,"max":24,"def":0,"unit":" st","dec":0,"scale":"lin","bipolar":true,"scope":"per_chop","step":1,"accent":null,"vis_tab":"PITCH"},{"id":"pitch_fine","type":"knob","label":"FINE","panel":"inspector","x":89,"y":582,"w":52,"h":66,"min":-100,"max":100,"def":0,"unit":" ct","dec":0,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"PITCH"},{"id":"pitch_env_amt","type":"knob","label":"ENV AMT","panel":"inspector","x":151,"y":582,"w":52,"h":66,"min":-24,"max":24,"def":0,"unit":" st","dec":1,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"PITCH"},{"id":"pitch_glide","type":"knob","label":"GLIDE","panel":"inspector","x":213,"y":582,"w":52,"h":66,"min":0,"max":500,"def":60,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"PITCH"},{"id":"pitch_curve","type":"knob","label":"CURVE","panel":"inspector","x":275,"y":582,"w":52,"h":66,"min":-100,"max":100,"def":0,"unit":"%","dec":0,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"PITCH"},{"id":"unison_voices","type":"knob","label":"UNISON","panel":"inspector","x":337,"y":582,"w":52,"h":66,"min":1,"max":4,"def":1,"unit":"","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":1,"accent":null,"vis_tab":"PITCH"},{"id":"unison_spread","type":"knob","label":"SPREAD","panel":"inspector","x":399,"y":582,"w":52,"h":66,"min":0,"max":50,"def":12,"unit":" ct","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"PITCH"},{"id":"dist_type","type":"combo","label":"dist_type","panel":"inspector","x":27,"y":582,"w":100,"h":24,"options":["Soft clip","Hard clip","Tape","Fold","Bitcrush","Downsample"],"def":0,"prefix":"","scope":"per_chop","vis_tab":"DIST"},{"id":"dist_drive","type":"knob","label":"DRIVE","panel":"inspector","x":137,"y":582,"w":52,"h":66,"min":0,"max":100,"def":25,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"DIST"},{"id":"dist_tone","type":"knob","label":"TONE","panel":"inspector","x":199,"y":582,"w":52,"h":66,"min":-100,"max":100,"def":0,"unit":"%","dec":0,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"DIST"},{"id":"dist_mix","type":"knob","label":"MIX","panel":"inspector","x":261,"y":582,"w":52,"h":66,"min":0,"max":100,"def":100,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"DIST"},{"id":"dist_output","type":"knob","label":"OUTPUT","panel":"inspector","x":323,"y":582,"w":52,"h":66,"min":-24,"max":12,"def":0,"unit":" dB","dec":1,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"DIST"},{"id":"dist_autogain","type":"toggle","label":"Auto-gain","panel":"inspector","x":387,"y":596,"w":80,"h":24,"def":1,"scope":"per_chop","accent":null,"glyph":null,"vis_tab":"DIST"},{"id":"filt_type","type":"combo","label":"filt_type","panel":"inspector","x":27,"y":582,"w":100,"h":24,"options":["Lowpass","Bandpass","Highpass"],"def":0,"prefix":"","scope":"per_chop","vis_tab":"FILTER"},{"id":"filt_slope","type":"combo","label":"filt_slope","panel":"inspector","x":27,"y":616,"w":100,"h":24,"options":["12 dB/oct","24 dB/oct"],"def":0,"prefix":"","scope":"per_chop","vis_tab":"FILTER"},{"id":"filt_cutoff","type":"knob","label":"CUTOFF","panel":"inspector","x":137,"y":582,"w":52,"h":66,"min":20,"max":20000,"def":20000,"unit":"Hz","dec":0,"scale":"log","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"FILTER"},{"id":"filt_res","type":"knob","label":"RES","panel":"inspector","x":199,"y":582,"w":52,"h":66,"min":0,"max":100,"def":15,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"FILTER"},{"id":"filt_env_amt","type":"knob","label":"ENV AMT","panel":"inspector","x":261,"y":582,"w":52,"h":66,"min":-100,"max":100,"def":0,"unit":"%","dec":0,"scale":"lin","bipolar":true,"scope":"per_chop","step":null,"accent":null,"vis_tab":"FILTER"},{"id":"env_attack","type":"knob","label":"ATTACK","panel":"inspector","x":27,"y":582,"w":52,"h":66,"min":0,"max":500,"def":2,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"ENV"},{"id":"env_hold","type":"knob","label":"HOLD","panel":"inspector","x":89,"y":582,"w":52,"h":66,"min":0,"max":500,"def":0,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"ENV"},{"id":"env_decay","type":"knob","label":"DECAY","panel":"inspector","x":151,"y":582,"w":52,"h":66,"min":0,"max":2000,"def":180,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"ENV"},{"id":"env_sustain","type":"knob","label":"SUSTAIN","panel":"inspector","x":213,"y":582,"w":52,"h":66,"min":0,"max":100,"def":80,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"ENV"},{"id":"env_release","type":"knob","label":"RELEASE","panel":"inspector","x":275,"y":582,"w":52,"h":66,"min":0,"max":2000,"def":120,"unit":" ms","dec":0,"scale":"lin","bipolar":false,"scope":"per_chop","step":null,"accent":null,"vis_tab":"ENV"},{"id":"ahdsr_graph","type":"display","kind":"ahdsr","label":"ahdsr_graph","panel":"inspector","x":347,"y":582,"w":120,"h":66,"vis_tab":"ENV","scope":"ui"},{"id":"br_mode","type":"seg","label":"Mode","panel":"beat_repeat","x":505,"y":514,"w":150,"h":24,"options":["Auto","Manual","Off"],"def":1,"scope":"apvts","accent":"amber"},{"id":"br_hold","type":"button","label":"HOLD","panel":"beat_repeat","x":665,"y":514,"w":116,"h":24,"scope":"apvts","accent":"amber","glyph":"rec"},{"id":"br_interval","type":"combo","label":"br_interval","panel":"beat_repeat","x":505,"y":548,"w":86,"h":24,"options":["1/4 bar","1/2 bar","1 bar","2 bars","4 bars"],"def":2,"prefix":"INT","scope":"apvts"},{"id":"br_grid","type":"combo","label":"br_grid","panel":"beat_repeat","x":601,"y":548,"w":86,"h":24,"options":["1/2","1/4","1/8","1/16","1/32","1/64"],"def":3,"prefix":"GRID","scope":"apvts"},{"id":"br_gate","type":"combo","label":"br_gate","panel":"beat_repeat","x":697,"y":548,"w":84,"h":24,"options":["1/16","1/8","1/4","1/2","1 bar","2 bars","4 bars"],"def":3,"prefix":"GATE","scope":"apvts"},{"id":"br_chance","type":"knob","label":"CHANCE","panel":"beat_repeat","x":505,"y":582,"w":52,"h":66,"min":0,"max":100,"def":60,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"apvts","step":null,"accent":"amber"},{"id":"br_decay","type":"knob","label":"DECAY","panel":"beat_repeat","x":567,"y":582,"w":52,"h":66,"min":0,"max":100,"def":25,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"apvts","step":null,"accent":"amber"},{"id":"br_pitch_decay","type":"knob","label":"P.DECAY","panel":"beat_repeat","x":629,"y":582,"w":52,"h":66,"min":0,"max":12,"def":0,"unit":" st","dec":1,"scale":"lin","bipolar":false,"scope":"apvts","step":null,"accent":"amber"},{"id":"br_freeze","type":"toggle","label":"FREEZE","panel":"beat_repeat","x":697,"y":605,"w":84,"h":24,"def":0,"scope":"apvts","accent":"amber","glyph":null},{"id":"br_mix_mode","type":"seg","label":"Mix mode","panel":"beat_repeat","x":505,"y":662,"w":276,"h":24,"options":["Mix","Insert","Gate"],"def":0,"scope":"apvts","accent":"amber"},{"id":"master_tone","type":"knob","label":"TONE","panel":"master","x":813,"y":516,"w":52,"h":66,"min":-100,"max":100,"def":0,"unit":"%","dec":0,"scale":"lin","bipolar":true,"scope":"apvts","step":null,"accent":null},{"id":"master_hp","type":"knob","label":"HP","panel":"master","x":875,"y":516,"w":52,"h":66,"min":20,"max":500,"def":20,"unit":" Hz","dec":0,"scale":"log","bipolar":false,"scope":"apvts","step":null,"accent":null},{"id":"master_sat","type":"knob","label":"SAT","panel":"master","x":937,"y":516,"w":52,"h":66,"min":0,"max":100,"def":10,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"apvts","step":null,"accent":null},{"id":"master_width","type":"knob","label":"WIDTH","panel":"master","x":999,"y":516,"w":52,"h":66,"min":0,"max":200,"def":100,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"apvts","step":null,"accent":null},{"id":"master_delay_send","type":"knob","label":"DELAY","panel":"master","x":813,"y":594,"w":52,"h":66,"min":0,"max":100,"def":0,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"apvts","step":null,"accent":null},{"id":"master_verb_send","type":"knob","label":"VERB","panel":"master","x":875,"y":594,"w":52,"h":66,"min":0,"max":100,"def":8,"unit":"%","dec":0,"scale":"lin","bipolar":false,"scope":"apvts","step":null,"accent":null},{"id":"master_output","type":"knob","label":"OUT","panel":"master","x":937,"y":594,"w":52,"h":66,"min":-24,"max":12,"def":0,"unit":" dB","dec":1,"scale":"lin","bipolar":true,"scope":"apvts","step":null,"accent":null},{"id":"master_limiter","type":"toggle","label":"LIMIT","panel":"master","x":1003,"y":594,"w":70,"h":24,"def":1,"scope":"apvts","accent":null,"glyph":null},{"id":"master_meter","type":"display","kind":"meter","label":"master_meter","panel":"master","x":1003,"y":628,"w":70,"h":32,"scope":"ui"}]};
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const $stage = document.getElementById("stage");
+let stageScale = 1;
+
+/* ------------------------------------------------------------------ mock JUCE bridge */
+window.Juce = (() => {
+  const states = {};
+  const mk = (id, kind) => states[id + ":" + kind] || (states[id + ":" + kind] = {
+    id, kind, value: 0, listeners: [],
+    valueChangedEvent: { addListener(fn) { this.owner.listeners.push(fn); } },
+    setValue(v, text, ctx) { this.value = v; console.log(`[CHOPLINE] param ${id} = ${text !== undefined ? text : v}${ctx ? "  " + ctx : ""}`); this.listeners.forEach(f => f(v)); }
+  });
+  const get = kind => id => { const s = mk(id, kind); s.valueChangedEvent.owner = s; return s; };
+  return { getSliderState: get("slider"), getToggleState: get("toggle"), getComboBoxState: get("combo") };
+})();
+const bridgeKind = c => (c.type === "knob" || c.type === "field") ? "slider" : (c.type === "toggle" || c.type === "button") ? "toggle" : "combo";
+const logp = (id, text, ctx) => console.log(`[CHOPLINE] param ${id} = ${text}${ctx ? "  " + ctx : ""}`);
+
+/* ------------------------------------------------------------------ palette + demo data */
+const PAL = ["#5b9dff", "#35c490", "#e6d14a", "#d97ad0", "#ff7d5c", "#a38cff", "#b9c0cc", "#d1a15c"];
+const chopCol = i => PAL[i % PAL.length];
+const pad2 = n => String(n + 1).padStart(2, "0");
+const SAMPLE_MS = 9200;
+const LANES = ["Velocity", "Pitch", "Ratchet", "Probability", "Stretch", "Drive", "Filter", "Pan"];
+const LANE_COL = ["#6f87a8", "#8a78b0", "#a8876a", "#6aa08f", "#a89a6a", "#b0707a", "#6a9ab0", "#8a9a6a"];
+const LANE_HINT = ["0-127", "-24..+24 st", "1 2 3 4 6 8 repeats", "0-100 %", "0.25x-4x", "0-100 %", "20 Hz-20 kHz", "L100-R100"];
+const BIPOLAR_LANE = [false, true, false, false, true, false, false, true];
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+// onset: [position, strength, amplitude]
+const ONS = [[.02, 1, .9], [.085, .8, .7], [.14, .45, .5], [.19, 1, .95], [.255, .6, .6], [.31, .9, .8], [.36, .35, .45], [.41, 1, 1], [.475, .7, .7],
+  [.53, .5, .55], [.58, .95, .85], [.645, .4, .5], [.69, .85, .8], [.745, .55, .6], [.80, 1, .95], [.865, .65, .65], [.915, .4, .5], [.95, .8, .7]];
+const NP = 1800, PK_MAX = new Float32Array(NP), PK_MIN = new Float32Array(NP);
+(() => {
+  const r = mulberry32(7);
+  for (let i = 0; i < NP; i++) {
+    const x = i / NP; let env = 0.035 + 0.02 * r();
+    for (const [t, s, a] of ONS) {
+      if (x < t) continue; const d = x - t, att = Math.min(1, d / 0.004);
+      const dec = Math.exp(-d / (0.028 + 0.02 * s)) , sus = Math.exp(-d / 0.09) * 0.35;
+      env = Math.max(env, a * att * (0.6 * dec + sus) * (0.88 + 0.12 * Math.sin(d * 700)));
+    }
+    PK_MAX[i] = Math.min(1, env * (0.55 + 0.45 * r())); PK_MIN[i] = -Math.min(1, env * (0.55 + 0.45 * r()));
+  }
+})();
+
+/* ------------------------------------------------------------------ application state */
+const ctrls = {};                       // id -> control instance
+const defs = {};                        // id -> config
+CFG.controls.forEach(c => defs[c.id] = c);
+const G = {};                           // global/ui values by id
+const chopP = [];                       // per-chop param dicts
+let markers = [];                       // chop start positions (0..1)
+let sel = 2;                            // selected chop
+let flashChop = -1, flashUntil = 0, playingChop = -1, playingUntil = 0;
+let view = { a: 0, b: 1 };
+let hoverStep = -1;
+let selEv = null;
+let patterns = {};
+let slot = "A";
+let playing = false, t0 = 0, ph = 0, prevPh = 0, lastBeat = 0;
+let brHold = false, brAuto = false, brAnchor = 0, brUntil = 0;
+const lanes = LANES.map(() => new Float32Array(128));
+let lastN = 32;
+let levelL = 0, levelR = 0;
+let undoStack = [];
+
+const dfl = id => defs[id].def;
+function chopDefaults(i) {
+  const p = {};
+  CFG.controls.forEach(c => { if (c.scope === "per_chop") p[c.id] = c.def; });
+  if (i % 4 === 1) { p.chop_playback = 0; }
+  if (i % 5 === 3) { p.chop_reverse = 1; }
+  if (i % 3 === 2) { p.pitch_coarse = 3; }
+  if (i === 5) { p.warp_mode = 0; p.dist_type = 3; p.dist_drive = 55; }
+  if (i === 7) { p.warp_mode = 2; }
+  return p;
+}
+CFG.controls.forEach(c => { if (c.scope !== "per_chop" && c.def !== undefined) G[c.id] = c.def; });
+chopP.push(chopDefaults(0), chopDefaults(1), chopDefaults(2));
+G.insp_tab = 0; G.lane_tab = 0;
+
+/* ------------------------------------------------------------------ value helpers */
+function toNorm(c, v) { return clamp(c.scale === "log" ? Math.log(v / c.min) / Math.log(c.max / c.min) : (v - c.min) / (c.max - c.min), 0, 1); }
+function fromNorm(c, n) {
+  n = clamp(n, 0, 1);
+  let v = c.scale === "log" ? c.min * Math.pow(c.max / c.min, n) : c.min + n * (c.max - c.min);
+  if (c.step) v = Math.round(v / c.step) * c.step; else if (c.dec === 0 && c.scale !== "log") v = Math.round(v);
+  return clamp(v, c.min, c.max);
+}
+function fmtVal(c, v) {
+  if (c.unit === "Hz" || (c.unit === " Hz" && v >= 1000)) return v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 1 : 2) + " kHz" : Math.round(v) + " Hz";
+  if (c.unit === "pan") return v === 0 ? "C" : (v < 0 ? "L" + Math.round(-v) : "R" + Math.round(v));
+  const sgn = c.bipolar && v > 0 ? "+" : "";
+  return sgn + (c.scale === "log" && c.dec ? v.toFixed(c.dec) : v.toFixed(c.dec || 0)) + (c.unit || "");
+}
+function getV(c) { return c.scope === "per_chop" ? chopP[sel][c.id] : G[c.id]; }
+function setV(c, v, user) {
+  if (c.scope === "per_chop") chopP[sel][c.id] = v; else G[c.id] = v;
+  const inst = ctrls[c.id]; if (inst) inst.refresh();
+  if (user) {
+    const text = c.options ? c.options[v] : (c.type === "toggle" || c.type === "button") ? (v ? "on" : "off") : fmtVal(c, v);
+    const ctx = c.scope === "per_chop" ? `(chop ${sel + 1})` : c.scope === "pattern_model" || c.scope === "slice_map" ? `(${c.scope})` : "";
+    Juce[{ slider: "getSliderState", toggle: "getToggleState", combo: "getComboBoxState" }[bridgeKind(c)]](c.id).setValue(v, text, ctx);
+    if (hooks[c.id]) hooks[c.id](v, true);
+  }
+}
+const hooks = {};
+
+/* ------------------------------------------------------------------ canvas registry */
+const cvs = [];
+function regCanvas(host, w, h, draw) {
+  const cv = document.createElement("canvas"); host.appendChild(cv);
+  const o = { cv, w, h, draw, ctx: cv.getContext("2d"), dirty: true };
+  cv.style.width = w + "px"; cv.style.height = h + "px"; cvs.push(o); sizeCanvas(o); return o;
+}
+function sizeCanvas(o) {
+  const k = Math.max(1, (window.devicePixelRatio || 1) * stageScale);
+  o.cv.width = Math.round(o.w * k); o.cv.height = Math.round(o.h * k); o.k = k; o.dirty = true;
+}
+function canvasXY(o, e) { const r = o.cv.getBoundingClientRect(); return [(e.clientX - r.left) / stageScale, (e.clientY - r.top) / stageScale]; }
+
+/* ------------------------------------------------------------------ build panels */
+const panelEls = {};
+CFG.panels.forEach(p => {
+  if (p.kind === "header") { panelEls[p.id] = document.getElementById("header"); return; }
+  const el = document.createElement("div"); el.className = "panel";
+  el.style.cssText = `left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px`;
+  el.innerHTML = `<div class="pbar"><div class="ptitle">${p.title}</div><div class="pstatus" id="status_${p.id}"></div></div>`;
+  $stage.appendChild(el); panelEls[p.id] = el;
+});
+const toStage = (c, el) => { el.style.left = c.x + "px"; el.style.top = c.y + "px"; el.style.width = c.w + "px"; el.style.height = c.h + "px"; $stage.appendChild(el); };
+const ICON = {
+  prev: '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M7 1 3 5l4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  next: '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  play: '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M2 1l7 4-7 4z" fill="currentColor"/></svg>',
+  stop: '<svg width="10" height="10" viewBox="0 0 10 10"><rect x="2" y="2" width="6" height="6" fill="currentColor"/></svg>',
+  gear: '<svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.5"/><g stroke="currentColor" stroke-width="1.6"><path d="M7 1v2.2M7 10.8V13M1 7h2.2M10.8 7H13M2.8 2.8l1.5 1.5M9.7 9.7l1.5 1.5M11.2 2.8 9.7 4.3M4.3 9.7 2.8 11.2"/></g></svg>',
+  rec: '<span class="dot"></span>',
+  chev: '<svg width="9" height="9" viewBox="0 0 9 9"><path d="M1 3l3.5 3.5L8 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'
+};
+
+/* ------------------------------------------------------------------ control builders */
+function buildKnob(c) {
+  const el = document.createElement("div"); el.className = "ctl knob" + (c.accent ? " " + c.accent : ""); toStage(c, el);
+  const col = c.accent === "amber" ? "var(--amber)" : "var(--accent)";
+  el.innerHTML = `<svg width="40" height="40" viewBox="0 0 40 40"><path d="${arc(17, -135, 135)}" fill="none" stroke="var(--track)" stroke-width="3" stroke-linecap="round"/><path class="va" fill="none" stroke="${col}" stroke-width="3" stroke-linecap="round"/><circle cx="20" cy="20" r="11.5" fill="#15171c" stroke="#2a2e38"/><line class="pt" x1="20" y1="20" x2="20" y2="9" stroke="#e6e8ec" stroke-width="1.6" stroke-linecap="round"/></svg><div class="kv"></div><div class="kl">${c.label}</div>`;
+  const va = el.querySelector(".va"), pt = el.querySelector(".pt"), kv = el.querySelector(".kv");
+  const inst = {
+    el, refresh() {
+      const v = getV(c), n = toNorm(c, v), a = -135 + 270 * n;
+      let d = "";
+      if (c.bipolar) { const a0 = 0, lo = Math.min(a0, a), hi = Math.max(a0, a); if (hi - lo > 0.8) d = arc(17, lo, hi); }
+      else if (n > 0.003) d = arc(17, -135, a);
+      va.setAttribute("d", d);
+      const r = a * Math.PI / 180; pt.setAttribute("x1", 20 + 5 * Math.sin(r)); pt.setAttribute("y1", 20 - 5 * Math.cos(r));
+      pt.setAttribute("x2", 20 + 11 * Math.sin(r)); pt.setAttribute("y2", 20 - 11 * Math.cos(r));
+      kv.textContent = fmtVal(c, v);
+    }
+  };
+  const setN = n => setV(c, fromNorm(c, n), true);
+  el.addEventListener("mousedown", e => {
+    if (e.button !== 0) return; e.preventDefault(); el.classList.add("active");
+    let y = e.clientY, n = toNorm(c, getV(c));
+    const mm = ev => { const k = (ev.shiftKey ? 0.0006 : 0.006) / (stageScale > 0 ? 1 : 1); n = clamp(n + (y - ev.clientY) * k / Math.max(0.5, stageScale) * 1.0, 0, 1); y = ev.clientY; setN(n); };
+    const mu = () => { el.classList.remove("active"); document.removeEventListener("mousemove", mm); document.removeEventListener("mouseup", mu); };
+    document.addEventListener("mousemove", mm); document.addEventListener("mouseup", mu);
+  });
+  el.addEventListener("dblclick", () => { setV(c, c.def, true); });
+  el.addEventListener("wheel", e => { e.preventDefault(); setN(toNorm(c, getV(c)) + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 0.004 : 0.03)); }, { passive: false });
+  el.addEventListener("contextmenu", e => { console.log(`[CHOPLINE] midi-learn armed for ${c.id}`); });
+  return inst;
+}
+function arc(r, a0, a1) {
+  const p = a => [20 + r * Math.sin(a * Math.PI / 180), 20 - r * Math.cos(a * Math.PI / 180)];
+  const [x0, y0] = p(a0), [x1, y1] = p(a1);
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${Math.abs(a1 - a0) > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+let openMenu = null;
+function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+document.addEventListener("mousedown", e => { if (openMenu && !openMenu.contains(e.target)) closeMenu(); }, true);
+function buildCombo(c) {
+  const el = document.createElement("div"); el.className = "ctl combo"; toStage(c, el);
+  el.innerHTML = `${c.prefix ? `<span class="pf">${c.prefix}</span>` : ""}<span class="cv"></span><span class="ch"></span>`;
+  const cv = el.querySelector(".cv");
+  const inst = { el, refresh() { cv.textContent = c.options[getV(c)]; } };
+  el.addEventListener("mousedown", e => {
+    if (e.button !== 0) return; e.stopPropagation(); const had = openMenu; closeMenu(); if (had && had._for === c.id) return;
+    const m = document.createElement("div"); m.className = "menu"; m._for = c.id;
+    c.options.forEach((o, i) => { const d = document.createElement("div"); d.textContent = o; if (i === getV(c)) d.className = "on"; d.addEventListener("mousedown", ev => { ev.stopPropagation(); setV(c, i, true); closeMenu(); }); m.appendChild(d); });
+    m.style.minWidth = c.w + "px"; m.style.left = c.x + "px";
+    const hgt = c.options.length * 22 + 8; m.style.top = (c.y + c.h + 3 + hgt > 715 ? c.y - hgt - 3 : c.y + c.h + 3) + "px";
+    $stage.appendChild(m); openMenu = m;
+  });
+  return inst;
+}
+function buildSeg(c) {
+  const el = document.createElement("div");
+  el.className = "ctl seg" + (c.type === "slots" ? " gap" : "") + (c.accent ? " " + c.accent : "") + (c.id === "lane_tab" || c.id === "insp_tab" ? " tabs" : ""); toStage(c, el);
+  const bs = c.options.map((o, i) => { const b = document.createElement("b"); b.textContent = o; b.addEventListener("mousedown", e => { e.preventDefault(); setV(c, i, true); }); el.appendChild(b); return b; });
+  if (c.type === "slots" || c.id === "lane_tab" || c.id === "insp_tab") bs.forEach(b => b.style.flex = "1 1 0");
+  return { el, refresh() { const v = getV(c); bs.forEach((b, i) => { b.classList.toggle("on", i === v); if (c.id === "lane_tab") b.style.setProperty("--lc", LANE_COL[i]); }); } };
+}
+function buildToggle(c) {
+  const el = document.createElement("div"); el.className = "ctl tgl" + (c.accent ? " " + c.accent : ""); toStage(c, el);
+  const set = () => { el.innerHTML = (c.glyph && ICON[c.glyph] ? ICON[c.glyph === "play" ? (G[c.id] ? "stop" : "play") : c.glyph] : "") + (c.label ? `<span>${c.label}</span>` : ""); };
+  el.addEventListener("mousedown", e => { e.preventDefault(); const v = getV(c) ? 0 : 1; setV(c, v, true); });
+  return { el, refresh() { el.classList.toggle("on", !!getV(c)); set(); } };
+}
+function buildButton(c) {
+  const el = document.createElement("div"); el.className = "ctl btn" + (c.accent ? " " + c.accent : ""); toStage(c, el);
+  el.innerHTML = (c.glyph ? ICON[c.glyph] : "") + (c.label ? `<span>${c.label}</span>` : "");
+  el.addEventListener("mousedown", e => { if (e.button !== 0) return; e.preventDefault(); if (hooks[c.id + ":down"]) hooks[c.id + ":down"](); else if (hooks[c.id]) hooks[c.id](); });
+  el.addEventListener("mouseup", () => { if (hooks[c.id + ":up"]) hooks[c.id + ":up"](); });
+  el.addEventListener("mouseleave", () => { if (hooks[c.id + ":up"] && el.classList.contains("on")) hooks[c.id + ":up"](); });
+  return { el, refresh() { } };
+}
+function buildField(c) {
+  const el = document.createElement("div"); el.className = "ctl field"; toStage(c, el);
+  el.innerHTML = `<span class="fl">${c.label}</span><span class="fv"></span><span class="fb"></span>`;
+  const fv = el.querySelector(".fv"), fb = el.querySelector(".fb");
+  const inst = { el, refresh() { const v = getV(c); fv.textContent = fmtVal(c, v); fb.style.width = (toNorm(c, v) * 100) + "%"; } };
+  if (c.scope === "host_readonly") { el.style.cursor = "ew-resize"; }
+  el.addEventListener("mousedown", e => {
+    if (e.button !== 0) return; e.preventDefault(); let x = e.clientX, n = toNorm(c, getV(c));
+    const mm = ev => { n = clamp(n + (ev.clientX - x) * (ev.shiftKey ? 0.0008 : 0.006) / Math.max(.5, stageScale), 0, 1); x = ev.clientX; setV(c, fromNorm(c, n), true); };
+    const mu = () => { document.removeEventListener("mousemove", mm); document.removeEventListener("mouseup", mu); };
+    document.addEventListener("mousemove", mm); document.addEventListener("mouseup", mu);
+  });
+  el.addEventListener("dblclick", () => setV(c, c.def, true));
+  el.addEventListener("wheel", e => { e.preventDefault(); setV(c, fromNorm(c, toNorm(c, getV(c)) + (e.deltaY < 0 ? 1 : -1) * 0.03), true); }, { passive: false });
+  return inst;
+}
+
+/* ------------------------------------------------------------------ build all controls */
+const DISP = {};     // display id -> {el, o}
+CFG.controls.forEach(c => {
+  let inst = null;
+  if (c.type === "knob") inst = buildKnob(c);
+  else if (c.type === "combo") inst = buildCombo(c);
+  else if (c.type === "seg" || c.type === "slots") inst = buildSeg(c);
+  else if (c.type === "toggle") inst = buildToggle(c);
+  else if (c.type === "button") inst = buildButton(c);
+  else if (c.type === "field") inst = buildField(c);
+  else if (c.type === "label") {
+    const el = document.createElement("div"); el.className = "ctl"; if (c.id !== "wordmark") el.id = c.id; toStage(c, el);
+    if (c.id === "wordmark") el.innerHTML = `<span id="wordmark"><i><b style="height:14px;background:${PAL[0]}"></b><b style="height:9px;background:${PAL[1]}"></b><b style="height:12px;background:${PAL[3]}"></b></i>chopline</span>`;
+    inst = { el, refresh() { } };
+  } else if (c.type === "readout") {
+    const el = document.createElement("div"); el.className = "ctl readout"; el.id = c.id; toStage(c, el);
+    if (c.id === "sampler_file") el.innerHTML = `<span>${c.text}</span>`;
+    inst = { el, refresh() { if (c.id === "chop_chip") el.innerHTML = `<span class="sw" style="background:${chopCol(sel)}"></span><span style="color:var(--text)">${pad2(sel)}</span><span>${chopDur(sel)}</span>`; } };
+  } else if (c.type === "display") {
+    const el = document.createElement("div"); el.className = "ctl disp"; el.id = c.id; toStage(c, el);
+    if (c.kind === "cpu") { el.id = "cpu_wrap"; el.className = "ctl disp"; el.innerHTML = `<div id="cpu" style="position:absolute;inset:0"><span class="cl">CPU</span><span class="cb"><i></i></span><span class="cv">2.1%</span></div>`; }
+    inst = { el, refresh() { } }; DISP[c.id] = inst;
+  }
+  if (inst) { inst.c = c; ctrls[c.id] = inst; if (c.type !== "display" && c.type !== "label" && c.type !== "readout" && c.type !== "button") inst.refresh(); }
+});
+const chopDur = i => { const a = markers[i], b = i + 1 < markers.length ? markers[i + 1] : 1; return ((b - a) * SAMPLE_MS / 1000).toFixed(2) + "s"; };
+
+/* ------------------------------------------------------------------ slicing */
+function rebuildMarkers() {
+  const m = G.slice_mode;
+  if (m === 0) {
+    const thr = 1.02 - G.slice_sensitivity / 100 * 0.78, minF = G.slice_min_len / SAMPLE_MS;
+    const out = []; ONS.forEach(([t, s]) => { if (s >= thr && (!out.length || t - out[out.length - 1] >= minF)) out.push(t); }); markers = out;
+  } else if (m === 1) markers = Array.from({ length: 16 }, (_, i) => i / 16);
+  else if (m === 2) markers = Array.from({ length: 10 }, (_, i) => i / 10);
+  /* manual keeps current markers */
+  if (!markers.length) markers = [0];
+  while (chopP.length < markers.length) chopP.push(chopDefaults(chopP.length));
+  sel = clamp(sel, 0, markers.length - 1);
+  Object.values(patterns).forEach(l => l.forEach(ev => { if (ev.chop >= markers.length) ev.chop = ev.chop % markers.length; }));
+  refreshInspector(); mark();
+}
+hooks.slice_mode = v => { rebuildMarkers(); console.log(`[CHOPLINE] slice mode -> ${defs.slice_mode.options[v]} (${markers.length} chops)`); };
+hooks.slice_sensitivity = () => { if (G.slice_mode === 0) rebuildMarkers(); };
+hooks.slice_min_len = () => { if (G.slice_mode === 0) rebuildMarkers(); };
+
+/* ------------------------------------------------------------------ inspector */
+function refreshInspector() {
+  Object.values(ctrls).forEach(i => { if (i.c && i.c.scope === "per_chop") i.refresh(); });
+  ctrls.chop_chip.refresh(); applyVis(); mark();
+}
+function applyVis() {
+  const tab = defs.insp_tab.options[G.insp_tab], wm = defs.warp_mode.options[chopP[sel].warp_mode];
+  CFG.controls.forEach(c => { if (!c.vis_tab) return; const on = c.vis_tab === tab && (!c.vis_wm || c.vis_wm === wm); ctrls[c.id].el.style.display = on ? "" : "none"; });
+  mark();
+}
+hooks.insp_tab = applyVis; hooks.warp_mode = applyVis;
+hooks.dist_type = () => { };
+["env_attack", "env_hold", "env_decay", "env_sustain", "env_release"].forEach(id => hooks[id] = () => mark());
+
+/* ------------------------------------------------------------------ Strip A (minimap + waveform) */
+const dMini = DISP.minimap.el, dWave = DISP.waveform.el;
+const mini = regCanvas(dMini, defs.minimap.w - 2, defs.minimap.h - 2, drawMini);
+const wave = regCanvas(dWave, defs.waveform.w - 2, defs.waveform.h - 2, drawWave);
+const chopRange = i => [markers[i], i + 1 < markers.length ? markers[i + 1] : 1];
+function peakAt(f0, f1) { const i0 = clamp(Math.floor(f0 * NP), 0, NP - 1), i1 = clamp(Math.ceil(f1 * NP), i0 + 1, NP); let mx = 0, mn = 0; for (let i = i0; i < i1; i++) { if (PK_MAX[i] > mx) mx = PK_MAX[i]; if (PK_MIN[i] < mn) mn = PK_MIN[i]; } return [mn, mx]; }
+function chopOf(f) { let k = -1; for (let i = 0; i < markers.length; i++) if (f >= markers[i]) k = i; return k; }
+function drawMini(o) {
+  const { ctx, w, h } = o; ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.clearRect(0, 0, w, h);
+  const mid = h / 2;
+  for (let x = 0; x < w; x++) {
+    const f = x / w, [mn, mx] = peakAt(f, f + 1 / w), ci = chopOf(f);
+    ctx.fillStyle = ci >= 0 ? chopCol(ci) : "#3a4050"; ctx.globalAlpha = .55;
+    ctx.fillRect(x, mid - mx * mid * .95, 1, Math.max(1, (mx - mn) * mid * .95));
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "rgba(8,9,11,.62)"; ctx.fillRect(0, 0, view.a * w, h); ctx.fillRect(view.b * w, 0, w - view.b * w, h);
+  ctx.strokeStyle = "#2bd4e6"; ctx.lineWidth = 1; ctx.strokeRect(view.a * w + .5, .5, Math.max(2, (view.b - view.a) * w) - 1, h - 1);
+  if (playing) { ctx.fillStyle = "#2bd4e6"; }
+}
+function drawWave(o) {
+  const { ctx, w, h } = o; ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.clearRect(0, 0, w, h);
+  const span = view.b - view.a, mid = h / 2 + 4, amp = h / 2 - 12;
+  const X = f => (f - view.a) / span * w;
+  ctx.strokeStyle = "#1a1d24"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid + .5); ctx.lineTo(w, mid + .5); ctx.stroke();
+  const now = performance.now();
+  for (let i = 0; i < markers.length; i++) {
+    const [a, b] = chopRange(i); const x0 = X(a), x1 = X(b); if (x1 < 0 || x0 > w) continue;
+    const col = chopCol(i), isSel = i === sel, isFl = i === flashChop && now < flashUntil, isPl = i === playingChop && now < playingUntil;
+    ctx.fillStyle = col; ctx.globalAlpha = isFl ? .42 : isPl ? .3 : isSel ? .17 : .075; ctx.fillRect(x0, 0, x1 - x0, h);
+    ctx.globalAlpha = .95;
+    const cs = Math.max(0, Math.floor(x0)), ce = Math.min(w, Math.ceil(x1));
+    for (let x = cs; x < ce; x++) { const f = view.a + x / w * span, [mn, mx] = peakAt(f, f + span / w); ctx.fillRect(x, mid - mx * amp, 1, Math.max(1, (mx - mn) * amp)); }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = col; ctx.fillRect(x0, 0, 1, h);
+    // index tag
+    const tx = Math.max(x0 + 3, 3);
+    if (x1 - x0 > 22) { ctx.fillStyle = col; ctx.fillRect(tx, 4, 17, 12); ctx.fillStyle = "#0d0e11"; ctx.font = "600 9.5px " + getComputedStyle(document.body).getPropertyValue("--mono"); ctx.textBaseline = "middle"; ctx.fillText(pad2(i), tx + 2.5, 10.5); }
+    if (isSel) {
+      ctx.strokeStyle = "#2bd4e6"; ctx.lineWidth = 1; ctx.strokeRect(x0 + .5, .5, x1 - x0 - 1, h - 1);
+      ctx.fillStyle = "#2bd4e6"; ctx.fillRect(x0 + 1, h / 2 - 8, 3, 16); ctx.fillRect(x1 - 4, h / 2 - 8, 3, 16);  // fine-trim handles
+    }
+  }
+  ctx.fillStyle = "#586070"; ctx.font = "9.5px " + getComputedStyle(document.body).getPropertyValue("--ui"); ctx.textAlign = "right";
+  ctx.fillText(`zoom ${(1 / span).toFixed(1)}x   |   drop audio here or Load`, w - 6, h - 7); ctx.textAlign = "left";
+}
+function waveXf(e) { const [x, y] = canvasXY(wave, e); return [x, y, view.a + x / wave.w * (view.b - view.a)]; }
+let chopDrag = null;
+const ghost = document.createElement("div"); ghost.id = "ghost"; $stage.appendChild(ghost);
+wave.cv.addEventListener("mousedown", e => {
+  if (e.button !== 0) return; e.preventDefault();
+  const [x, y, f] = waveXf(e), span = view.b - view.a;
+  // manual marker interactions
+  if (G.slice_mode === 3) {
+    let near = -1; markers.forEach((m, i) => { if (Math.abs((m - view.a) / span * wave.w - x) < 5) near = i; });
+    if (near >= 0 && e.altKey && markers.length > 1) { markers.splice(near, 1); chopP.splice(near, 1); sel = clamp(sel, 0, markers.length - 1); console.log(`[CHOPLINE] slice: marker removed -> ${markers.length} chops`); refreshInspector(); return; }
+    if (near > 0) { const mm = ev => { const [, , ff] = waveXf(ev); markers[near] = clamp(ff, markers[near - 1] + .004, (markers[near + 1] ?? 1) - .004); mark(); }; const mu = () => { document.removeEventListener("mousemove", mm); document.removeEventListener("mouseup", mu); console.log(`[CHOPLINE] slice: marker ${near + 1} moved to ${(markers[near] * SAMPLE_MS / 1000).toFixed(3)}s`); }; document.addEventListener("mousemove", mm); document.addEventListener("mouseup", mu); return; }
+  }
+  const idx = chopOf(f); if (idx < 0) return;
+  const sx = e.clientX, sy = e.clientY; let dragging = false;
+  const mm = ev => {
+    if (!dragging && Math.hypot(ev.clientX - sx, ev.clientY - sy) > 4) { dragging = true; chopDrag = { chop: idx }; ghost.style.display = "block"; ghost.style.background = chopCol(idx); ghost.textContent = pad2(idx); }
+    if (dragging) { const r = $stage.getBoundingClientRect(); ghost.style.left = ((ev.clientX - r.left) / stageScale + 10) + "px"; ghost.style.top = ((ev.clientY - r.top) / stageScale + 10) + "px"; hoverStep = stepAtClient(ev); mark(); }
+  };
+  const mu = ev => {
+    document.removeEventListener("mousemove", mm); document.removeEventListener("mouseup", mu);
+    if (dragging) { ghost.style.display = "none"; const s = stepAtClient(ev); if (s >= 0) placeEvent(s, 1, idx, true); chopDrag = null; hoverStep = -1; mark(); }
+    else { selectChop(idx); audition(idx); }
+  };
+  document.addEventListener("mousemove", mm); document.addEventListener("mouseup", mu);
+});
+wave.cv.addEventListener("dblclick", e => {
+  if (G.slice_mode !== 3) return; const [, , f] = waveXf(e); const idx = chopOf(f); if (idx < 0) return;
+  markers.splice(idx + 1, 0, f); chopP.splice(idx + 1, 0, chopDefaults(idx + 1)); console.log(`[CHOPLINE] slice: marker added at ${(f * SAMPLE_MS / 1000).toFixed(3)}s -> ${markers.length} chops`); refreshInspector();
+});
+wave.cv.addEventListener("wheel", e => {
+  e.preventDefault(); const [, , f] = waveXf(e), span = view.b - view.a;
+  if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) { const d = (e.deltaX || e.deltaY) / 1000 * span; view.a = clamp(view.a + d, 0, 1 - span); view.b = view.a + span; }
+  else { const ns = clamp(span * (e.deltaY < 0 ? .85 : 1.18), .08, 1), r = (f - view.a) / span; view.a = clamp(f - r * ns, 0, 1 - ns); view.b = view.a + ns; }
+  mark();
+}, { passive: false });
+mini.cv.addEventListener("mousedown", e => {
+  e.preventDefault(); const span = view.b - view.a;
+  const mv = ev => { const [x] = canvasXY(mini, ev); const c = x / mini.w; view.a = clamp(c - span / 2, 0, 1 - span); view.b = view.a + span; mark(); };
+  const mu = () => { document.removeEventListener("mousemove", mv); document.removeEventListener("mouseup", mu); };
+  mv(e); document.addEventListener("mousemove", mv); document.addEventListener("mouseup", mu);
+});
+function selectChop(i) { sel = i; refreshInspector(); }
+function audition(i) { flashChop = i; flashUntil = performance.now() + 380; console.log(`[CHOPLINE] audition chop ${pad2(i)} (${chopDur(i)}) through per-chop FX chain`); levelL = levelR = .7; mark(); setTimeout(mark, 400); }
+
+/* ------------------------------------------------------------------ Strip B (grid) */
+const dGrid = DISP.step_lane.el, dLane = DISP.lane_editor.el;
+const GW = defs.step_lane.w - 2, GH = defs.step_lane.h - 2;
+const grid = regCanvas(dGrid, GW, GH, drawGrid);
+const laneCv = regCanvas(dLane, defs.lane_editor.w - 2, defs.lane_editor.h - 2, drawLane);
+const RULER = 14, LANE_TOP = RULER + 3;
+const BARS = () => [1, 2, 4][G.pattern_length];
+const STEPS_BAR = () => { const base = [4, 8, 16, 32][G.grid_resolution], f = [1, 1.5, 2 / 3][G.grid_feel]; return Math.max(1, Math.round(base * f)); };
+const NSTEPS = () => STEPS_BAR() * BARS();
+function ev(step, len, chop, n = 32) { return { pos: step / n, len: len / n, chop }; }
+patterns.A = [ev(0, 2, 0), ev(2, 1, 1), ev(3, 1, 2), ev(4, 1, 2), ev(6, 2, 3), ev(8, 1, 4), ev(10, 1, 1), ev(11, 1, 5), ev(12, 2, 6), ev(15, 1, 7), ev(16, 1, 0), ev(18, 1, 8), ev(19, 1, 8), ev(20, 2, 2), ev(23, 1, 9), ev(24, 1, 4), ev(26, 2, 3), ev(28, 1, 5), ev(30, 1, 7)];
+patterns.B = [ev(0, 2, 1), ev(4, 2, 3), ev(8, 2, 5), ev(12, 2, 7)];
+"CDEFGH".split("").forEach(k => patterns[k] = []);
+const curEvents = () => patterns[slot];
+const evStep = e => Math.round(e.pos * NSTEPS());
+const evLenSteps = e => Math.max(1, Math.round(e.len * NSTEPS()));
+function stepAtClient(e) {
+  const [x, y] = canvasXY(grid, e); if (x < 0 || x >= grid.w || y < 0 || y >= grid.h) return -1;
+  return clamp(Math.floor(x / (grid.w / NSTEPS())), 0, NSTEPS() - 1);
+}
+function snapshot() { undoStack.push(JSON.stringify(patterns[slot])); if (undoStack.length > 100) undoStack.shift(); }
+function placeEvent(step, len, chop, log) {
+  snapshot(); const N = NSTEPS(), l = curEvents();
+  for (let i = l.length - 1; i >= 0; i--) if (evStep(l[i]) === step) l.splice(i, 1);
+  const e = { pos: step / N, len: len / N, chop }; l.push(e); selEv = e;
+  if (log) console.log(`[CHOPLINE] pattern ${slot}: place chop ${pad2(chop)} at step ${step + 1}/${N}`);
+  mark(); return e;
+}
+function eventAt(step) { return curEvents().find(e => { const s = evStep(e); return step >= s && step < s + evLenSteps(e); }); }
+function gridMouse(e) {
+  if (e.button !== 0) return; e.preventDefault();
+  const [x] = canvasXY(grid, e), N = NSTEPS(), cw = grid.w / N, s = clamp(Math.floor(x / cw), 0, N - 1);
+  let hit = eventAt(s);
+  if (hit) {
+    selEv = hit; sel = hit.chop; refreshInspector();
+    const s0 = evStep(hit), l0 = evLenSteps(hit), edge = (s0 + l0) * cw;
+    if (e.altKey) { snapshot(); hit = { pos: hit.pos, len: hit.len, chop: hit.chop }; curEvents().push(hit); selEv = hit; }
+    else snapshot();
+    const resize = !e.altKey && Math.abs(x - edge) < 7;
+    const mm = ev2 => {
+      const [xx] = canvasXY(grid, ev2), cs = clamp(Math.floor(xx / cw), 0, N - 1);
+      if (resize) hit.len = Math.max(1, cs - s0 + 1) / N;
+      else { const ns = clamp(s0 + (cs - s), 0, N - evLenSteps(hit)); hit.pos = ns / N; }
+      mark();
+    };
+    const mu = () => { document.removeEventListener("mousemove", mm); document.removeEventListener("mouseup", mu); console.log(`[CHOPLINE] pattern ${slot}: ${resize ? "span" : "move"} chop ${pad2(hit.chop)} -> step ${evStep(hit) + 1}, ${evLenSteps(hit)} step(s)`); };
+    document.addEventListener("mousemove", mm); document.addEventListener("mouseup", mu); return;
+  }
+  // paint with selected chop
+  let painted = [s]; placeEvent(s, 1, sel, false);
+  const mm = ev2 => { const [xx] = canvasXY(grid, ev2), cs = clamp(Math.floor(xx / cw), 0, N - 1); if (!painted.includes(cs) && !eventAt(cs)) { const l = curEvents(); l.push({ pos: cs / N, len: 1 / N, chop: sel }); painted.push(cs); mark(); } };
+  const mu = () => { document.removeEventListener("mousemove", mm); document.removeEventListener("mouseup", mu); console.log(`[CHOPLINE] pattern ${slot}: paint chop ${pad2(sel)} on ${painted.length} step(s) from ${Math.min(...painted) + 1}`); };
+  document.addEventListener("mousemove", mm); document.addEventListener("mouseup", mu);
+}
+grid.cv.addEventListener("mousedown", gridMouse);
+grid.cv.addEventListener("mousemove", e => { if (!chopDrag) { const s = stepAtClient(e); if (s !== hoverStep) { hoverStep = s; mark(); } } });
+grid.cv.addEventListener("mouseleave", () => { if (!chopDrag) { hoverStep = -1; mark(); } });
+
+const mono = () => getComputedStyle(document.body).getPropertyValue("--mono");
+function drawGrid(o) {
+  const { ctx, w, h } = o; ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.clearRect(0, 0, w, h);
+  const N = NSTEPS(), cw = w / N, sb = STEPS_BAR(), beatSteps = sb / 4, bars = BARS();
+  const laneH = h - LANE_TOP - 2;
+  // cells
+  for (let i = 0; i < N; i++) {
+    const beat = Math.floor(i / beatSteps + 1e-6);
+    ctx.fillStyle = beat % 2 ? "#13161b" : "#101216"; ctx.fillRect(i * cw, LANE_TOP, cw, laneH);
+  }
+  for (let i = 0; i <= N; i++) {
+    const isBar = i % sb === 0, isBeat = Math.abs((i / beatSteps) - Math.round(i / beatSteps)) < 1e-6;
+    ctx.fillStyle = isBar ? "#3a4050" : isBeat ? "#262a33" : "#1a1d24"; ctx.fillRect(Math.round(i * cw) - (i === N ? 1 : 0), LANE_TOP, 1, laneH);
+  }
+  // ruler
+  ctx.fillStyle = "#0c0d10"; ctx.fillRect(0, 0, w, RULER);
+  ctx.font = "9px " + mono(); ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  for (let b = 0; b < bars * 4; b++) { const x = b * (w / (bars * 4)); ctx.fillStyle = b % 4 === 0 ? "#8b92a0" : "#586070"; ctx.fillText(b % 4 === 0 ? String(b / 4 + 1) : `${Math.floor(b / 4) + 1}.${b % 4 + 1}`, x + 4, RULER / 2 + 1); ctx.fillStyle = b % 4 === 0 ? "#3a4050" : "#22262e"; ctx.fillRect(Math.round(x), b % 4 === 0 ? 0 : 7, 1, b % 4 === 0 ? RULER : 7); }
+  // hover cell / drop target
+  if (hoverStep >= 0) { ctx.fillStyle = chopDrag ? "rgba(43,212,230,.20)" : "rgba(255,255,255,.04)"; ctx.fillRect(hoverStep * cw, LANE_TOP, cw, laneH); if (chopDrag) { ctx.strokeStyle = "#2bd4e6"; ctx.lineWidth = 1; ctx.strokeRect(hoverStep * cw + .5, LANE_TOP + .5, cw - 1, laneH - 1); } }
+  // events
+  const now = performance.now();
+  curEvents().forEach(e => {
+    const s = e.pos * N, x = s * cw + 1, ew = Math.max(2, e.len * N * cw - 2), y = LANE_TOP + 2, eh = laneH - 4, col = chopCol(e.chop);
+    const fired = now - (e._fire || -1e9), glow = clamp(1 - fired / 220, 0, 1);
+    ctx.fillStyle = col; ctx.globalAlpha = .2 + .55 * glow; ctx.fillRect(x, y, ew, eh);
+    ctx.globalAlpha = 1; ctx.fillRect(x, y, 2, eh);
+    ctx.strokeStyle = col; ctx.globalAlpha = .6 + .4 * glow; ctx.lineWidth = 1; ctx.strokeRect(x + .5, y + .5, ew - 1, eh - 1); ctx.globalAlpha = 1;
+    // tiny waveform
+    const [a, b] = chopRange(e.chop % markers.length), ww = Math.floor(ew - 6);
+    if (ww > 6) { ctx.fillStyle = col; ctx.globalAlpha = .75; const my = y + eh / 2 + 5, hh = (eh - 18) / 2; for (let px = 0; px < ww; px++) { const [mn, mx] = peakAt(a + (b - a) * px / ww, a + (b - a) * (px + 1) / ww); ctx.fillRect(x + 4 + px, my - mx * hh, 1, Math.max(1, (mx - mn) * hh)); } ctx.globalAlpha = 1; }
+    if (ew > 12) { ctx.fillStyle = col; ctx.font = "600 9.5px " + mono(); ctx.textAlign = "left"; ctx.fillText(pad2(e.chop % markers.length), x + 5, y + 8); }
+    // ratchet ticks
+    const st = Math.round(s), rv = ratchetCount(st);
+    if (rv > 1 && ew > 14) { ctx.fillStyle = "#e6e8ec"; ctx.globalAlpha = .7; for (let r = 1; r < rv; r++) ctx.fillRect(x + ew * r / rv, y + eh - 5, 1, 4); ctx.globalAlpha = 1; }
+    if (e === selEv) { ctx.strokeStyle = "#2bd4e6"; ctx.lineWidth = 1.5; ctx.strokeRect(x - .5, y - .5, ew + 1, eh + 1); ctx.fillStyle = "#2bd4e6"; ctx.fillRect(x + ew - 3, y + eh / 2 - 6, 2, 12); }
+  });
+  // beat repeat overlay
+  if (brActive()) {
+    const size = BR_SIZE[G.br_grid] / (4 * bars), anchor = brAnchor, end = playing ? ph : clamp(anchor + 1 / (bars * 4) * 2, 0, 1);
+    const hold = brHold; ctx.fillStyle = "rgba(255,162,31,.07)"; ctx.fillRect(anchor * w, LANE_TOP, Math.max(2, (Math.max(end, anchor) - anchor) * w), laneH);
+    let k = 0; const dec = G.br_decay / 100;
+    for (let p = anchor; p < Math.max(end, anchor + size) && k < 48; p += size, k++) {
+      const pulse = playing ? 1 : (Math.floor(now / 90) % 2 ? 1 : .55);
+      ctx.fillStyle = "#ffa21f"; ctx.globalAlpha = clamp(Math.pow(1 - dec * .6, k) * pulse, .15, 1);
+      ctx.fillRect(Math.round(p * w), LANE_TOP, 2, laneH); ctx.fillRect(Math.round(p * w), LANE_TOP - 3, Math.max(2, size * w - 2), 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // playhead
+  if (playing || ph > 0) { const px = Math.round(ph * w); ctx.fillStyle = "#2bd4e6"; ctx.fillRect(px, 0, 2, h); ctx.beginPath(); ctx.moveTo(px - 4, 0); ctx.lineTo(px + 6, 0); ctx.lineTo(px + 1, 6); ctx.fill(); }
+}
+function ratchetCount(step) { return [1, 2, 3, 4, 6, 8][Math.round(lanes[2][step] * 5)] || 1; }
+
+/* ---- lane editor ---- */
+function laneVal(t, v) {
+  switch (t) {
+    case 0: return String(Math.round(v * 127));
+    case 1: { const s = (v * 2 - 1) * 24; return (s > 0 ? "+" : "") + s.toFixed(1) + " st"; }
+    case 2: return [1, 2, 3, 4, 6, 8][Math.round(v * 5)] + "x";
+    case 3: return Math.round(v * 100) + "%";
+    case 4: return (0.25 * Math.pow(16, v)).toFixed(2) + "x";
+    case 5: return Math.round(v * 100) + "%";
+    case 6: { const hz = 20 * Math.pow(1000, v); return hz >= 1000 ? (hz / 1000).toFixed(1) + " kHz" : Math.round(hz) + " Hz"; }
+    case 7: { const p = Math.round((v * 2 - 1) * 100); return p === 0 ? "C" : p < 0 ? "L" + -p : "R" + p; }
+  }
+}
+(() => { const r = mulberry32(3); for (let i = 0; i < 128; i++) { lanes[0][i] = .62 + .3 * r() * (i % 4 === 0 ? 1.1 : .8); lanes[1][i] = .5; lanes[2][i] = 0; lanes[3][i] = 1; lanes[4][i] = .5; lanes[5][i] = .1; lanes[6][i] = 1; lanes[7][i] = .5; }
+  [3, 6, 11, 19, 27].forEach(i => lanes[1][i] = .5 + (i % 2 ? .125 : -.0833)); [10, 22].forEach(i => lanes[2][i] = .4); lanes[2][14] = 1; lanes[3][5] = .7; lanes[3][21] = .5; lanes[4][8] = .75; lanes[5][11] = .6; lanes[6][19] = .62; lanes[7][2] = .3; lanes[7][9] = .75; })();
+const laneIdx = () => G.lane_tab;
+function laneMouse(e) {
+  if (e.button !== 0) return; e.preventDefault(); const t = laneIdx(); let first = true, lastS = -1, minS = 1e9, maxS = -1;
+  const apply = ev2 => {
+    const [x, y] = canvasXY(laneCv, ev2), N = NSTEPS(), s = clamp(Math.floor(x / (laneCv.w / N)), 0, N - 1);
+    let v = clamp(1 - (y - 6) / (laneCv.h - 12), 0, 1); if (t === 2) v = Math.round(v * 5) / 5; if (ev2.shiftKey && !first) v = Math.round(v * 127) / 127;
+    lanes[t][s] = v; minS = Math.min(minS, s); maxS = Math.max(maxS, s);
+    if (s !== lastS) { console.log(`[CHOPLINE] param lane_${LANES[t].toLowerCase()}[step ${s + 1}] = ${laneVal(t, v)}  (per-step)`); lastS = s; }
+    $lr.textContent = `${LANES[t]}  step ${s + 1}  ${laneVal(t, v)}`; first = false; mark();
+  };
+  apply(e);
+  const mm = ev2 => apply(ev2); const mu = () => { document.removeEventListener("mousemove", mm); document.removeEventListener("mouseup", mu); updateLaneReadout(); };
+  document.addEventListener("mousemove", mm); document.addEventListener("mouseup", mu);
+}
+laneCv.cv.addEventListener("mousedown", laneMouse);
+const $lr = document.getElementById("lane_readout");
+function updateLaneReadout() { const t = laneIdx(); $lr.textContent = `${LANES[t]}  ${LANE_HINT[t]}   -   click / drag to paint steps`; $lr.style.color = ""; }
+function drawLane(o) {
+  const { ctx, w, h } = o; ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.clearRect(0, 0, w, h);
+  const t = laneIdx(), N = NSTEPS(), cw = w / N, sb = STEPS_BAR(), beatSteps = sb / 4, col = LANE_COL[t], bi = BIPOLAR_LANE[t];
+  const top = 6, bot = h - 6, ih = bot - top;
+  const starts = new Set(curEvents().map(e => evStep(e)));
+  for (let i = 0; i <= N; i++) { const isBar = i % sb === 0, isBeat = Math.abs(i / beatSteps - Math.round(i / beatSteps)) < 1e-6; ctx.fillStyle = isBar ? "#2d323c" : isBeat ? "#1d2027" : "#15171c"; ctx.fillRect(Math.round(i * cw), 0, 1, h); }
+  ctx.fillStyle = "#1d2027"; [.25, .5, .75].forEach(f => ctx.fillRect(0, Math.round(top + ih * f), w, 1));
+  if (bi) { ctx.fillStyle = "#333945"; ctx.fillRect(0, Math.round(top + ih / 2), w, 1); }
+  for (let i = 0; i < N; i++) {
+    const v = lanes[t][i], x = i * cw + 2, bw = Math.max(2, cw - 4), has = starts.has(i);
+    const y = top + ih * (1 - v), y0 = bi ? top + ih / 2 : bot;
+    ctx.fillStyle = col; ctx.globalAlpha = has ? .95 : .32;
+    ctx.fillRect(x, Math.min(y, y0), bw, Math.max(1.5, Math.abs(y0 - y)));
+    ctx.globalAlpha = 1;
+    if (t === 2 && bw > 6) { const r = Math.round(v * 5); ctx.fillStyle = "#0d0e11"; ctx.globalAlpha = .55; for (let k = 1; k <= r; k++) ctx.fillRect(x, bot - ih * k / 5, bw, 1); ctx.globalAlpha = 1; }
+  }
+  if (selEv) { const s = evStep(selEv); ctx.strokeStyle = "rgba(43,212,230,.7)"; ctx.lineWidth = 1; ctx.strokeRect(s * cw + .5, .5, evLenSteps(selEv) * cw - 1, h - 1); }
+  ctx.fillStyle = "#586070"; ctx.font = "9px " + mono(); ctx.textAlign = "left"; ctx.textBaseline = "top";
+  const lab = t === 2 ? ["8x", "1x"] : bi ? ["+", "-"] : ["max", "0"]; ctx.fillText(lab[0], w - 24, 3); ctx.textBaseline = "bottom"; ctx.fillText(lab[1], w - 24, h - 2);
+  if (playing) { const px = Math.round(ph * w); ctx.fillStyle = "#2bd4e6"; ctx.fillRect(px, 0, 1.5, h); }
+}
+hooks.lane_tab = () => { updateLaneReadout(); mark(); };
+hooks.lane_collapse = v => { ["lane_tab", "lane_readout", "lane_reset", "lane_editor"].forEach(id => { const e = ctrls[id].el; e.style.display = v ? "" : "none"; }); mark(); };
+hooks.lane_reset = () => { const t = laneIdx(); const dv = [.7, .5, 0, 1, .5, 0, 1, .5][t]; lanes[t].fill(dv); console.log(`[CHOPLINE] lane ${LANES[t].toLowerCase()} reset`); mark(); };
+hooks.randomize = () => { snapshot(); const N = NSTEPS(), r = mulberry32((Date.now() & 0xffff)); const l = curEvents(); l.length = 0; for (let i = 0; i < N;) { if (r() < .55) { const len = r() < .2 ? 2 : 1; l.push({ pos: i / N, len: len / N, chop: Math.floor(r() * markers.length) }); i += len; } else i++; } console.log(`[CHOPLINE] pattern ${slot}: randomize (${l.length} events)`); mark(); };
+function onGridChange() {
+  const N = NSTEPS(); if (N !== lastN) { lanes.forEach((a, t) => { const c = Float32Array.from(a); for (let i = 0; i < 128; i++) a[i] = c[Math.min(127, Math.floor(i * lastN / N))] ?? a[i]; }); lastN = N; }
+  mark();
+}
+["grid_resolution", "grid_feel", "pattern_length"].forEach(id => hooks[id] = () => { const prev = lastN; onGridChange(); console.log(`[CHOPLINE] grid: ${NSTEPS()} steps over ${BARS()} bar(s) (events keep musical position)`); });
+hooks.pattern_slot = v => { slot = "ABCDEFGH"[v]; selEv = null; mark(); console.log(`[CHOPLINE] pattern slot -> ${slot} (${patterns[slot].length} events)`); };
+hooks.br_mode = () => { mark(); }; hooks.br_freeze = () => mark();
+
+/* ------------------------------------------------------------------ Beat Repeat */
+const BR_SIZE = [2, 1, .5, .25, .125, .0625];                    // beats
+const BR_GATE = [.25, .5, 1, 2, 4, 8, 16];
+const BR_INT = [1, 2, 4, 8, 16];
+const brActive = () => G.br_mode !== 2 && (brHold || (brAuto && performance.now() < brUntil));
+hooks["br_hold:down"] = () => {
+  if (G.br_mode === 2) { console.log("[CHOPLINE] beat repeat: ignored (mode Off)"); return; }
+  brHold = true; brAnchor = playing ? ph : (ph || 0); ctrls.br_hold.el.classList.add("on"); console.log(`[CHOPLINE] param br_hold = on  (repeat ${defs.br_grid.options[G.br_grid]}, decay ${G.br_decay}%)`); levelL = levelR = .8; mark();
+};
+hooks["br_hold:up"] = () => { if (!brHold) return; brHold = false; ctrls.br_hold.el.classList.remove("on"); console.log("[CHOPLINE] param br_hold = off"); mark(); };
+
+/* ------------------------------------------------------------------ transport */
+function togglePlay(user) { playing = !playing; G.transport_play = playing ? 1 : 0; ctrls.transport_play.refresh(); if (playing) { t0 = performance.now() - ph * 4 * BARS() * 60000 / G.bpm; prevPh = ph; } else { } console.log(`[CHOPLINE] transport ${playing ? "play" : "stop"} @ ${G.bpm} BPM`); mark(); }
+hooks.transport_play = v => { playing = !!v; if (playing) { t0 = performance.now() - ph * 4 * BARS() * 60000 / G.bpm; prevPh = ph; } else { } mark(); };
+ctrls.transport_play.el.title = "Space";
+function frame(now) {
+  if (playing) {
+    const beats = (now - t0) / 60000 * G.bpm, pb = 4 * BARS(); prevPh = ph; ph = (beats % pb) / pb;
+    const wrapped = ph < prevPh;
+    curEvents().forEach(e => {
+      const hit = wrapped ? (e.pos > prevPh || e.pos <= ph) : (e.pos > prevPh && e.pos <= ph) || (e.pos === 0 && prevPh === 0 && ph > 0);
+      if (hit) {
+        e._fire = now; const c = e.chop % markers.length; playingChop = c; playingUntil = now + e.len * pb * 60000 / G.bpm; levelL = .55 + lanes[0][evStep(e) % 128] * .4; levelR = levelL * .9;
+        console.log(`[CHOPLINE] fire chop ${pad2(c)} @ step ${evStep(e) + 1}/${NSTEPS()}  vel ${laneVal(0, lanes[0][evStep(e) % 128])}`);
+      }
+    });
+    // auto beat repeat
+    if (G.br_mode === 0 && !brAuto) { const iv = BR_INT[G.br_interval]; const cb = Math.floor(beats / iv); if (cb !== lastBeat) { lastBeat = cb; if (Math.random() < G.br_chance / 100) { brAuto = true; brAnchor = ph; brUntil = now + BR_GATE[G.br_gate] * 60000 / G.bpm; console.log(`[CHOPLINE] beat repeat auto fired (${defs.br_gate.options[G.br_gate]} gate)`); } } }
+    if (brAuto && now > brUntil) brAuto = false;
+    mark();
+  }
+  levelL *= .93; levelR *= .93;
+  const active = brActive(); panelEls.beat_repeat.classList.toggle("br-on", active);
+  const st = document.getElementById("status_beat_repeat");
+  if (active) { st.textContent = "REPEATING " + defs.br_grid.options[G.br_grid]; st.style.color = "var(--amber)"; if (Math.floor(now / 140) % 2) st.style.opacity = .55; else st.style.opacity = 1; mark(); }
+  else { st.textContent = ["AUTO " + G.br_chance + "%", "MANUAL", "OFF"][G.br_mode]; st.style.color = ""; st.style.opacity = 1; }
+  if (flashUntil && now > flashUntil + 20) { flashUntil = 0; mark(); }
+  if (now - lastCpu > 160) { lastCpu = now; const base = 2.1 + (playing ? 1.7 : 0) + (active ? 1.4 : 0) + Math.random() * .25; const cp = document.querySelector("#cpu"); cp.querySelector("i").style.width = clamp(base * 5, 4, 100) + "%"; cp.querySelector("i").style.background = base > 7 ? "var(--amber)" : "var(--accent)"; cp.querySelector(".cv").textContent = base.toFixed(1) + "%"; }
+  cvs.forEach(o => { if (o.dirty && o.cv.offsetParent !== null) { o.draw(o); o.dirty = false; } });
+  drawMeter(now);
+  requestAnimationFrame(frame);
+}
+let lastCpu = 0;
+function mark() { cvs.forEach(o => o.dirty = true); }
+
+/* ---- master meter + ahdsr ---- */
+const meterC = regCanvas(DISP.master_meter.el, defs.master_meter.w - 2, defs.master_meter.h - 2, o => { });
+function drawMeter() {
+  const o = meterC, { ctx, w, h } = o; ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.clearRect(0, 0, w, h);
+  const gainDb = G.master_output, g = Math.pow(10, gainDb / 20);
+  [[levelL, 5], [levelR, 17]].forEach(([lv, y]) => {
+    const v = clamp(lv * g, 0, 1.1); ctx.fillStyle = "#1b1e25"; ctx.fillRect(4, y, w - 8, 7);
+    const grd = ctx.createLinearGradient(4, 0, w - 4, 0); grd.addColorStop(0, "#2bd4e6"); grd.addColorStop(.78, "#2bd4e6"); grd.addColorStop(.86, brActive() ? "#ffa21f" : "#e6d14a"); grd.addColorStop(1, "#ff7d5c");
+    ctx.fillStyle = grd; ctx.fillRect(4, y, (w - 8) * Math.min(1, v), 7);
+  });
+}
+const ahd = regCanvas(DISP.ahdsr_graph.el, defs.ahdsr_graph.w - 2, defs.ahdsr_graph.h - 2, o => {
+  const { ctx, w, h } = o; ctx.setTransform(o.k, 0, 0, o.k, 0, 0); ctx.clearRect(0, 0, w, h);
+  const p = chopP[sel], a = Math.sqrt(p.env_attack / 500) , hd = Math.sqrt(p.env_hold / 500), d = Math.sqrt(p.env_decay / 2000), r = Math.sqrt(p.env_release / 2000), s = p.env_sustain / 100;
+  const tot = a + hd + d + .35 + r + .02, X = v => 6 + v / tot * (w - 12), Y = v => h - 8 - v * (h - 18);
+  let x = 0; ctx.beginPath(); ctx.moveTo(X(0), Y(0)); x += a + .01; ctx.lineTo(X(x), Y(1)); x += hd; ctx.lineTo(X(x), Y(1)); x += d + .01; ctx.lineTo(X(x), Y(s)); x += .35; ctx.lineTo(X(x), Y(s)); x += r + .01; ctx.lineTo(X(x), Y(0));
+  ctx.strokeStyle = chopCol(sel); ctx.lineWidth = 1.5; ctx.lineJoin = "round"; ctx.stroke(); ctx.lineTo(X(0), Y(0)); ctx.fillStyle = chopCol(sel); ctx.globalAlpha = .1; ctx.fill(); ctx.globalAlpha = 1;
+  ctx.fillStyle = "#586070"; ctx.font = "9px " + mono(); ctx.fillText("A H D S R", 6, 10);
+});
+
+/* ------------------------------------------------------------------ header actions */
+let presetIdx = 0;
+const setPreset = i => { presetIdx = (i + defs.preset_name.options.length) % defs.preset_name.options.length; setV(defs.preset_name, presetIdx, true); };
+hooks["preset_prev"] = () => setPreset(presetIdx - 1); hooks["preset_next"] = () => setPreset(presetIdx + 1);
+hooks.preset_name = v => { presetIdx = v; };
+hooks.settings = () => console.log("[CHOPLINE] settings opened (embed FLAC in state, base MIDI note C1, relink sample, UI scale)");
+hooks.sampler_load = () => { console.log("[CHOPLINE] load sample: native file chooser (decode + resample on background thread)"); const f = ctrls.sampler_file.el; f.style.color = "var(--accent)"; setTimeout(() => f.style.color = "", 500); };
+hooks.quality = v => { };
+hooks.bpm = () => { if (playing) t0 = performance.now() - ph * 4 * BARS() * 60000 / G.bpm; };
+
+/* ------------------------------------------------------------------ keyboard */
+document.addEventListener("keydown", e => {
+  if (e.code === "Space") { e.preventDefault(); if (!e.repeat) togglePlay(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (undoStack.length) { patterns[slot] = JSON.parse(undoStack.pop()); selEv = null; console.log("[CHOPLINE] undo"); mark(); } return; }
+  if ((e.key === "Delete" || e.key === "Backspace") && selEv) { snapshot(); const l = curEvents(); l.splice(l.indexOf(selEv), 1); console.log(`[CHOPLINE] pattern ${slot}: delete event (chop ${pad2(selEv.chop)})`); selEv = null; mark(); return; }
+  if (/^[1-8]$/.test(e.key) && !e.metaKey) { setV(defs.pattern_slot, +e.key - 1, true); return; }
+  if (e.key.toLowerCase() === "b" && !e.repeat) hooks["br_hold:down"]();
+});
+document.addEventListener("keyup", e => { if (e.key.toLowerCase() === "b") hooks["br_hold:up"](); });
+document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+
+/* ------------------------------------------------------------------ fit + init */
+const vp = document.getElementById("viewport");
+function fit() {
+  const W = vp.clientWidth, H = vp.clientHeight, s = Math.min(W / 1100, H / 720);
+  stageScale = clamp(s, 0.75, 2);
+  $stage.style.transform = `scale(${stageScale})`;
+  $stage.style.left = Math.max(0, (W - 1100 * stageScale) / 2) + "px"; $stage.style.top = Math.max(0, (H - 720 * stageScale) / 2) + "px";
+  cvs.forEach(sizeCanvas);
+}
+window.addEventListener("resize", fit);
+rebuildMarkers();
+chopP[2].warp_mode = 1;
+refreshInspector(); updateLaneReadout(); ctrls.lane_tab.refresh();
+fit();
+requestAnimationFrame(frame);
+selEv = patterns.A[2];
+console.log("[CHOPLINE] mockup ready: " + markers.length + " chops, " + NSTEPS() + " steps");
+
+/* ------------------------------------------------------------------ automated demo (?demo=...) */
+function fire(el, type, x, y, extra) { el.dispatchEvent(new MouseEvent(type, Object.assign({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, view: window }, extra || {}))); }
+function clientOf(o, lx, ly) { const r = o.cv.getBoundingClientRect(); return [r.left + lx * stageScale, r.top + ly * stageScale]; }
+window.__demo = {
+  dragChopToStep(chop, step) {
+    const [a, b] = chopRange(chop), fm = (a + b) / 2, lx = (fm - view.a) / (view.b - view.a) * wave.w, [sx, sy] = clientOf(wave, lx, 60);
+    const N = NSTEPS(), [gx, gy] = clientOf(grid, (step + .5) * grid.w / N, 40);
+    fire(wave.cv, "mousedown", sx, sy); fire(document, "mousemove", sx + 8, sy + 8); fire(document, "mousemove", gx, gy); fire(document, "mouseup", gx, gy);
+  },
+  tab(i) { setV(defs.lane_tab, i, true); }, inspTab(i) { setV(defs.insp_tab, i, true); }, play: () => togglePlay(), brOn: () => hooks["br_hold:down"](), brOff: () => hooks["br_hold:up"](),
+  slice(i) { setV(defs.slice_mode, i, true); }
+};
+(function () {
+  const m = /demo=([a-z0-9,]+)/.exec(location.search + location.hash); if (!m) return;
+  const steps = m[1].split(","), D = window.__demo;
+  const run = { drag() { D.dragChopToStep(4, 13); D.dragChopToStep(9, 14); }, tab() { D.tab(1); }, tab2() { D.tab(2); }, play() { D.play(); }, br() { D.brOn(); }, insp() { D.inspTab(2); }, slice() { D.slice(1); }, sel() { selectChop(5); } };
+  steps.forEach((s, i) => setTimeout(() => run[s] && run[s](), 400 + i * 450));
+})();
+</script>
+</body>
+</html>
