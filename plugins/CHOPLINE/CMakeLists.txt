@@ -76,6 +76,8 @@ set(CHOPLINE_ENGINE_SOURCES
     src/engine/SliceMap.cpp
     src/engine/TransientDetector.cpp
     src/engine/ChopVoice.cpp
+    src/engine/BeatRepeat.cpp
+    src/engine/MasterFX.cpp
     src/state/Parameters.cpp
     src/state/PatternModel.cpp
 )
@@ -89,6 +91,8 @@ set(CHOPLINE_PLUGIN_SOURCES
     src/ui/GridStrip.cpp
     src/ui/ChopEditorOverlay.cpp
     src/ui/FxPage.cpp
+    src/ui/BeatRepeatPanel.cpp
+    src/ui/MasterPanel.cpp
 )
 
 target_sources(CHOPLINE PRIVATE
@@ -160,6 +164,8 @@ set(CHOPLINE_TEST_SOURCES
     tests/PatternModelTests.cpp
     tests/SchedulerTests.cpp
     tests/WarpTests.cpp
+    tests/BeatRepeatTests.cpp
+    tests/MasterFXTests.cpp
 )
 
 target_sources(CHOPLINE_Tests PRIVATE

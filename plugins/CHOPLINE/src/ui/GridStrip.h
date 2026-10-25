@@ -122,6 +122,7 @@ private:
 
         std::set<int> selectedEventIds; // event ids (stable across undo)
         float lastPlayheadBar = -1.0f;  // page-local playhead, −1 = off
+        bool brHold = false;            // playhead turns red while BR holds (v17)
 
     private:
         struct Cell

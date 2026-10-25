@@ -63,6 +63,11 @@ ChoplineLookAndFeel::ChoplineLookAndFeel()
     setColour (juce::PopupMenu::highlightedBackgroundColourId, ink);
     setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
     setColour (juce::Slider::textBoxTextColourId, ink);
+    // Knob value-arc/notch accent; a control overrides it per-slider for the
+    // Beat Repeat red (v17: red is strictly the BR accent).
+    setColour (juce::Slider::rotarySliderFillColourId, ink);
+    // Toggled TextButton fill; the BR HOLD button overrides it to red.
+    setColour (juce::TextButton::buttonOnColourId, ink);
     setColour (juce::TooltipWindow::backgroundColourId, cell);
     setColour (juce::TooltipWindow::textColourId, label);
     setColour (juce::TooltipWindow::outlineColourId, hairline());
@@ -88,13 +93,14 @@ void ChoplineLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
     g.setColour (knobTrack());
     g.strokePath (track, juce::PathStrokeType (1.4f));
 
-    // Value arc.
+    // Value arc (accent colour; BR knobs set it to the repeat red).
+    const auto accentColour = slider.findColour (juce::Slider::rotarySliderFillColourId);
     if (enabled && sliderPos > 0.001f)
     {
         juce::Path value;
         value.addCentredArc (centre.x, centre.y, radius + 2.0f, radius + 2.0f, 0.0f,
                              rotaryStartAngle, angle, true);
-        g.setColour (ink);
+        g.setColour (accentColour);
         g.strokePath (value, juce::PathStrokeType (2.0f));
     }
 
@@ -113,7 +119,7 @@ void ChoplineLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int
                                  centre.y - inner * std::cos (angle));
     const juce::Point<float> p2 (centre.x + outer * std::sin (angle),
                                  centre.y - outer * std::cos (angle));
-    g.setColour (enabled ? ink : textTertiary);
+    g.setColour (enabled ? accentColour : textTertiary);
     g.drawLine ({ p1, p2 }, 2.2f);
 }
 
@@ -157,11 +163,12 @@ void ChoplineLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button&
     const auto radius = juce::jmin (8.0f, bounds.getHeight() * 0.5f);
 
     const auto active = button.getToggleState();
-    auto fill = active ? ink : cell;
+    const auto onColour = button.findColour (juce::TextButton::buttonOnColourId);
+    auto fill = active ? onColour : cell;
     if (down)
-        fill = active ? ink.brighter (0.2f) : juce::Colour (0xffededf0);
+        fill = active ? onColour.brighter (0.2f) : juce::Colour (0xffededf0);
     else if (highlighted)
-        fill = active ? ink : juce::Colour (0xfff2f2f4);
+        fill = active ? onColour : juce::Colour (0xfff2f2f4);
 
     g.setColour (fill);
     g.fillRoundedRectangle (bounds, radius);

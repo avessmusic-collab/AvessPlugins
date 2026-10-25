@@ -15,6 +15,50 @@ ChoplineAudioProcessor::ChoplineAudioProcessor()
     baseNoteParam = state.getRawParameterValue (params::id::midiBaseNote);
     swingParam = state.getRawParameterValue (params::id::swing);
 
+    // Phase 4 raw values (audio thread reads only these atomics).
+    namespace pid = params::id;
+    p4.brMode = state.getRawParameterValue (pid::brMode);
+    p4.brHold = state.getRawParameterValue (pid::brHold);
+    p4.brInterval = state.getRawParameterValue (pid::brInterval);
+    p4.brOffset = state.getRawParameterValue (pid::brOffset);
+    p4.brChance = state.getRawParameterValue (pid::brChance);
+    p4.brGrid = state.getRawParameterValue (pid::brGrid);
+    p4.brGate = state.getRawParameterValue (pid::brGate);
+    p4.brDecay = state.getRawParameterValue (pid::brDecay);
+    p4.brPitchDecay = state.getRawParameterValue (pid::brPitchDecay);
+    p4.brAccel = state.getRawParameterValue (pid::brAccel);
+    p4.brReverse = state.getRawParameterValue (pid::brReverse);
+    p4.brFilterMode = state.getRawParameterValue (pid::brFilterMode);
+    p4.brSweep = state.getRawParameterValue (pid::brSweep);
+    p4.brMix = state.getRawParameterValue (pid::brMix);
+    p4.brFreeze = state.getRawParameterValue (pid::brFreeze);
+    p4.brRndGrid = state.getRawParameterValue (pid::brRndGrid);
+    p4.brMidiBase = state.getRawParameterValue (pid::brMidiBase);
+
+    p4.filterOn = state.getRawParameterValue (pid::masterFilterOn);
+    p4.filterType = state.getRawParameterValue (pid::masterFilterType);
+    p4.filterCutoff = state.getRawParameterValue (pid::masterFilterCutoff);
+    p4.filterReso = state.getRawParameterValue (pid::masterFilterReso);
+    p4.distOn = state.getRawParameterValue (pid::masterDistOn);
+    p4.distType = state.getRawParameterValue (pid::masterDistType);
+    p4.distDrive = state.getRawParameterValue (pid::masterDistDrive);
+    p4.distMix = state.getRawParameterValue (pid::masterDistMix);
+    p4.distAutoGain = state.getRawParameterValue (pid::masterDistAutoGain);
+    p4.widthOn = state.getRawParameterValue (pid::masterWidthOn);
+    p4.width = state.getRawParameterValue (pid::masterWidth);
+    p4.mono = state.getRawParameterValue (pid::masterMono);
+    p4.limiterOn = state.getRawParameterValue (pid::masterLimiterOn);
+    p4.output = state.getRawParameterValue (pid::masterOutput);
+    p4.ceiling = state.getRawParameterValue (pid::masterCeiling);
+    p4.delayOn = state.getRawParameterValue (pid::masterDelayOn);
+    p4.delayTime = state.getRawParameterValue (pid::masterDelayTime);
+    p4.delayFb = state.getRawParameterValue (pid::masterDelayFb);
+    p4.delayRtn = state.getRawParameterValue (pid::masterDelayRtn);
+    p4.verbOn = state.getRawParameterValue (pid::masterVerbOn);
+    p4.verbDecay = state.getRawParameterValue (pid::masterVerbDecay);
+    p4.verbDamp = state.getRawParameterValue (pid::masterVerbDamp);
+    p4.verbRtn = state.getRawParameterValue (pid::masterVerbRtn);
+
     // Dev-only convenience for the Standalone app: CHOPLINE_AUTOLOAD_SAMPLE=<path>
     // loads a file at startup (used for manual smoke testing; no effect in hosts).
     if (wrapperType == wrapperType_Standalone)
@@ -33,6 +77,9 @@ ChoplineAudioProcessor::~ChoplineAudioProcessor()
 void ChoplineAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engine.prepare (sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    // Constant while playing (spec §8): the zero-latency master chain reports
+    // the rounded oversampler group delay (≈ 0 for the IIR polyphase 2×).
+    setLatencySamples (engine.getLatencySamples());
 }
 
 void ChoplineAudioProcessor::releaseResources()
@@ -58,6 +105,58 @@ void ChoplineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             static_cast<int> (baseNoteParam->load (std::memory_order_relaxed)));
     if (swingParam != nullptr)
         context.swingPct = swingParam->load (std::memory_order_relaxed);
+
+    // Phase 4: Beat Repeat + master chain values from the cached atomics.
+    const auto f = [] (std::atomic<float>* a, float fallback = 0.0f)
+    {
+        return a != nullptr ? a->load (std::memory_order_relaxed) : fallback;
+    };
+    const auto b = [&f] (std::atomic<float>* a) { return f (a) >= 0.5f; };
+    const auto i = [&f] (std::atomic<float>* a) { return static_cast<int> (f (a)); };
+
+    auto& br = context.br;
+    br.mode = i (p4.brMode);
+    br.hold = b (p4.brHold);
+    br.intervalIndex = i (p4.brInterval);
+    br.offsetSteps = i (p4.brOffset);
+    br.chancePct = f (p4.brChance, 60.0f);
+    br.gridIndex = i (p4.brGrid);
+    br.gateIndex = i (p4.brGate);
+    br.decayPct = f (p4.brDecay, 25.0f);
+    br.pitchDecaySt = f (p4.brPitchDecay);
+    br.accelPct = f (p4.brAccel);
+    br.reverseMode = i (p4.brReverse);
+    br.filterMode = i (p4.brFilterMode);
+    br.sweepPct = f (p4.brSweep, 50.0f);
+    br.mixMode = i (p4.brMix);
+    br.freeze = b (p4.brFreeze);
+    br.rndGrid = b (p4.brRndGrid);
+    context.brPerfBase = br.mode != 2 ? params::brBaseNoteForChoice (i (p4.brMidiBase)) : -1;
+
+    auto& m = context.master;
+    m.filterOn = b (p4.filterOn);
+    m.filterType = i (p4.filterType);
+    m.cutoffHz = f (p4.filterCutoff, 20000.0f);
+    m.resoPct = f (p4.filterReso, 10.0f);
+    m.distOn = b (p4.distOn);
+    m.distType = i (p4.distType);
+    m.drivePct = f (p4.distDrive, 10.0f);
+    m.mixPct = f (p4.distMix, 100.0f);
+    m.autoGain = b (p4.distAutoGain);
+    m.widthOn = b (p4.widthOn);
+    m.widthPct = f (p4.width, 100.0f);
+    m.monoHz = f (p4.mono, 120.0f);
+    m.outOn = b (p4.limiterOn);
+    m.outDb = f (p4.output);
+    m.ceilingDb = f (p4.ceiling, -0.3f);
+    m.delayOn = b (p4.delayOn);
+    m.delayTimeIndex = i (p4.delayTime);
+    m.delayFbPct = f (p4.delayFb, 35.0f);
+    m.delayRtnPct = f (p4.delayRtn);
+    m.verbOn = b (p4.verbOn);
+    m.verbDecayPct = f (p4.verbDecay, 40.0f);
+    m.verbDampPct = f (p4.verbDamp, 50.0f);
+    m.verbRtnPct = f (p4.verbRtn);
 
     // Host transport → scheduler view (spec §8: derive step times from the
     // host PPQ every block; no playhead at all = Standalone free-run).

@@ -214,20 +214,60 @@ TEST_CASE ("Audio thread allocates nothing (allocation detector over many blocks
     SimHost host;
     host.swingPct = 55.0f;
 
+    // Phase 4 (spec §12): the WHOLE master chain + Beat Repeat must also be
+    // allocation-free — sends, delay/reverb returns, oversampled distortion,
+    // width, limiter and the BR ring with auto + hold repeats.
+    const auto fill = [] (engine::Engine::BlockContext ctx, bool hold)
+    {
+        ctx.master.filterOn = true;
+        ctx.master.cutoffHz = 1800.0f;
+        ctx.master.resoPct = 40.0f;
+        ctx.master.distOn = true;
+        ctx.master.distType = 2;
+        ctx.master.drivePct = 60.0f;
+        ctx.master.delayOn = true;
+        ctx.master.delayRtnPct = 70.0f;
+        ctx.master.delayFbPct = 50.0f;
+        ctx.master.verbOn = true;
+        ctx.master.verbRtnPct = 60.0f;
+        ctx.master.widthOn = true;
+        ctx.master.widthPct = 160.0f;
+        ctx.master.outOn = true;
+        ctx.master.outDb = 4.0f;
+        ctx.br.mode = 0; // Auto
+        ctx.br.chancePct = 100.0f;
+        ctx.br.hold = hold;
+        ctx.br.pitchDecaySt = 3.0f;
+        ctx.br.accelPct = 40.0f;
+        ctx.br.reverseMode = 1;
+        ctx.br.filterMode = 1;
+        ctx.brPerfBase = 60;
+        return ctx;
+    };
+
+    // Per-chop sends so the delay/verb buses carry signal.
+    for (int i = 0; i < 8; ++i)
+    {
+        auto s = eng.getChopSettings (i);
+        s.delaySend = 80.0f; // model stores 0–100 %
+        s.verbSend = 60.0f;
+        eng.setChopSettings (i, s);
+    }
+
     // Warm-up (first calls may touch lazily-initialised library state): run a
     // full pattern bar so every chop — stretch, unison, loop, fit, reverse —
     // has triggered at least once before the detector arms.
     eng.audition (1, 0.8f);
-    eng.process (out, notes, host.ctx());
+    eng.process (out, notes, fill (host.ctx(), false));
     host.advance (512);
     for (int b = 0; b < 200; ++b)
     {
-        eng.process (out, empty, host.ctx());
+        eng.process (out, empty, fill (host.ctx(), b % 50 < 25));
         host.advance (512);
     }
 
     // ~10 s of audio at 512-sample blocks with steady triggering (spec §12),
-    // including a transport stop/start and a loop jump mid-run.
+    // including a transport stop/start, a loop jump and BR hold toggling.
     constexpr int numBlocks = 1000;
     {
         allocGuard::Arm arm;
@@ -239,7 +279,8 @@ TEST_CASE ("Audio thread allocates nothing (allocation detector over many blocks
                 host.playing = true;  // restart
             if (b == 700)
                 host.ppq = 0.0;       // loop jump / discontinuity
-            eng.process (out, (b % 4 == 0) ? notes : empty, host.ctx());
+            const auto hold = (b >= 500 && b < 560) || (b >= 800 && b < 820);
+            eng.process (out, (b % 4 == 0) ? notes : empty, fill (host.ctx(), hold));
             if (host.playing)
                 host.advance (512);
         }

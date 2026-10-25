@@ -84,10 +84,12 @@ public:
             oldest->noteOff (midiNote);
     }
 
-    void renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept
+    void renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples,
+                    juce::AudioBuffer<float>* delayBus = nullptr,
+                    juce::AudioBuffer<float>* verbBus = nullptr) noexcept
     {
         for (auto& v : voices)
-            v.renderAdd (out, startSample, numSamples);
+            v.renderAdd (out, startSample, numSamples, delayBus, verbBus);
     }
 
     void releaseAll() noexcept

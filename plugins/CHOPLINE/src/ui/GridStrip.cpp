@@ -491,7 +491,8 @@ void GridStrip::BoxesDisplay::paint (juce::Graphics& g)
                                 11.0f, 1.5f);
     }
 
-    // Playhead: 1.5 px blue hairline moving through the boxes (v17).
+    // Playhead: 1.5 px blue hairline moving through the boxes (v17) — red
+    // while Beat Repeat holds (v17 beat_repeat_hold).
     if (playPos >= 0.0)
     {
         for (const auto& c : cells)
@@ -500,7 +501,7 @@ void GridStrip::BoxesDisplay::paint (juce::Graphics& g)
             {
                 const auto frac = (playPos - c.startBar) / juce::jmax (barEps, c.endBar - c.startBar);
                 const auto x = c.rect.getX() + static_cast<float> (frac) * c.rect.getWidth();
-                g.setColour (LnF::accent);
+                g.setColour (brHold ? LnF::repeat : LnF::accent);
                 g.drawLine (x, c.rect.getY() - 3.0f, x, c.rect.getBottom() + 3.0f, 1.5f);
                 break;
             }
@@ -923,9 +924,11 @@ void GridStrip::animationTick()
         if (p >= 0.0f && p < 1.0f)
             local = p;
     }
-    if (! juce::exactlyEqual (local, boxes.lastPlayheadBar))
+    const auto hold = engine.isBeatRepeatActive();
+    if (! juce::exactlyEqual (local, boxes.lastPlayheadBar) || hold != boxes.brHold)
     {
         boxes.lastPlayheadBar = local;
+        boxes.brHold = hold;
         boxes.repaint();
     }
 }

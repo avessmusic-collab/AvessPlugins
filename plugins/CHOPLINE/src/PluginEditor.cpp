@@ -102,16 +102,16 @@ void ChoplineAudioProcessorEditor::GearButton::paintButton (juce::Graphics& g,
     g.fillEllipse (juce::Rectangle<float> (2.4f, 2.4f).withCentre (c));
 }
 
-void ChoplineAudioProcessorEditor::QuietPanel::paint (juce::Graphics& g)
+void ChoplineAudioProcessorEditor::HoldBadge::paint (juce::Graphics& g)
 {
-    const auto b = getLocalBounds().toFloat();
-    g.setColour (LnF::paper);
-    g.fillRoundedRectangle (b, 16.0f);
-    g.setColour (LnF::hairline());
-    g.drawRoundedRectangle (b.reduced (0.5f), 16.0f, 1.0f);
-    g.setColour (LnF::textTertiary);
-    g.setFont (LnF::labelFont (8.5f));
-    g.drawText (title, getLocalBounds(), juce::Justification::centred, false);
+    // White pill, 1 px red outline, "REPEAT HOLD" (v17 beat_repeat_hold).
+    const auto b = getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (juce::Colours::white);
+    g.fillRoundedRectangle (b, b.getHeight() * 0.5f);
+    g.setColour (LnF::repeat);
+    g.drawRoundedRectangle (b, b.getHeight() * 0.5f, 1.0f);
+    g.setFont (LnF::labelFont (8.0f));
+    g.drawText ("REPEAT HOLD", getLocalBounds(), juce::Justification::centred, false);
 }
 
 // ---- settings flyout (gear): MIDI base note + embed-sample toggle --------------------
@@ -200,14 +200,25 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
       midiDot (p.getEngine()),
       samplerStrip (p.getEngine()),
       gridStrip (p.getEngine(), p.getState()),
-      fxPage (p.getEngine()),
+      beatRepeatPanel (p.getState(), p.getEngine()),
+      masterPanel (p.getState(), p.getEngine()),
+      fxPage (p.getEngine(), p.getState()),
       chopOverlay (p.getEngine()),
       vblank (this, [this]
       {
           samplerStrip.animationTick();
           gridStrip.animationTick();
           chopOverlay.animationTick();
+          beatRepeatPanel.animationTick();
+          masterPanel.animationTick();
+          fxPage.animationTick();
           midiDot.tick();
+
+          // REPEAT HOLD badge (both pages) + red accents follow the engine.
+          const auto holding = processorRef.getEngine().isBeatRepeatActive();
+          if (holding != holdBadge.isVisible())
+              holdBadge.setVisible (holding);
+
           if (--gcCountdown <= 0)
           {
               gcCountdown = 30; // ~0.5 s: free retired snapshots
@@ -235,6 +246,7 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
     canvas.addAndMakeVisible (presetNext);
 
     canvas.addAndMakeVisible (midiDot);
+    canvas.addChildComponent (holdBadge); // visible only while BR holds
 
     pageSeg.getPage = [this] { return page; };
     pageSeg.setPage = [this] (int newPage) { setPage (newPage); };
@@ -245,8 +257,8 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
 
     canvas.addAndMakeVisible (samplerStrip);
     canvas.addAndMakeVisible (gridStrip);
-    canvas.addAndMakeVisible (beatRepeatPlaceholder);
-    canvas.addAndMakeVisible (masterPlaceholder);
+    canvas.addAndMakeVisible (beatRepeatPanel);
+    canvas.addAndMakeVisible (masterPanel);
 
     canvas.addChildComponent (fxPage); // FX page starts hidden (page 0 = MAIN)
     canvas.addChildComponent (chopOverlay); // topmost
@@ -358,7 +370,20 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
 
 ChoplineAudioProcessorEditor::~ChoplineAudioProcessorEditor()
 {
+    // Never leave a momentary H hold stuck on when the window closes.
+    if (momentaryHold)
+        processorRef.getEngine().setMomentaryHold (false);
     setLookAndFeel (nullptr);
+}
+
+void ChoplineAudioProcessorEditor::focusLost (FocusChangeType)
+{
+    // The key-up would be delivered elsewhere — release the momentary hold.
+    if (momentaryHold)
+    {
+        momentaryHold = false;
+        processorRef.getEngine().setMomentaryHold (false);
+    }
 }
 
 // ---- pages / selection / overlay ----------------------------------------------------
@@ -377,8 +402,8 @@ void ChoplineAudioProcessorEditor::setPage (int newPage)
     const bool mainVisible = page == 0;
     samplerStrip.setVisible (mainVisible);
     gridStrip.setVisible (mainVisible);
-    beatRepeatPlaceholder.setVisible (mainVisible);
-    masterPlaceholder.setVisible (mainVisible);
+    beatRepeatPanel.setVisible (mainVisible);
+    masterPanel.setVisible (mainVisible);
     fxPage.setVisible (! mainVisible);
     if (! mainVisible)
         fxPage.refresh();
@@ -432,6 +457,21 @@ void ChoplineAudioProcessorEditor::openSettingsFlyout()
                                             gearButton.getScreenBounds(), nullptr);
 }
 
+bool ChoplineAudioProcessorEditor::keyStateChanged (bool)
+{
+    // H = MOMENTARY Beat Repeat hold on either page (v17 hold_pad / keyboard.h;
+    // the HOLD button stays the latching toggle).
+    const auto down = juce::KeyPress::isKeyCurrentlyDown ('h')
+                   || juce::KeyPress::isKeyCurrentlyDown ('H');
+    if (down != momentaryHold)
+    {
+        momentaryHold = down;
+        processorRef.getEngine().setMomentaryHold (down);
+        return true;
+    }
+    return false;
+}
+
 bool ChoplineAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
 {
     if (key.getModifiers().isCommandDown() && (key.isKeyCode ('z') || key.isKeyCode ('Z')))
@@ -464,6 +504,9 @@ bool ChoplineAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
         setPage (1);
         return true;
     }
+    if ((key.isKeyCode ('h') || key.isKeyCode ('H'))
+        && ! key.getModifiers().isAnyModifierKeyDown())
+        return true; // momentary BR hold — handled by keyStateChanged
     if (key.getKeyCode() >= '1' && key.getKeyCode() <= '8')
     {
         setSelectedChop (key.getKeyCode() - '1');
@@ -502,10 +545,12 @@ void ChoplineAudioProcessorEditor::resized()
     pageSeg.setBounds (956, 15, 91, 24);
     gearButton.setBounds (1057, 15, 28, 24);
 
+    holdBadge.setBounds (790, 15, 154, 24);
+
     samplerStrip.setBounds (15, 60, 1070, 138);
     gridStrip.setBounds (15, 206, 1070, 379);
-    beatRepeatPlaceholder.setBounds (15, 593, 500, 112);
-    masterPlaceholder.setBounds (523, 593, 562, 112);
+    beatRepeatPanel.setBounds (15, 593, 500, 112);
+    masterPanel.setBounds (523, 593, 562, 112);
 
     fxPage.setBounds (0, 0, designWidth, designHeight);     // children use canvas coords
     chopOverlay.setBounds (0, 0, designWidth, designHeight); // scrim covers everything

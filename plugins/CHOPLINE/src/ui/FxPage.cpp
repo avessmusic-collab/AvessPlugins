@@ -2,6 +2,9 @@
 
 #include "FxPage.h"
 
+#include "../engine/MasterFX.h"
+#include "../state/Parameters.h"
+
 #include <cmath>
 
 namespace chopline::ui
@@ -9,8 +12,8 @@ namespace chopline::ui
 
 using LnF = ChoplineLookAndFeel;
 
-FxPage::FxPage (engine::Engine& engineToUse)
-    : eng (engineToUse)
+FxPage::FxPage (engine::Engine& engineToUse, juce::AudioProcessorValueTreeState& apvts)
+    : eng (engineToUse), state (apvts)
 {
     // PLAYBACK card — mirrors of the overlay controls (v17 mirror_of).
     modeBox.setName ("Mode");
@@ -97,6 +100,8 @@ FxPage::FxPage (engine::Engine& engineToUse)
                [] (engine::ChopSettings& s, double v) { s.releaseMs = static_cast<float> (v); });
     releaseKnob.valueSuffix = " ms";
 
+    buildMasterColumn();
+
     eng.addChangeListener (this);
     refresh();
 }
@@ -104,6 +109,181 @@ FxPage::FxPage (engine::Engine& engineToUse)
 FxPage::~FxPage()
 {
     eng.removeChangeListener (this);
+}
+
+// ---- MASTER column (Phase 4) ---------------------------------------------------------
+
+void FxPage::buildMasterColumn()
+{
+    namespace pid = params::id;
+
+    const auto attachKnob = [this] (CompactKnob& knob, const char* paramId)
+    {
+        addAndMakeVisible (knob);
+        if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (paramId)))
+            knobAttachments.push_back (
+                std::make_unique<juce::SliderParameterAttachment> (*p, knob.getSlider()));
+    };
+
+    // Sections: card rects + titles + bypass params (v17 geometry).
+    const struct { juce::Rectangle<int> card; const char* title; const char* onId;
+                   juce::Rectangle<int> toggle; } defs[6] = {
+        { { 458, 92, 560, 108 },  "FILTER",     pid::masterFilterOn,  { 980, 97, 28, 20 } },
+        { { 458, 215, 560, 108 }, "DISTORTION", pid::masterDistOn,    { 980, 220, 28, 20 } },
+        { { 458, 338, 274, 108 }, "WIDTH",      pid::masterWidthOn,   { 694, 343, 28, 20 } },
+        { { 744, 338, 274, 108 }, "OUTPUT",     pid::masterLimiterOn, { 980, 343, 28, 20 } },
+        { { 458, 461, 560, 108 }, "DELAY",      pid::masterDelayOn,   { 980, 466, 28, 20 } },
+        { { 458, 584, 560, 108 }, "REVERB",     pid::masterVerbOn,    { 980, 589, 28, 20 } },
+    };
+    for (size_t i = 0; i < 6; ++i)
+    {
+        auto& s = sections[i];
+        s.card = defs[i].card;
+        s.title = defs[i].title;
+        s.onParam = state.getRawParameterValue (defs[i].onId);
+        s.bypass.setButtonText ({});
+        s.bypass.setTooltip (juce::String (defs[i].title).toLowerCase() + " on/off");
+        s.bypass.setBounds (defs[i].toggle);
+        addAndMakeVisible (s.bypass);
+        if (auto* p = state.getParameter (defs[i].onId))
+            s.attachment = std::make_unique<juce::ButtonParameterAttachment> (*p, s.bypass);
+    }
+
+    // FILTER — type seg + cutoff/reso + response curve (12 dB/oct, master-only).
+    filterTypeSeg.options = { "LP", "BP", "HP" };
+    if (auto* p = state.getParameter (pid::masterFilterType))
+    {
+        filterTypeAttachment = std::make_unique<juce::ParameterAttachment> (
+            *p, [this] (float) { filterTypeSeg.repaint(); });
+        filterTypeSeg.getValue = [p]
+        {
+            return static_cast<int> (std::lround (p->convertFrom0to1 (p->getValue())));
+        };
+        filterTypeSeg.setValue = [this] (int v)
+        {
+            filterTypeAttachment->setValueAsCompleteGesture (static_cast<float> (v));
+        };
+    }
+    addAndMakeVisible (filterTypeSeg);
+    attachKnob (fxCutoff, pid::masterFilterCutoff);
+    fxCutoff.formatValue = [] (double v)
+    {
+        return v >= 1000.0 ? juce::String (v / 1000.0, 1) + "k"
+                           : juce::String (static_cast<int> (v));
+    };
+    attachKnob (fxReso, pid::masterFilterReso);
+    fxReso.valueSuffix = "%";
+    filterCurve.type = state.getRawParameterValue (pid::masterFilterType);
+    filterCurve.cutoff = state.getRawParameterValue (pid::masterFilterCutoff);
+    filterCurve.reso = state.getRawParameterValue (pid::masterFilterReso);
+    addAndMakeVisible (filterCurve);
+    sections[0].content = { &filterTypeSeg, &fxCutoff, &fxReso, &filterCurve };
+
+    // DISTORTION — 6 types (Tape default = the absorbed v14 master saturation).
+    distTypeBox.setName ("DIST");
+    distTypeBox.addItemList ({ "Soft clip", "Hard clip", "Tape", "Fold",
+                               "Bitcrush", "Downsample" }, 1);
+    addAndMakeVisible (distTypeBox);
+    if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (
+            state.getParameter (pid::masterDistType)))
+        distTypeAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (*p, distTypeBox);
+    addAndMakeVisible (autoGainToggle);
+    if (auto* p = state.getParameter (pid::masterDistAutoGain))
+        autoGainAttachment = std::make_unique<juce::ButtonParameterAttachment> (*p, autoGainToggle);
+    attachKnob (fxDrive, pid::masterDistDrive);
+    fxDrive.valueSuffix = "%";
+    attachKnob (fxDistMix, pid::masterDistMix);
+    fxDistMix.valueSuffix = "%";
+    distCurve.type = state.getRawParameterValue (pid::masterDistType);
+    distCurve.drive = state.getRawParameterValue (pid::masterDistDrive);
+    distCurve.mix = state.getRawParameterValue (pid::masterDistMix);
+    distCurve.autoGain = state.getRawParameterValue (pid::masterDistAutoGain);
+    addAndMakeVisible (distCurve);
+    sections[1].content = { &distTypeBox, &autoGainToggle, &fxDrive, &fxDistMix, &distCurve };
+
+    // WIDTH — width + mono-below + stereo field.
+    attachKnob (fxWidth, pid::masterWidth);
+    fxWidth.valueSuffix = "%";
+    attachKnob (fxMono, pid::masterMono);
+    fxMono.valueSuffix = " Hz";
+    widthScope.width = state.getRawParameterValue (pid::masterWidth);
+    widthScope.mono = state.getRawParameterValue (pid::masterMono);
+    addAndMakeVisible (widthScope);
+    sections[2].content = { &fxWidth, &fxMono, &widthScope };
+
+    // OUTPUT — gain + ceiling + out/GR meter.
+    attachKnob (fxOut, pid::masterOutput);
+    fxOut.valueSuffix = " dB";
+    attachKnob (fxCeiling, pid::masterCeiling);
+    fxCeiling.valueSuffix = " dB";
+    addAndMakeVisible (outMeter);
+    sections[3].content = { &fxOut, &fxCeiling, &outMeter };
+
+    // DELAY — tempo-synced time + feedback + return + taps.
+    delayTimeBox.addItemList ({ "1/16", "1/8", "1/8.", "1/4", "1/4.", "1/2",
+                                "1/8T", "1/4T" }, 1);
+    addAndMakeVisible (delayTimeBox);
+    if (auto* p = dynamic_cast<juce::RangedAudioParameter*> (
+            state.getParameter (pid::masterDelayTime)))
+        delayTimeAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (*p, delayTimeBox);
+    attachKnob (fxDelayFb, pid::masterDelayFb);
+    fxDelayFb.valueSuffix = "%";
+    attachKnob (fxDelayRtn, pid::masterDelayRtn);
+    fxDelayRtn.valueSuffix = "%";
+    delayTaps.time = state.getRawParameterValue (pid::masterDelayTime);
+    delayTaps.feedback = state.getRawParameterValue (pid::masterDelayFb);
+    addAndMakeVisible (delayTaps);
+    sections[4].content = { &delayTimeBox, &fxDelayFb, &fxDelayRtn, &delayTaps };
+
+    // REVERB — small plate: decay + damp + return + tail.
+    attachKnob (fxVerbDecay, pid::masterVerbDecay);
+    fxVerbDecay.valueSuffix = "%";
+    attachKnob (fxVerbDamp, pid::masterVerbDamp);
+    fxVerbDamp.valueSuffix = "%";
+    attachKnob (fxVerbRtn, pid::masterVerbRtn);
+    fxVerbRtn.valueSuffix = "%";
+    verbTail.decay = state.getRawParameterValue (pid::masterVerbDecay);
+    verbTail.damp = state.getRawParameterValue (pid::masterVerbDamp);
+    addAndMakeVisible (verbTail);
+    sections[5].content = { &fxVerbDecay, &fxVerbDamp, &fxVerbRtn, &verbTail };
+}
+
+void FxPage::animationTick()
+{
+    if (! isVisible())
+        return;
+
+    // Bypass dimming (v17: bypassed module dims to 45 %).
+    for (auto& s : sections)
+    {
+        const auto off = s.onParam != nullptr && s.onParam->load (std::memory_order_relaxed) < 0.5f;
+        if (off != s.dimmed)
+        {
+            s.dimmed = off;
+            for (auto* c : s.content)
+                c->setAlpha (off ? 0.45f : 1.0f);
+            repaint (s.card);
+        }
+    }
+
+    // Displays repaint only when their underlying values change.
+    filterCurve.refreshIfChanged();
+    distCurve.refreshIfChanged();
+    widthScope.refreshIfChanged();
+    delayTaps.bpm = eng.getUiBpm();
+    delayTaps.refreshIfChanged();
+    verbTail.refreshIfChanged();
+
+    outMeter.peak = eng.getMasterOutPeak();
+    outMeter.grDb = eng.getMasterGainReductionDb();
+    outMeter.refreshIfChanged();
+
+    const auto bpm = eng.getUiBpm();
+    if (std::abs (bpm - shownBpm) > 0.049)
+    {
+        shownBpm = bpm;
+        repaint (900, 60, 124, 26);
+    }
 }
 
 void FxPage::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -143,23 +323,40 @@ void FxPage::resized()
     decayKnob.setBounds (237, 441, 50, 54);
     sustainKnob.setBounds (308, 441, 50, 54);
     releaseKnob.setBounds (378, 441, 50, 54);
+
+    // MASTER column (bypass toggles were positioned in buildMasterColumn).
+    filterTypeSeg.setBounds (472, 145, 120, 28);
+    fxCutoff.setBounds (608, 132, 50, 54);
+    fxReso.setBounds (670, 132, 50, 54);
+    filterCurve.setBounds (732, 132, 272, 54);
+
+    distTypeBox.setBounds (472, 253, 150, 24);
+    autoGainToggle.setBounds (472, 287, 150, 24);
+    fxDrive.setBounds (638, 255, 50, 54);
+    fxDistMix.setBounds (700, 255, 50, 54);
+    distCurve.setBounds (762, 253, 242, 58);
+
+    fxWidth.setBounds (472, 378, 50, 54);
+    fxMono.setBounds (534, 378, 50, 54);
+    widthScope.setBounds (596, 378, 122, 54);
+
+    fxOut.setBounds (758, 378, 50, 54);
+    fxCeiling.setBounds (820, 378, 50, 54);
+    outMeter.setBounds (882, 378, 122, 54);
+
+    delayTimeBox.setBounds (472, 514, 120, 28);
+    fxDelayFb.setBounds (608, 501, 50, 54);
+    fxDelayRtn.setBounds (670, 501, 50, 54);
+    delayTaps.setBounds (732, 501, 272, 54);
+
+    fxVerbDecay.setBounds (472, 624, 50, 54);
+    fxVerbDamp.setBounds (534, 624, 50, 54);
+    fxVerbRtn.setBounds (596, 624, 50, 54);
+    verbTail.setBounds (658, 624, 346, 54);
 }
 
 void FxPage::paint (juce::Graphics& g)
 {
-    auto card = [&g] (juce::Rectangle<float> r, const juce::String& title)
-    {
-        g.setColour (LnF::cell);
-        g.fillRoundedRectangle (r, 12.0f);
-        g.setColour (LnF::hairline());
-        g.drawRoundedRectangle (r.reduced (0.5f), 12.0f, 1.0f);
-        g.setColour (LnF::label);
-        g.setFont (LnF::labelFont (8.5f));
-        g.drawText (title, juce::Rectangle<int> (static_cast<int> (r.getX()) + 10,
-                                                 static_cast<int> (r.getY()) + 8, 200, 12),
-                    juce::Justification::centredLeft, false);
-    };
-
     // Column titles (transparent containers — v17 layout_fx).
     g.setColour (LnF::label);
     g.setFont (LnF::labelFont (8.5f));
@@ -184,19 +381,282 @@ void FxPage::paint (juce::Graphics& g)
                     juce::Justification::centredLeft, false);
     }
 
-    card ({ 82.0f, 92.0f, 360.0f, 114.0f }, "PLAYBACK");
-    card ({ 82.0f, 221.0f, 360.0f, 288.0f }, "ENVELOPE");
+    // BPM readout mirror (v17 fx_bpm at 906,65).
+    {
+        const auto readout = juce::Rectangle<int> (906, 65, 112, 18);
+        g.setColour (LnF::display);
+        g.fillRoundedRectangle (readout.toFloat(), 6.0f);
+        g.setColour (LnF::hairline());
+        g.drawRoundedRectangle (readout.toFloat().reduced (0.5f), 6.0f, 1.0f);
+        g.setColour (LnF::textTertiary);
+        g.setFont (LnF::labelFont (6.5f));
+        g.drawText ("BPM", readout.reduced (8, 0), juce::Justification::centredLeft, false);
+        g.setColour (LnF::ink);
+        g.setFont (LnF::monoFont (9.0f));
+        g.drawText (juce::String (shownBpm, 1), readout.reduced (8, 0),
+                    juce::Justification::centredRight, false);
+    }
 
-    // MASTER column: Phase 4 placeholder.
-    const auto master = juce::Rectangle<float> (458.0f, 92.0f, 560.0f, 613.0f);
-    g.setColour (LnF::paper);
-    g.fillRoundedRectangle (master, 12.0f);
+    const auto card = [&g] (juce::Rectangle<float> r, const juce::String& title, float alpha)
+    {
+        g.setColour (LnF::cell.withMultipliedAlpha (alpha));
+        g.fillRoundedRectangle (r, 12.0f);
+        g.setColour (LnF::hairline().withMultipliedAlpha (alpha));
+        g.drawRoundedRectangle (r.reduced (0.5f), 12.0f, 1.0f);
+        g.setColour (LnF::label.withMultipliedAlpha (alpha));
+        g.setFont (LnF::labelFont (8.5f));
+        g.drawText (title, juce::Rectangle<int> (static_cast<int> (r.getX()) + 10,
+                                                 static_cast<int> (r.getY()) + 8, 200, 12),
+                    juce::Justification::centredLeft, false);
+    };
+
+    card ({ 82.0f, 92.0f, 360.0f, 114.0f }, "PLAYBACK", 1.0f);
+    card ({ 82.0f, 221.0f, 360.0f, 288.0f }, "ENVELOPE", 1.0f);
+
+    for (const auto& s : sections)
+        card (s.card.toFloat(), s.title, s.dimmed ? 0.45f : 1.0f);
+}
+
+// ---- master displays ---------------------------------------------------------------------
+
+void FxPage::MasterDisplay::paint (juce::Graphics& g)
+{
+    const auto area = getLocalBounds().toFloat();
+    g.setColour (LnF::display);
+    g.fillRoundedRectangle (area, 10.0f);
+    {
+        juce::Graphics::ScopedSaveState save (g);
+        juce::Path clip;
+        clip.addRoundedRectangle (area, 10.0f);
+        g.reduceClipRegion (clip);
+
+        g.setColour (LnF::gridLine());
+        for (auto gx = 22.0f; gx < area.getWidth(); gx += 22.0f)
+            g.drawVerticalLine (static_cast<int> (gx), 0.0f, area.getHeight());
+        for (auto gy = 22.0f; gy < area.getHeight(); gy += 22.0f)
+            g.drawHorizontalLine (static_cast<int> (gy), 0.0f, area.getWidth());
+
+        drawContent (g, area.reduced (6.0f, 6.0f));
+    }
     g.setColour (LnF::hairline());
-    g.drawRoundedRectangle (master.reduced (0.5f), 12.0f, 1.0f);
+    g.drawRoundedRectangle (area.reduced (0.5f), 10.0f, 1.0f);
+}
+
+bool FxPage::MasterDisplay::refreshIfChanged()
+{
+    const auto sig = signature();
+    if (juce::exactlyEqual (sig, lastSignature))
+        return false;
+    lastSignature = sig;
+    repaint();
+    return true;
+}
+
+namespace
+{
+    inline float atomicValue (std::atomic<float>* a, float fallback = 0.0f)
+    {
+        return a != nullptr ? a->load (std::memory_order_relaxed) : fallback;
+    }
+} // namespace
+
+void FxPage::FilterCurve::drawContent (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    const auto t = static_cast<int> (atomicValue (type));
+    const auto fc = juce::jlimit (20.0f, 20000.0f, atomicValue (cutoff, 20000.0f));
+    const auto q = 0.707f + 7.3f * atomicValue (reso, 10.0f) / 100.0f;
+
+    juce::Path p;
+    const auto n = 64;
+    for (int i = 0; i <= n; ++i)
+    {
+        const auto f = 20.0f * std::pow (1000.0f, static_cast<float> (i) / n); // 20..20k log
+        const auto w = f / fc;
+        const auto w2 = w * w;
+        float mag;
+        if (t == 0)      mag = 1.0f / std::sqrt (juce::square (1.0f - w2) + w2 / (q * q));
+        else if (t == 1) mag = (w / q) / std::sqrt (juce::square (1.0f - w2) + w2 / (q * q));
+        else             mag = w2 / std::sqrt (juce::square (1.0f - w2) + w2 / (q * q));
+        const auto db = juce::jlimit (-30.0f, 18.0f, juce::Decibels::gainToDecibels (mag, -60.0f));
+        const auto x = r.getX() + r.getWidth() * static_cast<float> (i) / n;
+        const auto y = juce::jmap (db, -30.0f, 18.0f, r.getBottom(), r.getY());
+        if (i == 0)
+            p.startNewSubPath (x, y);
+        else
+            p.lineTo (x, y);
+    }
+    g.setColour (LnF::ink);
+    g.strokePath (p, juce::PathStrokeType (1.7f));
+
+    // Cutoff marker (thin blue accent, v17).
+    const auto cx = r.getX() + r.getWidth()
+                        * (std::log (fc / 20.0f) / std::log (1000.0f));
+    g.setColour (LnF::accent);
+    g.drawLine (cx, r.getY(), cx, r.getBottom(), 1.0f);
+}
+
+float FxPage::FilterCurve::signature() const
+{
+    return atomicValue (type) * 10.0f + atomicValue (cutoff) * 0.001f + atomicValue (reso);
+}
+
+void FxPage::DistCurve::drawContent (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    const auto t = static_cast<int> (atomicValue (type));
+    const auto d01 = atomicValue (drive, 10.0f) / 100.0f;
+    const auto m = atomicValue (mix, 100.0f) / 100.0f;
+    const auto ag = atomicValue (autoGain, 1.0f) >= 0.5f
+                        ? engine::MasterFX::autoGainFor (t, d01) : 1.0f;
+
+    juce::Path p;
+    const auto n = 96;
+    for (int i = 0; i <= n; ++i)
+    {
+        const auto x01 = static_cast<float> (i) / n * 2.0f - 1.0f;
+        auto y01 = t == 5 ? x01 // Downsample: identity transfer (rate reduction)
+                          : engine::MasterFX::shapeSample (t, x01, d01) * ag;
+        y01 = x01 * (1.0f - m) + y01 * m;
+        y01 = juce::jlimit (-1.2f, 1.2f, y01);
+        const auto x = r.getX() + r.getWidth() * static_cast<float> (i) / n;
+        const auto y = juce::jmap (y01, -1.2f, 1.2f, r.getBottom(), r.getY());
+        if (i == 0)
+            p.startNewSubPath (x, y);
+        else
+            p.lineTo (x, y);
+    }
+    g.setColour (LnF::ink);
+    g.strokePath (p, juce::PathStrokeType (1.7f));
+}
+
+float FxPage::DistCurve::signature() const
+{
+    return atomicValue (type) * 1000.0f + atomicValue (drive) + atomicValue (mix) * 0.001f
+         + atomicValue (autoGain) * 7777.0f;
+}
+
+void FxPage::WidthScope::drawContent (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    // Stereo field: mid axis + an ellipse whose side radius follows WIDTH.
+    const auto w01 = atomicValue (width, 100.0f) / 200.0f; // 0..1
+    const auto c = r.getCentre();
+    const auto midR = juce::jmin (r.getWidth(), r.getHeight()) * 0.42f;
+    const auto sideR = midR * juce::jmax (0.02f, w01);
+
+    juce::Path ellipse;
+    ellipse.addEllipse (c.x - sideR, c.y - midR * 0.8f, sideR * 2.0f, midR * 1.6f);
+    ellipse.applyTransform (juce::AffineTransform::rotation (
+        -juce::MathConstants<float>::pi / 4.0f, c.x, c.y));
+    g.setColour (LnF::ink);
+    g.strokePath (ellipse, juce::PathStrokeType (1.5f));
+
+    // Mono-below caption (small, faint).
     g.setColour (LnF::textTertiary);
-    g.setFont (LnF::labelFont (8.5f));
-    g.drawText (juce::String (juce::CharPointer_UTF8 ("MASTER \xe2\x80\x94 PHASE 4")),
-                master.toNearestInt(), juce::Justification::centred, false);
+    g.setFont (LnF::monoFont (8.0f));
+    g.drawText ("<" + juce::String (static_cast<int> (atomicValue (mono, 120.0f))) + "Hz mono",
+                r.toNearestInt().removeFromBottom (10), juce::Justification::centredRight, false);
+}
+
+float FxPage::WidthScope::signature() const
+{
+    return atomicValue (width) + atomicValue (mono) * 0.001f;
+}
+
+void FxPage::OutMeter::drawContent (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    // Output peak bar (ink) + gain-reduction bar (blue, v17 faders_meters).
+    auto bars = r.reduced (10.0f, 4.0f);
+    auto peakBar = bars.removeFromLeft (bars.getWidth() * 0.5f - 6.0f);
+    bars.removeFromLeft (12.0f);
+    auto grBar = bars;
+
+    const auto track = [&g] (juce::Rectangle<float> b)
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.16f));
+        g.fillRoundedRectangle (b.withSizeKeepingCentre (4.0f, b.getHeight()), 2.0f);
+    };
+    track (peakBar);
+    track (grBar);
+
+    const auto peakDb = juce::Decibels::gainToDecibels (juce::jmax (1.0e-4f, peak), -60.0f);
+    const auto peakNorm = juce::jlimit (0.0f, 1.0f, juce::jmap (peakDb, -60.0f, 6.0f, 0.0f, 1.0f));
+    auto pFill = peakBar.withSizeKeepingCentre (4.0f, peakBar.getHeight());
+    pFill = pFill.removeFromBottom (pFill.getHeight() * peakNorm);
+    g.setColour (LnF::ink);
+    g.fillRoundedRectangle (pFill, 2.0f);
+
+    const auto grNorm = juce::jlimit (0.0f, 1.0f, -grDb / 12.0f);
+    auto gFill = grBar.withSizeKeepingCentre (4.0f, grBar.getHeight());
+    gFill = gFill.removeFromTop (gFill.getHeight() * grNorm);
+    g.setColour (LnF::accent); // blue while limiting
+    g.fillRoundedRectangle (gFill, 2.0f);
+
+    g.setColour (LnF::textTertiary);
+    g.setFont (LnF::labelFont (6.5f));
+    g.drawText ("OUT", peakBar.toNearestInt().removeFromBottom (9).translated (0, 6),
+                juce::Justification::centred, false);
+    g.drawText ("GR", grBar.toNearestInt().removeFromBottom (9).translated (0, 6),
+                juce::Justification::centred, false);
+}
+
+float FxPage::OutMeter::signature() const
+{
+    return peak * 100.0f + grDb;
+}
+
+void FxPage::DelayTaps::drawContent (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    const auto idx = static_cast<int> (atomicValue (time, 2.0f));
+    const auto fb01 = atomicValue (feedback, 35.0f) / 100.0f;
+    const auto seconds = params::delayTimeBeats (idx) * 60.0
+                             / juce::jlimit (20.0, 999.0, bpm > 1.0 ? bpm : 120.0);
+    const auto span = 3.0; // display window in seconds
+
+    g.setColour (LnF::ink);
+    auto level = 1.0f;
+    for (int k = 1; k <= 8; ++k)
+    {
+        const auto t = seconds * k;
+        if (t > span)
+            break;
+        const auto x = r.getX() + r.getWidth() * static_cast<float> (t / span);
+        const auto h = r.getHeight() * juce::jmax (0.06f, level);
+        g.drawLine (x, r.getBottom() - h, x, r.getBottom(), 2.0f);
+        level *= fb01;
+    }
+}
+
+float FxPage::DelayTaps::signature() const
+{
+    return atomicValue (time) * 100.0f + atomicValue (feedback)
+         + static_cast<float> (bpm) * 0.01f;
+}
+
+void FxPage::VerbTail::drawContent (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    const auto decay01 = atomicValue (decay, 40.0f) / 100.0f;
+    const auto damp01 = atomicValue (damp, 50.0f) / 100.0f;
+
+    juce::Path p;
+    const auto n = 64;
+    for (int i = 0; i <= n; ++i)
+    {
+        const auto t01 = static_cast<float> (i) / n;
+        // Tail envelope: longer with DECAY; DAMP curves it down faster early.
+        const auto tail = std::exp (-t01 * (6.0f - 5.0f * decay01) * (1.0f + damp01 * t01));
+        const auto x = r.getX() + r.getWidth() * t01;
+        const auto y = r.getBottom() - r.getHeight() * tail * 0.9f;
+        if (i == 0)
+            p.startNewSubPath (x, y);
+        else
+            p.lineTo (x, y);
+    }
+    g.setColour (LnF::ink);
+    g.strokePath (p, juce::PathStrokeType (1.7f));
+}
+
+float FxPage::VerbTail::signature() const
+{
+    return atomicValue (decay) + atomicValue (damp) * 0.001f;
 }
 
 // ================================ EnvDisplay =============================================

@@ -5,7 +5,7 @@ is `SPEC.md` (user-authored); the locked visual direction is the v17 mockup
 (`.ideas/mockups/v17-ui.yaml`, see `.ideas/creative-brief.md` "UI Design — FINAL").
 Work phase by phase (spec §11) and STOP after each phase for user approval.
 
-**Current phase: 3 (Chop FX / warp engine) — complete, awaiting approval.**
+**Current phase: 4 (Beat Repeat + master chain) — complete, awaiting approval.**
 
 ## Build commands
 
@@ -301,6 +301,110 @@ Do NOT install to system plugin folders until the user asks.
   `CHOPLINE_UI_VIEW=overlay|fx` switches the view before `CHOPLINE_UI_SNAPSHOT`
   fires (Standalone only).
 
+## Decisions made (Phase 4 — Beat Repeat + master chain)
+
+- **Chain order (user decision 2026-10-25)**: voices (+per-chop send taps) →
+  Beat Repeat → FILTER → DISTORTION → delay/reverb RETURNS → WIDTH → OUTPUT
+  gain → safety limiter. WIDTH and OUTPUT last, superseding spec §7.
+- **ZERO-LATENCY master chain (deliberate product call)**: this is a live
+  performance instrument (BR HOLD/H/MIDI are played in real time), so nothing
+  in the master chain adds lookahead/FIR latency. Distortion oversampling is
+  2× **IIR polyphase** (sub-sample group delay, reported — rounds to 0 — via
+  `setLatencySamples`, constant while playing); the safety limiter is a
+  clip-guarded instant-attack / ~80 ms-release gain computer with **no
+  lookahead** (house rule: NOT `juce::dsp::Limiter`, which hides a fixed 4:1
+  compressor at −10 dBFS). Unit-tested: never exceeds the ceiling (+1e-4) and
+  is BIT-IDENTICAL below it.
+- **All Phase 4 parameters are APVTS** (42 total now; ids = the v17 ids). The
+  UI surfaces only the v17 set (BR: HOLD/AUTO/EVERY/GRID/CHANCE/DECAY; master
+  cards per the FX page); the advanced BR params (offset, gate, pitch decay,
+  accel, reverse, filter sweep, mix mode, freeze, random grid, mode=Off) exist
+  with the v17 `not_surfaced_in_mockup` defaults for automation and a later
+  advanced drawer. The AUTO toggle drives `br_mode` Auto↔Manual; Off is
+  reachable only via automation until the drawer lands.
+- **Engine/processor split**: `BlockContext` carries `BeatRepeat::Params` +
+  `MasterParams` structs whose **defaults are everything-bypassed** — the
+  processor fills them from cached APVTS atomics every block, while engine
+  tests of Phases 1–3 stay bit-identical unless they opt in.
+- **Beat Repeat engine** (`engine/BeatRepeat`): 32 s stereo ring (4 bars at
+  30 BPM — the spec §7 figure at 192 kHz), allocated in prepare. Timeline =
+  host PPQ (same discipline as PatternScheduler); no PPQ → a free-run
+  accumulator, so manual holds work in the Standalone and with stopped
+  transports. Slot 0 is the capture pass (reader tracks the write head —
+  bit-exact dry); repeats apply decay^k gain, 2^(−k·pdecay/12) varispeed
+  read, reverse per Alternate/All (slot 0 always forward — its audio doesn't
+  exist yet), accel shrinks slots up to 8× over the gate, 3 ms crossfade at
+  every slot boundary and on stop. Manual triggers quantise to the next GRID
+  boundary and run while held (gate ignored); Auto rolls CHANCE at every
+  interval(+offset/16) boundary and runs the GATE (a boundary mid-repeat
+  re-captures). Freeze pins the slice AND the slot params (no further decay)
+  and pauses ring writes. Mix modes: Mix = dry + repeats k≥1, Insert = dry
+  muted while repeating, Gate = repeats only. `setRandomSeed` makes chance
+  deterministic for tests. Mode Off takes a fast path that still captures
+  into the ring (so enabling mid-stream has history) and is bit-transparent.
+- **BR vs chop MIDI collision — RESOLVED (document for user sign-off)**: chop
+  notes run base+0..63 (C1+N default), which covers C3-up. BR performance
+  notes therefore take a SEPARATE configurable base (`br_midi_base`: C2–C5,
+  default C3=60 per spec §7) mapping base+0..7 → 1/4, 1/8, 1/16, 1/32, 1/64,
+  1/8T, 1/16T, 1/32T (grid "1/2" is not performable; spec's example starts at
+  1/4). When BR mode ≠ Off, notes in [base, base+8) hold a repeat at that
+  grid and NEVER trigger chops; when mode = Off they fall through to the chop
+  range as before. Several held perf notes → the finest grid wins; note-offs
+  are per-note. Unit-tested.
+- **Per-chop delay/verb sends are now routed**: tapped post-voice, pre-master
+  (spec §7 "chop tails") into two engine-owned send buses. A voice with zero
+  sends renders through the exact Phase 3 fast path (bit-identical); a voice
+  with sends renders into a per-voice scratch and distributes dry + sends.
+  Steal tails keep the faded chop's send levels. Returns mix in AFTER the
+  distortion (user chain order), so tails stay clean of the drive.
+- **Master modules**: FILTER = `juce::dsp::StateVariableTPTFilter` (12 dB/oct
+  fixed per the v11 decision), reso 0–100 % → Q 0.707–8. DISTORTION = 6 types
+  (Soft/Hard tanh/clip, Tape = tanh + 0.15 DC offset — the absorbed v14
+  saturation, Fold = sin shaper, Bitcrush 1–16 bits, Downsample 1–64×
+  hold at BASE rate — intentionally not oversampled); drive → up to +24 dB;
+  analytic auto-gain (unity at a 0.5 reference level; crushers exempt);
+  `MasterFX::shapeSample/autoGainFor` are shared with the UI transfer curve
+  and the tests. DELAY = 4 s ring, tempo-synced (v17 options in beats),
+  100 ms time smoothing (tempo glide), feedback hard-bounded ±4 + NaN guard.
+  REVERB = `juce::Reverb` small-plate mapping (roomSize 0.25+0.72·decay),
+  reset on re-activation. WIDTH = M/S with a TPT high-pass on the side
+  channel for elliptical bass mono (`master_mono` ≤ 20 Hz disables it →
+  width 100 % is identity). Every audible param smoothed 20 ms; section
+  bypasses crossfade 15 ms and fully-off sections are skipped
+  (bit-transparent).
+- **Tail length**: `getTailLengthSeconds` reports INFINITY (the delay rings
+  for minutes at 95 % feedback; JUCE wrappers map infinity to the host's
+  infinite-tail flag, so bounces never trim an echo).
+- **Post-review hardening (self code-review, Phase 4)**: ring writes pause
+  during every repeat after slot 0's crossfade (holds/freezes > 32 s can no
+  longer wrap over the pinned slice); oversized host blocks (> prepared max)
+  run the master chain in prepared-size chunks so the safety limiter stays
+  engaged (sends dropped for that pathological block only); the delay has an
+  idle fast path like the other modules (return settled at 0 → skip; clean
+  ring on re-activation); delay/reverb returns fold to mono when the main bus
+  is mono; merged steal tails keep the higher of the two chops' send levels;
+  the editor releases a momentary H hold on focus loss/destruction and no
+  longer swallows Cmd/Ctrl+H.
+- **UI**: `ui::BeatRepeatPanel` + `ui::MasterPanel` replace the MAIN
+  placeholders (v17 geometry; HOLD fills red + 1 px red card ring while
+  repeating/holding; CHANCE/DECAY knobs use the red accent via
+  `Slider::rotarySliderFillColourId`, default ink set in the LnF). H key =
+  momentary hold through `keyStateChanged` + an engine atomic; the REPEAT
+  HOLD header badge shows on both pages; the grid playhead turns red while
+  BR is engaged. `master_more` ('…') opens the MASTER–MORE CallOutBox
+  (CEILING / DLY RTN / VERB RTN) per the v17 `fl_mastermore` flyout — NOT a
+  jump to the FX page. FX page gained the full MASTER column: six cards,
+  titles top-left + iOS mini-toggle bypass top-right inside each card,
+  bypassed card dims to 45 % (tick-driven alpha), displays (filter response,
+  transfer curve, width field, out/GR meter, delay taps, reverb tail) repaint
+  only when their values change. BPM readout lives in MASTER on both pages
+  (hairline pill; host BPM or free-run BPM), fed by an engine atomic.
+- **Meters**: limiter GR + output peak ride engine atomics (same lock-free
+  discipline as the MIDI flash); the MAIN lamp and the FX OUT/GR bars go
+  blue while limiting (v17 faders_meters).
+- **Free-run BPM stays in the settings flyout** (it is the free-run tempo
+  CONTROL; the MASTER BPM readout is display-only per v17 `host_readonly`).
+
 ## Known issues / notes
 
 - **auval not run locally**: validating an AU requires the component to be
@@ -353,8 +457,29 @@ Do NOT install to system plugin folders until the user asks.
   a heavily trimmed chop's strip playhead is slightly offset (the overlay
   editor maps it correctly). Cosmetic; revisit with the Phase 5 polish.
 
+- **Phase 4 — BR auto chance is NOT seeded per project**: the audio-thread
+  RNG seeds to a constant at construction, so a bounce after a reopen rolls
+  the same sequence from time zero, but live chance is effectively random.
+  Spec §5's seeded randomize applies to the Phase 5 pattern generators; if
+  reproducible BOUNCES of Auto repeats are wanted, add a bar-position-keyed
+  hash instead of a running RNG (revisit in Phase 5).
+- **Phase 4 — BR ring writes pause while repeating** (after slot 0's
+  crossfade): the pinned slice survives holds/freezes of any length; the only
+  cost is that the ring's dry history restarts at the next (re)capture —
+  exactly what a new capture needs anyway.
+- **Phase 4 — BPM readout pill is drawn twice** (MasterPanel + FxPage, same
+  v17 widget, different geometry). Extract a shared BpmReadout component in
+  the Phase 5 polish pass before restyling it.
+- **Phase 4 — delay time changes glide** (100 ms smoothed read head), so
+  tempo automation produces a short varispeed pitch bend in the tail —
+  intentional (musical) rather than a click or a re-clear.
+
 ## Open questions
 
+- **DECIDED (user, 2026-10-25): master chain order** — WIDTH and OUTPUT go
+  LAST: Beat Repeat → Filter → Distortion → Delay/Reverb returns → Width →
+  Output gain → safety limiter. (Supersedes spec §7's width-before-delay
+  ordering.)
 - **Rename pending**: the user will change the plugin's name later
   (decision 2026-10-25, before release). Keep `PLUGIN_CODE Chpl` etc. until
   the new name lands; expect a rename pass (CMake PRODUCT_NAME, wordmark,
@@ -391,3 +516,18 @@ Do NOT install to system plugin folders until the user asks.
 - **Choke group UI**: spec §6 default (all chops group 1) is live, but there
   is no way to change groups from the UI (v17 has none). Decide in Phase 5
   whether groups get surfaced or stay a fixed behaviour.
+- **Phase 4 — BR vs chop MIDI ranges (user sign-off wanted)**: resolution
+  documented under "Decisions made (Phase 4)": BR performance notes own
+  [br_midi_base, +8) whenever BR mode ≠ Off and win over chop triggering
+  there; with the default chop base C1 and ≥ 25 chops, chops 25–32 are
+  shadowed by the C3 performance octave. If that bites, move `br_midi_base`
+  (C2–C5 in settings/advanced later) or set BR mode Off. Confirm the default
+  feels right in the DAW test.
+- **Phase 4 — advanced BR drawer**: offset/gate/pitch-decay/accel/reverse/
+  sweep/mix-mode/freeze/random-grid are engine-complete + automatable but
+  have no UI (v17 `not_surfaced_in_mockup`). Decide the drawer's home in
+  Phase 5 (settings flyout? FX-page card?).
+- **Phase 4 — spec §7 "Gate 1/16–4 bars" units** read as note values; the
+  engine treats the list as bar fractions in 4/4 (1/16 bar = a 1/16 note),
+  matching the grid list. Only differs in odd meters (same caveat as the
+  pattern bar note above).

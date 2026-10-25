@@ -15,10 +15,12 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "PluginProcessor.h"
+#include "ui/BeatRepeatPanel.h"
 #include "ui/ChopEditorOverlay.h"
 #include "ui/FxPage.h"
 #include "ui/GridStrip.h"
 #include "ui/LookAndFeel.h"
+#include "ui/MasterPanel.h"
 #include "ui/SamplerStrip.h"
 
 namespace chopline
@@ -34,6 +36,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    bool keyStateChanged (bool isKeyDown) override; // H = momentary BR hold (v17)
+    void focusLost (FocusChangeType) override;      // releases a stuck H hold
 
 private:
     // ---- small header widgets ------------------------------------------------
@@ -67,14 +71,10 @@ private:
         void paintButton (juce::Graphics&, bool, bool) override;
     };
 
-    class QuietPanel final : public juce::Component // placeholder cards
+    class HoldBadge final : public juce::Component // REPEAT HOLD pill (v17)
     {
     public:
-        explicit QuietPanel (juce::String titleToUse) : title (std::move (titleToUse)) {}
         void paint (juce::Graphics&) override;
-
-    private:
-        juce::String title;
     };
 
     void openSettingsFlyout();
@@ -105,14 +105,15 @@ private:
     MidiActivityDot midiDot;
     PageSeg pageSeg;
     GearButton gearButton;
+    HoldBadge holdBadge; // visible on both pages while BR holds (v17 br_badge)
 
     // MAIN page.
     ui::SamplerStrip samplerStrip;
     ui::GridStrip gridStrip;
-    QuietPanel beatRepeatPlaceholder { juce::String (juce::CharPointer_UTF8 ("BEAT REPEAT \xe2\x80\x94 PHASE 4")) };
-    QuietPanel masterPlaceholder { juce::String (juce::CharPointer_UTF8 ("MASTER \xe2\x80\x94 PHASE 4")) };
+    ui::BeatRepeatPanel beatRepeatPanel; // Phase 4 (v17 br card)
+    ui::MasterPanel masterPanel;         // Phase 4 (v17 master card)
 
-    // FX page (Phase 3: CHOP column; MASTER lands in Phase 4).
+    // FX page (CHOP column + Phase 4 MASTER column).
     ui::FxPage fxPage;
 
     // Chop detail overlay (topmost, v17 overlay).
@@ -120,6 +121,7 @@ private:
 
     juce::VBlankAttachment vblank;
     int gcCountdown = 0;
+    bool momentaryHold = false; // H key state (mirrors engine.setMomentaryHold)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChoplineAudioProcessorEditor)
 };

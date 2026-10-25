@@ -33,9 +33,22 @@ void Engine::prepare (double sampleRate, int maxBlockSize, int numOutputChannels
     currentMaxBlockSize = maxBlockSize;
     currentNumChannels = numOutputChannels;
 
-    pool.prepare (sampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
+    const auto block = maxBlockSize > 0 ? maxBlockSize : 512;
+    pool.prepare (sampleRate, block);
     pool.reset();
     scheduler.prepare (sampleRate);
+
+    // Phase 4: Beat Repeat ring + master chain + send buses (spec §7/§8 —
+    // everything the audio thread touches is allocated here).
+    beatRepeat.prepare (sampleRate, block);
+    masterFx.prepare (sampleRate, block);
+    delayBus.setSize (2, block);
+    verbBus.setSize (2, block);
+    delayBus.clear();
+    verbBus.clear();
+    brFreeBars = 0.0;
+    perfHeldMask = 0;
+    perfLastGrid = -1;
 
     // Re-resample the loaded sample at the new session rate (async; markers are
     // stored in seconds, so the slice map survives the rate change).
@@ -56,6 +69,20 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
     const auto numSamples = buffer.getNumSamples();
     if (numSamples <= 0 || buffer.getNumChannels() == 0)
         return;
+
+    // Per-chop send buses (Phase 4): sized in prepare; a host block larger
+    // than the prepared size is handled by clamping (hosts must not do this).
+    const auto busSamples = juce::jmin (numSamples, delayBus.getNumSamples());
+    const auto busesValid = busSamples == numSamples && delayBus.getNumSamples() > 0;
+    if (busesValid)
+    {
+        delayBus.clear (0, 0, busSamples);
+        delayBus.clear (1, 0, busSamples);
+        verbBus.clear (0, 0, busSamples);
+        verbBus.clear (1, 0, busSamples);
+    }
+    auto* delayBusPtr = busesValid ? &delayBus : nullptr;
+    auto* verbBusPtr = busesValid ? &verbBus : nullptr;
 
     const auto* sampleNode = sampleStore.acquire();
     const auto* sliceNode = sliceExchange.acquire();
@@ -128,9 +155,46 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
     }
 
     // MIDI note-ons/offs → chop triggers / gate releases, sample-accurate.
+    // Beat Repeat performance notes (spec §7) are intercepted FIRST: when BR is
+    // not Off, notes in [brPerfBase, brPerfBase+8) hold a manual repeat at that
+    // grid and never reach the chop mapping (documented Phase 4 resolution of
+    // the chop-range/C3 collision).
     for (const auto metadata : midi)
     {
         const auto msg = metadata.getMessage();
+        if (context.brPerfBase >= 0 && (msg.isNoteOn() || msg.isNoteOff()))
+        {
+            const auto note = msg.getNoteNumber();
+            const auto grid = BeatRepeat::gridIndexForPerformanceNote (note, context.brPerfBase);
+            if (grid >= 0)
+            {
+                const auto bit = 1 << (note - context.brPerfBase);
+                if (msg.isNoteOn())
+                {
+                    midiFlash.fetch_add (1, std::memory_order_relaxed);
+                    perfHeldMask |= bit;
+                    perfLastGrid = grid;
+                }
+                else
+                {
+                    perfHeldMask &= ~bit;
+                    if (perfHeldMask != 0)
+                    {
+                        // Another performance note is still held: repeat at the
+                        // finest (highest) one still down.
+                        for (int b = 7; b >= 0; --b)
+                        {
+                            if ((perfHeldMask & (1 << b)) != 0)
+                            {
+                                perfLastGrid = b + 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+        }
         if (msg.isNoteOn())
         {
             midiFlash.fetch_add (1, std::memory_order_relaxed);
@@ -156,6 +220,7 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
         else if (msg.isAllNotesOff() || msg.isAllSoundOff() || msg.isResetAllControllers())
         {
             pool.releaseAll();
+            perfHeldMask = 0;
         }
     }
 
@@ -177,7 +242,7 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
     int cursor = 0;
     for (int i = 0; i < numEvents; ++i)
     {
-        pool.renderAdd (buffer, cursor, events[i].offset - cursor);
+        pool.renderAdd (buffer, cursor, events[i].offset - cursor, delayBusPtr, verbBusPtr);
         cursor = events[i].offset;
         if (events[i].isNoteOff)
             pool.noteOff (events[i].note);
@@ -187,7 +252,71 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
                           events[i].gate, events[i].note,
                           static_cast<double> (events[i].startNorm));
     }
-    pool.renderAdd (buffer, cursor, numSamples - cursor);
+    pool.renderAdd (buffer, cursor, numSamples - cursor, delayBusPtr, verbBusPtr);
+
+    // ---- Phase 4: Beat Repeat → master chain (spec §7; user-decided order:
+    // BR → filter → distortion → delay/verb returns → width → output+limiter).
+    {
+        const auto quartersPerBar = context.timeSigNumerator > 0 && context.timeSigDenominator > 0
+            ? static_cast<double> (context.timeSigNumerator) * 4.0
+                  / static_cast<double> (context.timeSigDenominator)
+            : 4.0;
+        const auto freeBpm = freeBpmCache.load (std::memory_order_relaxed);
+        const auto bpm = context.hasBpm && context.bpm > 1.0 ? context.bpm
+                       : (freeBpm > 1.0 ? freeBpm : 120.0);
+        const auto sr = currentSampleRate > 0.0 ? currentSampleRate : 48000.0;
+        const auto samplesPerBar = sr * 60.0 / bpm * quartersPerBar;
+        const auto blockBars = static_cast<double> (numSamples) / samplesPerBar;
+
+        // BR timeline: host PPQ while PLAYING (same discipline as the pattern
+        // scheduler); otherwise a free-running accumulator, so manual holds
+        // work in the Standalone and with stopped transports — and a stopped
+        // host's frozen PPQ can't re-fire the same Auto boundary every block.
+        double barPhase;
+        if (context.hasHostPosition && context.hasPpq && context.hostPlaying)
+        {
+            barPhase = context.ppqPosition / quartersPerBar;
+            brFreeBars = barPhase + blockBars;
+        }
+        else
+        {
+            barPhase = brFreeBars;
+            brFreeBars += blockBars;
+        }
+
+        auto brp = context.br;
+        brp.hold = brp.hold || uiMomentaryHold.load (std::memory_order_relaxed);
+        if (context.brPerfBase >= 0 && perfHeldMask != 0)
+        {
+            brp.hold = true;
+            brp.gridIndex = perfLastGrid; // held performance note picks the grid
+        }
+        beatRepeat.process (buffer, brp, barPhase, samplesPerBar);
+
+        if (busesValid)
+        {
+            masterFx.process (buffer, delayBus, verbBus, context.master, bpm);
+        }
+        else if (delayBus.getNumSamples() > 0)
+        {
+            // Oversized host block (larger than prepareToPlay's maximum):
+            // keep the master chain — above all the safety limiter — engaged
+            // by processing in prepared-size chunks. The per-chop sends are
+            // dropped for this pathological block only.
+            delayBus.clear();
+            verbBus.clear();
+            const auto cap = delayBus.getNumSamples();
+            for (int pos = 0; pos < numSamples; pos += cap)
+            {
+                const auto n = juce::jmin (cap, numSamples - pos);
+                juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(),
+                                               buffer.getNumChannels(), pos, n);
+                masterFx.process (view, delayBus, verbBus, context.master, bpm);
+            }
+        }
+
+        uiBpm.store (bpm, std::memory_order_relaxed);
+    }
 
     // Block completed on these snapshots.
     sampleStore.ack (sampleNode);

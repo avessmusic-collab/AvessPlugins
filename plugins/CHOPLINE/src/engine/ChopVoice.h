@@ -78,7 +78,12 @@ public:
         return pb.active && pb.midiNote == midiNote && pb.gateApplies && pb.gateRemaining == -1;
     }
     void fastRelease() noexcept;           // steal / stop / all-notes-off: 2 ms fade
-    void renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept;
+    /// Adds this voice into `out`; when the master send buses are given, the
+    /// voice's contribution is also added into them scaled by its chop's
+    /// DELAY/VERB send levels (Phase 4: tapped post-voice, pre-master).
+    void renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples,
+                    juce::AudioBuffer<float>* delayBus = nullptr,
+                    juce::AudioBuffer<float>* verbBus = nullptr) noexcept;
 
     bool isActive() const noexcept { return pb.active || tailRemaining > 0; }
     bool isHolding() const noexcept { return pb.active && ! pb.fastFading; }
@@ -168,6 +173,7 @@ private:
 
     // Prerendered steal tail (PCM — holds no sample/stretcher references).
     int tailRemaining = 0, tailPos = 0;
+    float tailDelaySend = 0.0f, tailVerbSend = 0.0f; // send levels of the faded chop
 
     double sampleRate = 48000.0;
     int maxBlock = 512;
@@ -181,6 +187,7 @@ private:
     std::vector<float> inScratchL, inScratchR;
     std::vector<float> outScratchL, outScratchR;
     std::vector<float> tailL, tailR;
+    std::vector<float> mixL, mixR; // per-voice bus scratch (send routing)
 
     std::uint64_t stamp = 0;
     int sourceTag = tagMidi; // audio thread only

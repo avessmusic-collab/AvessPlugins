@@ -19,6 +19,8 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include <juce_events/juce_events.h>
 
+#include "BeatRepeat.h"
+#include "MasterFX.h"
 #include "PatternScheduler.h"
 #include "SampleStore.h"
 #include "SliceMap.h"
@@ -42,6 +44,10 @@ public:
     // ---- audio thread ----------------------------------------------------------
     struct BlockContext
     {
+        BlockContext() = default;
+        BlockContext (int baseNote, float swing = 0.0f) // tests: { 36 } etc.
+            : midiBaseNote (baseNote), swingPct (swing) {}
+
         int midiBaseNote = 36;  // chop N triggers from base + N
         float swingPct = 0.0f;  // APVTS swing, 0–75 (trigger time only)
 
@@ -55,6 +61,16 @@ public:
         double bpm = 120.0;
         int timeSigNumerator = 4;
         int timeSigDenominator = 4;
+
+        // Phase 4 (filled from the APVTS by the processor each block; the
+        // defaults keep Beat Repeat off and the master chain bypassed, so
+        // engine tests of earlier phases stay bit-identical unless they opt in).
+        BeatRepeat::Params br;
+        MasterParams master;
+        /// Beat Repeat MIDI performance base note (spec §7: base = 1/4 grid,
+        /// base+1 = 1/8, … base+7 = 1/32T). −1 disables interception — notes
+        /// then fall through to the chop trigger range as before.
+        int brPerfBase = -1;
     };
     void process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi,
                   const BlockContext& context) noexcept;
@@ -126,6 +142,26 @@ public:
     int getVoiceViews (VoiceView* dest, int maxCount) const noexcept;
     int countActiveVoices() const noexcept { return pool.countActive(); }
 
+    // ---- Phase 4: Beat Repeat / master chain UI + host plumbing -------------------
+    /// H key momentary hold (message thread → audio thread).
+    void setMomentaryHold (bool held) noexcept
+    {
+        uiMomentaryHold.store (held, std::memory_order_relaxed);
+    }
+    /// True while a repeat is sounding or a hold is engaged (red accent rules).
+    bool isBeatRepeatActive() const noexcept
+    {
+        return beatRepeat.isActiveUi() || uiMomentaryHold.load (std::memory_order_relaxed);
+    }
+    /// Effective BPM of the last processed block (host BPM or free-run BPM).
+    double getUiBpm() const noexcept { return uiBpm.load (std::memory_order_relaxed); }
+    float getMasterGainReductionDb() const noexcept { return masterFx.getGainReductionDb(); }
+    float getMasterOutPeak() const noexcept { return masterFx.getOutPeak(); }
+    /// Constant total latency (reported by the processor via setLatencySamples).
+    int getLatencySamples() const noexcept { return masterFx.getLatencySamples(); }
+    /// Tests only: deterministic Beat Repeat chance.
+    BeatRepeat& getBeatRepeat() noexcept { return beatRepeat; }
+
     /// Frees retired snapshots (call periodically from the editor / after edits).
     void collectGarbage();
 
@@ -144,6 +180,16 @@ private:
     SnapshotExchange<PatternSnapshot> patternExchange;
     PatternScheduler scheduler;                       // audio-thread transport state
     std::atomic<double> freeBpmCache { 120.0 };       // model → audio thread
+
+    // Phase 4: Beat Repeat → master chain (spec §7; user-decided order).
+    BeatRepeat beatRepeat;
+    MasterFX masterFx;
+    juce::AudioBuffer<float> delayBus, verbBus;       // per-chop send buses
+    double brFreeBars = 0.0;                          // BR free-run timeline (audio thread)
+    int perfHeldMask = 0;                             // held BR performance notes
+    int perfLastGrid = -1;
+    std::atomic<bool> uiMomentaryHold { false };
+    std::atomic<double> uiBpm { 120.0 };
 
     struct AuditionEvent { int chopIndex = 0; float velocity = 1.0f; float startNorm = 0.0f; };
     static constexpr int auditionFifoSize = 64;

@@ -55,6 +55,8 @@ void ChopVoice::prepare (double newSampleRate, int maxBlockSize, StretcherPool& 
     inScratchR.assign (inCap, 0.0f);
     tailL.assign (static_cast<size_t> (fastFadeSamples + 8), 0.0f);
     tailR.assign (static_cast<size_t> (fastFadeSamples + 8), 0.0f);
+    mixL.assign (static_cast<size_t> (maxBlock), 0.0f);
+    mixR.assign (static_cast<size_t> (maxBlock), 0.0f);
 
     reset();
 }
@@ -644,7 +646,20 @@ void ChopVoice::prerenderTail() noexcept
 
     // Render the running playback's 2 ms fade NOW (renderChunk applies the
     // fade through fastFading and stops the playback at zero), then free its
-    // stretchers for the new note.
+    // stretchers for the new note. The tail keeps the faded chop's send
+    // levels so its last 2 ms still feed the master delay/verb buses; when an
+    // older tail is still fading in the same buffer, the merged PCM keeps the
+    // HIGHER of the two levels (bounded ≤ 2 ms approximation).
+    if (oldRemaining > 0)
+    {
+        tailDelaySend = juce::jmax (tailDelaySend, pb.chop.delaySend);
+        tailVerbSend = juce::jmax (tailVerbSend, pb.chop.verbSend);
+    }
+    else
+    {
+        tailDelaySend = pb.chop.delaySend;
+        tailVerbSend = pb.chop.verbSend;
+    }
     pb.fastFading = true; // keeps the current fastGain if already fading
     renderPlayback (pb, tailL.data(), tailR.data(), fadeN);
     stopPlayback (pb);
@@ -653,7 +668,9 @@ void ChopVoice::prerenderTail() noexcept
     tailRemaining = juce::jmax (oldRemaining, fadeN);
 }
 
-void ChopVoice::renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept
+void ChopVoice::renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples,
+                           juce::AudioBuffer<float>* delayBus,
+                           juce::AudioBuffer<float>* verbBus) noexcept
 {
     if (numSamples <= 0 || out.getNumChannels() == 0)
         return;
@@ -662,22 +679,88 @@ void ChopVoice::renderAdd (juce::AudioBuffer<float>& out, int startSample, int n
 
     auto* outL = out.getWritePointer (0) + startSample;
     auto* outR = out.getNumChannels() > 1 ? out.getWritePointer (1) + startSample : outL;
+    auto* dL = delayBus != nullptr ? delayBus->getWritePointer (0) + startSample : nullptr;
+    auto* dR = delayBus != nullptr && delayBus->getNumChannels() > 1
+                   ? delayBus->getWritePointer (1) + startSample : dL;
+    auto* vL = verbBus != nullptr ? verbBus->getWritePointer (0) + startSample : nullptr;
+    auto* vR = verbBus != nullptr && verbBus->getNumChannels() > 1
+                   ? verbBus->getWritePointer (1) + startSample : vL;
 
     if (tailRemaining > 0)
     {
         const auto n = juce::jmin (numSamples, tailRemaining);
         for (int i = 0; i < n; ++i)
         {
-            outL[i] += tailL[static_cast<size_t> (tailPos + i)];
+            const auto tl = tailL[static_cast<size_t> (tailPos + i)];
+            const auto tr = tailR[static_cast<size_t> (tailPos + i)];
+            outL[i] += tl;
             if (outR != outL)
-                outR[i] += tailR[static_cast<size_t> (tailPos + i)];
+                outR[i] += tr;
+            if (dL != nullptr && tailDelaySend > 0.0f)
+            {
+                dL[i] += tl * tailDelaySend;
+                dR[i] += tr * tailDelaySend;
+            }
+            if (vL != nullptr && tailVerbSend > 0.0f)
+            {
+                vL[i] += tl * tailVerbSend;
+                vR[i] += tr * tailVerbSend;
+            }
         }
         tailPos += n;
         tailRemaining -= n;
     }
 
     if (pb.active)
-        renderPlayback (pb, outL, outR, numSamples);
+    {
+        const auto sendD = dL != nullptr ? pb.chop.delaySend : 0.0f;
+        const auto sendV = vL != nullptr ? pb.chop.verbSend : 0.0f;
+        if (sendD <= 0.0f && sendV <= 0.0f)
+        {
+            // Fast path (no sends): bit-identical to the Phase 3 render.
+            renderPlayback (pb, outL, outR, numSamples);
+        }
+        else
+        {
+            // Render into the per-voice scratch, then distribute: dry at unity
+            // plus the chop's send levels into the master delay/verb buses.
+            auto remaining = numSamples;
+            auto offset = 0;
+            while (remaining > 0 && pb.active)
+            {
+                const auto n = juce::jmin (remaining, maxBlock);
+                std::fill (mixL.begin(), mixL.begin() + n, 0.0f);
+                std::fill (mixR.begin(), mixR.begin() + n, 0.0f);
+                renderPlayback (pb, mixL.data(), mixR.data(), n);
+                for (int i = 0; i < n; ++i)
+                {
+                    const auto l = mixL[static_cast<size_t> (i)];
+                    const auto r = mixR[static_cast<size_t> (i)];
+                    if (outR != outL)
+                    {
+                        outL[offset + i] += l;
+                        outR[offset + i] += r;
+                    }
+                    else
+                    {
+                        outL[offset + i] += l + r; // mono fold (matches Phase 3)
+                    }
+                    if (sendD > 0.0f)
+                    {
+                        dL[offset + i] += l * sendD;
+                        dR[offset + i] += r * sendD;
+                    }
+                    if (sendV > 0.0f)
+                    {
+                        vL[offset + i] += l * sendV;
+                        vR[offset + i] += r * sendV;
+                    }
+                }
+                offset += n;
+                remaining -= n;
+            }
+        }
+    }
 
     updateUiFeedback();
 }
