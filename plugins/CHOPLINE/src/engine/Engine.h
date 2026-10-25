@@ -89,8 +89,15 @@ public:
     int addMarker (double timeSec);
     bool removeMarker (int id);
 
+    // ---- per-chop settings (Phase 3; v17 scope per_chop — model, NOT APVTS) ------
+    ChopSettings getChopSettings (int chopIndex) const;
+    /// Clamps, republishes the slice snapshot and notifies. Ringing voices
+    /// keep the settings they were triggered with (copied by value).
+    void setChopSettings (int chopIndex, const ChopSettings& settings);
+
     // ---- audition (message thread → audio thread, lock-free) --------------------
-    void audition (int chopIndex, float velocity);
+    /// startNorm 0..1 auditions from that point of the chop (overlay editor).
+    void audition (int chopIndex, float velocity, double startNorm = 0.0);
 
     // ---- pattern (message thread edits; snapshots republish automatically) --------
     state::PatternModel& getPatternModel() noexcept { return patternModel; }
@@ -138,7 +145,7 @@ private:
     PatternScheduler scheduler;                       // audio-thread transport state
     std::atomic<double> freeBpmCache { 120.0 };       // model → audio thread
 
-    struct AuditionEvent { int chopIndex = 0; float velocity = 1.0f; };
+    struct AuditionEvent { int chopIndex = 0; float velocity = 1.0f; float startNorm = 0.0f; };
     static constexpr int auditionFifoSize = 64;
     juce::AbstractFifo auditionFifo { auditionFifoSize };
     std::array<AuditionEvent, auditionFifoSize> auditionSlots {};

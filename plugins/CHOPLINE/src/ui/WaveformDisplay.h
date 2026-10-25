@@ -41,6 +41,11 @@ public:
     /// Drag description prefix for chop drags onto the grid.
     static constexpr const char* chopDragPrefix = "chopline:chops:";
 
+    /// Wired by the editor (Phase 3): selection sync (FX chip / overlay) and
+    /// the chop editor overlay (double-click a strip chop, v17).
+    std::function<void()> onSelectionChanged;
+    std::function<void()> onOpenChopEditor;
+
     void paint (juce::Graphics&) override;
 
     void mouseMove (const juce::MouseEvent&) override;

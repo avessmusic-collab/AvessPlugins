@@ -390,6 +390,8 @@ void WaveformDisplay::selectChop (int chopIndex)
     if (chopIndex >= 0)
         selection.insert (chopIndex);
     repaint();
+    if (onSelectionChanged != nullptr)
+        onSelectionChanged();
 }
 
 void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
@@ -478,17 +480,37 @@ void WaveformDisplay::mouseUp (const juce::MouseEvent& e)
     {
         selection.clear();
         selection.insert (chop);
-        engine.audition (chop, 0.9f); // click-to-audition through the voice path
+        // Click-to-audition through the voice path — but not on the second
+        // click of a double-click (that gesture opens the chop editor).
+        if (e.getNumberOfClicks() <= 1)
+            engine.audition (chop, 0.9f);
     }
     repaint();
+    if (onSelectionChanged != nullptr)
+        onSelectionChanged();
 }
 
 void WaveformDisplay::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (sample() == nullptr)
         return;
+
+    // Manual mode keeps double-click-adds-marker (spec §4); in the other
+    // modes a double-clicked chop opens the chop editor (v17) — documented
+    // reconciliation in CLAUDE.md.
     if (engine.getSliceMode() == engine::SliceMode::manual && markerIdAt (e.position.x) < 0)
+    {
         engine.addMarker (xToTime (e.position.x));
+        return;
+    }
+
+    const auto chop = chopIndexAt (e.position.x);
+    if (chop >= 0 && markerIdAt (e.position.x) < 0)
+    {
+        selectChop (chop);
+        if (onOpenChopEditor != nullptr)
+            onOpenChopEditor();
+    }
 }
 
 void WaveformDisplay::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)

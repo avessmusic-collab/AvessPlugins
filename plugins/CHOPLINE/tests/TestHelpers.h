@@ -81,6 +81,18 @@ inline float maxSampleJump (const juce::AudioBuffer<float>& buf, int channel = 0
     return maxJump;
 }
 
+/// Phase 3: all chops default to choke group 1 (spec §6 classic vocal-chop
+/// behaviour). Tests that exercise POLYPHONY turn choking off explicitly.
+inline void disableChoke (engine::Engine& eng)
+{
+    for (int i = 0; i < eng.getNumChops(); ++i)
+    {
+        auto s = eng.getChopSettings (i);
+        s.chokeGroup = 0;
+        eng.setChopSettings (i, s);
+    }
+}
+
 /// Prepares an engine at the given rate and synchronously loads a buffer.
 inline void prepareEngineWithBuffer (engine::Engine& eng, const juce::AudioBuffer<float>& source,
                                      double rate, int blockSize = 512)

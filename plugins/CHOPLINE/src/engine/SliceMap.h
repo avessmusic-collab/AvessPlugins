@@ -1,12 +1,19 @@
-// CHOPLINE — SliceMap (spec §4)
-// Slice markers and per-chop playback bounds.
+// CHOPLINE — SliceMap (spec §4, §6)
+// Slice markers, per-chop playback settings and per-chop playback bounds.
 //
 // The MODEL (SliceModel) lives on the message thread and stores markers in
 // SECONDS (so a session-rate change never moves a slice). The four slicing
 // modes all just generate markers; every mode's markers can then be edited
 // manually (drag / add / delete). The AUDIO side sees an immutable
-// SliceMapSnapshot (sample-frame chop bounds + declick fade lengths)
-// published through SnapshotExchange.
+// SliceMapSnapshot (sample-frame chop bounds + per-chop playback settings
+// converted to frames) published through SnapshotExchange.
+//
+// Phase 3: every marker carries the full per-chop settings of the chop that
+// STARTS at it (locked v17 `scope: per_chop` — model state, NOT APVTS):
+// sample-editor trims/fades/loop, playback mode, warp, pitch, release, sends,
+// unison, the AHDSR amp envelope and the choke group. Settings are copied by
+// value into the snapshot, so editing them never glitches ringing voices
+// (they finish on the settings they were triggered with).
 //
 // The single SENS control is mode-dependent (locked v17 design: lean slicing
 // controls — one knob):
@@ -35,23 +42,94 @@ enum class SliceMode : int
     manual
 };
 
+// ---- per-chop playback settings (locked v17, spec §6) ---------------------------
+
+enum class PlaybackMode : int
+{
+    oneShot = 0, // start → end, ignores event length / note-off
+    gate,        // plays for the event span / while the note is held, then releases
+    loop,        // loops loopStart..loopEnd (crossfaded) for the span / note hold
+    fitStep      // time-stretched to exactly fill the event span, pitch preserved
+};
+
+enum class WarpMode : int
+{
+    varispeed = 0, // speed & pitch together (±24 st)
+    stretch,       // Signalsmith Stretch: independent pitch, formant preserve
+    granular,      // Phase 5 (surfaced disabled in the v17 UI)
+    freeze         // Phase 5 (surfaced disabled in the v17 UI)
+};
+
+/// Settings of one chop (the chop starting at a marker). Model units:
+/// seconds / ms / normalised — converted to frames in the snapshot.
+struct ChopSettings
+{
+    // Sample editor (v17 chop_sample_editor per_chop_model_fields).
+    double startOffsetSec = 0.0; // trim of the chop start vs. its marker (signed)
+    double endOffsetSec = 0.0;   // trim of the chop end vs. the next marker (signed)
+    float fadeInMs = 2.0f;       // equal-power declick fades, 0–20 ms
+    float fadeOutMs = 2.0f;
+    double loopStart = 0.25;     // normalised 0..1 of the trimmed chop
+    double loopEnd = 0.75;       // loopStart <= loopEnd - 0.05
+    float loopXfadeMs = 10.0f;   // 0–200, clamped to half the loop at build time
+
+    // Playback (v17 overlay / FX CHOP column).
+    PlaybackMode mode = PlaybackMode::gate; // v17 default Gate
+    WarpMode warp = WarpMode::varispeed;
+    bool reverse = false;
+    int pitchSemitones = 0;   // ±24, step 1
+    float releaseMs = 80.0f;  // 5–500 — also the AHDSR release stage
+    float delaySend = 0.0f;   // 0–100 % (stored now; audible with the Phase 4 delay)
+    float verbSend = 0.0f;    // 0–100 % (stored now; audible with the Phase 4 reverb)
+    int unison = 1;           // 1–4 voices (fixed cents + stereo spread)
+
+    // AHDSR amp envelope (v17 ENVELOPE card; release is releaseMs above).
+    float attackMs = 2.0f;    // 0–500
+    float holdMs = 0.0f;      // 0–500
+    float decayMs = 160.0f;   // 5–1000
+    float sustainPct = 100.0f; // 0–100
+
+    // Engine-only (no v17 UI yet).
+    int chokeGroup = 1;         // 0 = off; default: ALL chops in group 1 (spec §6)
+    bool formantPreserve = true; // Stretch warp formant preservation
+
+    /// Returns a range-clamped copy (offsets are clamped against neighbours
+    /// in SliceModel::buildSnapshot, not here).
+    static ChopSettings clamped (ChopSettings s) noexcept;
+};
+
 struct SliceMarker
 {
     int id = 0;          // stable while the marker lives
     double timeSec = 0;  // position in the sample
-    float fadeInMs = 2.0f;  // declick fades of the chop STARTING here (0–20 ms)
-    float fadeOutMs = 2.0f;
+    ChopSettings settings; // settings of the chop STARTING at this marker
 };
 
-/// Immutable audio-thread view: chop bounds in sample frames at session rate.
+/// Immutable audio-thread view: chop bounds in sample frames at session rate
+/// plus the per-chop playback settings (copied by value into voices).
 struct SliceMapSnapshot
 {
     static constexpr int maxChops = 64;
 
     struct Chop
     {
-        juce::int64 start = 0, end = 0; // [start, end) in frames
+        juce::int64 start = 0, end = 0; // EFFECTIVE [start, end) incl. trim offsets
         int fadeInSamples = 0, fadeOutSamples = 0;
+
+        PlaybackMode mode = PlaybackMode::gate;
+        WarpMode warp = WarpMode::varispeed;
+        bool reverse = false;
+        bool formantPreserve = true;
+        float pitchSemitones = 0.0f;
+        int unison = 1;
+        int chokeGroup = 1;
+        float delaySend = 0.0f, verbSend = 0.0f; // 0..1 (Phase 4 master sends)
+
+        juce::int64 loopStart = 0, loopEnd = 0;  // absolute frames inside [start, end)
+        int loopXfadeSamples = 0;
+
+        int attackSamples = 0, holdSamples = 0, decaySamples = 0, releaseSamples = 1;
+        float sustainLevel = 1.0f; // 0..1
     };
 
     int numChops = 0;
@@ -84,6 +162,13 @@ public:
     bool moveMarker (int id, double newTimeSec, const SampleData* sample);
     int addMarker (double timeSec, const SampleData* sample); // returns id or -1
     bool removeMarker (int id);
+
+    // ---- per-chop settings (Phase 3) ----------------------------------------
+    /// Settings of chop `index` (marker order). Returns defaults when out of
+    /// range.
+    ChopSettings getChopSettings (int index) const noexcept;
+    /// Replaces chop `index` settings (range-clamped). Returns true if valid.
+    bool setChopSettings (int index, const ChopSettings& s) noexcept;
 
     void setMarkersFromState (std::vector<SliceMarker> restored);
 

@@ -33,7 +33,7 @@ void Engine::prepare (double sampleRate, int maxBlockSize, int numOutputChannels
     currentMaxBlockSize = maxBlockSize;
     currentNumChannels = numOutputChannels;
 
-    pool.prepare (sampleRate);
+    pool.prepare (sampleRate, maxBlockSize > 0 ? maxBlockSize : 512);
     pool.reset();
     scheduler.prepare (sampleRate);
 
@@ -64,7 +64,17 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
     const SliceMapSnapshot* slices = sliceNode != nullptr ? sliceNode->object.get() : nullptr;
     const PatternSnapshot* pattern = patternNode != nullptr ? patternNode->object.get() : nullptr;
 
-    struct Event { int offset = 0; int chop = 0; float gain = 1.0f; int tag = ChopVoice::tagMidi; };
+    struct Event
+    {
+        int offset = 0;
+        int chop = 0;
+        float gain = 1.0f;
+        int tag = ChopVoice::tagMidi;
+        juce::int64 gate = ChopVoice::gateNatural; // span / gateHeld / gateNatural
+        int note = -1;                             // MIDI note (noteOff pairing)
+        float startNorm = 0.0f;                    // audition-from (overlay editor)
+        bool isNoteOff = false;
+    };
     static constexpr int maxEvents = 128;
     Event events[maxEvents];
     int numEvents = 0;
@@ -94,7 +104,8 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
 
         for (int i = 0; i < numTriggers && numEvents < maxEvents; ++i)
             events[numEvents++] = { triggers[i].offset, triggers[i].chop,
-                                    triggers[i].velocity, ChopVoice::tagPattern };
+                                    triggers[i].velocity, ChopVoice::tagPattern,
+                                    triggers[i].lengthSamples, -1, 0.0f, false };
     }
 
     // Audition triggers (lock-free SPSC FIFO; UI is the producer).
@@ -109,13 +120,14 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
             for (int i = 0; i < size && numEvents < maxEvents; ++i)
             {
                 const auto& slot = auditionSlots[static_cast<size_t> (start + i)];
-                events[numEvents++] = { 0, slot.chopIndex, slot.velocity, ChopVoice::tagMidi };
+                events[numEvents++] = { 0, slot.chopIndex, slot.velocity, ChopVoice::tagMidi,
+                                        ChopVoice::gateNatural, -1, slot.startNorm, false };
             }
         }
         auditionFifo.finishedRead (size1 + size2);
     }
 
-    // MIDI note-ons → chop triggers, sample-accurate within the block.
+    // MIDI note-ons/offs → chop triggers / gate releases, sample-accurate.
     for (const auto metadata : midi)
     {
         const auto msg = metadata.getMessage();
@@ -125,7 +137,21 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
             const auto chop = msg.getNoteNumber() - context.midiBaseNote;
             if (chop >= 0 && chop < SliceMapSnapshot::maxChops && numEvents < maxEvents)
                 events[numEvents++] = { juce::jlimit (0, numSamples - 1, metadata.samplePosition),
-                                        chop, msg.getFloatVelocity(), ChopVoice::tagMidi };
+                                        chop, msg.getFloatVelocity(), ChopVoice::tagMidi,
+                                        ChopVoice::gateHeld, msg.getNoteNumber(), 0.0f, false };
+        }
+        else if (msg.isNoteOff())
+        {
+            // Gate/Loop chops release at the note-off (spec §6); One-shot/Fit
+            // ignore it inside the voice.
+            if (numEvents < maxEvents)
+            {
+                Event e;
+                e.offset = juce::jlimit (0, numSamples - 1, metadata.samplePosition);
+                e.note = msg.getNoteNumber();
+                e.isNoteOff = true;
+                events[numEvents++] = e;
+            }
         }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff() || msg.isResetAllControllers())
         {
@@ -153,9 +179,13 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
     {
         pool.renderAdd (buffer, cursor, events[i].offset - cursor);
         cursor = events[i].offset;
-        if (sample != nullptr && slices != nullptr && events[i].chop < slices->numChops)
+        if (events[i].isNoteOff)
+            pool.noteOff (events[i].note);
+        else if (sample != nullptr && slices != nullptr && events[i].chop < slices->numChops)
             pool.trigger (sample, slices->chops[static_cast<size_t> (events[i].chop)],
-                          events[i].chop, events[i].gain, events[i].tag);
+                          events[i].chop, events[i].gain, events[i].tag,
+                          events[i].gate, events[i].note,
+                          static_cast<double> (events[i].startNorm));
     }
     pool.renderAdd (buffer, cursor, numSamples - cursor);
 
@@ -338,14 +368,37 @@ bool Engine::removeMarker (int id)
 
 // ---- audition -----------------------------------------------------------------------
 
-void Engine::audition (int chopIndex, float velocity)
+void Engine::audition (int chopIndex, float velocity, double startNorm)
 {
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
     auditionFifo.prepareToWrite (1, start1, size1, start2, size2);
     if (size1 > 0)
         auditionSlots[static_cast<size_t> (start1)] = { chopIndex,
-                                                        juce::jlimit (0.0f, 1.0f, velocity) };
+                                                        juce::jlimit (0.0f, 1.0f, velocity),
+                                                        static_cast<float> (
+                                                            juce::jlimit (0.0, 1.0, startNorm)) };
     auditionFifo.finishedWrite (size1);
+}
+
+// ---- per-chop settings (Phase 3) -------------------------------------------------------
+
+ChopSettings Engine::getChopSettings (int chopIndex) const
+{
+    const juce::ScopedLock sl (modelLock);
+    return model.getChopSettings (chopIndex);
+}
+
+void Engine::setChopSettings (int chopIndex, const ChopSettings& settings)
+{
+    bool changed = false;
+    {
+        const juce::ScopedLock sl (modelLock);
+        changed = model.setChopSettings (chopIndex, settings);
+        if (changed)
+            rebuildAndPublishSlices();
+    }
+    if (changed)
+        sendChangeMessage();
 }
 
 // ---- state ----------------------------------------------------------------------------
@@ -378,8 +431,29 @@ void Engine::serializeTo (juce::ValueTree& root) const
     {
         juce::ValueTree marker (markerTag);
         marker.setProperty ("t", m.timeSec, nullptr);
-        marker.setProperty ("fi", m.fadeInMs, nullptr);
-        marker.setProperty ("fo", m.fadeOutMs, nullptr);
+        const auto& s = m.settings;
+        marker.setProperty ("fi", s.fadeInMs, nullptr);
+        marker.setProperty ("fo", s.fadeOutMs, nullptr);
+        // Phase 3 per-chop settings (missing in Phase 1/2 states → defaults).
+        marker.setProperty ("so", s.startOffsetSec, nullptr);
+        marker.setProperty ("eo", s.endOffsetSec, nullptr);
+        marker.setProperty ("ls", s.loopStart, nullptr);
+        marker.setProperty ("le", s.loopEnd, nullptr);
+        marker.setProperty ("lx", s.loopXfadeMs, nullptr);
+        marker.setProperty ("md", static_cast<int> (s.mode), nullptr);
+        marker.setProperty ("wp", static_cast<int> (s.warp), nullptr);
+        marker.setProperty ("rv", s.reverse, nullptr);
+        marker.setProperty ("pt", s.pitchSemitones, nullptr);
+        marker.setProperty ("rl", s.releaseMs, nullptr);
+        marker.setProperty ("dsn", s.delaySend, nullptr);
+        marker.setProperty ("vsn", s.verbSend, nullptr);
+        marker.setProperty ("un", s.unison, nullptr);
+        marker.setProperty ("at", s.attackMs, nullptr);
+        marker.setProperty ("hd", s.holdMs, nullptr);
+        marker.setProperty ("dc", s.decayMs, nullptr);
+        marker.setProperty ("su", s.sustainPct, nullptr);
+        marker.setProperty ("ck", s.chokeGroup, nullptr);
+        marker.setProperty ("fp", s.formantPreserve, nullptr);
         slicesTree.appendChild (marker, nullptr);
     }
 
@@ -423,8 +497,36 @@ void Engine::restoreFrom (const juce::ValueTree& root, bool synchronous)
                     continue;
                 SliceMarker m;
                 m.timeSec = static_cast<double> (child.getProperty ("t", 0.0));
-                m.fadeInMs = static_cast<float> (static_cast<double> (child.getProperty ("fi", 2.0)));
-                m.fadeOutMs = static_cast<float> (static_cast<double> (child.getProperty ("fo", 2.0)));
+                auto& s = m.settings;
+                const ChopSettings defaults;
+                auto getF = [&child] (const char* key, float def)
+                {
+                    return static_cast<float> (static_cast<double> (child.getProperty (key,
+                        static_cast<double> (def))));
+                };
+                s.fadeInMs = getF ("fi", defaults.fadeInMs);
+                s.fadeOutMs = getF ("fo", defaults.fadeOutMs);
+                s.startOffsetSec = static_cast<double> (child.getProperty ("so", 0.0));
+                s.endOffsetSec = static_cast<double> (child.getProperty ("eo", 0.0));
+                s.loopStart = static_cast<double> (child.getProperty ("ls", defaults.loopStart));
+                s.loopEnd = static_cast<double> (child.getProperty ("le", defaults.loopEnd));
+                s.loopXfadeMs = getF ("lx", defaults.loopXfadeMs);
+                s.mode = static_cast<PlaybackMode> (static_cast<int> (
+                    child.getProperty ("md", static_cast<int> (defaults.mode))));
+                s.warp = static_cast<WarpMode> (static_cast<int> (
+                    child.getProperty ("wp", static_cast<int> (defaults.warp))));
+                s.reverse = static_cast<bool> (child.getProperty ("rv", defaults.reverse));
+                s.pitchSemitones = static_cast<int> (child.getProperty ("pt", defaults.pitchSemitones));
+                s.releaseMs = getF ("rl", defaults.releaseMs);
+                s.delaySend = getF ("dsn", defaults.delaySend);
+                s.verbSend = getF ("vsn", defaults.verbSend);
+                s.unison = static_cast<int> (child.getProperty ("un", defaults.unison));
+                s.attackMs = getF ("at", defaults.attackMs);
+                s.holdMs = getF ("hd", defaults.holdMs);
+                s.decayMs = getF ("dc", defaults.decayMs);
+                s.sustainPct = getF ("su", defaults.sustainPct);
+                s.chokeGroup = static_cast<int> (child.getProperty ("ck", defaults.chokeGroup));
+                s.formantPreserve = static_cast<bool> (child.getProperty ("fp", defaults.formantPreserve));
                 pendingMarkers.push_back (m);
             }
         }

@@ -107,6 +107,27 @@ void GridStrip::NoteLengthButton::showMenu()
                         });
 }
 
+// ================================ ChopChip ===========================================
+
+void GridStrip::ChopChip::paint (juce::Graphics& g)
+{
+    const auto chop = getChop != nullptr ? getChop() : 0;
+    const auto shade = LnF::chopShade (chop);
+
+    // Swatch with the blue selection ring (v17 chop_chip.blue_ring_swatch).
+    const auto swatch = juce::Rectangle<float> (2.0f,
+        static_cast<float> (getHeight()) * 0.5f - 5.0f, 10.0f, 10.0f);
+    g.setColour (shade);
+    g.fillRoundedRectangle (swatch, 2.5f);
+    g.setColour (LnF::accent);
+    g.drawRoundedRectangle (swatch.expanded (1.5f), 3.5f, 1.0f);
+
+    g.setColour (LnF::label);
+    g.setFont (LnF::labelFont (8.5f));
+    g.drawText ("CHOP " + juce::String (chop + 1), getLocalBounds().withTrimmedLeft (20),
+                juce::Justification::centredLeft, false);
+}
+
 // ================================ BarPageSeg =========================================
 
 void GridStrip::BarPageSeg::paint (juce::Graphics& g)
@@ -678,8 +699,12 @@ void GridStrip::BoxesDisplay::mouseUp (const juce::MouseEvent&)
 void GridStrip::BoxesDisplay::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (const auto* piece = pieceAt (e.position, pieceCache))
+    {
         if (owner.onSelectChop != nullptr)
             owner.onSelectChop (piece->chop); // selects the chop in Strip A (spec §5)
+        if (owner.onOpenChopEditor != nullptr)
+            owner.onOpenChopEditor(); // and opens the chop editor (v17)
+    }
 }
 
 bool GridStrip::BoxesDisplay::keyPressed (const juce::KeyPress& key)
@@ -841,6 +866,18 @@ GridStrip::GridStrip (engine::Engine& engineToUse, juce::AudioProcessorValueTree
 
     addAndMakeVisible (boxes);
 
+    // Lane-row chop chip + '…' (v17 chop_chip / chop_more, beside the Phase 5
+    // lanes placeholder).
+    chopChip.getChop = [this] { return getEditChop != nullptr ? getEditChop() : 0; };
+    addAndMakeVisible (chopChip);
+    chopMoreButton.onClick = [this]
+    {
+        if (onOpenChopEditor != nullptr)
+            onOpenChopEditor();
+    };
+    chopMoreButton.setTooltip ("Chop settings");
+    addAndMakeVisible (chopMoreButton);
+
     syncControlsFromModel();
     engine.addChangeListener (this);
 }
@@ -921,6 +958,8 @@ void GridStrip::resized()
     barPageSeg.setBounds (198, 20, 140, 28);
     swingKnob.setBounds (928, 14, 130, 40);
     boxes.setBounds (12, 64, 1046, 190);
+    chopChip.setBounds (878, 268, 124, 20);      // v17 chop_chip (893,474 canvas)
+    chopMoreButton.setBounds (1012, 268, 46, 20); // v17 chop_more (1027,474 canvas)
 }
 
 } // namespace chopline::ui

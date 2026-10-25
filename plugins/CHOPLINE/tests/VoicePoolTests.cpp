@@ -41,6 +41,11 @@ namespace
             model.regenerate (data.get());
             slices = model.buildSnapshot (data.get());
             REQUIRE (slices.numChops == numChops);
+
+            // These tests assert simultaneous voices — turn the Phase 3
+            // default choke group off on the snapshot itself.
+            for (auto& c : slices.chops)
+                c.chokeGroup = 0;
         }
     };
 } // namespace

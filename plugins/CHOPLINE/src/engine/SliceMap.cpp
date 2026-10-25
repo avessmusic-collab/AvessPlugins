@@ -10,6 +10,28 @@
 namespace chopline::engine
 {
 
+ChopSettings ChopSettings::clamped (ChopSettings s) noexcept
+{
+    s.fadeInMs = juce::jlimit (0.0f, SliceModel::maxFadeMs, s.fadeInMs);
+    s.fadeOutMs = juce::jlimit (0.0f, SliceModel::maxFadeMs, s.fadeOutMs);
+    s.loopStart = juce::jlimit (0.0, 0.95, s.loopStart);
+    s.loopEnd = juce::jlimit (s.loopStart + 0.05, 1.0, s.loopEnd);
+    s.loopXfadeMs = juce::jlimit (0.0f, 200.0f, s.loopXfadeMs);
+    s.mode = static_cast<PlaybackMode> (juce::jlimit (0, 3, static_cast<int> (s.mode)));
+    s.warp = static_cast<WarpMode> (juce::jlimit (0, 3, static_cast<int> (s.warp)));
+    s.pitchSemitones = juce::jlimit (-24, 24, s.pitchSemitones);
+    s.releaseMs = juce::jlimit (5.0f, 500.0f, s.releaseMs);
+    s.delaySend = juce::jlimit (0.0f, 100.0f, s.delaySend);
+    s.verbSend = juce::jlimit (0.0f, 100.0f, s.verbSend);
+    s.unison = juce::jlimit (1, 4, s.unison);
+    s.attackMs = juce::jlimit (0.0f, 500.0f, s.attackMs);
+    s.holdMs = juce::jlimit (0.0f, 500.0f, s.holdMs);
+    s.decayMs = juce::jlimit (5.0f, 1000.0f, s.decayMs);
+    s.sustainPct = juce::jlimit (0.0f, 100.0f, s.sustainPct);
+    s.chokeGroup = juce::jlimit (0, 16, s.chokeGroup);
+    return s;
+}
+
 int SliceModel::gridDivisionIndex (float sensitivity01) noexcept
 {
     const auto s = juce::jlimit (0.0f, 1.0f, sensitivity01);
@@ -83,7 +105,7 @@ void SliceModel::regenerate (const SampleData* sample)
     {
         if (markers.empty())
         {
-            markers.push_back ({ nextId++, 0.0, defaultFadeMs, defaultFadeMs });
+            markers.push_back ({ nextId++, 0.0, {} });
         }
         return; // manual mode never regenerates what the user built
     }
@@ -138,7 +160,7 @@ void SliceModel::regenerate (const SampleData* sample)
         if (snapped > 0.0 && length - snapped < minGap)
             continue;
 
-        markers.push_back ({ 0, snapped, defaultFadeMs, defaultFadeMs });
+        markers.push_back ({ 0, snapped, {} });
         if (markers.size() >= SliceMapSnapshot::maxChops)
             break;
     }
@@ -189,7 +211,7 @@ int SliceModel::addMarker (double timeSec, const SampleData* sample)
         t = snapToZeroCross (*sample, t);
 
     if (markers.empty())
-        markers.push_back ({ nextId++, 0.0, defaultFadeMs, defaultFadeMs });
+        markers.push_back ({ nextId++, 0.0, {} });
 
     // Find neighbours.
     auto next = std::find_if (markers.begin(), markers.end(),
@@ -201,8 +223,25 @@ int SliceModel::addMarker (double timeSec, const SampleData* sample)
         return -1; // too close to a neighbour — no-op
 
     const auto id = nextId++;
-    markers.insert (next, { id, t, defaultFadeMs, defaultFadeMs });
+    markers.insert (next, { id, t, {} });
     return id;
+}
+
+// ---- per-chop settings (Phase 3) -----------------------------------------------
+
+ChopSettings SliceModel::getChopSettings (int index) const noexcept
+{
+    if (index < 0 || index >= static_cast<int> (markers.size()))
+        return {};
+    return markers[static_cast<size_t> (index)].settings;
+}
+
+bool SliceModel::setChopSettings (int index, const ChopSettings& s) noexcept
+{
+    if (index < 0 || index >= static_cast<int> (markers.size()))
+        return false;
+    markers[static_cast<size_t> (index)].settings = ChopSettings::clamped (s);
+    return true;
 }
 
 bool SliceModel::removeMarker (int id)
@@ -227,13 +266,12 @@ void SliceModel::setMarkersFromState (std::vector<SliceMarker> restored)
             break;
         m.id = nextId++;
         m.timeSec = juce::jmax (0.0, m.timeSec);
-        m.fadeInMs = juce::jlimit (0.0f, maxFadeMs, m.fadeInMs);
-        m.fadeOutMs = juce::jlimit (0.0f, maxFadeMs, m.fadeOutMs);
+        m.settings = ChopSettings::clamped (m.settings);
         markers.push_back (m);
     }
 
     if (! markers.empty() && markers.front().timeSec > 1.0e-9)
-        markers.insert (markers.begin(), { nextId++, 0.0, defaultFadeMs, defaultFadeMs });
+        markers.insert (markers.begin(), { nextId++, 0.0, {} });
 }
 
 SliceMapSnapshot SliceModel::buildSnapshot (const SampleData* sample) const
@@ -244,29 +282,77 @@ SliceMapSnapshot SliceModel::buildSnapshot (const SampleData* sample) const
 
     const auto rate = sample->sessionRate;
     const auto totalFrames = sample->numFrames();
+    const auto lengthSec = sample->lengthSeconds();
+    const auto minLen = minGapSeconds();
+
+    auto msToSamples = [rate] (float ms)
+    {
+        return static_cast<int> (std::lround (static_cast<double> (ms) * 0.001 * rate));
+    };
 
     for (size_t i = 0; i < markers.size() && snap.numChops < SliceMapSnapshot::maxChops; ++i)
     {
-        const auto startSec = markers[i].timeSec;
-        const auto endSec = i + 1 < markers.size() ? markers[i + 1].timeSec
-                                                   : sample->lengthSeconds();
+        const auto s = ChopSettings::clamped (markers[i].settings);
 
-        auto start = juce::jlimit<juce::int64> (0, totalFrames,
-                                                static_cast<juce::int64> (std::llround (startSec * rate)));
-        auto end = juce::jlimit<juce::int64> (0, totalFrames,
-                                              static_cast<juce::int64> (std::llround (endSec * rate)));
-        if (end - start < 2)
-            continue;
+        const auto baseStart = markers[i].timeSec;
+        const auto baseEnd = i + 1 < markers.size() ? markers[i + 1].timeSec : lengthSec;
 
+        // v17 trim limits: start ∈ [previous chop marker, effEnd − minLen],
+        // end ∈ [effStart + minLen, end of the NEXT chop].
+        const auto prevBound = i > 0 ? markers[i - 1].timeSec : 0.0;
+        const auto nextBound = i + 2 < markers.size() ? markers[i + 2].timeSec : lengthSec;
+
+        auto effEndSec = baseEnd + s.endOffsetSec;
+        effEndSec = juce::jlimit (juce::jmin (baseStart + minLen, nextBound), nextBound, effEndSec);
+
+        auto startHi = effEndSec - minLen;
+        if (startHi < prevBound)
+            startHi = prevBound; // degenerate (minLen grown after slicing) — keep safe
+        const auto effStartSec = juce::jlimit (prevBound, startHi, baseStart + s.startOffsetSec);
+
+        const auto start = juce::jlimit<juce::int64> (0, totalFrames,
+            static_cast<juce::int64> (std::llround (effStartSec * rate)));
+        const auto end = juce::jmax (start, juce::jlimit<juce::int64> (0, totalFrames,
+            static_cast<juce::int64> (std::llround (effEndSec * rate))));
+
+        // A degenerate chop (< 2 frames) still occupies its slot so snapshot
+        // indices stay aligned with marker indices (triggering/editing chop k
+        // must always address marker k); the voice rejects it silently.
         auto& chop = snap.chops[static_cast<size_t> (snap.numChops)];
         chop.start = start;
         chop.end = end;
 
-        const auto half = static_cast<int> ((end - start) / 2);
-        chop.fadeInSamples = juce::jlimit (0, half,
-            static_cast<int> (std::lround (static_cast<double> (markers[i].fadeInMs) * 0.001 * rate)));
-        chop.fadeOutSamples = juce::jlimit (0, half,
-            static_cast<int> (std::lround (static_cast<double> (markers[i].fadeOutMs) * 0.001 * rate)));
+        const auto chopFrames = end - start;
+        const auto half = static_cast<int> (chopFrames / 2);
+        chop.fadeInSamples = juce::jlimit (0, half, msToSamples (s.fadeInMs));
+        chop.fadeOutSamples = juce::jlimit (0, half, msToSamples (s.fadeOutMs));
+
+        chop.mode = s.mode;
+        chop.warp = s.warp;
+        chop.reverse = s.reverse;
+        chop.formantPreserve = s.formantPreserve;
+        chop.pitchSemitones = static_cast<float> (s.pitchSemitones);
+        chop.unison = s.unison;
+        chop.chokeGroup = s.chokeGroup;
+        chop.delaySend = s.delaySend / 100.0f;
+        chop.verbSend = s.verbSend / 100.0f;
+
+        chop.loopStart = start + static_cast<juce::int64> (std::llround (s.loopStart
+                             * static_cast<double> (chopFrames)));
+        chop.loopEnd = start + static_cast<juce::int64> (std::llround (s.loopEnd
+                           * static_cast<double> (chopFrames)));
+        // Non-inverting clamps (a tiny chop may not fit a loop at all — the
+        // voice only engages looping when loopEnd > loopStart + 1).
+        chop.loopStart = juce::jlimit (start, end, chop.loopStart);
+        chop.loopEnd = juce::jlimit (chop.loopStart, end, chop.loopEnd);
+        const auto halfLoop = static_cast<int> ((chop.loopEnd - chop.loopStart) / 2);
+        chop.loopXfadeSamples = juce::jlimit (0, halfLoop, msToSamples (s.loopXfadeMs));
+
+        chop.attackSamples = juce::jmax (0, msToSamples (s.attackMs));
+        chop.holdSamples = juce::jmax (0, msToSamples (s.holdMs));
+        chop.decaySamples = juce::jmax (1, msToSamples (s.decayMs));
+        chop.releaseSamples = juce::jmax (1, msToSamples (s.releaseMs));
+        chop.sustainLevel = s.sustainPct / 100.0f;
 
         ++snap.numChops;
     }

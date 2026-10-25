@@ -37,6 +37,7 @@ namespace
         eng.setSliceMode (engine::SliceMode::equal);
         eng.setSensitivity (0.0f); // → 2 slices
         REQUIRE (eng.getNumChops() == 2);
+        disableChoke (eng); // these tests assert 2-voice polyphony (Phase 3 chokes by default)
     }
 } // namespace
 

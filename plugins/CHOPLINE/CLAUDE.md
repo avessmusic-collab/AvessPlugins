@@ -5,7 +5,7 @@ is `SPEC.md` (user-authored); the locked visual direction is the v17 mockup
 (`.ideas/mockups/v17-ui.yaml`, see `.ideas/creative-brief.md` "UI Design — FINAL").
 Work phase by phase (spec §11) and STOP after each phase for user approval.
 
-**Current phase: 2 (Grid sequencer) — complete, awaiting approval.**
+**Current phase: 3 (Chop FX / warp engine) — complete, awaiting approval.**
 
 ## Build commands
 
@@ -193,6 +193,114 @@ Do NOT install to system plugin folders until the user asks.
   Phase 1-shaped state (no PATTERNS child) restores to default patterns —
   unit-tested, as is the full pattern round trip (tree equivalence).
 
+## Decisions made (Phase 3 — Chop FX / warp engine)
+
+- **Per-chop settings live in the slice model, NOT APVTS** (locked v17
+  `scope: per_chop`): `engine::ChopSettings` rides on each `SliceMarker`
+  (the chop STARTING at the marker) — trims (startOffset/endOffset, seconds),
+  fades, loop (start/end normalised + xfade ms), mode, warp, reverse, pitch
+  ±24 st, release 5–500 ms, delay/verb sends, unison 1–4, AHDSR, choke group,
+  formantPreserve. Serialized as extra properties on the `M` marker children
+  (`so eo ls le lx md wp rv pt rl dsn vsn un at hd dc su ck fp`); Phase 1/2
+  states (t/fi/fo only) load with defaults — unit-tested. Snapshot `Chop`
+  carries everything converted to frames; voices COPY the struct at trigger,
+  so a settings edit never glitches a ringing voice (unit-tested).
+- **Behaviour change from Phase 2**: default mode is **Gate** (v17) — grid
+  spans now truncate playback (release 80 ms) — and ALL chops default to
+  **choke group 1** (spec §6 classic vocal-chop monophony). Tests that assert
+  polyphony disable choke explicitly (`test::disableChoke`). Choke group 0 =
+  off. No choke UI yet (v17 has none) — model field only.
+- **Signalsmith Stretch 1.4.0** pinned via FetchContent (MIT; its CMake pins
+  signalsmith-linear 0.6.4, also MIT — both in THIRD_PARTY_LICENSES.md).
+  `GIT_SUBMODULES ""` skips its cmd/ tooling. Headers included through
+  `StretcherPool.h` behind warning-suppression pragmas (-Weverything off for
+  the include; our -Werror stays on for our code).
+- **Stretcher budget**: 16 DEDICATED stretchers (one per voice — a stretch
+  chop can always sound) + 8 SHARED for unison streams 2–4; when the shared
+  pool is exhausted extra unison copies are silently dropped (graceful
+  degradation). All configured + WARMED in prepare (one outputSeek + process
+  at the worst-case rate) so audio-thread reset/seek/process never allocate —
+  covered by the allocation-detector test (stretch + unison + choke + all
+  modes over 1000 blocks). StretcherPool::prepare early-outs when rate/block
+  are unchanged (pluginval calls prepareToPlay repeatedly).
+- **Live per-voice stretch, no background pre-render**: spec §6 allows
+  pre-render per chop, but Fit's stretch ratio depends on the EVENT SPAN (and
+  Gate/Loop interact with live release), so pre-render cannot cover the
+  general case; live stretch with `outputSeek()` pre-roll (spec §6 "pre-roll
+  inputLatency()") starts chops on time (unit-tested ≤ 2 ms of the trigger
+  offset). `splitComputation=true` spreads FFT work across process calls.
+  Each trigger of a stretch voice costs a one-off outputSeek burst
+  (~outputLatency samples of processing) — profile CPU in the DAW test; the
+  Eco switch is Phase 5.
+- **Varispeed** = fractional-rate playback with catmull-rom (4-point)
+  interpolation; EXACT integer positions take a bit-exact fast path, so
+  pitch 0 reproduces Phase 1/2 renders sample-for-sample. Tape-stop/start
+  curves (spec §6) deferred — not in v17.
+- **Fit step** forces the STRETCH engine regardless of the warp choice
+  (pitch preserved by definition); input rate clamped to 0.25×–4× (spec §6
+  stretch range): a chop > 4× the span gates at the span end, a chop < 0.25×
+  the span ends early. A span-less Fit trigger (plain MIDI note / audition)
+  plays as One-shot with the chop's own warp (documented decision).
+- **Stretch warp** = time 1:1, pitch independent (v17 has no time knob),
+  formant preserve ON by default (`setFormantSemitones (0, true)`,
+  `setFormantBase (0)` auto pitch, tonality limit 8000 Hz/rate). The
+  formantPreserve flag is engine/state only — v17 surfaces NO formant toggle
+  (open question).
+- **Unison constants** (documented for taste-tuning): cents spread per count
+  {0} / {−7,+7} / {−10,0,+10} / {−12,−4,+4,+12}; stereo positions {0} /
+  {∓0.6} / {∓0.7,0} / {∓0.8,∓0.3}; balance-law panning (centre = unity, so
+  unison 1 is bit-identical to Phase 2) and 1/√N gain compensation. Unison
+  applies in Varispeed (detuned rates) and Stretch (detuned transpose per
+  stream, own stretcher).
+- **Loop mode**: forward only (spec's ping-pong dropped with v17's lean UI),
+  LINEAR crossfade into the pre-loop content (correlated material at the loop
+  point — equal-power would bump the level; DC stays flat, unit-tested
+  click-free); xfade clamped to half the loop AND the available pre-loop
+  audio (loopStart 0 → no crossfade). Keeps looping through the release.
+  Reverse+Loop maps the brace into the reversed (logical) domain.
+- **Playback/gate semantics**: pattern events gate for their span (computed
+  at trigger from the current tempo — a later tempo change doesn't re-scale a
+  ringing gate); MIDI notes gate while held (note-offs are sample-accurate —
+  merged into the same sorted event list as note-ons — and one note-off
+  closes only the OLDEST voice still holding that note, so overlapping
+  same-note retriggers keep the newer instance ringing); audition gates for
+  one chop's worth. One-shot and Fit ignore note-off (spec §6). AHDSR: linear
+  attack/decay/release segments; chop RELEASE = the AHDSR release stage. A
+  hard output cut (Fit/stretch end) hides under a 32-sample micro-fade.
+- **Steal/choke never allocates or clicks**: a retrigger/steal PRERENDERS the
+  old playback's 2 ms fade into a per-voice PCM tail buffer immediately and
+  frees its stretchers for the new note (the tail holds no sample/stretcher
+  refs); choke/all-notes-off/transport-stop fast-fade the live playback
+  (2 ms). Choke fires on any trigger source against every other ringing voice
+  in the group.
+- **Delay/verb sends are stored + surfaced (overlay knobs) but routed
+  nowhere** until the Phase 4 master delay/reverb land.
+- **Granular/Freeze**: v17 WARP seg shows them DISABLED (tooltip "Phase 5");
+  the engine plays such chops as Varispeed if a hand-edited state contains
+  them.
+- **UI**: chop editor overlay (800×468 at 150,120; scrim/Esc/✕ close) with
+  the v17 sample editor — S/E flags (blue #5b87f5, zero-cross snap, ±7 px hit
+  zones, double-click resets), fade corner grips + wedges, loop brace + bars
+  + xfade diamond (60 px ≈ 200 ms, Loop only), seconds ruler, reverse
+  chevron, click-to-audition from that point (reverse plays backwards, Loop
+  wraps). FX page: MAIN|FX seg + Tab/M/F (both pages stay alive, VBlank keeps
+  ticking); CHOP column = PLAYBACK (mode/reverse/warp mirrors — same model
+  fields, separate attachments) + ENVELOPE (4-handle AHDSR display, hovered
+  handle shows its value, knobs mirror); MASTER column = Phase 4 placeholder.
+  Chop chip + '…' in the grid's lane row (lanes placeholder kept). Selection
+  sync: strip click / box double-click / keys 1–8 / FX arrows all drive ONE
+  selection (WaveformDisplay.onSelectionChanged).
+- **Audition playhead is the blue accent hairline**, not v13's white: the
+  "white playhead / dark screen" note in v17's chop_editor is inherited from
+  the v13 dark skin; v17's own selftest says the editor draws dark strokes on
+  light panels, where white would be invisible.
+- **Double-click reconciliation**: Manual slice mode keeps
+  double-click-adds-marker (spec §4); in the other modes double-clicking a
+  chop opens the overlay (v17). '…' and Enter open it in every mode.
+- **MIDI base-note test hooks unchanged**; new dev hook
+  `CHOPLINE_UI_VIEW=overlay|fx` switches the view before `CHOPLINE_UI_SNAPSHOT`
+  fires (Standalone only).
+
 ## Known issues / notes
 
 - **auval not run locally**: validating an AU requires the component to be
@@ -228,8 +336,29 @@ Do NOT install to system plugin folders until the user asks.
 - The boxes display rebuilds its cell/piece geometry per paint (≤24 cells,
   ≤256 events, message thread only) — simple and fast enough; cache if the
   Phase 5 lane editor makes paints heavier.
+- **Stretch CPU is untested against the spec §8 budget** (<5% of an M1 core
+  with 8 stretch voices): per-trigger outputSeek bursts and per-stream FFTs
+  are the hot spots. Measure during the Phase 3 DAW test; mitigations ready:
+  presetCheaper for an Eco mode (Phase 5 quality switch), smaller shared
+  unison pool.
+- **Gate length / Fit ratio are frozen at trigger time** — a tempo change
+  mid-note doesn't re-scale a ringing gate or an in-flight Fit stretch (the
+  next trigger follows the new tempo). Matches how most samplers behave.
+- **Steal tails are raw PCM** (no sample/stretcher references), so they
+  survive — and are ignored by — sample/snapshot swaps and the GC by design.
+- **prepareToPlay warms 24 stretchers** (~100 ms worst case, message thread,
+  skipped when rate/block size are unchanged). First-open cost only.
+- **VoiceView normalised positions are relative to the EFFECTIVE (trimmed)
+  chop**; Strip A playheads still map them over the untrimmed marker span, so
+  a heavily trimmed chop's strip playhead is slightly offset (the overlay
+  editor maps it correctly). Cosmetic; revisit with the Phase 5 polish.
 
 ## Open questions
+
+- **Rename pending**: the user will change the plugin's name later
+  (decision 2026-10-25, before release). Keep `PLUGIN_CODE Chpl` etc. until
+  the new name lands; expect a rename pass (CMake PRODUCT_NAME, wordmark,
+  bundle IDs, docs) in a later phase.
 
 - **JUCE licence tier**: confirm the JUCE 9 revenue-cap tier and buy the
   right licence before any public release (see THIRD_PARTY_LICENSES.md).
@@ -249,3 +378,16 @@ Do NOT install to system plugin folders until the user asks.
 - **Swing feel**: implemented literally per spec — the even step is delayed by
   swing% of one step (75 % max keeps order). If the user expects MPC-style
   percentages (50 % = straight), remap the knob in Phase 5 polish.
+- **Pitch envelope / glide and scale lock (spec §6) are deferred**: v17 has
+  no UI for them (no glide/curve/scale controls anywhere). Engine-side they
+  would slot into the per-chop settings + voice pitch path; ask the user
+  whether they return in Phase 5 (advanced drawer?) or get cut.
+- **Formant preserve has no v17 control** (spec §6 wants on/off + shift
+  ±12 st): the engine stores per-chop formantPreserve (default ON, the vocal
+  default) and it round-trips, but nothing surfaces it. Candidate for the
+  Phase 5 advanced drawer; formant SHIFT is not implemented yet.
+- **Unison spread constants** (cents/pan tables, 1/√N) are engineering
+  guesses — tune by ear with the user on vocals during the Phase 3 test.
+- **Choke group UI**: spec §6 default (all chops group 1) is live, but there
+  is no way to change groups from the UI (v17 has none). Decide in Phase 5
+  whether groups get surfaced or stay a fixed behaviour.

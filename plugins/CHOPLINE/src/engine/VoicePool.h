@@ -1,8 +1,10 @@
-// CHOPLINE — VoicePool (spec §3)
-// Fixed pool of 16 preallocated ChopVoices. A trigger takes a free voice, or
-// steals the oldest one (the voice itself moves its running stream into a
-// 2 ms fast-fading tail, so stealing never clicks). Everything audio-thread
-// safe: no allocation, the pool is a plain std::array.
+// CHOPLINE — VoicePool (spec §3, §6)
+// Fixed pool of 16 preallocated ChopVoices plus the StretcherPool they draw
+// from. A trigger takes a free voice, or steals the oldest one (the voice
+// prerenders a 2 ms fade tail, so stealing never clicks). Choke groups
+// (spec §6, default: all chops in group 1): a new trigger fast-fades every
+// other ringing voice in its group. Everything audio-thread safe: no
+// allocation, plain std::arrays.
 
 #pragma once
 
@@ -18,10 +20,13 @@ class VoicePool final
 public:
     static constexpr int numVoices = 16;
 
-    void prepare (double sampleRate) noexcept
+    /// Message thread (prepareToPlay). Configures + warms the stretchers.
+    void prepare (double sampleRate, int maxBlockSize = 512)
     {
+        stretchers.prepare (sampleRate, maxBlockSize);
+        int index = 0;
         for (auto& v : voices)
-            v.prepare (sampleRate);
+            v.prepare (sampleRate, maxBlockSize, stretchers, index++);
         nextStamp = 1;
     }
 
@@ -33,7 +38,9 @@ public:
 
     // ---- audio thread -------------------------------------------------------
     void trigger (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
-                  int chopIndex, float gain, int tag = ChopVoice::tagMidi) noexcept
+                  int chopIndex, float gain, int tag = ChopVoice::tagMidi,
+                  juce::int64 gateSamples = ChopVoice::gateNatural,
+                  int midiNote = -1, double startNorm = 0.0) noexcept
     {
         ChopVoice* chosen = nullptr;
         for (auto& v : voices)
@@ -44,14 +51,37 @@ public:
                 break;
             }
         }
-        if (chosen == nullptr) // steal the oldest (its tail declicks the takeover)
+        if (chosen == nullptr) // steal the oldest (its prerendered tail declicks)
         {
             chosen = &voices[0];
             for (auto& v : voices)
                 if (v.getStamp() < chosen->getStamp())
                     chosen = &v;
         }
-        chosen->trigger (sample, chop, chopIndex, gain, nextStamp++, tag);
+
+        // Choke (spec §6): fast-fade every OTHER ringing voice in the group
+        // (the chosen voice's own retrigger is declicked by its steal tail).
+        if (chop.chokeGroup > 0)
+            for (auto& v : voices)
+                if (&v != chosen && v.isActive() && v.getChokeGroup() == chop.chokeGroup)
+                    v.fastRelease();
+
+        chosen->trigger (sample, chop, chopIndex, gain, nextStamp++, tag,
+                         gateSamples, midiNote, startNorm);
+    }
+
+    /// The OLDEST Gate/Loop voice still holding this MIDI note enters its
+    /// release stage (overlapping same-note retriggers keep the newer
+    /// instance ringing — one note-off closes one note-on).
+    void noteOff (int midiNote) noexcept
+    {
+        ChopVoice* oldest = nullptr;
+        for (auto& v : voices)
+            if (v.isNoteHeld (midiNote)
+                && (oldest == nullptr || v.getStamp() < oldest->getStamp()))
+                oldest = &v;
+        if (oldest != nullptr)
+            oldest->noteOff (midiNote);
     }
 
     void renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept
@@ -100,6 +130,7 @@ public:
 
 private:
     std::array<ChopVoice, numVoices> voices;
+    StretcherPool stretchers;
     std::uint64_t nextStamp = 1;
 };
 

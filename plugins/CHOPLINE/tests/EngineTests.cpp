@@ -98,6 +98,7 @@ namespace
         eng.setSliceMode (engine::SliceMode::equal);
         eng.setSensitivity (6.0f / 62.0f);      // → exactly 8 equal slices
         REQUIRE (eng.getNumChops() == 8);
+        disableChoke (eng); // these tests assert polyphony (Phase 3 chokes by default)
     }
 } // namespace
 
@@ -185,6 +186,23 @@ TEST_CASE ("Audio thread allocates nothing (allocation detector over many blocks
     for (int i = 0; i < 16; ++i)
         REQUIRE (pm.addEvent (0, i / 16.0, 1.0 / 16.0, i % 8) >= 0);
 
+    // Phase 3 (the hard one, spec §12): stretch voices + choke + unison + all
+    // playback modes must stay allocation-free too.
+    for (int i = 0; i < 8; ++i)
+    {
+        auto s = eng.getChopSettings (i);
+        s.chokeGroup = i % 2 == 0 ? 1 : 0;
+        s.unison = 1 + (i % 3);
+        s.pitchSemitones = (i % 5) - 2;
+        s.warp = i % 2 == 0 ? engine::WarpMode::stretch : engine::WarpMode::varispeed;
+        s.mode = i == 3 ? engine::PlaybackMode::loop
+               : i == 5 ? engine::PlaybackMode::fitStep
+               : i == 6 ? engine::PlaybackMode::oneShot
+                        : engine::PlaybackMode::gate;
+        s.reverse = i == 7;
+        eng.setChopSettings (i, s);
+    }
+
     juce::AudioBuffer<float> out (2, 512);
 
     // Prebuild MIDI buffers outside the armed region.
@@ -196,12 +214,17 @@ TEST_CASE ("Audio thread allocates nothing (allocation detector over many blocks
     SimHost host;
     host.swingPct = 55.0f;
 
-    // Warm-up (first calls may touch lazily-initialised library state).
+    // Warm-up (first calls may touch lazily-initialised library state): run a
+    // full pattern bar so every chop — stretch, unison, loop, fit, reverse —
+    // has triggered at least once before the detector arms.
     eng.audition (1, 0.8f);
     eng.process (out, notes, host.ctx());
     host.advance (512);
-    eng.process (out, empty, host.ctx());
-    host.advance (512);
+    for (int b = 0; b < 200; ++b)
+    {
+        eng.process (out, empty, host.ctx());
+        host.advance (512);
+    }
 
     // ~10 s of audio at 512-sample blocks with steady triggering (spec §12),
     // including a transport stop/start and a loop jump mid-run.

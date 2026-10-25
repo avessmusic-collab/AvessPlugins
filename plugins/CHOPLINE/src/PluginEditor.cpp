@@ -1,4 +1,4 @@
-// CHOPLINE — PluginEditor implementation (Phase 1). See header.
+// CHOPLINE — PluginEditor implementation. See header.
 
 #include "PluginEditor.h"
 
@@ -53,15 +53,28 @@ void ChoplineAudioProcessorEditor::PageSeg::paint (juce::Graphics& g)
     g.setColour (LnF::hairline());
     g.drawRoundedRectangle (b, 7.0f, 1.0f);
 
-    auto left = b.removeFromLeft (b.getWidth() * 0.5f).reduced (2.0f);
-    g.setColour (LnF::ink);
-    g.fillRoundedRectangle (left, 5.0f);
+    const auto current = getPage != nullptr ? getPage() : 0;
+    const char* names[] = { "MAIN", "FX" };
+    const auto segW = b.getWidth() * 0.5f;
+    for (int i = 0; i < 2; ++i)
+    {
+        auto seg = juce::Rectangle<float> (b.getX() + segW * static_cast<float> (i),
+                                           b.getY(), segW, b.getHeight()).reduced (2.0f);
+        if (i == current)
+        {
+            g.setColour (LnF::ink);
+            g.fillRoundedRectangle (seg, 5.0f);
+        }
+        g.setFont (LnF::labelFont (8.0f));
+        g.setColour (i == current ? juce::Colours::white : LnF::label);
+        g.drawText (names[i], seg.toNearestInt(), juce::Justification::centred, false);
+    }
+}
 
-    g.setFont (LnF::labelFont (8.0f));
-    g.setColour (juce::Colours::white);
-    g.drawText ("MAIN", left.toNearestInt(), juce::Justification::centred, false);
-    g.setColour (LnF::textTertiary); // FX page lands in Phase 3
-    g.drawText ("FX", b.reduced (2.0f).toNearestInt(), juce::Justification::centred, false);
+void ChoplineAudioProcessorEditor::PageSeg::mouseDown (const juce::MouseEvent& e)
+{
+    if (setPage != nullptr && getWidth() > 0)
+        setPage (e.position.x < static_cast<float> (getWidth()) * 0.5f ? 0 : 1);
 }
 
 void ChoplineAudioProcessorEditor::GearButton::paintButton (juce::Graphics& g,
@@ -187,10 +200,13 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
       midiDot (p.getEngine()),
       samplerStrip (p.getEngine()),
       gridStrip (p.getEngine(), p.getState()),
+      fxPage (p.getEngine()),
+      chopOverlay (p.getEngine()),
       vblank (this, [this]
       {
           samplerStrip.animationTick();
           gridStrip.animationTick();
+          chopOverlay.animationTick();
           midiDot.tick();
           if (--gcCountdown <= 0)
           {
@@ -219,7 +235,9 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
     canvas.addAndMakeVisible (presetNext);
 
     canvas.addAndMakeVisible (midiDot);
-    pageSeg.setInterceptsMouseClicks (false, false); // FX page lands in Phase 3
+
+    pageSeg.getPage = [this] { return page; };
+    pageSeg.setPage = [this] (int newPage) { setPage (newPage); };
     canvas.addAndMakeVisible (pageSeg);
 
     gearButton.onClick = [this] { openSettingsFlyout(); };
@@ -230,12 +248,26 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
     canvas.addAndMakeVisible (beatRepeatPlaceholder);
     canvas.addAndMakeVisible (masterPlaceholder);
 
-    // Shared chop selection: grid paints Strip A's selection; double-clicking
-    // a filled box selects that chop back in Strip A (spec §5).
-    gridStrip.getSelectedChops = [this] { return samplerStrip.getWaveform().getSelectedChops(); };
-    gridStrip.onSelectChop = [this] (int chop) { samplerStrip.getWaveform().selectChop (chop); };
+    canvas.addChildComponent (fxPage); // FX page starts hidden (page 0 = MAIN)
+    canvas.addChildComponent (chopOverlay); // topmost
 
-    setWantsKeyboardFocus (true); // Cmd/Ctrl-Z fallback when the grid lacks focus
+    // Shared chop selection: grid paints Strip A's selection; double-clicking
+    // a filled box selects that chop back in Strip A (spec §5) and opens the
+    // chop editor (v17 chop_editing_without_panel).
+    gridStrip.getSelectedChops = [this] { return samplerStrip.getWaveform().getSelectedChops(); };
+    gridStrip.onSelectChop = [this] (int chop) { setSelectedChop (chop); };
+    gridStrip.getEditChop = [this] { return selectedChop(); };
+    gridStrip.onOpenChopEditor = [this] { openChopEditor (selectedChop()); };
+
+    samplerStrip.getWaveform().onSelectionChanged = [this] { selectionChanged(); };
+    samplerStrip.getWaveform().onOpenChopEditor = [this] { openChopEditor (selectedChop()); };
+
+    fxPage.getChop = [this] { return selectedChop(); };
+    fxPage.setChop = [this] (int chop) { setSelectedChop (chop); };
+
+    chopOverlay.onClose = [this] { closeChopEditor(); };
+
+    setWantsKeyboardFocus (true); // page keys + Cmd/Ctrl-Z fallback
 
     // Resizable 75%–200% of 1100x720, fixed aspect ratio (spec §9).
     setResizable (true, true);
@@ -280,7 +312,24 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
                                     chop % juce::jmax (1, engine.getNumChops()));
                     ++chop;
                 }
-                safe->samplerStrip.getWaveform().selectChop (1);
+                safe->setSelectedChop (1);
+            });
+        }
+
+        // Dev-only: CHOPLINE_UI_VIEW=overlay|fx switches the view before the
+        // snapshot fires (Phase 3 screenshots).
+        const auto uiView = juce::SystemStats::getEnvironmentVariable ("CHOPLINE_UI_VIEW", {});
+        if (uiView == "overlay" || uiView == "fx")
+        {
+            juce::Timer::callAfterDelay (5500,
+                [safe = juce::Component::SafePointer<ChoplineAudioProcessorEditor> (this), uiView]
+            {
+                if (safe == nullptr)
+                    return;
+                if (uiView == "fx")
+                    safe->setPage (1);
+                else
+                    safe->openChopEditor (safe->selectedChop());
             });
         }
 
@@ -312,6 +361,69 @@ ChoplineAudioProcessorEditor::~ChoplineAudioProcessorEditor()
     setLookAndFeel (nullptr);
 }
 
+// ---- pages / selection / overlay ----------------------------------------------------
+
+void ChoplineAudioProcessorEditor::setPage (int newPage)
+{
+    newPage = juce::jlimit (0, 1, newPage);
+    if (newPage == page && chopOverlay.isVisible() == false)
+    {
+        pageSeg.repaint();
+        return;
+    }
+    page = newPage;
+    chopOverlay.setVisible (false); // switching closes the overlay (v17 persistence)
+
+    const bool mainVisible = page == 0;
+    samplerStrip.setVisible (mainVisible);
+    gridStrip.setVisible (mainVisible);
+    beatRepeatPlaceholder.setVisible (mainVisible);
+    masterPlaceholder.setVisible (mainVisible);
+    fxPage.setVisible (! mainVisible);
+    if (! mainVisible)
+        fxPage.refresh();
+    pageSeg.repaint();
+}
+
+int ChoplineAudioProcessorEditor::selectedChop()
+{
+    const auto chops = samplerStrip.getWaveform().getSelectedChops();
+    return chops.empty() ? 0 : chops.front();
+}
+
+void ChoplineAudioProcessorEditor::setSelectedChop (int chop)
+{
+    const auto numChops = processorRef.getEngine().getNumChops();
+    if (numChops <= 0)
+        return;
+    samplerStrip.getWaveform().selectChop (juce::jlimit (0, numChops - 1, chop));
+    // selectChop fires onSelectionChanged → selectionChanged().
+}
+
+void ChoplineAudioProcessorEditor::selectionChanged()
+{
+    gridStrip.repaint();
+    fxPage.refresh();
+    if (chopOverlay.isVisible())
+        chopOverlay.setChop (selectedChop());
+}
+
+void ChoplineAudioProcessorEditor::openChopEditor (int chop)
+{
+    if (processorRef.getEngine().getNumChops() <= 0)
+        return;
+    setSelectedChop (chop);
+    chopOverlay.setChop (selectedChop());
+    chopOverlay.toFront (false);
+    chopOverlay.setVisible (true);
+}
+
+void ChoplineAudioProcessorEditor::closeChopEditor()
+{
+    chopOverlay.setVisible (false);
+    grabKeyboardFocus();
+}
+
 void ChoplineAudioProcessorEditor::openSettingsFlyout()
 {
     auto content = std::make_unique<SettingsFlyout> (processorRef.getState(),
@@ -329,6 +441,42 @@ bool ChoplineAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
             undo.redo();
         else
             undo.undo();
+        return true;
+    }
+
+    if (key.getModifiers().isAnyModifierKeyDown())
+        return false;
+
+    // v17 keyboard map: Tab toggles the page, M/F jump, 1–8 select the chop,
+    // Enter opens the chop editor, Esc closes it.
+    if (key.isKeyCode (juce::KeyPress::tabKey))
+    {
+        setPage (1 - page);
+        return true;
+    }
+    if (key.isKeyCode ('m') || key.isKeyCode ('M'))
+    {
+        setPage (0);
+        return true;
+    }
+    if (key.isKeyCode ('f') || key.isKeyCode ('F'))
+    {
+        setPage (1);
+        return true;
+    }
+    if (key.getKeyCode() >= '1' && key.getKeyCode() <= '8')
+    {
+        setSelectedChop (key.getKeyCode() - '1');
+        return true;
+    }
+    if (key.isKeyCode (juce::KeyPress::returnKey))
+    {
+        openChopEditor (selectedChop());
+        return true;
+    }
+    if (key.isKeyCode (juce::KeyPress::escapeKey) && chopOverlay.isVisible())
+    {
+        closeChopEditor();
         return true;
     }
     return false;
@@ -358,6 +506,9 @@ void ChoplineAudioProcessorEditor::resized()
     gridStrip.setBounds (15, 206, 1070, 379);
     beatRepeatPlaceholder.setBounds (15, 593, 500, 112);
     masterPlaceholder.setBounds (523, 593, 562, 112);
+
+    fxPage.setBounds (0, 0, designWidth, designHeight);     // children use canvas coords
+    chopOverlay.setBounds (0, 0, designWidth, designHeight); // scrim covers everything
 }
 
 } // namespace chopline

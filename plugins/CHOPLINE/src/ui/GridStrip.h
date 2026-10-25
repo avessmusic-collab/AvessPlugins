@@ -39,6 +39,10 @@ public:
     std::function<std::vector<int>()> getSelectedChops;
     /// Wired by the editor: double-clicking a filled box selects that chop.
     std::function<void (int)> onSelectChop;
+    /// Wired by the editor: the edited chop (v17 chop_chip) and the chop
+    /// editor overlay ('…' button / double-click a filled box).
+    std::function<int()> getEditChop;
+    std::function<void()> onOpenChopEditor;
 
     /// ~60 fps tick from the editor's VBlankAttachment (playhead).
     void animationTick();
@@ -68,6 +72,14 @@ private:
         bool menuShownForThisPress = false;
         static constexpr int caretZoneWidth = 14; // v17: right 14 px opens the menu
         static constexpr int holdMenuMs = 380;
+    };
+
+    // ---- chop chip readout (v17 chop_chip: swatch + "CHOP nn") ---------------------
+    class ChopChip final : public juce::Component
+    {
+    public:
+        std::function<int()> getChop;
+        void paint (juce::Graphics&) override;
     };
 
     // ---- bar page segment (visible when pattern length > 1 bar) -------------------
@@ -162,6 +174,8 @@ private:
     CompactKnob swingKnob { "SWING" };
     std::unique_ptr<juce::SliderParameterAttachment> swingAttachment;
     BoxesDisplay boxes { *this };
+    ChopChip chopChip;
+    juce::TextButton chopMoreButton { juce::CharPointer_UTF8 ("\xe2\x80\xa6") }; // …
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GridStrip)
 };

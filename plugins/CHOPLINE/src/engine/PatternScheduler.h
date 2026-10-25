@@ -122,6 +122,7 @@ public:
         int offset = 0; // sample offset within the block
         int chop = 0;
         float velocity = 1.0f;
+        juce::int64 lengthSamples = 0; // event span (Gate/Loop gate, Fit target)
     };
 
     static constexpr int maxTriggers = 64;
@@ -238,7 +239,13 @@ public:
                 const auto offsetD = (t - startBars) * samplesPerBar;
                 const auto offset = static_cast<int> (std::floor (offsetD + 0.5));
                 if (offset >= 0 && offset < numSamples)
-                    out[n++] = { offset, ev.chop, ev.velocity };
+                {
+                    // Event span in samples at the current tempo (Phase 3:
+                    // Gate/Loop gate length, Fit-step stretch target).
+                    const auto len = juce::jmax<juce::int64> (1,
+                        static_cast<juce::int64> (std::llround (ev.lenBars * samplesPerBar)));
+                    out[n++] = { offset, ev.chop, ev.velocity, len };
+                }
             }
         }
         return n;

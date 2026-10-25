@@ -36,6 +36,18 @@ FetchContent_Declare(Catch2
 )
 FetchContent_MakeAvailable(Catch2)
 
+# Signalsmith Stretch (MIT) — time-stretch / pitch-shift with formant options
+# (spec §2/§6, Phase 3 warp engine). Its own CMakeLists provides the INTERFACE
+# target `signalsmith-stretch` and pins signalsmith-linear (MIT) by exact tag.
+# GIT_SUBMODULES "" skips the repo's cmd/ tooling submodule (not needed).
+FetchContent_Declare(SignalsmithStretch
+    GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
+    GIT_TAG        1.4.0
+    GIT_SHALLOW    TRUE
+    GIT_SUBMODULES ""
+)
+FetchContent_MakeAvailable(SignalsmithStretch)
+
 # ---------------------------------------------------------------------------
 # Plugin target
 # ---------------------------------------------------------------------------
@@ -75,6 +87,8 @@ set(CHOPLINE_PLUGIN_SOURCES
     src/ui/WaveformDisplay.cpp
     src/ui/SamplerStrip.cpp
     src/ui/GridStrip.cpp
+    src/ui/ChopEditorOverlay.cpp
+    src/ui/FxPage.cpp
 )
 
 target_sources(CHOPLINE PRIVATE
@@ -99,6 +113,7 @@ target_link_libraries(CHOPLINE
         juce::juce_events
         juce::juce_graphics
         juce::juce_gui_basics
+        signalsmith-stretch
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -144,6 +159,7 @@ set(CHOPLINE_TEST_SOURCES
     tests/EngineTests.cpp
     tests/PatternModelTests.cpp
     tests/SchedulerTests.cpp
+    tests/WarpTests.cpp
 )
 
 target_sources(CHOPLINE_Tests PRIVATE
@@ -164,6 +180,7 @@ target_link_libraries(CHOPLINE_Tests
         juce::juce_data_structures
         juce::juce_dsp
         juce::juce_events
+        signalsmith-stretch
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
