@@ -65,6 +65,7 @@ set(CHOPLINE_ENGINE_SOURCES
     src/engine/TransientDetector.cpp
     src/engine/ChopVoice.cpp
     src/state/Parameters.cpp
+    src/state/PatternModel.cpp
 )
 
 set(CHOPLINE_PLUGIN_SOURCES
@@ -73,6 +74,7 @@ set(CHOPLINE_PLUGIN_SOURCES
     src/ui/LookAndFeel.cpp
     src/ui/WaveformDisplay.cpp
     src/ui/SamplerStrip.cpp
+    src/ui/GridStrip.cpp
 )
 
 target_sources(CHOPLINE PRIVATE
@@ -140,6 +142,8 @@ set(CHOPLINE_TEST_SOURCES
     tests/SampleStoreTests.cpp
     tests/VoicePoolTests.cpp
     tests/EngineTests.cpp
+    tests/PatternModelTests.cpp
+    tests/SchedulerTests.cpp
 )
 
 target_sources(CHOPLINE_Tests PRIVATE

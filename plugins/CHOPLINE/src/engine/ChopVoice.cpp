@@ -48,8 +48,9 @@ void ChopVoice::copyStream (Stream& dst, const Stream& src) noexcept
 }
 
 void ChopVoice::trigger (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
-                         int chopIndex, float gain, std::uint64_t newStamp) noexcept
+                         int chopIndex, float gain, std::uint64_t newStamp, int tag) noexcept
 {
+    sourceTag = tag;
     if (main.active)
     {
         // Move the running stream into the tail and fast-fade it (2 ms steal fade).

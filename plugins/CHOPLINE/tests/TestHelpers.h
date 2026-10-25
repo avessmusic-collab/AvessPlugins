@@ -101,4 +101,79 @@ inline void renderBlocks (engine::Engine& eng, juce::AudioBuffer<float>& block, 
         eng.process (block, noMidi, ctx);
 }
 
+/// Simulated host transport for scheduler tests (Phase 2): builds BlockContexts
+/// the way the processor does from AudioPlayHead, and advances the PPQ exactly
+/// as a well-behaved host would.
+struct SimHost
+{
+    double rate = 48000.0;
+    double bpm = 120.0;
+    double ppq = 0.0;
+    bool playing = true;
+    bool hasPosition = true;
+    bool hasPpq = true;
+    bool hasBpm = true;
+    int tsNum = 4, tsDen = 4;
+    float swingPct = 0.0f;
+
+    engine::Engine::BlockContext ctx (int baseNote = 36) const
+    {
+        engine::Engine::BlockContext c;
+        c.midiBaseNote = baseNote;
+        c.swingPct = swingPct;
+        c.hasHostPosition = hasPosition;
+        c.hostPlaying = playing;
+        c.hasPpq = hasPpq;
+        c.ppqPosition = ppq;
+        c.hasBpm = hasBpm;
+        c.bpm = bpm;
+        c.timeSigNumerator = tsNum;
+        c.timeSigDenominator = tsDen;
+        return c;
+    }
+
+    void advance (int numSamples)
+    {
+        ppq += static_cast<double> (numSamples) / rate * bpm / 60.0;
+    }
+
+    double samplesPerBar() const
+    {
+        return rate * 60.0 / bpm * (static_cast<double> (tsNum) * 4.0 / tsDen);
+    }
+};
+
+/// Renders `totalSamples` through the engine in `blockSize` chunks while
+/// advancing the simulated host; returns the concatenated output (channel 0+1).
+inline juce::AudioBuffer<float> renderWithHost (engine::Engine& eng, SimHost& host,
+                                                int totalSamples, int blockSize)
+{
+    juce::AudioBuffer<float> full (2, totalSamples);
+    full.clear();
+    juce::AudioBuffer<float> block (2, blockSize);
+    const juce::MidiBuffer noMidi;
+    for (int pos = 0; pos < totalSamples; pos += blockSize)
+    {
+        const auto n = juce::jmin (blockSize, totalSamples - pos);
+        block.setSize (2, n, false, false, true);
+        eng.process (block, noMidi, host.ctx());
+        host.advance (n);
+        for (int ch = 0; ch < 2; ++ch)
+            full.copyFrom (ch, pos, block, ch, 0, n);
+    }
+    return full;
+}
+
+/// First sample index at or after `from` whose magnitude exceeds the threshold,
+/// or −1.
+inline int firstAudibleSample (const juce::AudioBuffer<float>& buf, int from = 0,
+                               float threshold = 1.0e-6f)
+{
+    const auto* d = buf.getReadPointer (0);
+    for (int i = juce::jmax (0, from); i < buf.getNumSamples(); ++i)
+        if (std::abs (d[i]) > threshold)
+            return i;
+    return -1;
+}
+
 } // namespace chopline::test

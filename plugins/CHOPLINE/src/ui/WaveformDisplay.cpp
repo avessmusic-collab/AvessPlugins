@@ -384,13 +384,26 @@ void WaveformDisplay::mouseExit (const juce::MouseEvent&)
     repaint();
 }
 
+void WaveformDisplay::selectChop (int chopIndex)
+{
+    selection.clear();
+    if (chopIndex >= 0)
+        selection.insert (chopIndex);
+    repaint();
+}
+
 void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 {
     draggedSinceDown = false;
+    draggingToGrid = false;
     dragMarkerId = -1;
+    downChop = -1;
 
     if (sample() == nullptr)
         return;
+
+    if (markerIdAt (e.position.x) < 0)
+        downChop = chopIndexAt (e.position.x);
 
     const auto markerId = markerIdAt (e.position.x);
 
@@ -416,7 +429,28 @@ void WaveformDisplay::mouseDrag (const juce::MouseEvent& e)
         draggedSinceDown = true;
 
     if (dragMarkerId >= 0)
+    {
         engine.moveMarker (dragMarkerId, xToTime (e.position.x));
+        return;
+    }
+
+    // Drag a chop (or the multi-selection containing it) onto the grid
+    // (spec §5: chops are drag sources for Strip B).
+    if (! draggingToGrid && downChop >= 0 && ! e.mods.isAltDown()
+        && e.getDistanceFromDragStart() > 6)
+    {
+        if (auto* container = juce::DragAndDropContainer::findParentDragContainerFor (this))
+        {
+            auto chops = selection.count (downChop) > 0 ? getSelectedChops()
+                                                        : std::vector<int> { downChop };
+            juce::StringArray list;
+            for (auto c : chops)
+                list.add (juce::String (c));
+            draggingToGrid = true;
+            container->startDragging (juce::String (chopDragPrefix) + list.joinIntoString (","),
+                                      this, juce::ScaledImage(), true);
+        }
+    }
 }
 
 void WaveformDisplay::mouseUp (const juce::MouseEvent& e)

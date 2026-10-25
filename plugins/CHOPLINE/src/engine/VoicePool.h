@@ -33,7 +33,7 @@ public:
 
     // ---- audio thread -------------------------------------------------------
     void trigger (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
-                  int chopIndex, float gain) noexcept
+                  int chopIndex, float gain, int tag = ChopVoice::tagMidi) noexcept
     {
         ChopVoice* chosen = nullptr;
         for (auto& v : voices)
@@ -51,7 +51,7 @@ public:
                 if (v.getStamp() < chosen->getStamp())
                     chosen = &v;
         }
-        chosen->trigger (sample, chop, chopIndex, gain, nextStamp++);
+        chosen->trigger (sample, chop, chopIndex, gain, nextStamp++, tag);
     }
 
     void renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept
@@ -64,6 +64,15 @@ public:
     {
         for (auto& v : voices)
             v.fastRelease();
+    }
+
+    /// Fast-fades only the voices triggered with the given source tag
+    /// (transport stop / loop jump releases pattern voices, spec §8).
+    void releaseTagged (int tag) noexcept
+    {
+        for (auto& v : voices)
+            if (v.isActive() && v.getSourceTag() == tag)
+                v.fastRelease();
     }
 
     // ---- message thread -------------------------------------------------------

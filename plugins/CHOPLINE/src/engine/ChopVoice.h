@@ -32,15 +32,22 @@ public:
     void prepare (double sampleRate) noexcept;
     void reset() noexcept;
 
+    // Trigger source tags (Phase 2: transport stop / loop jumps release only
+    // pattern voices; MIDI and audition voices keep ringing — spec §8).
+    static constexpr int tagMidi = 0;
+    static constexpr int tagPattern = 1;
+
     // ---- audio thread -------------------------------------------------------
     void trigger (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
-                  int chopIndex, float gain, std::uint64_t newStamp) noexcept;
+                  int chopIndex, float gain, std::uint64_t newStamp,
+                  int tag = tagMidi) noexcept;
     void fastRelease() noexcept; // steal / all-notes-off: 2 ms fade
     void renderAdd (juce::AudioBuffer<float>& out, int startSample, int numSamples) noexcept;
 
     bool isActive() const noexcept { return main.active || tail.active; }
     bool isHolding() const noexcept { return main.active && ! main.fastFading; }
     std::uint64_t getStamp() const noexcept { return stamp; }
+    int getSourceTag() const noexcept { return sourceTag; }
 
     // ---- message thread (UI feedback / snapshot GC) --------------------------
     int getUiChopIndex() const noexcept { return uiChop.load (std::memory_order_relaxed); }
@@ -77,6 +84,7 @@ private:
     Stream main, tail;
     float fastFadeStep = 1.0f / 96.0f;
     std::uint64_t stamp = 0;
+    int sourceTag = tagMidi; // audio thread only
     std::atomic<int> uiChop { -1 };
     std::atomic<float> uiPos { 0.0f };
 };

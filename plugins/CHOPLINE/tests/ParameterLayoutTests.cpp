@@ -53,9 +53,9 @@ TEST_CASE ("Parameter layout instantiates and builds an APVTS", "[state][paramet
                                               juce::Identifier ("CHOPLINE"),
                                               chopline::params::createParameterLayout());
 
-    // Phase 1: MIDI base note is the only automatable parameter (slicing
-    // controls are slice-map state per the locked v17 design).
-    REQUIRE (processor.getParameters().size() == 1);
+    // Phase 2: MIDI base note + swing (slicing controls are slice-map state
+    // and the pattern lives in the PATTERNS tree, per the locked v17 design).
+    REQUIRE (processor.getParameters().size() == 2);
 
     auto* baseNote = apvts.getParameter (chopline::params::id::midiBaseNote);
     REQUIRE (baseNote != nullptr);
@@ -67,6 +67,15 @@ TEST_CASE ("Parameter layout instantiates and builds an APVTS", "[state][paramet
     REQUIRE (chopline::params::baseNoteForChoice (0) == 24);
     REQUIRE (chopline::params::baseNoteForChoice (1) == 36);
     REQUIRE (chopline::params::baseNoteForChoice (3) == 60);
+
+    // Swing (spec §5): 0–75 %, default 0, automatable float.
+    auto* swing = apvts.getParameter (chopline::params::id::swing);
+    REQUIRE (swing != nullptr);
+    const auto* swingFloat = dynamic_cast<juce::AudioParameterFloat*> (swing);
+    REQUIRE (swingFloat != nullptr);
+    REQUIRE (juce::exactlyEqual (swingFloat->get(), 0.0f));
+    REQUIRE (juce::exactlyEqual (swingFloat->getNormalisableRange().start, 0.0f));
+    REQUIRE (juce::exactlyEqual (swingFloat->getNormalisableRange().end, 75.0f));
 
     // State tree exists and carries the right root type for save/recall.
     REQUIRE (apvts.state.isValid());

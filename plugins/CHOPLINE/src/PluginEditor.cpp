@@ -128,7 +128,31 @@ namespace
             embed.onClick = [this] { engine.setEmbedAudioInState (embed.getToggleState()); };
             addAndMakeVisible (embed);
 
-            setSize (246, 104);
+            // Standalone free-run BPM (spec §8: no host transport → free-run
+            // at a manual BPM; v17 moves the BPM readout to the Phase 4
+            // MASTER bar — until then it lives here).
+            bpmCaption.setText ("FREE-RUN BPM", juce::dontSendNotification);
+            bpmCaption.setFont (LnF::labelFont (8.5f));
+            bpmCaption.setColour (juce::Label::textColourId, LnF::label);
+            addAndMakeVisible (bpmCaption);
+
+            bpmValue.setEditable (true);
+            bpmValue.setFont (LnF::monoFont (10.0f));
+            bpmValue.setColour (juce::Label::textColourId, LnF::ink);
+            bpmValue.setJustificationType (juce::Justification::centredRight);
+            bpmValue.setText (juce::String (engine.getPatternModel().getFreeBpm(), 1),
+                              juce::dontSendNotification);
+            bpmValue.onTextChange = [this]
+            {
+                const auto v = bpmValue.getText().getDoubleValue();
+                if (v > 1.0)
+                    engine.getPatternModel().setFreeBpm (v);
+                bpmValue.setText (juce::String (engine.getPatternModel().getFreeBpm(), 1),
+                                  juce::dontSendNotification);
+            };
+            addAndMakeVisible (bpmValue);
+
+            setSize (246, 132);
         }
 
         void resized() override
@@ -139,6 +163,10 @@ namespace
             baseNote.setBounds (b.removeFromTop (28));
             b.removeFromTop (8);
             embed.setBounds (b.removeFromTop (24));
+            b.removeFromTop (8);
+            auto row = b.removeFromTop (20);
+            bpmCaption.setBounds (row.removeFromLeft (130));
+            bpmValue.setBounds (row);
         }
 
     private:
@@ -147,6 +175,7 @@ namespace
         juce::ComboBox baseNote;
         std::unique_ptr<juce::ComboBoxParameterAttachment> baseNoteAttachment;
         juce::ToggleButton embed;
+        juce::Label bpmCaption, bpmValue;
     };
 } // namespace
 
@@ -157,9 +186,11 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
       processorRef (p),
       midiDot (p.getEngine()),
       samplerStrip (p.getEngine()),
+      gridStrip (p.getEngine(), p.getState()),
       vblank (this, [this]
       {
           samplerStrip.animationTick();
+          gridStrip.animationTick();
           midiDot.tick();
           if (--gcCountdown <= 0)
           {
@@ -195,9 +226,16 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
     canvas.addAndMakeVisible (gearButton);
 
     canvas.addAndMakeVisible (samplerStrip);
-    canvas.addAndMakeVisible (gridPlaceholder);
+    canvas.addAndMakeVisible (gridStrip);
     canvas.addAndMakeVisible (beatRepeatPlaceholder);
     canvas.addAndMakeVisible (masterPlaceholder);
+
+    // Shared chop selection: grid paints Strip A's selection; double-clicking
+    // a filled box selects that chop back in Strip A (spec §5).
+    gridStrip.getSelectedChops = [this] { return samplerStrip.getWaveform().getSelectedChops(); };
+    gridStrip.onSelectChop = [this] (int chop) { samplerStrip.getWaveform().selectChop (chop); };
+
+    setWantsKeyboardFocus (true); // Cmd/Ctrl-Z fallback when the grid lacks focus
 
     // Resizable 75%–200% of 1100x720, fixed aspect ratio (spec §9).
     setResizable (true, true);
@@ -213,6 +251,39 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
     // to this component — never a screen capture).
     if (processorRef.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
     {
+        // Dev-only: CHOPLINE_DEMO_PATTERN=1 paints the first chops onto the
+        // grid ~5 s after open (after the autoload settles) so UI snapshots
+        // show a populated pattern. No effect in hosts, never set in CI.
+        if (juce::SystemStats::getEnvironmentVariable ("CHOPLINE_DEMO_PATTERN", {}) == "1")
+        {
+            juce::Timer::callAfterDelay (5000,
+                [safe = juce::Component::SafePointer<ChoplineAudioProcessorEditor> (this)]
+            {
+                if (safe == nullptr)
+                    return;
+                auto& engine = safe->processorRef.getEngine();
+                auto& model = engine.getPatternModel();
+                const auto slot = model.getActiveSlot();
+                if (model.getNumEvents (slot) > 0 || engine.getNumChops() <= 0)
+                    return;
+                const auto step = engine::noteLengthBars (model.getNoteLength (slot));
+                const auto steps = engine::noteLengthStepsPerBar (model.getNoteLength (slot));
+                model.beginTransaction ("Demo pattern");
+                const int cellsToFill[] = { 0, 2, 4, 6, 7, 10, 12, 14 };
+                int chop = 0;
+                for (auto cell : cellsToFill)
+                {
+                    if (cell >= steps)
+                        break;
+                    model.addEvent (slot, step * cell,
+                                    cell == 4 ? step * 2.0 : step, // one spanned event
+                                    chop % juce::jmax (1, engine.getNumChops()));
+                    ++chop;
+                }
+                safe->samplerStrip.getWaveform().selectChop (1);
+            });
+        }
+
         const auto snapshotPath =
             juce::SystemStats::getEnvironmentVariable ("CHOPLINE_UI_SNAPSHOT", {});
         if (snapshotPath.isNotEmpty() && juce::File::isAbsolutePath (snapshotPath))
@@ -249,6 +320,20 @@ void ChoplineAudioProcessorEditor::openSettingsFlyout()
                                             gearButton.getScreenBounds(), nullptr);
 }
 
+bool ChoplineAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    if (key.getModifiers().isCommandDown() && (key.isKeyCode ('z') || key.isKeyCode ('Z')))
+    {
+        auto& undo = processorRef.getEngine().getPatternModel().getUndoManager();
+        if (key.getModifiers().isShiftDown())
+            undo.redo();
+        else
+            undo.undo();
+        return true;
+    }
+    return false;
+}
+
 void ChoplineAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (LnF::page);
@@ -270,7 +355,7 @@ void ChoplineAudioProcessorEditor::resized()
     gearButton.setBounds (1057, 15, 28, 24);
 
     samplerStrip.setBounds (15, 60, 1070, 138);
-    gridPlaceholder.setBounds (15, 206, 1070, 379);
+    gridStrip.setBounds (15, 206, 1070, 379);
     beatRepeatPlaceholder.setBounds (15, 593, 500, 112);
     masterPlaceholder.setBounds (523, 593, 562, 112);
 }

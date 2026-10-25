@@ -50,6 +50,7 @@ private:
     juce::AudioProcessorValueTreeState state;
     engine::Engine engine;
     std::atomic<float>* baseNoteParam = nullptr;
+    std::atomic<float>* swingParam = nullptr;
 
     // Guards the message-thread hop in setStateInformation against destruction.
     std::shared_ptr<bool> aliveFlag = std::make_shared<bool> (true);

@@ -19,9 +19,12 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include <juce_events/juce_events.h>
 
+#include "PatternScheduler.h"
 #include "SampleStore.h"
 #include "SliceMap.h"
 #include "VoicePool.h"
+
+#include "../state/PatternModel.h"
 
 namespace chopline::engine
 {
@@ -39,7 +42,19 @@ public:
     // ---- audio thread ----------------------------------------------------------
     struct BlockContext
     {
-        int midiBaseNote = 36; // chop N triggers from base + N
+        int midiBaseNote = 36;  // chop N triggers from base + N
+        float swingPct = 0.0f;  // APVTS swing, 0–75 (trigger time only)
+
+        // Host transport view (filled from AudioPlayHead by the processor;
+        // tests drive the scheduler by filling these directly).
+        bool hasHostPosition = false; // a playhead exists
+        bool hostPlaying = false;
+        bool hasPpq = false;
+        double ppqPosition = 0.0;
+        bool hasBpm = false;
+        double bpm = 120.0;
+        int timeSigNumerator = 4;
+        int timeSigDenominator = 4;
     };
     void process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi,
                   const BlockContext& context) noexcept;
@@ -77,6 +92,11 @@ public:
     // ---- audition (message thread → audio thread, lock-free) --------------------
     void audition (int chopIndex, float velocity);
 
+    // ---- pattern (message thread edits; snapshots republish automatically) --------
+    state::PatternModel& getPatternModel() noexcept { return patternModel; }
+    /// UI playhead: position within the pattern in bars, −1 while stopped.
+    float getUiPatternPositionBars() const noexcept { return scheduler.getUiPositionBars(); }
+
     // ---- state (spec §10) --------------------------------------------------------
     bool getEmbedAudioInState() const noexcept { return embedAudioInState; }
     void setEmbedAudioInState (bool b) noexcept { embedAudioInState = b; }
@@ -105,12 +125,18 @@ public:
 private:
     void rebuildAndPublishSlices();   // callers hold modelLock
     void handleLoadFinished (juce::String error);
+    void publishPattern();            // message thread
 
     SampleStore sampleStore;
     SliceModel model;                                 // guarded by modelLock
     std::shared_ptr<const SampleData> stateSample;    // message-thread cache, guarded
     SnapshotExchange<SliceMapSnapshot> sliceExchange;
     VoicePool pool;
+
+    state::PatternModel patternModel;                 // message thread (own lock)
+    SnapshotExchange<PatternSnapshot> patternExchange;
+    PatternScheduler scheduler;                       // audio-thread transport state
+    std::atomic<double> freeBpmCache { 120.0 };       // model → audio thread
 
     struct AuditionEvent { int chopIndex = 0; float velocity = 1.0f; };
     static constexpr int auditionFifoSize = 64;

@@ -24,6 +24,7 @@ inline constexpr int kParameterVersion = 1;
 namespace id
 {
     inline constexpr auto midiBaseNote = "midiBaseNote"; // choice: C0 C1 C2 C3
+    inline constexpr auto swing = "swing";               // float: 0–75 % (Phase 2)
 }
 
 /// Choice index (0..3) → MIDI note number (C0=24 … C3=60, Ableton naming).

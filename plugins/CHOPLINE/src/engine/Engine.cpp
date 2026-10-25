@@ -12,6 +12,19 @@ const juce::Identifier Engine::markerTag { "M" };
 Engine::Engine()
 {
     sampleStore.onLoadFinished = [this] (juce::String error) { handleLoadFinished (std::move (error)); };
+
+    patternModel.onChanged = [this]
+    {
+        freeBpmCache.store (patternModel.getFreeBpm(), std::memory_order_relaxed);
+        publishPattern();
+        sendChangeMessage();
+    };
+    publishPattern(); // audio thread always sees a valid (empty) pattern
+}
+
+void Engine::publishPattern()
+{
+    patternExchange.publish (std::make_shared<PatternSnapshot> (patternModel.buildSnapshot()));
 }
 
 void Engine::prepare (double sampleRate, int maxBlockSize, int numOutputChannels)
@@ -22,6 +35,7 @@ void Engine::prepare (double sampleRate, int maxBlockSize, int numOutputChannels
 
     pool.prepare (sampleRate);
     pool.reset();
+    scheduler.prepare (sampleRate);
 
     // Re-resample the loaded sample at the new session rate (async; markers are
     // stored in seconds, so the slice map survives the rate change).
@@ -45,13 +59,43 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
 
     const auto* sampleNode = sampleStore.acquire();
     const auto* sliceNode = sliceExchange.acquire();
+    const auto* patternNode = patternExchange.acquire();
     const SampleData* sample = sampleNode != nullptr ? sampleNode->object.get() : nullptr;
     const SliceMapSnapshot* slices = sliceNode != nullptr ? sliceNode->object.get() : nullptr;
+    const PatternSnapshot* pattern = patternNode != nullptr ? patternNode->object.get() : nullptr;
 
-    struct Event { int offset = 0; int chop = 0; float gain = 1.0f; };
-    static constexpr int maxEvents = 64;
+    struct Event { int offset = 0; int chop = 0; float gain = 1.0f; int tag = ChopVoice::tagMidi; };
+    static constexpr int maxEvents = 128;
     Event events[maxEvents];
     int numEvents = 0;
+
+    // Pattern triggers from the host position (spec §8: derived from PPQ every
+    // block; loop/jump releases ringing pattern voices with a short fade).
+    {
+        PatternScheduler::HostView host;
+        host.hasPosition = context.hasHostPosition;
+        host.playing = context.hostPlaying;
+        host.hasPpq = context.hasPpq;
+        host.ppq = context.ppqPosition;
+        host.hasBpm = context.hasBpm;
+        host.bpm = context.bpm;
+        host.timeSigNumerator = context.timeSigNumerator;
+        host.timeSigDenominator = context.timeSigDenominator;
+
+        PatternScheduler::Trigger triggers[PatternScheduler::maxTriggers];
+        bool releasePatternVoices = false;
+        const auto numTriggers = scheduler.process (
+            pattern, host, context.swingPct,
+            freeBpmCache.load (std::memory_order_relaxed),
+            numSamples, triggers, releasePatternVoices);
+
+        if (releasePatternVoices)
+            pool.releaseTagged (ChopVoice::tagPattern);
+
+        for (int i = 0; i < numTriggers && numEvents < maxEvents; ++i)
+            events[numEvents++] = { triggers[i].offset, triggers[i].chop,
+                                    triggers[i].velocity, ChopVoice::tagPattern };
+    }
 
     // Audition triggers (lock-free SPSC FIFO; UI is the producer).
     {
@@ -65,7 +109,7 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
             for (int i = 0; i < size && numEvents < maxEvents; ++i)
             {
                 const auto& slot = auditionSlots[static_cast<size_t> (start + i)];
-                events[numEvents++] = { 0, slot.chopIndex, slot.velocity };
+                events[numEvents++] = { 0, slot.chopIndex, slot.velocity, ChopVoice::tagMidi };
             }
         }
         auditionFifo.finishedRead (size1 + size2);
@@ -81,7 +125,7 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
             const auto chop = msg.getNoteNumber() - context.midiBaseNote;
             if (chop >= 0 && chop < SliceMapSnapshot::maxChops && numEvents < maxEvents)
                 events[numEvents++] = { juce::jlimit (0, numSamples - 1, metadata.samplePosition),
-                                        chop, msg.getFloatVelocity() };
+                                        chop, msg.getFloatVelocity(), ChopVoice::tagMidi };
         }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff() || msg.isResetAllControllers())
         {
@@ -111,13 +155,14 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
         cursor = events[i].offset;
         if (sample != nullptr && slices != nullptr && events[i].chop < slices->numChops)
             pool.trigger (sample, slices->chops[static_cast<size_t> (events[i].chop)],
-                          events[i].chop, events[i].gain);
+                          events[i].chop, events[i].gain, events[i].tag);
     }
     pool.renderAdd (buffer, cursor, numSamples - cursor);
 
     // Block completed on these snapshots.
     sampleStore.ack (sampleNode);
     sliceExchange.ack (sliceNode);
+    patternExchange.ack (patternNode);
 }
 
 // ---- loading ----------------------------------------------------------------------
@@ -340,11 +385,16 @@ void Engine::serializeTo (juce::ValueTree& root) const
 
     root.addChild (sampleTree, -1, nullptr);
     root.addChild (slicesTree, -1, nullptr);
+
+    patternModel.serializeTo (root); // PATTERNS child, all 8 slots (own lock)
 }
 
 void Engine::restoreFrom (const juce::ValueTree& root, bool synchronous)
 {
     JUCE_ASSERT_MESSAGE_THREAD
+
+    // Patterns: a missing PATTERNS child (Phase 1 state) resets to defaults.
+    patternModel.restoreFrom (root);
 
     const auto sampleTree = root.getChildWithName (sampleTag);
     const auto slicesTree = root.getChildWithName (slicesTag);
@@ -442,6 +492,7 @@ void Engine::collectGarbage()
     const juce::ScopedLock sl (modelLock);
     sampleStore.collectGarbage ([this] (const SampleData* s) { return pool.usesSample (s); });
     sliceExchange.collectGarbage();
+    patternExchange.collectGarbage();
 }
 
 } // namespace chopline::engine

@@ -29,6 +29,9 @@ public:
     /// ~60 fps tick, forwarded from the editor's VBlankAttachment.
     void animationTick() { waveform.animationTick(); }
 
+    /// Chop selection shared with the grid strip (Phase 2).
+    WaveformDisplay& getWaveform() noexcept { return waveform; }
+
     // Drag-and-drop loading (Finder / Explorer / DAW file drags).
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void filesDropped (const juce::StringArray& files, int x, int y) override;

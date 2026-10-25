@@ -13,6 +13,7 @@ ChoplineAudioProcessor::ChoplineAudioProcessor()
       state (*this, nullptr, juce::Identifier ("CHOPLINE"), params::createParameterLayout())
 {
     baseNoteParam = state.getRawParameterValue (params::id::midiBaseNote);
+    swingParam = state.getRawParameterValue (params::id::swing);
 
     // Dev-only convenience for the Standalone app: CHOPLINE_AUTOLOAD_SAMPLE=<path>
     // loads a file at startup (used for manual smoke testing; no effect in hosts).
@@ -55,6 +56,34 @@ void ChoplineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (baseNoteParam != nullptr)
         context.midiBaseNote = params::baseNoteForChoice (
             static_cast<int> (baseNoteParam->load (std::memory_order_relaxed)));
+    if (swingParam != nullptr)
+        context.swingPct = swingParam->load (std::memory_order_relaxed);
+
+    // Host transport → scheduler view (spec §8: derive step times from the
+    // host PPQ every block; no playhead at all = Standalone free-run).
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto position = playHead->getPosition())
+        {
+            context.hasHostPosition = true;
+            context.hostPlaying = position->getIsPlaying();
+            if (const auto ppq = position->getPpqPosition())
+            {
+                context.hasPpq = true;
+                context.ppqPosition = *ppq;
+            }
+            if (const auto bpm = position->getBpm(); bpm.hasValue() && *bpm > 0.0)
+            {
+                context.hasBpm = true;
+                context.bpm = *bpm;
+            }
+            if (const auto timeSig = position->getTimeSignature())
+            {
+                context.timeSigNumerator = timeSig->numerator;
+                context.timeSigDenominator = timeSig->denominator;
+            }
+        }
+    }
 
     engine.process (buffer, midi, context);
 }
@@ -74,6 +103,7 @@ void ChoplineAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     // the live sample reference + slice map (thread-safe inside the engine).
     stateTree.removeChild (stateTree.getChildWithName (engine::Engine::sampleTag), nullptr);
     stateTree.removeChild (stateTree.getChildWithName (engine::Engine::slicesTag), nullptr);
+    stateTree.removeChild (stateTree.getChildWithName (state::PatternModel::patternsTag), nullptr);
     engine.serializeTo (stateTree);
 
     if (auto xml = stateTree.createXml())

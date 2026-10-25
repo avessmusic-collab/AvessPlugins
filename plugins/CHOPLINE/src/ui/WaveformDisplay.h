@@ -31,6 +31,16 @@ public:
     /// something animates (voices playing, loading spinner).
     void animationTick();
 
+    // ---- chop selection (shared with the grid, Phase 2) -----------------------
+    /// Selected chop ordinals in ascending index order (multi-selection drops
+    /// onto the grid in this order, spec §5).
+    std::vector<int> getSelectedChops() const { return { selection.begin(), selection.end() }; }
+    /// Replaces the selection (grid double-click selects the chop, spec §5).
+    void selectChop (int chopIndex);
+
+    /// Drag description prefix for chop drags onto the grid.
+    static constexpr const char* chopDragPrefix = "chopline:chops:";
+
     void paint (juce::Graphics&) override;
 
     void mouseMove (const juce::MouseEvent&) override;
@@ -67,6 +77,8 @@ private:
     int hoverMarkerId = -1;
     int hoverChop = -1;
     int dragMarkerId = -1;
+    int downChop = -1;           // chop under the mouse at mouseDown
+    bool draggingToGrid = false; // external chop drag started
     bool draggedSinceDown = false;
     std::set<int> selection; // chop ordinals
 

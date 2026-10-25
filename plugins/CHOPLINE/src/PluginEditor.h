@@ -10,13 +10,15 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "PluginProcessor.h"
+#include "ui/GridStrip.h"
 #include "ui/LookAndFeel.h"
 #include "ui/SamplerStrip.h"
 
 namespace chopline
 {
 
-class ChoplineAudioProcessorEditor final : public juce::AudioProcessorEditor
+class ChoplineAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                           public juce::DragAndDropContainer
 {
 public:
     explicit ChoplineAudioProcessorEditor (ChoplineAudioProcessor&);
@@ -24,6 +26,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override; // Cmd/Ctrl-Z undo, Shift-Cmd-Z redo
 
 private:
     // ---- small header widgets ------------------------------------------------
@@ -85,7 +88,7 @@ private:
 
     // Strips.
     ui::SamplerStrip samplerStrip;
-    QuietPanel gridPlaceholder { juce::String (juce::CharPointer_UTF8 ("GRID \xe2\x80\x94 PHASE 2")) };
+    ui::GridStrip gridStrip;
     QuietPanel beatRepeatPlaceholder { juce::String (juce::CharPointer_UTF8 ("BEAT REPEAT \xe2\x80\x94 PHASE 4")) };
     QuietPanel masterPlaceholder { juce::String (juce::CharPointer_UTF8 ("MASTER \xe2\x80\x94 PHASE 4")) };
 

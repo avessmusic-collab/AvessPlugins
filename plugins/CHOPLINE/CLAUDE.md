@@ -5,7 +5,7 @@ is `SPEC.md` (user-authored); the locked visual direction is the v17 mockup
 (`.ideas/mockups/v17-ui.yaml`, see `.ideas/creative-brief.md` "UI Design — FINAL").
 Work phase by phase (spec §11) and STOP after each phase for user approval.
 
-**Current phase: 1 (Sampler) — complete, awaiting approval.**
+**Current phase: 2 (Grid sequencer) — complete, awaiting approval.**
 
 ## Build commands
 
@@ -123,6 +123,76 @@ Do NOT install to system plugin folders until the user asks.
   global new/delete in the test binary and asserts zero (de)allocations on the
   calling thread across 1000 processed blocks with triggers (spec §8/§12).
 
+## Decisions made (Phase 2 — Grid sequencer)
+
+- **Pattern model is a ValueTree** (`state/PatternModel`): every edit routes
+  through `juce::UndoManager` (100 transactions; gestures group under one
+  `beginTransaction`). Events are TIME-BASED — start + length in fractions of
+  a bar (locked v17 `events_are_time_based`); changing the note length keeps
+  events at their musical positions, off-grid events stay until moved.
+- **Note lengths**: 9 values, 1/4 · 1/8 · 1/16 each straight/triplet/dotted
+  (NO 1/32 — v17 dropped it). Boxes per bar 4/8/16, 6/12/24, 3/6/11; the last
+  dotted box is the fractional bar remainder. Default 1/16.
+- **8 pattern slots live in the model and all serialize** (`PATTERNS` child,
+  8 `PATTERN` children with `EV` events); the UI surfaces only slot A — the
+  slot selector is deliberately deferred to Phase 5 (v17
+  `deferred_pattern_slots`), and there is no pattern-slot APVTS param yet.
+- **Per-step override FIELDS stored now** (vel 0–127 default 100, pitch st,
+  prob %, ratchet): only velocity plays in Phase 2; the rest round-trip
+  untouched (unit-tested) until the Phase 5 lane editor.
+- **PatternSnapshot** published through the same `SnapshotExchange` as the
+  slice map, republished on every model change (model has its own re-entrant
+  lock so `getStateInformation` stays thread-safe).
+- **Scheduler** (`engine/PatternScheduler`, header-only): position is derived
+  from host PPQ every block (`ppq / quartersPerBar`, time sig from the host),
+  never an internal counter. Trigger inclusion is tested in ROUNDED SAMPLE
+  space (`floor(offset + 0.5)` within `[0, numSamples)`), which keeps triggers
+  exact-sample down to block size 1 (bar-space tests clamp boundary triggers a
+  sample early). PPQ discontinuity tolerance: `max(0.01q, 25% of the block)`.
+- **Voice source tags**: pattern triggers are tagged; transport stop and
+  loop/jump discontinuities fast-fade (2 ms) ONLY pattern voices — MIDI and
+  audition voices ring on (spec §8). `VoicePool::releaseTagged`.
+- **Free-run**: no playhead at all (Standalone) → always free-runs at the
+  manual FREE-RUN BPM (settings flyout; stored on the PATTERNS tree, not
+  undoable, cached in an atomic for the audio thread). Host present but no
+  PPQ → internal accumulator at the host BPM. Accumulator restarts at 0
+  whenever the pattern (re)starts.
+- **Swing** is the Phase 2 APVTS param (`swing`, 0–75 %, default 0): even
+  steps — odd 0-based indices of the CURRENT grid — trigger late by
+  swing% × step. Trigger time only, atomic per-block read (no smoothing
+  needed); events off the current grid are not swung (by design).
+- **Spans are stored and rendered but playback is one-shot** — the chop plays
+  from the event start exactly like Phase 1; Gate/span-aware truncation and
+  Loop/Fit land in Phase 3 (per spec §6/§11).
+- **Bar semantics**: a pattern bar = a HOST bar (time signature honoured for
+  bar length); step lengths are fractions of that bar with v17's 4/4 box
+  counts. See open questions for odd meters.
+- **GridStrip UI**: compact 64×24 note-length button (click cycles
+  1/4→1/8→1/16 keeping T/D; 380 ms hold / right-click / right-14 px caret
+  zone opens the 9-value menu), pattern-length combo, bar-page seg (only when
+  >1 bar; UI-only state), SWING CompactKnob (APVTS attachment). Boxes
+  display: ≤12 steps = 1 row, else 2 rows (12×2 max, v17); cards per v17
+  tokens, filled = chop-shade tint + index chip + mini waveform (peaksFine) on
+  a 12 px grid, selected = 1.5 px blue, playing = pressed grey + inset
+  hairline, playhead = 1.5 px blue via the editor VBlank
+  (`Engine::getUiPatternPositionBars`, −1 when stopped).
+- **Grid interactions**: paint/paint-run with Strip A's selected chop, drag
+  from Strip A (editor is the `DragAndDropContainer`; description
+  `chopline:chops:i,j,…`; multi-selection fills consecutive cells in index
+  order), right-edge drag spans steps, drag moves (replacing the target cell's
+  event), Alt-drag duplicates, Delete/Backspace removes, double-click selects
+  the chop in Strip A; Cmd/Ctrl-Z / Shift-Cmd-Z on the grid and the editor.
+- **Trigger capacities**: 256 events per pattern (snapshot array), ≤64
+  pattern triggers per block, 128 merged events (pattern+MIDI+audition) per
+  block — all fixed arrays, no audio-thread allocation (detector test runs
+  the pattern + swing + stop/start + loop jump over 1000 blocks).
+- **Dev hook** (Standalone only): `CHOPLINE_DEMO_PATTERN=1` paints the first
+  chops onto the grid ~5 s after open so `CHOPLINE_UI_SNAPSHOT` shows a
+  populated pattern.
+- **State**: `schemaVersion` stays 1 (PATTERNS is an additive child). A
+  Phase 1-shaped state (no PATTERNS child) restores to default patterns —
+  unit-tested, as is the full pattern round trip (tree equivalence).
+
 ## Known issues / notes
 
 - **auval not run locally**: validating an AU requires the component to be
@@ -146,6 +216,18 @@ Do NOT install to system plugin folders until the user asks.
   DAW testing (Phase 1 user test).
 - Waveform repaints the whole display on animated frames (playheads); fine at
   60 fps on M-series — sub-region dirty rects are a Phase 5 polish item.
+- **Pattern events spanning a bar-page boundary** render only on the page
+  where they start (playback is unaffected). Revisit with the Phase 5 lane UI.
+- **Standalone free-runs the pattern permanently** (spec §8 "free run at
+  manual BPM") — as soon as events exist they play. If that proves annoying in
+  practice, gate it on a transport/preview control (Space is reserved for
+  "transport_preview" in v17's keyboard map).
+- **Undo via Cmd/Ctrl-Z needs keyboard focus** on the grid or the editor;
+  some hosts swallow Cmd-Z before the plugin sees it (standard JUCE
+  limitation). Edits remain undoable via the model regardless.
+- The boxes display rebuilds its cell/piece geometry per paint (≤24 cells,
+  ≤256 events, message thread only) — simple and fast enough; cache if the
+  Phase 5 lane editor makes paints heavier.
 
 ## Open questions
 
@@ -160,3 +242,10 @@ Do NOT install to system plugin folders until the user asks.
 - Spec asks for SPEC.md "in the repo root"; in this monorepo it lives at
   `plugins/CHOPLINE/SPEC.md` (the plugin's own root) — flag if a copy at the
   monorepo root is wanted.
+- **Odd time signatures**: a pattern bar follows the host bar length, but the
+  v17 box counts (4/8/16 per bar …) assume 4/4 — in 3/4 a "1/16" step is 1/16
+  of a 3-quarter bar (i.e. a 1/12 note). Most step sequencers do exactly this;
+  confirm with the user if true note-value steps are wanted in odd meters.
+- **Swing feel**: implemented literally per spec — the even step is delayed by
+  swing% of one step (75 % max keeps order). If the user expects MPC-style
+  percentages (50 % = straight), remap the knob in Phase 5 polish.

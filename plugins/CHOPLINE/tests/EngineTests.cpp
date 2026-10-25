@@ -179,6 +179,12 @@ TEST_CASE ("Audio thread allocates nothing (allocation detector over many blocks
     engine::Engine eng;
     loadEightChops (eng);
 
+    // Phase 2: run with a busy PATTERN playing from host PPQ as well as MIDI
+    // (spec §12: the detector stays green with the pattern scheduler active).
+    auto& pm = eng.getPatternModel();
+    for (int i = 0; i < 16; ++i)
+        REQUIRE (pm.addEvent (0, i / 16.0, 1.0 / 16.0, i % 8) >= 0);
+
     juce::AudioBuffer<float> out (2, 512);
 
     // Prebuild MIDI buffers outside the armed region.
@@ -186,19 +192,34 @@ TEST_CASE ("Audio thread allocates nothing (allocation detector over many blocks
     notes.addEvent (juce::MidiMessage::noteOn (1, 36, static_cast<juce::uint8> (120)), 7);
     notes.addEvent (juce::MidiMessage::noteOn (1, 43, static_cast<juce::uint8> (90)), 250);
     juce::MidiBuffer empty;
-    const engine::Engine::BlockContext ctx { 36 };
+
+    SimHost host;
+    host.swingPct = 55.0f;
 
     // Warm-up (first calls may touch lazily-initialised library state).
     eng.audition (1, 0.8f);
-    eng.process (out, notes, ctx);
-    eng.process (out, empty, ctx);
+    eng.process (out, notes, host.ctx());
+    host.advance (512);
+    eng.process (out, empty, host.ctx());
+    host.advance (512);
 
-    // ~10 s of audio at 512-sample blocks with steady triggering (spec §12).
+    // ~10 s of audio at 512-sample blocks with steady triggering (spec §12),
+    // including a transport stop/start and a loop jump mid-run.
     constexpr int numBlocks = 1000;
     {
         allocGuard::Arm arm;
         for (int b = 0; b < numBlocks; ++b)
-            eng.process (out, (b % 4 == 0) ? notes : empty, ctx);
+        {
+            if (b == 400)
+                host.playing = false; // stop: pattern voices release
+            if (b == 450)
+                host.playing = true;  // restart
+            if (b == 700)
+                host.ppq = 0.0;       // loop jump / discontinuity
+            eng.process (out, (b % 4 == 0) ? notes : empty, host.ctx());
+            if (host.playing)
+                host.advance (512);
+        }
     }
 
     REQUIRE (allocGuard::violations.load() == 0);
