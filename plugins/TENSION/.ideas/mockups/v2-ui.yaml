@@ -1,0 +1,228 @@
+# TENSION UI mockup v2 - v1 design + 3D knobs + enclosure bezel
+meta:
+  plugin: TENSION
+  version: 2
+  changes_from_v1: ["knobs rebuilt with layered 3D construction (knob_3d)", "enclosure bezel added (enclosure)"]
+  note: >
+    Final GUI is NATIVE JUCE (no WebView). This mockup is the locked visual reference
+    for GUI Phases 4.1-4.3, to be reproduced with juce::Graphics. Only natively drawable
+    primitives are used (gradients, arcs, layered-stroke glows, ellipses, lines). No CSS
+    filters or backdrop blur. All coordinates are in a 520x520 pixel space.
+window:
+  width: 520
+  height: 520
+  resizable: false
+controls:
+  - id: tension
+    type: slider            # rotary, 0..100 %, default 0, linear
+    label: "TENSION"
+    position: { x: 165, y: 140 }
+    size: { diameter: 190 }
+    center: { x: 260, y: 235 }
+    range: [0.0, 100.0]
+    default: 0.0
+    readout: "{n}%  (integer, 40px semibold, centered at knob centre y-6)"
+    reset: double-click
+    drag: relative, 0.005 normalised per px vertical (up = increase), shift = 0.1x
+  - id: mix
+    type: slider
+    label: "MIX"
+    position: { x: 40, y: 420 }
+    size: { diameter: 56 }
+    center: { x: 68, y: 448 }
+    range: [0.0, 100.0]
+    default: 100.0
+    readout: "{n}%"
+    reset: double-click
+  - id: output
+    type: slider
+    label: "OUTPUT"
+    position: { x: 424, y: 420 }
+    size: { diameter: 56 }
+    center: { x: 452, y: 448 }
+    range: [-24.0, 12.0]
+    default: 0.0
+    readout: "{+0.0} dB"
+    reset: double-click
+  - id: sync
+    type: toggle
+    label: "SYNC"
+    position: { x: 424, y: 24 }
+    size: { width: 72, height: 26 }
+    default: true
+  - id: riseMode
+    type: combo             # 3-way segmented selector
+    label: "RISE MODE"
+    position: { x: 150, y: 440 }
+    size: { width: 220, height: 30 }
+    choices: ["Slow Burn", "Cinematic", "Aggressive"]
+    default: 1
+styling:
+  colors:
+    background_top: "#0d0b0c"
+    background_bottom: "#050405"
+    bezel_note: "see enclosure section; content area inset to 10px bezel"
+    vignette: "rgba(0,0,0,0.55) radial from r=180 to r=370 around (260,260)"
+    text_primary: "#ece6e1"
+    text_secondary: "#8a817b"
+    text_dim: "#4f4945"
+    accent_orange: "#ff8a3d"
+    accent_red: "#ff2d2a"
+    track: "#241f1e"
+    knob_face_top: "#2a2625"
+    knob_face_bottom: "#0f0d0d"
+    knob_rim: "#3a3433"
+    hairline: "#2d2827"
+  fonts:
+    primary: "Helvetica Neue / Arial (JUCE default sans)"
+    wordmark: { size: 13, weight: bold, letter_spacing_px: 6, color: text_secondary, position: { x: 28, y: 37 } }
+    label: { size: 10, weight: bold, letter_spacing_px: 2, color: text_secondary }
+    main_readout: { size: 40, weight: bold, color: text_primary }
+    small_readout: { size: 11, weight: normal, color: text_primary }
+  accent_ramp: "color(t) = lerp(accent_orange, accent_red, smoothstep(0.35, 1.0, tension))"
+knob_geometry:
+  sweep: { start_deg: 135, end_deg: 405, note: "0 deg = +x axis, clockwise (screen coords); 270 deg total" }
+  main:
+    track_radius: 88
+    track_stroke: 5
+    value_stroke: 5
+    value_color: accent ramp
+    glow: "2 extra strokes of the value arc: width 11 alpha 0.18*i, width 18 alpha 0.08*i (i = intensity)"
+    face_radius: 74
+    face_radius_note: "R=74 is the outer bevel radius; dome radius = R - 6 = 68. Face is built by knob_3d layers, not a flat fill"
+    indicator: "inlay line r=44..66, width 3, round cap, colour = accent ramp (#ece6e1 at tension<0.02); engraved groove under it per knob_3d.indicator"
+    tick_ring: "41 ticks at r=96..100, 1px, text_dim; ticks inside value range tinted accent at alpha 0.6"
+    readout_y_offset: 16
+    label_y_offset: 46
+  secondary:
+    track_radius: 25
+    track_stroke: 3
+    face_radius: 20
+    indicator: "inlay line r=9..17 width 2 (#c9743a) with groove per knob_3d.indicator"
+    value_color: "#c9743a (orange at 0.85 brightness, not intensity-driven)"
+    label_y: "centre + 44 (label below knob)"
+    readout_y: "centre + 3, centred inside face, 11px"
+knob_3d:
+  description: >
+    Layered physical-depth construction for all three knobs (TENSION R=74, MIX/OUTPUT R=20).
+    Light source is fixed TOP-LEFT. "diag(r)" = linear gradient from (cx-0.707r, cy-0.707r)
+    to (cx+0.707r, cy+0.707r), i.e. top-left -> bottom-right. All layers are plain
+    fills/strokes with linear/radial gradients (juce::ColourGradient). Specular uses an
+    AffineTransform (translate, rotate, scale) on an ellipse path. Draw order = list order.
+    Parameters: R = face (bevel) radius; main: bevel b=6, wellR=R+9=83; secondary: b=3, wellR=R+3=23.
+    dr = R - b (dome radius).
+  layers:
+    - id: well
+      what: "recessed socket, filled disc r=wellR"
+      fill: "diag(wellR): 0 #020202, 0.5 #0b0a0a, 1 #221d1c   (dark shadowed upper-left wall, lit lower-right lip)"
+      edge: "1px ring at r=wellR-0.5, diag(wellR): 0 rgba(0,0,0,0.9), 0.5 rgba(0,0,0,0), 1 rgba(255,255,255,0.13)"
+    - id: contact_shadow
+      what: "disc clipped to circle r=wellR-1; centre offset (0.35*so, so) with so = 7 main / 3.5 secondary"
+      fill: "radial from r=0.85R to r=R+14 (main) / R+7 (secondary): 0 rgba(0,0,0,0.8), 0.5 rgba(0,0,0,0.4), 1 rgba(0,0,0,0)"
+    - id: bevel_skirt
+      what: "disc r=R"
+      fill: "diag(R): 0 #6f6867, 0.42 #2c2827, 0.58 #141111, 1 #050404   (bright machined edge top-left, near black bottom-right)"
+    - id: dome
+      what: "disc r=dr"
+      fill: "radial, focal centre (cx-0.3dr, cy-0.4dr) r0=0, outer centre (cx,cy) r1=1.3dr: 0 #4f4847, 0.3 #2f2a29, 0.7 #131111, 1 #070606"
+      clip: "layers dome_rings, bounce_light, inner_shadow are clipped to circle r=dr"
+    - id: dome_rings
+      what: "main knob only: machined concentric rings at r = dr*{0.3,0.5,0.7,0.88}"
+      stroke: "0.8px rgba(255,255,255,0.03)"
+    - id: bounce_light
+      what: "reflected light from lower-right: disc r=0.6dr centred (cx+0.5dr, cy+0.6dr)"
+      fill: "radial r 0 -> 0.6dr: 0 rgba(255,255,255,0.07), 1 rgba(255,255,255,0)"
+    - id: inner_shadow
+      what: "ring at r=dr-1.5, width 3 (darkens lower-right edge inside the dome)"
+      stroke: "diag(dr): 0 rgba(0,0,0,0), 0.4 rgba(0,0,0,0), 1 rgba(0,0,0,0.6)"
+    - id: dome_rim
+      what: "ring at r=dr, width 1 (outside the clip)"
+      stroke: "diag(dr): 0 rgba(255,255,255,0.24), 0.5 rgba(255,255,255,0.02), 1 rgba(0,0,0,0.55)"
+    - id: specular
+      what: "elliptical highlight: translate (cx-0.32dr, cy-0.42dr), rotate -35 deg, scale y by 0.6, disc r=0.34dr"
+      fill: "radial r 0 -> 0.34dr: 0 rgba(255,255,255,0.30), 0.5 rgba(255,255,255,0.10), 1 rgba(255,255,255,0)"
+    - id: indicator
+      what: "engraved groove then inlay (drawn after all layers above)"
+      groove: "same line as indicator, width 5 main / 3.4 secondary, rgba(0,0,0,0.65), round cap"
+      groove_lip: "same line offset (+1.6,+1.6), width 1, rgba(255,255,255,0.10)  (lit lower-right wall)"
+      inlay: "same line, width 3 main / 2 secondary, accent ramp (main) or #c9743a (secondary)"
+  track_and_ticks: "unchanged from v1; track ring (r=88 / 25) sits outside the well so the well never overlaps the track"
+enclosure:
+  description: "Machined bezel around the full 520x520 window. All content (background, vignette, pulse field, knobs, controls) is clipped to the inner rounded rect and the bezel is drawn last."
+  outer: { x: 0, y: 0, width: 520, height: 520, corner_radius: 14 }
+  inner_window: { x: 10, y: 10, width: 500, height: 500, corner_radius: 6, note: "bezel thickness 10px; v1 content positions unchanged, minimum clearance from inner edge is 14px (SYNC top y=24, wordmark x=28)" }
+  layers:
+    - id: outer_edge
+      what: "1px stroke on rrect(0.5,0.5,519,519,r14)"
+      colour: "#060505"
+    - id: band
+      what: "evenodd fill of rrect(1,1,518,518,r13) minus inner_window"
+      fill: "linear (0,0)->(520,520): 0 #4d4645, 0.35 #26211f, 0.65 #141110, 1 #2e2928"
+    - id: edge_highlight
+      what: "1px stroke on rrect(1.5,1.5,517,517,r12.5)"
+      stroke: "linear (0,0)->(520,520): 0 rgba(255,255,255,0.22), 0.5 rgba(255,255,255,0), 1 rgba(255,255,255,0.05)"
+    - id: inner_lip
+      what: "1px stroke on rrect(9.5,9.5,501,501,r6.5)"
+      stroke: "linear (0,0)->(520,520): 0 rgba(0,0,0,0.95), 0.5 rgba(0,0,0,0.5), 1 rgba(255,255,255,0.12)"
+    - id: accent_hairline
+      what: "1px stroke on rrect(13.5,13.5,493,493,r4), drawn inside the window over the pulse field"
+      stroke: "linear (13,13)->(507,507): 0 rgba(255,138,61, 0.22+0.2*I), 1 rgba(255,45,42, 0.18+0.2*I)   (I = smoothed pulse intensity)"
+selector:
+  background: "#141111, radius 15, 1px hairline border"
+  segment_width: 73.33
+  active: "pill radius 12, fill rgba(255,138,61,0.16), 1px border accent_orange at alpha 0.7, text text_primary"
+  inactive_text: text_secondary
+  text: "11px bold, letter spacing 1px"
+  caption: "RISE MODE label 10px at y=432, centred x=260"
+sync_toggle:
+  shape: "pill 72x26 radius 13"
+  on: "border accent_orange, fill rgba(255,138,61,0.14), 8px LED dot (accent_orange + glow ring r=7 alpha 0.25) left, text 'SYNC' text_primary"
+  off: "border hairline, LED dot text_dim, text text_dim"
+pulse_field:
+  description: "Radial pulse field behind the knob. Centre (260,235). Pure vector drawing, GUI timer ~60 Hz, independent of audio."
+  intensity_input: "i = tension^gamma, gamma by riseMode (Slow Burn 1.25, Cinematic 1.0, Aggressive 0.75), smoothed with one-pole (0.12 per frame at 60Hz)"
+  transparency_gate: "g = smoothstep(0.0, 0.04, tension): everything below is multiplied by g, so the field is fully invisible at 0%"
+  stages:
+    "0%": transparent, no field
+    "10%": faint slow breathing ticks, a few drifting sparks
+    "60%": atmospheric - full ring of moving spikes, regular outward rings, visible particle haze
+    "100%": intense climax - long fast spikes, dense particles, rapid double rings, red-dominant, halo glow
+  radial_segments:
+    count: 72
+    inner_radius: 104
+    base_length: "2 + 6*i"
+    max_extra_length: "70 * i^1.2 * activity"
+    activity_per_segment: "0.5 + 0.5*sin(phase + k*0.7 + t*rate*2pi) combined with 0.5 + 0.5*sin(k*1.9 - t*rate*1.37*2pi)  -> averaged"
+    rate_hz: "0.15 + 2.6*i"
+    stroke_width: "1.2 + 1.3*i"
+    alpha: "g * (0.10 + 0.75*i) * (0.35 + 0.65*activity)"
+    colour: accent ramp
+    rotation_deg_per_sec: "2 + 22*i"
+  pulse_rings:
+    spawn_rate_hz: "0.2 + 2.8*i"
+    lifetime_sec: "3.2 - 1.9*i (min 1.3)"
+    radius: "from 100 to 215 using easeOutCubic(age/lifetime)"
+    stroke_width: "2.2 - 1.2*age_norm"
+    alpha: "g * (0.08 + 0.4*i) * (1 - age_norm)^1.5"
+    max_alive: 12
+  particles:
+    count_alive_target: "round(g * (6 + 130*i^1.1))"
+    spawn: "angle random, radius 100..110"
+    speed_px_per_sec: "25 + 140*i (random 0.6..1.4x)"
+    lifetime_sec: "1.6 - 0.8*i (random 0.7..1.3x)"
+    size_px: "1 + 1.6*i (random 0.6..1.2x)"
+    alpha: "g * (0.15 + 0.6*i) * (1 - age_norm)"
+    colour: accent ramp
+    drift: "tangential 6 + 30*i px/sec"
+  halo:
+    description: "Radial gradient ellipse centred on knob, r 90 -> 230"
+    inner_alpha: "0.0"
+    mid_alpha: "g * 0.14 * i^1.3  at r=130"
+    outer_alpha: 0
+    colour: accent ramp
+  breathing: "overall radial scale 1 + 0.015*i*sin(t*2pi*(0.5+1.5*i)) applied to segment inner radius"
+interaction:
+  drag: relative (frame delta), vertical, 0.005 normalised/px, shift = 0.1x
+  double_click: reset to default
+  cursor: ns-resize over knobs, pointer over toggle/selector
+test_html_readout: small parameter readout bottom of page (outside the 520x520 plugin area), mock Juce state logging
