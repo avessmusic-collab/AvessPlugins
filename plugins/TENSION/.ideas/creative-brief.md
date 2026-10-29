@@ -30,9 +30,12 @@ The result must sound like a purpose-built cinematic tension instrument, not a g
 
 ## UI Concept
 
-**Layout:** One oversized central circular TENSION knob (0–100% readout) with a reactive circular intensity visualization; compact MIX / OUTPUT / SYNC / RISE MODE controls. Nothing else.
-**Visual Style:** Premium minimalist — near-black background, subtle gradients, clean typography, restrained orange/red accents.
-**Key Elements:** Reactive circular visualizer around/behind the big knob; GUI animation decoupled from audio thread. (Spec §6 calls for native JUCE LookAndFeel; factory default is WebView — resolve in Stage 0.)
+**FINAL — locked to mockup v4** (`.ideas/mockups/v4-ui.yaml`, `meta.finalized: true`, 2026-10-29). GUI is **native JUCE** (user decision; no WebView). Phases 4.1–4.3 reproduce v4 with `juce::Graphics`.
+
+**Layout:** 520×520 near-black canvas inside a 10px machined enclosure bezel (14px outer corner radius, mode-colored accent hairline). 190px central TENSION knob (270° arc, tick ring, 40px percent readout) over a radial pulse field (72 spikes, expanding rings, drifting particles, halo) driven by tension. MIX and OUTPUT as 56px knobs in the bottom corners, RISE MODE 3-way segmented pill bottom-center, SYNC LED pill top-right.
+**Visual Style:** Premium minimalist; all knobs use a 9-layer 3D build (recessed well, contact shadow, bevel skirt, gradient dome, machined rings, bounce light, rim, specular; top-left light source). Depth and glow via gradients/strokes/clips only — everything drawable with juce::Graphics.
+**Mode color themes** (crossfade 450 ms smoothstep, drives pulse field + arcs + inlays + LED + selector + bezel hairline): Slow Burn orange #ff8a3d → red #ff2d2a (glow_k 1.0); Cinematic (default) teal #2dd4c4 → electric blue #2b52ff (glow_k 1.15); Aggressive violet #b266ff → magenta #e62bc8 (glow_k 1.1). Pulse intensity gamma per mode: 1.25 / 1.0 / 0.75.
+**Interactions:** relative-drag knobs (0.005/px, Shift = 0.1×), double-click reset; visualizer animation decoupled from audio (60 Hz timer reading telemetry atomics).
 
 ## Use Cases
 

@@ -2,6 +2,8 @@
 meta:
   plugin: TENSION
   version: 4
+  finalized: true
+  finalized_date: 2026-10-29
   changes_from_v2: ["accent colour system is now owned by RISE MODE (see mode_themes); default view = Cinematic blue"]
   changes_from_v3: ["Cinematic ramp changed from cyan-blue/electric-blue to teal (#2dd4c4) rising to electric blue (#2b52ff): green at low tension, blue at climax (user request)"]
   note: >
