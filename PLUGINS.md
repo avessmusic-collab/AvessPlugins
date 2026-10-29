@@ -47,7 +47,7 @@
 | Materia | 📦 Installed | 1.0.0 | Synth (Material Percussion Instrument) | 2026-09-09 |
 | DROP | 📦 Installed | 1.0.0 | Audio Effect (Transition Engine) | 2026-09-24 |
 | PRISM | 📦 Installed | 1.0.0 | Audio Effect (Multi-Source Analyzer/Visualizer) | 2026-10-18 |
-| CHOPLINE | 💡 Ideated | - | Synth (Vocal Chop/Warp/Glitch Instrument) | 2026-10-24 |
+| CHOPLINE | 🚧 Phase 5 | - | Synth (Vocal Chop/Warp/Glitch Instrument) | 2026-10-29 |
 
 **For detailed plugin information (lifecycle timeline, known issues, parameters, etc.), see:**
 `plugins/[PluginName]/NOTES.md`
