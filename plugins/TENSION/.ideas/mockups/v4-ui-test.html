@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>TENSION UI Mockup v3</title>
+<style>
+  html, body { height: 100%; margin: 0; padding: 0; }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    user-select: none; -webkit-user-select: none; cursor: default; overflow: hidden;
+    background: #000; color: #ece6e1;
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  }
+  #plugin { width: 520px; height: 520px; position: relative; }
+  canvas { display: block; width: 520px; height: 520px; }
+  #readout { font: 11px/1.4 ui-monospace, Menlo, monospace; color: #8a817b; letter-spacing: 0.5px; }
+  #readout b { color: #35e08a; font-weight: normal; }
+</style>
+</head>
+<body>
+<div id="plugin"><canvas id="c"></canvas></div>
+<div id="readout"></div>
+<script>
+// Mock JUCE backend
+window.Juce = {
+  getSliderState: (id) => ({ normalisedValue: 0, valueChangedEvent: { addListener: () => console.log("listener " + id) } }),
+  getToggleState: (id) => ({ value: true, valueChangedEvent: { addListener: () => console.log("listener " + id) } }),
+  getComboBoxState: (id) => ({ selectedId: 1, valueChangedEvent: { addListener: () => console.log("listener " + id) } })
+};
+document.addEventListener("contextmenu", (e) => { e.preventDefault(); return false; });
+
+const W = 520, H = 520, CX = 260, CY = 235;
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const dpr = window.devicePixelRatio || 1;
+cv.width = W * dpr; cv.height = H * dpr; ctx.scale(dpr, dpr);
+
+const P = {
+  tension: { v: 0, def: 0, cx: CX, cy: CY, r: 95, main: true, label: "TENSION" },
+  mix:     { v: 1, def: 1, cx: 68, cy: 448, r: 28, label: "MIX" },
+  output:  { v: 24 / 36, def: 24 / 36, cx: 452, cy: 448, r: 28, label: "OUTPUT" }
+};
+const state = { sync: true, riseMode: 1 };  // default Cinematic (blue)
+const modes = ["Slow Burn", "Cinematic", "Aggressive"];
+const gammas = [1.25, 1.0, 0.75];
+const SYNC = { x: 424, y: 24, w: 72, h: 26 };
+const SEL = { x: 150, y: 440, w: 220, h: 30 };
+
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+// ---- Per-RISE-MODE colour themes (crossfaded). a = low-tension stop, b = full-tension stop.
+const THEMES = [
+  { name: "Slow Burn",  a: hex("#ff8a3d"), b: hex("#ff2d2a"), glow: 1.0 },
+  { name: "Cinematic",  a: hex("#35e08a"), b: hex("#2b52ff"), glow: 1.15 },
+  { name: "Aggressive", a: hex("#b266ff"), b: hex("#e62bc8"), glow: 1.1 }
+];
+const THEME_FADE_MS = 450;
+const OR = THEMES[1].a.slice(), RD = THEMES[1].b.slice();   // live (animated) stops
+let GLOWK = THEMES[1].glow;
+let fade = null;                                            // {from, to, t0}
+function setTheme(idx) {
+  const from = { a: OR.slice(), b: RD.slice(), glow: GLOWK };
+  fade = { from, to: THEMES[idx], t0: performance.now() };
+}
+function stepTheme(now) {
+  if (!fade) return;
+  const u = clamp((now - fade.t0) / THEME_FADE_MS, 0, 1), e = u * u * (3 - 2 * u);
+  for (let c = 0; c < 3; c++) { OR[c] = lerp(fade.from.a[c], fade.to.a[c], e); RD[c] = lerp(fade.from.b[c], fade.to.b[c], e); }
+  GLOWK = lerp(fade.from.glow, fade.to.glow, e);
+  if (u >= 1) fade = null;
+}
+const rgbA = (c, a) => `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${a})`;
+function ramp(t, a) {
+  const k = smooth(0.35, 1.0, t);
+  return `rgba(${Math.round(lerp(OR[0], RD[0], k))},${Math.round(lerp(OR[1], RD[1], k))},${Math.round(lerp(OR[2], RD[2], k))},${clamp(a, 0, 1)})`;
+}
+const rad = (d) => d * Math.PI / 180;
+const A0 = rad(135), A1 = rad(405);
+
+// ---- Pulse field state
+let I = 0;            // smoothed intensity
+let T = 0;            // seconds
+const rings = [], parts = [];
+let ringAcc = 0, partAcc = 0, rot = 0;
+const rnd = (a, b) => a + Math.random() * (b - a);
+
+function stepField(dt, tension) {
+  const target = Math.pow(tension, gammas[state.riseMode]);
+  I += (target - I) * (1 - Math.pow(1 - 0.12, dt * 60));
+  const g = smooth(0, 0.04, tension), i = I;
+  rot += rad(2 + 22 * i) * dt;
+  // rings
+  if (g > 0.001) {
+    ringAcc += dt * (0.2 + 2.8 * i);
+    if (ringAcc >= 1 && rings.length < 12) { ringAcc = 0; rings.push({ age: 0 }); } else if (ringAcc >= 1) ringAcc = 0;
+  }
+  const life = Math.max(1.3, 3.2 - 1.9 * i);
+  for (let k = rings.length - 1; k >= 0; k--) { rings[k].age += dt; if (rings[k].age > life) rings.splice(k, 1); }
+  // particles
+  const want = Math.round(g * (6 + 130 * Math.pow(i, 1.1)));
+  const pl = 1.6 - 0.8 * i;
+  const spawnRate = want / Math.max(0.3, pl);
+  partAcc += dt * spawnRate;
+  while (partAcc >= 1) {
+    partAcc -= 1;
+    if (parts.length < 220) parts.push({ a: rnd(0, Math.PI * 2), r: rnd(100, 110), sp: (25 + 140 * i) * rnd(0.6, 1.4),
+      life: pl * rnd(0.7, 1.3), age: 0, sz: (1 + 1.6 * i) * rnd(0.6, 1.2), tg: (6 + 30 * i) * rnd(-1, 1) });
+  }
+  for (let k = parts.length - 1; k >= 0; k--) {
+    const p = parts[k]; p.age += dt; p.r += p.sp * dt; p.a += (p.tg / p.r) * dt;
+    if (p.age > p.life) parts.splice(k, 1);
+  }
+  return { g, i, life };
+}
+
+function drawField(f, tension) {
+  const { g, i, life } = f;
+  if (g <= 0.001) return;
+  // halo
+  const ha = g * 0.14 * GLOWK * Math.pow(i, 1.3);
+  const hg = ctx.createRadialGradient(CX, CY, 90, CX, CY, 230);
+  hg.addColorStop(0, ramp(i, 0));
+  hg.addColorStop(0.3, ramp(i, ha));
+  hg.addColorStop(1, ramp(i, 0));
+  ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(CX, CY, 230, 0, Math.PI * 2); ctx.fill();
+  // rings
+  for (const r of rings) {
+    const n = r.age / life, e = 1 - Math.pow(1 - n, 3);
+    ctx.strokeStyle = ramp(i, g * (0.08 + 0.4 * i) * Math.pow(1 - n, 1.5));
+    ctx.lineWidth = 2.2 - 1.2 * n;
+    ctx.beginPath(); ctx.arc(CX, CY, lerp(100, 215, e), 0, Math.PI * 2); ctx.stroke();
+  }
+  // radial segments
+  const rate = 0.15 + 2.6 * i, breathe = 1 + 0.015 * i * Math.sin(T * 2 * Math.PI * (0.5 + 1.5 * i));
+  ctx.lineCap = "round"; ctx.lineWidth = 1.2 + 1.3 * i;
+  for (let k = 0; k < 72; k++) {
+    const act = 0.5 * (0.5 + 0.5 * Math.sin(k * 0.7 + T * rate * 2 * Math.PI)) + 0.5 * (0.5 + 0.5 * Math.sin(k * 1.9 - T * rate * 1.37 * 2 * Math.PI));
+    const a = rot + k * (Math.PI * 2 / 72);
+    const r0 = 104 * breathe, len = 2 + 6 * i + 70 * Math.pow(i, 1.2) * act;
+    ctx.strokeStyle = ramp(i, g * (0.10 + 0.75 * i) * (0.35 + 0.65 * act));
+    ctx.beginPath();
+    ctx.moveTo(CX + Math.cos(a) * r0, CY + Math.sin(a) * r0);
+    ctx.lineTo(CX + Math.cos(a) * (r0 + len), CY + Math.sin(a) * (r0 + len));
+    ctx.stroke();
+  }
+  // particles
+  for (const p of parts) {
+    const n = p.age / p.life;
+    ctx.fillStyle = ramp(i, g * (0.15 + 0.6 * i) * (1 - n));
+    ctx.beginPath(); ctx.arc(CX + Math.cos(p.a) * p.r, CY + Math.sin(p.a) * p.r, p.sz, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// ---- Drawing helpers
+function text(s, x, y, size, weight, color, spacing, align) {
+  ctx.font = `${weight} ${size}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.letterSpacing = (spacing || 0) + "px";
+  ctx.fillStyle = color; ctx.textAlign = align || "center"; ctx.textBaseline = "middle";
+  // letterSpacing adds trailing space; compensate for centre
+  const off = align === "left" || align === "right" ? 0 : (spacing || 0) / 2;
+  ctx.fillText(s, x + off, y);
+}
+function arc(cx, cy, r, a0, a1, w, col) {
+  ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
+}
+function rrect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+
+// ---- 3D knob construction (light source: top-left, direction (-0.707,-0.707))
+function lin(x0, y0, x1, y1, stops) { const g = ctx.createLinearGradient(x0, y0, x1, y1); stops.forEach(s => g.addColorStop(s[0], s[1])); return g; }
+function rad2(x0, y0, r0, x1, y1, r1, stops) { const g = ctx.createRadialGradient(x0, y0, r0, x1, y1, r1); stops.forEach(s => g.addColorStop(s[0], s[1])); return g; }
+function disc(cx, cy, r, fill) { ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill(); }
+function ring(cx, cy, r, w, stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = w; ctx.lineCap = "butt"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); }
+// axis-aligned TL->BR gradient across a circle of radius r
+const diag = (cx, cy, r, stops) => lin(cx - r * 0.707, cy - r * 0.707, cx + r * 0.707, cy + r * 0.707, stops);
+
+function knobBody(cx, cy, R, main) {
+  const bev = main ? 6 : 3, dr = R - bev, wellR = R + (main ? 9 : 3);
+  // 1. recessed well: dark upper-left (shadowed wall), lit lower-right lip
+  disc(cx, cy, wellR, diag(cx, cy, wellR, [[0, "#020202"], [0.5, "#0b0a0a"], [1, "#221d1c"]]));
+  ring(cx, cy, wellR - 0.5, 1, diag(cx, cy, wellR, [[0, "rgba(0,0,0,0.9)"], [0.5, "rgba(0,0,0,0)"], [1, "rgba(255,255,255,0.13)"]]));
+  // 2. contact shadow (clipped to well), offset down-right away from light
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, wellR - 1, 0, Math.PI * 2); ctx.clip();
+  const so = main ? 7 : 3.5, sx = cx + so * 0.35, sy = cy + so;
+  disc(sx, sy, R + (main ? 14 : 7), rad2(sx, sy, R * 0.85, sx, sy, R + (main ? 14 : 7), [[0, "rgba(0,0,0,0.8)"], [0.5, "rgba(0,0,0,0.4)"], [1, "rgba(0,0,0,0)"]]));
+  ctx.restore();
+  // 3. bevel skirt: bright upper-left edge to near-black lower-right
+  disc(cx, cy, R, diag(cx, cy, R, [[0, "#6f6867"], [0.42, "#2c2827"], [0.58, "#141111"], [1, "#050404"]]));
+  // 4. dome
+  disc(cx, cy, dr, rad2(cx - dr * 0.3, cy - dr * 0.4, 0, cx, cy, dr * 1.3, [[0, "#4f4847"], [0.3, "#2f2a29"], [0.7, "#131111"], [1, "#070606"]]));
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, dr, 0, Math.PI * 2); ctx.clip();
+  // 5. machined concentric rings (main only)
+  if (main) for (const f of [0.3, 0.5, 0.7, 0.88]) ring(cx, cy, dr * f, 0.8, "rgba(255,255,255,0.03)");
+  // 6. bounce light from lower-right
+  const bx = cx + dr * 0.5, by = cy + dr * 0.6;
+  disc(bx, by, dr * 0.6, rad2(bx, by, 0, bx, by, dr * 0.6, [[0, "rgba(255,255,255,0.07)"], [1, "rgba(255,255,255,0)"]]));
+  // 7. inner shadow along lower-right edge
+  ring(cx, cy, dr - 1.5, 3, diag(cx, cy, dr, [[0, "rgba(0,0,0,0)"], [0.4, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0.6)"]]));
+  ctx.restore();
+  // 8. dome rim line
+  ring(cx, cy, dr, 1, diag(cx, cy, dr, [[0, "rgba(255,255,255,0.24)"], [0.5, "rgba(255,255,255,0.02)"], [1, "rgba(0,0,0,0.55)"]]));
+  // 9. specular highlight: elliptical, offset to light source, rotated -35 deg
+  ctx.save(); ctx.translate(cx - dr * 0.32, cy - dr * 0.42); ctx.rotate(rad(-35)); ctx.scale(1, 0.6);
+  disc(0, 0, dr * 0.34, rad2(0, 0, 0, 0, 0, dr * 0.34, [[0, "rgba(255,255,255,0.30)"], [0.5, "rgba(255,255,255,0.10)"], [1, "rgba(255,255,255,0)"]]));
+  ctx.restore();
+}
+
+function drawKnob(k, id) {
+  const m = k.main, v = k.v, ang = A0 + (A1 - A0) * v;
+  const trackR = m ? 88 : 25, w = m ? 5 : 3, faceR = m ? 74 : 20;
+  const t = P.tension.v;
+  const col = (a) => m ? ramp(t, a) : rgbA([OR[0]*0.85,OR[1]*0.85,OR[2]*0.85],a);
+  if (m) {
+    for (let n = 0; n <= 40; n++) {
+      const a = A0 + (A1 - A0) * n / 40, on = n / 40 <= v && v > 0;
+      ctx.strokeStyle = on ? ramp(t, 0.6) : "#4f4945"; ctx.lineWidth = 1; ctx.lineCap = "butt";
+      ctx.beginPath(); ctx.moveTo(CX + Math.cos(a) * 96, CY + Math.sin(a) * 96); ctx.lineTo(CX + Math.cos(a) * 100, CY + Math.sin(a) * 100); ctx.stroke();
+    }
+  }
+  arc(k.cx, k.cy, trackR, A0, A1, w, "#241f1e");
+  if (v > 0.001) {
+    if (m) { arc(k.cx, k.cy, trackR, A0, ang, 18, col(0.08 * I * GLOWK)); arc(k.cx, k.cy, trackR, A0, ang, 11, col(0.18 * I * GLOWK)); }
+    arc(k.cx, k.cy, trackR, A0, ang, w, col(1));
+  }
+  knobBody(k.cx, k.cy, faceR, m);
+  // indicator: engraved groove (dark, offset toward light-opposite) + coloured inlay
+  const r0 = m ? 44 : 9, r1 = m ? 66 : 17, c = Math.cos(ang), s = Math.sin(ang);
+  const ic = m ? (t < 0.02 ? "#ece6e1" : ramp(t, 1)) : rgbA([OR[0]*0.85,OR[1]*0.85,OR[2]*0.85],1);
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(0,0,0,0.65)"; ctx.lineWidth = m ? 5 : 3.4;
+  ctx.beginPath(); ctx.moveTo(k.cx + c * r0, k.cy + s * r0); ctx.lineTo(k.cx + c * r1, k.cy + s * r1); ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(k.cx + c * r0 + 1.6, k.cy + s * r0 + 1.6); ctx.lineTo(k.cx + c * r1 + 1.6, k.cy + s * r1 + 1.6); ctx.stroke();
+  ctx.strokeStyle = ic; ctx.lineWidth = m ? 3 : 2;
+  ctx.beginPath(); ctx.moveTo(k.cx + c * r0, k.cy + s * r0); ctx.lineTo(k.cx + c * r1, k.cy + s * r1); ctx.stroke();
+  // readout + label
+  if (m) {
+    text(Math.round(v * 100) + "%", CX, CY - 6 + 22, 40, "bold", "#ece6e1", 0);
+    text("TENSION", CX, CY + 24 + 22, 10, "bold", "#8a817b", 2);
+  } else {
+    const s2 = id === "mix" ? Math.round(v * 100) + "%" : fmtDb(v);
+    text(s2, k.cx, k.cy + 3, id === "output" ? 10 : 11, "normal", "#ece6e1", 0);
+    text(k.label, k.cx, k.cy + 44, 10, "bold", "#8a817b", 2);
+  }
+}
+
+// ---- Enclosure bezel (drawn last, over content clipped to inner window)
+const INNER = { x: 10, y: 10, w: 500, h: 500, r: 6 };
+function frameBand() {
+  ctx.beginPath(); ctx.roundRect(1, 1, 518, 518, 13); ctx.roundRect(INNER.x, INNER.y, INNER.w, INNER.h, INNER.r);
+}
+function drawBezel() {
+  // a. outer edge line
+  ctx.strokeStyle = "#060505"; ctx.lineWidth = 1; rrect(0.5, 0.5, 519, 519, 14); ctx.stroke();
+  // b. machined band
+  frameBand();
+  ctx.fillStyle = lin(0, 0, 520, 520, [[0, "#4d4645"], [0.35, "#26211f"], [0.65, "#141110"], [1, "#2e2928"]]);
+  ctx.fill("evenodd");
+  // c. top-left edge highlight
+  ctx.strokeStyle = lin(0, 0, 520, 520, [[0, "rgba(255,255,255,0.22)"], [0.5, "rgba(255,255,255,0)"], [1, "rgba(255,255,255,0.05)"]]);
+  ctx.lineWidth = 1; rrect(1.5, 1.5, 517, 517, 12.5); ctx.stroke();
+  // d. inner lip: shadow upper-left, light lower-right
+  ctx.strokeStyle = lin(0, 0, 520, 520, [[0, "rgba(0,0,0,0.95)"], [0.5, "rgba(0,0,0,0.5)"], [1, "rgba(255,255,255,0.12)"]]);
+  rrect(9.5, 9.5, 501, 501, 6.5); ctx.stroke();
+  // e. accent hairline (orange -> red, brightens slightly with intensity)
+  ctx.strokeStyle = lin(13, 13, 507, 507, [[0, rgbA(OR,0.22 + 0.2 * I)], [1, rgbA(RD,0.18 + 0.2 * I)]]);
+  rrect(13.5, 13.5, 493, 493, 4); ctx.stroke();
+}
+
+const dbOf = (v) => -24 + 36 * v;
+const fmtDb = (v) => { const d = Math.round(dbOf(v) * 10) / 10; return (d > 0 ? "+" : "") + d.toFixed(1); };
+
+function drawSync() {
+  const { x, y, w, h } = SYNC, on = state.sync;
+  rrect(x, y, w, h, 13);
+  ctx.fillStyle = on ? rgbA(OR,0.14) : "#100d0d"; ctx.fill();
+  ctx.strokeStyle = on ? rgbA(OR,1) : "#2d2827"; ctx.lineWidth = 1; ctx.stroke();
+  const lx = x + 15, ly = y + h / 2;
+  if (on) { ctx.fillStyle = rgbA(OR,0.25*GLOWK); ctx.beginPath(); ctx.arc(lx, ly, 7, 0, 7); ctx.fill(); }
+  ctx.fillStyle = on ? rgbA(OR,1) : "#4f4945"; ctx.beginPath(); ctx.arc(lx, ly, 4, 0, 7); ctx.fill();
+  text("SYNC", x + 30, ly + 0.5, 10, "bold", on ? "#ece6e1" : "#4f4945", 1.5, "left");
+}
+function drawSelector() {
+  const { x, y, w, h } = SEL;
+  text("RISE MODE", 260, 432, 10, "bold", "#8a817b", 2);
+  rrect(x, y, w, h, 15); ctx.fillStyle = "#141111"; ctx.fill(); ctx.strokeStyle = "#2d2827"; ctx.lineWidth = 1; ctx.stroke();
+  const sw = w / 3;
+  for (let k = 0; k < 3; k++) {
+    const sx = x + k * sw, act = k === state.riseMode;
+    if (act) { rrect(sx + 3, y + 3, sw - 6, h - 6, 12); ctx.fillStyle = rgbA(OR,0.16); ctx.fill(); ctx.strokeStyle = rgbA(OR,0.7); ctx.stroke(); }
+    text(modes[k], sx + sw / 2, y + h / 2 + 0.5, 10.5, "bold", act ? "#ece6e1" : "#8a817b", 0.5);
+  }
+}
+
+function drawBackground() {
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#0d0b0c"); bg.addColorStop(1, "#050405");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const vg = ctx.createRadialGradient(260, 260, 180, 260, 260, 370);
+  vg.addColorStop(0, "rgba(0,0,0,0)"); vg.addColorStop(1, "rgba(0,0,0,0.55)");
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  text("TENSION", 28, 37, 13, "bold", "#8a817b", 6, "left");
+  ctx.strokeStyle = "#2d2827"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(28, 58); ctx.lineTo(60, 58); ctx.stroke();
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; T += dt;
+  stepTheme(now);
+  const f = stepField(dt, P.tension.v);
+  ctx.clearRect(0, 0, W, H);
+  ctx.save(); ctx.beginPath(); ctx.roundRect(INNER.x, INNER.y, INNER.w, INNER.h, INNER.r); ctx.clip();
+  drawBackground();
+  drawField(f, P.tension.v);
+  drawKnob(P.tension, "tension"); drawKnob(P.mix, "mix"); drawKnob(P.output, "output");
+  drawSync(); drawSelector();
+  ctx.restore();
+  drawBezel();
+  updateReadout();
+  requestAnimationFrame(frame);
+}
+
+// ---- Interaction
+let drag = null;
+const pos = (e) => { const b = cv.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
+function hitKnob(p) { for (const id in P) { const k = P[id]; if (Math.hypot(p.x - k.cx, p.y - k.cy) <= (k.main ? 80 : 28)) return id; } return null; }
+const inR = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+cv.addEventListener("pointerdown", (e) => {
+  const p = pos(e), id = hitKnob(p);
+  if (id) { drag = { id, lastY: e.clientY }; cv.setPointerCapture(e.pointerId); return; }
+  if (inR(p, SYNC)) { state.sync = !state.sync; console.log("sync", state.sync); }
+  else if (inR(p, SEL)) { state.riseMode = clamp(Math.floor((p.x - SEL.x) / (SEL.w / 3)), 0, 2); setTheme(state.riseMode); console.log("riseMode", state.riseMode); }
+});
+cv.addEventListener("pointermove", (e) => {
+  if (drag) {
+    const dy = drag.lastY - e.clientY; drag.lastY = e.clientY;   // relative frame delta
+    const k = P[drag.id]; k.v = clamp(k.v + dy * 0.005 * (e.shiftKey ? 0.1 : 1), 0, 1);
+    return;
+  }
+  const p = pos(e);
+  cv.style.cursor = hitKnob(p) ? "ns-resize" : (inR(p, SYNC) || inR(p, SEL)) ? "pointer" : "default";
+});
+cv.addEventListener("pointerup", () => { drag = null; });
+cv.addEventListener("dblclick", (e) => { const id = hitKnob(pos(e)); if (id) P[id].v = P[id].def; });
+cv.addEventListener("keydown", () => {});
+
+const ro = document.getElementById("readout");
+function updateReadout() {
+  ro.innerHTML = `tension <b>${Math.round(P.tension.v * 100)}%</b> &nbsp; mix <b>${Math.round(P.mix.v * 100)}%</b> &nbsp; output <b>${fmtDb(P.output.v)} dB</b> &nbsp; sync <b>${state.sync ? "on" : "off"}</b> &nbsp; riseMode <b>${modes[state.riseMode]}</b>`;
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
