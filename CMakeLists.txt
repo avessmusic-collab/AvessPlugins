@@ -27,12 +27,21 @@ else()
     FetchContent_MakeAvailable(JUCE)
 endif()
 
+# Self-contained plugin projects are NOT added to the root build: they declare
+# their own project() and pin their own dependencies via FetchContent (e.g.
+# CHOPLINE pins JUCE 9.0.4), which collides with the root's JUCE 8 targets.
+# They are configured and built from their own directory (see their CMakeLists).
+set(SELF_CONTAINED_PLUGINS CHOPLINE)
+
 # Auto-discover plugins. -DONLY_PLUGIN=<Name> restricts configuration to one
 # plugin (used by CI so one plugin's build never depends on the others).
 file(GLOB PLUGIN_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*")
 foreach(PLUGIN_DIR ${PLUGIN_DIRS})
     if(IS_DIRECTORY ${PLUGIN_DIR} AND EXISTS "${PLUGIN_DIR}/CMakeLists.txt")
         get_filename_component(PLUGIN_NAME ${PLUGIN_DIR} NAME)
+        if(PLUGIN_NAME IN_LIST SELF_CONTAINED_PLUGINS)
+            continue()
+        endif()
         if(DEFINED ONLY_PLUGIN AND NOT PLUGIN_NAME STREQUAL "${ONLY_PLUGIN}")
             continue()
         endif()
