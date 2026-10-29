@@ -11,11 +11,26 @@
       T4  block-size invariance
       T5  allocation guard (global operator new counter armed around process())
       T6  telemetry atomics
+
+    Phase 3.2 (core series modules, driven by the temporary linear stub mapping):
+      T7  stub mapping (Phase 3.2 destinations) + LFOEngine (shapes, period, sync, continuity, S&H)
+      T8  FilterEngine (extremes / Q cap / cutoff clamp, click-free sweep)
+      T9  SaturationEngine (ADAA alias test via juce::dsp::FFT, loudness vs drive, no DC, finite)
+      T10 StereoWidth (LR4 flat recombination, mono-sum loss, mid attenuation, low collapse)
+      T11 real chain in-circuit (block invariance, NaN/Inf, bounded output, telemetry, transport)
+    Regression: T1..T6 run unchanged against the real modules (T2 safety-clamp and T6 telemetry use
+    the series-chain bypass hook to keep their Phase 3.1 identity-proc assumption).
 */
 #include "PluginProcessor.h"
 #include "DSP/TensionEngine.h"
 #include "DSP/OutputSafety.h"
 #include "DSP/TensionMapping.h"
+#include "DSP/LFOEngine.h"
+#include "DSP/FilterEngine.h"
+#include "DSP/SaturationEngine.h"
+#include "DSP/StereoWidth.h"
+
+#include <juce_dsp/juce_dsp.h>
 
 #include <algorithm>
 #include <atomic>
@@ -465,6 +480,7 @@ namespace
         {
             TensionEngine eng;
             eng.prepare (48000.0, 512, 2);
+            eng.setSeriesChainEnabledForTesting (false);   // Phase 3.1 identity proc (DC input would be filtered away otherwise)
             const Signal c = makeConst (12000, 2.0f);
             Signal out;
             render (eng, c, out, 512, [&] (int) { return makeParams (1.0f, 1.0f, 12.0f); });
@@ -684,6 +700,7 @@ namespace
 
         TensionEngine eng;
         eng.prepare (48000.0, 512, 2);
+        eng.setSeriesChainEnabledForTesting (false);       // bus telemetry against the identity proc
         const Signal sine = makeSine (512 * 40, 48000.0, 220.0, 0.5f);
         Signal out;
         render (eng, sine, out, 512, [&] (int pos) { return makeParams (pos == 0 ? 0.0f : 0.5f); });
@@ -697,15 +714,833 @@ namespace
         check (std::abs (ts - 0.5f) < 1.0e-4f, "tensionSmoothed reaches the target");
         check (pk > 0.4f && pk <= 0.55f, "outPeak tracks the output peak");
         check (std::abs (rms - 0.5f / std::sqrt (2.0f)) < 0.03f, "wetRms ~ wet-bus RMS");
-        check (tel.noiseLevel.load() == 0.0f && tel.lfoPhaseA.load() == 0.0f, "noiseLevel / lfoPhaseA are 0 in Phase 3.1");
+        const float ph = tel.lfoPhaseA.load();
+        check (tel.noiseLevel.load() == 0.0f && ph >= 0.0f && ph < 1.0f, "noiseLevel is 0 (Phase 3.3), lfoPhaseA published in [0,1)");
+    }
+
+    // =======================================================================
+    // Phase 3.2 helpers
+    // =======================================================================
+    constexpr double kPi = 3.14159265358979323846;
+
+    double rmsOf (const std::vector<float>& x, int from, int to)
+    {
+        double acc = 0.0;
+        for (int i = from; i < to; ++i) acc += (double) x[(size_t) i] * (double) x[(size_t) i];
+        return std::sqrt(acc / (double) std::max (1, to - from));
+    }
+
+    double toDb (double ratio) { return 20.0 * std::log10 (std::max (ratio, 1.0e-30)); }
+
+    float maxSecondDiffFrom (const std::vector<float>& x, int from)
+    {
+        float m = 0.0f;
+        for (size_t i = (size_t) std::max (2, from); i < x.size(); ++i)
+            m = std::max (m, std::abs (x[i] - 2.0f * x[i - 1] + x[i - 2]));
+        return m;
+    }
+
+    // Paul Kellett pink noise, normalised to a target RMS over the whole vector.
+    std::vector<float> makePink (int n, std::uint32_t seed, float targetRms)
+    {
+        Rng rng { seed | 1u };
+        float b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+        std::vector<float> out ((size_t) n);
+
+        for (int i = 0; i < n; ++i)
+        {
+            const float w = rng.next();
+            b0 = 0.99886f * b0 + w * 0.0555179f;
+            b1 = 0.99332f * b1 + w * 0.0750759f;
+            b2 = 0.96900f * b2 + w * 0.1538520f;
+            b3 = 0.86650f * b3 + w * 0.3104856f;
+            b4 = 0.55000f * b4 + w * 0.5329522f;
+            b5 = -0.7616f * b5 - w * 0.0168980f;
+            out[(size_t) i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362f;
+            b6 = w * 0.115926f;
+        }
+
+        const double r = rmsOf (out, 0, n);
+        const float g = (float) ((double) targetRms / std::max (r, 1.0e-12));
+        for (auto& v : out) v *= g;
+        return out;
+    }
+
+    // =======================================================================
+    // T7 - stub mapping + LFOEngine
+    // =======================================================================
+    void testLFO()
+    {
+        std::printf ("\n[T7] Phase 3.2 stub mapping + LFOEngine\n");
+
+        using namespace TensionDSP;
+        const double fs = 48000.0;
+
+        // ---- stub mapping (temporary linear destinations) ----
+        {
+            const auto a = evaluateTensionMapping (0.0f, RiseMode::Cinematic);
+            const auto b = evaluateTensionMapping (1.0f, RiseMode::Cinematic);
+            check (a.satDrive == 1.0f && a.satAmount == 0.0f && a.widthFactor == 1.0f && a.lowSideCollapse == 0.0f
+                   && a.lfoAmpDepth == 0.0f && a.lfoMoveDepth == 0.0f && a.bpBlend == 0.0f && a.inputTrim == 1.0f,
+                   "stub mapping: neutral destinations at t = 0");
+            check (std::abs (b.satDrive - 4.2f) < 1e-5f && std::abs (b.widthFactor - 2.1f) < 1e-5f && std::abs (b.hpCutoffHz - 640.0f) < 1e-3f
+                   && std::abs (b.bpCenterHz - 9000.0f) < 1e-2f && std::abs (b.bpQ - 3.2f) < 1e-5f && std::abs (b.satAmount - 0.85f) < 1e-5f,
+                   "stub mapping: Cinematic end values at t = 1");
+
+            bool mono = true;
+            auto prev = evaluateTensionMapping (0.0f, RiseMode::Cinematic);
+            for (int i = 1; i <= 200; ++i)
+            {
+                const auto c = evaluateTensionMapping ((float) i / 200.0f, RiseMode::Cinematic);
+                if (c.satDrive < prev.satDrive || c.hpCutoffHz < prev.hpCutoffHz || c.widthFactor < prev.widthFactor
+                    || c.lfoRateHz < prev.lfoRateHz || c.lfoCyclesPerBeat < prev.lfoCyclesPerBeat) mono = false;
+                prev = c;
+            }
+            check (mono, "stub mapping: destinations monotone in t");
+        }
+
+        // ---- shapes: range, reach, period accuracy (free mode, 1 Hz @ 48 kHz) ----
+        const LFOEngine::Shape shapes[] = { LFOEngine::Shape::Sine, LFOEngine::Shape::Triangle, LFOEngine::Shape::Saw, LFOEngine::Shape::ReverseSaw };
+        const char* names[] = { "sine", "triangle", "saw", "reverse saw" };
+
+        for (int si = 0; si < 4; ++si)
+        {
+            LFOEngine l;
+            l.prepare (fs);
+            l.setShape (shapes[si]);
+            l.setTargetRateHz (1.0f);
+            l.reset();
+
+            const int n = 3 * 48000;
+            std::vector<float> y ((size_t) n);
+            for (int i = 0; i < n; ++i) y[(size_t) i] = l.next();
+
+            const float mn = *std::min_element (y.begin(), y.end());
+            const float mx = *std::max_element (y.begin(), y.end());
+
+            std::vector<int> marks;
+            for (int i = 1; i < n; ++i)
+            {
+                bool hit = false;
+                if (si <= 1)      hit = (y[(size_t) i - 1] < 0.0f && y[(size_t) i] >= 0.0f);
+                else if (si == 2) hit = (y[(size_t) i] < y[(size_t) i - 1] - 1.5f);
+                else              hit = (y[(size_t) i] > y[(size_t) i - 1] + 1.5f);
+                if (hit) marks.push_back (i);
+            }
+
+            bool periodOk = marks.size() >= 2;
+            for (size_t k = 1; k < marks.size(); ++k)
+                if (std::abs (marks[k] - marks[k - 1] - 48000) > 1) periodOk = false;
+
+            char name[128];
+            std::snprintf (name, sizeof name, "%s: range within [-1,1], reaches both extremes", names[si]);
+            check (mn >= -1.000001f && mx <= 1.000001f && mx > 0.999f && mn < -0.999f, name);
+            std::snprintf (name, sizeof name, "%s: 1 Hz @ 48 kHz period = 48000 +/- 1 samples (%d cycles seen)", names[si], (int) marks.size());
+            check (periodOk, name);
+        }
+
+        // ---- sync rate = bpm-scaled value ----
+        {
+            check (std::abs (LFOEngine::syncRateHz (120.0, 1.0) - 2.0) < 1e-9, "sync: 120 BPM x 1 cycle/beat = 2 Hz (ladder rung is exact)");
+            check (std::abs (LFOEngine::syncRateHz (90.0, 0.5) - 0.75) < 1e-9, "sync: 90 BPM x 1/2 = 0.75 Hz");
+            check (std::abs (LFOEngine::syncRateHz (140.0, 4.0) - 140.0 / 60.0 * 4.0) < 1e-9, "sync: 140 BPM x 4 = bpm/60 * 4");
+            check (std::abs (LFOEngine::syncRateHz (120.0, 1.5, 0.0) - 3.0) < 1e-12, "sync: snap strength 0 = pure continuous tempo scaling");
+
+            bool mono = true, bounded = true;
+            double prev = 0.0;
+            for (int i = 0; i <= 4000; ++i)
+            {
+                const double cpb = 0.125 * std::pow (32.0, (double) i / 4000.0);        // 1/8 .. 4
+                const double s = LFOEngine::snapCyclesPerBeat (cpb, LFOEngine::kSnapStrength);
+                if (i > 0 && s <= prev) mono = false;
+                if (s < 0.125 * 0.999999 || s > 4.0 * 1.000001) bounded = false;
+                prev = s;
+            }
+            check (mono && bounded, "sync: soft-snap is strictly monotone and stays within the 1/8..4 ladder");
+
+            // dwell: the same log-step of the knob moves the rate LESS near a rung than between rungs
+            const double near = std::log2 (LFOEngine::snapCyclesPerBeat (1.02, 0.6)) - std::log2 (LFOEngine::snapCyclesPerBeat (0.98, 0.6));
+            const double mid  = std::log2 (LFOEngine::snapCyclesPerBeat (1.44, 0.6)) - std::log2 (LFOEngine::snapCyclesPerBeat (1.38, 0.6)) ;
+            check (near / (std::log2 (1.02 / 0.98)) < 0.6 && mid / std::log2 (1.44 / 1.38) > 1.2, "sync: ladder dwell (slope < 1 at a rung, > 1 between rungs)");
+
+            LFOEngine l;
+            l.prepare (fs);
+            l.setShape (LFOEngine::Shape::Saw);
+            l.setSyncTarget (90.0, 2.0);                 // 3 Hz -> 16000 samples
+            l.reset();
+            int prevWrap = -1, lastPeriod = 0;
+            float last = l.next();
+            for (int i = 1; i < 60000; ++i)
+            {
+                const float y = l.next();
+                if (y < last - 1.5f) { if (prevWrap >= 0) lastPeriod = i - prevWrap; prevWrap = i; }
+                last = y;
+            }
+            check (std::abs (lastPeriod - 16000) <= 1, "sync: LFO at 90 BPM x 2 cycles/beat has a 16000-sample period");
+        }
+
+        // ---- phase continuity on a rate change ----
+        {
+            LFOEngine l;
+            l.prepare (fs);
+            l.setShape (LFOEngine::Shape::Sine);
+            l.setTargetRateHz (1.0f);
+            l.reset();
+
+            float maxStep = 0.0f, prevY = l.next();
+            auto run = [&] (int samples)
+            {
+                for (int i = 0; i < samples; i += 32)
+                {
+                    l.controlStep (32);
+                    for (int k = 0; k < 32; ++k)
+                    {
+                        const float y = l.next();
+                        maxStep = std::max (maxStep, std::abs (y - prevY));
+                        prevY = y;
+                    }
+                }
+            };
+            run (48000);
+            l.setTargetRateHz (8.0f);          // 8x jump of the target
+            run (96000);
+
+            const double bound = 2.0 * kPi * 8.0 / fs * 1.05;
+            std::printf ("  (max |sample step| across the rate change: %.3e, bound %.3e, rate now %.3f Hz)\n", (double) maxStep, bound, l.getCurrentRateHz());
+            check ((double) maxStep <= bound && std::abs (l.getCurrentRateHz() - 8.0) < 0.05, "rate change: no phase jump (step bounded by the new rate), slew converges");
+        }
+
+        // ---- S&H determinism + slew ----
+        {
+            auto render = [&] (std::uint32_t seed, int n)
+            {
+                LFOEngine l;
+                l.prepare (fs);
+                l.setShape (LFOEngine::Shape::SampleHold);
+                l.setSeed (seed);
+                l.setTargetRateHz (5.0f);
+                l.reset();
+                std::vector<float> y ((size_t) n);
+                for (int i = 0; i < n; ++i) y[(size_t) i] = l.next();
+                return y;
+            };
+
+            const auto a = render (0xC0FFEEu, 96000);
+            const auto b = render (0xC0FFEEu, 96000);
+            const auto c = render (0xBADF00Du, 96000);
+
+            check (std::memcmp (a.data(), b.data(), a.size() * sizeof (float)) == 0, "S&H: same seed -> bit-identical sequence");
+            check (std::memcmp (a.data(), c.data(), a.size() * sizeof (float)) != 0, "S&H: different seed -> different sequence");
+
+            float maxStep = 0.0f, mn = 1.0f, mx = -1.0f;
+            for (size_t i = 1; i < a.size(); ++i) maxStep = std::max (maxStep, std::abs (a[i] - a[i - 1]));
+            for (float v : a) { mn = std::min (mn, v); mx = std::max (mx, v); }
+            const double sd = rmsOf (a, 0, (int) a.size());
+
+            check (mn >= -1.0f && mx < 1.0f && sd > 0.2, "S&H: bipolar range, genuinely random plateaus");
+            check (maxStep < 0.03f, "S&H: 2 ms slew keeps the sample-to-sample step small (no clicks)");
+
+            // setSeed + reset restores the sequence on the same instance
+            LFOEngine l;
+            l.prepare (fs);
+            l.setShape (LFOEngine::Shape::SampleHold);
+            l.setSeed (0xC0FFEEu);
+            l.setTargetRateHz (5.0f);
+            l.reset();
+            for (int i = 0; i < 70000; ++i) (void) l.next();
+            l.setSeed (0xC0FFEEu);
+            l.reset();
+            bool same = true;
+            for (size_t i = 0; i < 20000; ++i) if (l.next() != a[i]) same = false;
+            check (same, "S&H: setSeed + reset() reproduces the sequence");
+        }
+
+        // ---- lfoB configuration: 90 degree offset, 0.75 rate ratio, ppq alignment ----
+        {
+            LFOEngine b;
+            b.prepare (fs);
+            b.setShape (LFOEngine::Shape::Sine);
+            b.setPhaseOffset (0.25f);
+            b.setRateScale (0.75f);
+            b.setTargetRateHz (2.0f);
+            b.reset();
+            check (std::abs (b.value() - 1.0f) < 1e-5f && std::abs (b.getCurrentRateHz() - 1.5) < 1e-9, "lfoB: 90 degree phase offset, rate = 0.75 x 2 Hz");
+
+            LFOEngine a;
+            a.prepare (fs);
+            a.setShape (LFOEngine::Shape::Sine);
+            a.setSyncTarget (120.0, 1.0);
+            a.reset();
+            a.alignToPpq (2.25);                       // frac(2.25 * 1 cycle/beat) = 0.25 -> sine peak
+            check (std::abs (a.value() - 1.0f) < 1e-5f, "transport start: phase re-aligned to frac(ppq * cyclesPerBeat)");
+
+            LFOEngine f;
+            f.prepare (fs);
+            f.setTargetRateHz (3.0f);
+            f.reset();
+            for (int i = 0; i < 1000; ++i) (void) f.next();
+            const float before = f.getPhase();
+            f.alignToPpq (7.3);
+            check (f.getPhase() == before, "free mode: ppq alignment is a no-op");
+        }
+    }
+
+    // =======================================================================
+    // T8 - FilterEngine
+    // =======================================================================
+    void testFilter()
+    {
+        std::printf ("\n[T8] FilterEngine\n");
+
+        for (double fs : { 44100.0, 48000.0, 192000.0 })
+        {
+            FilterEngine f;
+            f.prepare (fs);
+
+            FilterEngine::Targets hi;
+            hi.hpHz = 1.0e9f; hi.bpCenterHz = 1.0e9f; hi.bpQ = 1000.0f; hi.bpBlend = 1.0f; hi.lfoDepthOct = 100.0f;
+            FilterEngine::Targets lo;
+            lo.hpHz = -5.0f; lo.bpCenterHz = 1.0e-3f; lo.bpQ = 0.0f; lo.bpBlend = 1.0f; lo.lfoDepthOct = 100.0f;
+
+            f.setTargets (hi, 1.0f, true, 32);
+            const float ceilingHz = (float) (0.45 * fs) + 0.05f;
+            const bool capsHi = f.getAppliedQ() <= 4.0f && f.getAppliedHpHz() <= ceilingHz && f.getAppliedBpHz() <= ceilingHz;
+            f.setTargets (lo, -1.0f, true, 32);
+            const bool capsLo = f.getAppliedQ() > 0.0f && f.getAppliedHpHz() >= 20.0f && f.getAppliedBpHz() >= 20.0f;
+
+            char name[128];
+            std::snprintf (name, sizeof name, "%.0f Hz: Q capped <= 4.0, cutoffs clamped to [20 Hz, 0.45 fs] (incl. LFO modulation)", fs);
+            check (capsHi && capsLo, name);
+
+            // noise at the extremes, alternating every 1000 samples with the LFO flipping every period
+            Rng rng { 777u };
+            bool finite = true;
+            float peak = 0.0f;
+            const int total = (int) (fs * 4.0);
+            std::vector<float> l ((size_t) total), r ((size_t) total);
+            for (int i = 0; i < total; ++i) { l[(size_t) i] = rng.next(); r[(size_t) i] = rng.next(); }
+
+            f.reset();
+            int period = 0;
+            for (int pos = 0; pos < total; pos += 32, ++period)
+            {
+                const int n = std::min (32, total - pos);
+                f.setTargets (((pos / 1000) & 1) ? hi : lo, (period & 1) ? 1.0f : -1.0f, false, 32);
+                f.process (l.data() + pos, r.data() + pos, n);
+            }
+            for (int i = 0; i < total; ++i)
+            {
+                if (! std::isfinite (l[(size_t) i]) || ! std::isfinite (r[(size_t) i])) finite = false;
+                peak = std::max (peak, std::max (std::abs (l[(size_t) i]), std::abs (r[(size_t) i])));
+            }
+            std::snprintf (name, sizeof name, "%.0f Hz: full-scale noise at extreme settings is finite and bounded (peak %.2f)", fs, (double) peak);
+            check (finite && peak < 100.0f, name);
+        }
+
+        // ---- click-free cutoff sweep: smoothed vs unsmoothed target jump ----
+        {
+            const double fs = 48000.0;
+            const int n = 72000, jumpAt = 24000;
+            const Signal sine = makeSine (n, fs, 100.0, 0.5f);
+
+            auto run = [&] (bool smoothed)
+            {
+                FilterEngine f;
+                f.prepare (fs);
+                std::vector<float> l = sine.ch[0], r = sine.ch[1];
+
+                FilterEngine::Targets tg;
+                tg.hpHz = 20.0f; tg.bpBlend = 0.0f;
+                f.setTargets (tg, 0.0f, true, 32);
+
+                for (int pos = 0; pos < n; pos += 32)
+                {
+                    tg.hpHz = pos < jumpAt ? 20.0f : 2000.0f;
+                    f.setTargets (tg, 0.0f, ! smoothed, 32);
+                    f.process (l.data() + pos, r.data() + pos, std::min (32, n - pos));
+                }
+                return l;
+            };
+
+            const auto smooth = run (true);
+            const auto hard   = run (false);
+            const float ms = maxSecondDiffFrom (smooth, 4800);
+            const float mh = maxSecondDiffFrom (hard,   4800);
+
+            std::printf ("  (HP 20 Hz -> 2 kHz on a 100 Hz sine: max |second difference| smoothed %.3e, unsmoothed %.3e)\n", (double) ms, (double) mh);
+            check (ms < 0.02f && ms < 0.25f * mh, "cutoff sweep: multiplicative smoothing is click-free (far below the unsmoothed jump)");
+            check (std::abs (smooth.back()) < 0.05f * 0.5f + 0.01f, "cutoff sweep: the 2 kHz HP really removed the 100 Hz tone");
+        }
+
+        // ---- LFO modulation moves the cutoff by octaves ----
+        {
+            FilterEngine f;
+            f.prepare (48000.0);
+            FilterEngine::Targets tg;
+            tg.hpHz = 400.0f; tg.bpCenterHz = 1000.0f; tg.lfoDepthOct = 1.0f;
+            f.setTargets (tg, 1.0f, true, 32);
+            const float up = f.getAppliedHpHz();
+            f.setTargets (tg, -1.0f, true, 32);
+            const float down = f.getAppliedHpHz();
+            check (std::abs (up - 800.0f) < 0.5f && std::abs (down - 200.0f) < 0.5f, "lfoA modulation: cutoff * 2^(depth * lfo) in octaves");
+        }
+    }
+
+    // =======================================================================
+    // T9 - SaturationEngine
+    // =======================================================================
+    double aliasToFundamentalDb (float drive, float peakAmp)
+    {
+        const double fs = 48000.0;
+        constexpr int order = 14;
+        constexpr int N = 1 << order;
+        const int k0 = (int) std::lround (5000.0 * (double) N / fs);       // coherent bin
+        const double f0 = (double) k0 * fs / (double) N;
+        const int settle = 8192;
+
+        SaturationEngine s;
+        s.prepare (fs);
+        s.setTargets (drive, 1.0f, true);
+
+        std::vector<float> l ((size_t) (settle + N)), r;
+        for (size_t i = 0; i < l.size(); ++i)
+            l[i] = peakAmp * (float) std::sin (2.0 * kPi * f0 * (double) i / fs);
+        r = l;
+
+        for (size_t pos = 0; pos < l.size(); pos += 32)
+            s.process (l.data() + pos, r.data() + pos, (int) std::min<size_t> (32, l.size() - pos));
+
+        std::vector<float> data ((size_t) (2 * N), 0.0f);
+        for (int i = 0; i < N; ++i)
+        {
+            const float w = 0.5f - 0.5f * (float) std::cos (2.0 * kPi * (double) i / (double) N);   // Hann
+            data[(size_t) i] = l[(size_t) (settle + i)] * w;
+        }
+
+        juce::dsp::FFT fft (order);
+        fft.performRealOnlyForwardTransform (data.data(), true);
+
+        std::vector<double> power ((size_t) (N / 2 + 1));
+        for (int k = 0; k <= N / 2; ++k)
+            power[(size_t) k] = (double) data[(size_t) (2 * k)] * data[(size_t) (2 * k)] + (double) data[(size_t) (2 * k + 1)] * data[(size_t) (2 * k + 1)];
+
+        constexpr int guard = 8;
+        std::vector<char> excluded ((size_t) (N / 2 + 1), 0);
+        for (int k = 0; k <= guard; ++k) excluded[(size_t) k] = 1;                       // DC leakage
+        for (int h = 1; h * k0 <= N / 2; ++h)                                            // true harmonics
+            for (int k = h * k0 - guard; k <= h * k0 + guard; ++k)
+                if (k >= 0 && k <= N / 2) excluded[(size_t) k] = 1;
+
+        double fund = 0.0, alias = 0.0;
+        for (int k = k0 - guard; k <= k0 + guard; ++k) fund += power[(size_t) k];
+        for (int k = 0; k <= N / 2; ++k) if (! excluded[(size_t) k]) alias += power[(size_t) k];
+
+        return 10.0 * std::log10 (std::max (alias, 1.0e-30) / fund);
+    }
+
+    void testSaturation()
+    {
+        std::printf ("\n[T9] SaturationEngine\n");
+
+        // ---- alias test (5 kHz @ 48 kHz, aliased-bin energy vs fundamental) ----
+        {
+            // Reference level: -18 dBFS peak (the same reference level as the loudness criterion).
+            const double a7  = aliasToFundamentalDb (7.0f, 0.12589254f);
+            const double a42 = aliasToFundamentalDb (4.2f, 0.12589254f);
+            std::printf ("  (alias energy vs fundamental, -18 dBFS: drive 7.0 %.1f dB, drive 4.2 %.1f dB)\n", a7, a42);
+            check (a7 < -40.0 && a42 < -40.0, "5 kHz sine, max drive: aliased-bin energy > 40 dB below the fundamental");
+
+            // Informational only (not asserted): hot levels where first-order ADAA is expected to run out of margin.
+            std::printf ("  (informational, hot levels: drive 7 @ -6 dBFS %.1f dB, drive 4.2 @ -12 dBFS %.1f dB)\n",
+                         aliasToFundamentalDb (7.0f, 0.5f), aliasToFundamentalDb (4.2f, 0.25f));
+        }
+
+        // ---- loudness vs drive at -18 dBFS pink noise ----
+        {
+            const double fs = 48000.0;
+            const int n = 4 * 48000;
+            const auto pinkL = makePink (n, 11u, 0.12589254f);
+            const auto pinkR = makePink (n, 23u, 0.12589254f);
+
+            const float drives[] = { 1.0f, 1.5f, 2.0f, 3.0f, 4.2f, 5.5f, 7.0f };
+            double ref = 0.0, worst = 0.0;
+
+            for (float d : drives)
+            {
+                SaturationEngine s;
+                s.prepare (fs);
+                s.setTargets (d, 1.0f, true);
+                std::vector<float> l = pinkL, r = pinkR;
+                for (int pos = 0; pos < n; pos += 32)
+                    s.process (l.data() + pos, r.data() + pos, std::min (32, n - pos));
+
+                const double rms = rmsOf (l, 24000, n);
+                if (d == 1.0f) ref = rms;
+                worst = std::max (worst, std::abs (toDb (rms / ref)));
+            }
+            std::printf ("  (worst RMS deviation vs drive 1 over drive 1..7: %.2f dB)\n", worst);
+            check (worst < 1.5, "loudness change < 1.5 dB over the drive range (-18 dBFS pink noise, amount 1)");
+        }
+
+        // ---- no DC at the output ----
+        {
+            const double fs = 48000.0;
+            const int n = 3 * 48000;
+            for (float drive : { 1.0f, 4.2f, 7.0f })
+            {
+                SaturationEngine s;
+                s.prepare (fs);
+                s.setTargets (drive, 1.0f, true);
+                const Signal sine = makeSine (n, fs, 1000.0, 0.5f);
+                std::vector<float> l = sine.ch[0], r = sine.ch[1];
+                for (int pos = 0; pos < n; pos += 32)
+                    s.process (l.data() + pos, r.data() + pos, std::min (32, n - pos));
+
+                double mean = 0.0;
+                for (int i = 2 * 48000; i < n; ++i) mean += l[(size_t) i];
+                mean /= 48000.0;
+
+                char name[96];
+                std::snprintf (name, sizeof name, "no DC at the output, drive %.1f (mean %.2e < 1e-4)", (double) drive, std::abs (mean));
+                check (std::abs (mean) < 1.0e-4, name);
+            }
+        }
+
+        // ---- parallel amount, finiteness, fallbacks ----
+        {
+            const Signal noise = makeNoise (48000, 2, 5u, 0.5f, false);
+
+            SaturationEngine s;
+            s.prepare (48000.0);
+            s.setTargets (7.0f, 0.0f, true);
+            std::vector<float> l = noise.ch[0], r = noise.ch[1];
+            for (int pos = 0; pos < 48000; pos += 32)
+                s.process (l.data() + pos, r.data() + pos, 32);
+            check (std::memcmp (l.data(), noise.ch[0].data(), l.size() * sizeof (float)) == 0
+                   && std::memcmp (r.data(), noise.ch[1].data(), r.size() * sizeof (float)) == 0,
+                   "amount 0 returns the input exactly");
+
+            // |x| huge (fast path |u| > 9), constant DC (|dx| < 1e-5 fallback), tiny steps
+            SaturationEngine h;
+            h.prepare (48000.0);
+            h.setTargets (8.0f, 1.0f, true);
+            std::vector<float> a (4096), b (4096);
+            Rng rng { 99u };
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                if (i < 1024)      a[i] = rng.next() * 1.0e6f;        // fast path
+                else if (i < 2048) a[i] = 0.3f;                       // constant: fallback branch
+                else if (i < 3072) a[i] = 0.3f + 1.0e-6f * (float) (i & 7);   // sub-threshold deltas
+                else               a[i] = rng.next() * 0.2f;
+                b[i] = a[i];
+            }
+            for (size_t pos = 0; pos < a.size(); pos += 32)
+                h.process (a.data() + pos, b.data() + pos, 32);
+
+            bool finite = true;
+            for (size_t i = 0; i < a.size(); ++i) if (! std::isfinite (a[i]) || ! std::isfinite (b[i])) finite = false;
+            check (finite, "ADAA stays finite on huge inputs, constant input and sub-1e-5 deltas");
+
+            // even harmonics from the bias: 0.2-peak 1 kHz sine at drive 4.2 has energy at 2 kHz
+            SaturationEngine e;
+            e.prepare (48000.0);
+            e.setTargets (4.2f, 1.0f, true);
+            const Signal sine = makeSine (48000, 48000.0, 1000.0, 0.2f);
+            std::vector<float> el = sine.ch[0], er = sine.ch[1];
+            for (int pos = 0; pos < 48000; pos += 32)
+                e.process (el.data() + pos, er.data() + pos, 32);
+            double c2 = 0.0, s2 = 0.0;
+            for (int i = 24000; i < 48000; ++i)
+            {
+                c2 += (double) el[(size_t) i] * std::cos (2.0 * kPi * 2000.0 * (double) i / 48000.0);
+                s2 += (double) el[(size_t) i] * std::sin (2.0 * kPi * 2000.0 * (double) i / 48000.0);
+            }
+            const double h2 = 2.0 * std::sqrt (c2 * c2 + s2 * s2) / 24000.0;
+            check (h2 > 1.0e-3, "asymmetric bias produces a 2nd harmonic (even-harmonic warmth)");
+        }
+    }
+
+    // =======================================================================
+    // T10 - StereoWidth
+    // =======================================================================
+    void testWidth()
+    {
+        std::printf ("\n[T10] StereoWidth\n");
+
+        const double fs = 48000.0;
+        const int skip = 9600, win = 38400;                 // win = integer number of cycles for every test frequency
+        const int total = skip + win;
+
+        auto renderStereo = [&] (StereoWidth& w, std::vector<float>& l, std::vector<float>& r, const float* lfo)
+        {
+            for (int pos = 0; pos < total; pos += 32)
+                w.process (l.data() + pos, r.data() + pos, std::min (32, total - pos), lfo != nullptr ? lfo + pos : nullptr);
+        };
+
+        // ---- LR4 recombination flat at width 1 (per channel, all-pass) ----
+        {
+            double worst = 0.0;
+            for (double f : { 40.0, 150.0, 600.0, 3000.0, 12000.0 })
+            {
+                StereoWidth w;
+                w.prepare (fs);
+                w.setTargets (1.0f, 0.0f, 0.0f, true);
+
+                std::vector<float> l ((size_t) total), r ((size_t) total);
+                for (int i = 0; i < total; ++i)
+                {
+                    l[(size_t) i] = 0.5f * (float) std::sin (2.0 * kPi * f * (double) i / fs);
+                    r[(size_t) i] = 0.4f * (float) std::sin (2.0 * kPi * f * (double) i / fs + 0.9);     // different level + phase
+                }
+                const auto l0 = l, r0 = r;
+                renderStereo (w, l, r, nullptr);
+
+                worst = std::max (worst, std::abs (toDb (rmsOf (l, skip, total) / rmsOf (l0, skip, total))));
+                worst = std::max (worst, std::abs (toDb (rmsOf (r, skip, total) / rmsOf (r0, skip, total))));
+            }
+            std::printf ("  (width 1: worst |out/in| deviation %.4f dB)\n", worst);
+            check (worst < 0.05, "LR4 recombination is flat at width 1 (|out/in| within 0.05 dB, 40 Hz .. 12 kHz)");
+        }
+
+        // ---- mid never attenuated by more than 1 dB ----
+        {
+            double lowest = 0.0, highestHF = -100.0;
+            for (float width : { 1.5f, 2.1f, 2.4f })
+                for (double f : { 60.0, 300.0, 1000.0, 5000.0, 12000.0 })
+                {
+                    StereoWidth w;
+                    w.prepare (fs);
+                    w.setTargets (width, 0.8f, 0.0f, true);
+
+                    std::vector<float> l ((size_t) total), r;
+                    for (int i = 0; i < total; ++i)
+                        l[(size_t) i] = 0.5f * (float) std::sin (2.0 * kPi * f * (double) i / fs);
+                    r = l;                                                     // pure mid
+                    const auto l0 = l;
+                    renderStereo (w, l, r, nullptr);
+
+                    const double db = toDb (rmsOf (l, skip, total) / rmsOf (l0, skip, total));
+                    lowest = std::min (lowest, db);
+                    if (f >= 1000.0) highestHF = std::max (highestHF, db);
+                }
+            std::printf ("  (mono input, widths 1.5..2.4: lowest gain %.3f dB)\n", lowest);
+            check (lowest >= -1.001, "mid (mono) content never attenuated by more than 1 dB at any width");
+            check (highestHF <= 0.01, "mid compensation never boosts");
+        }
+
+        // ---- mono-sum loss at max width (with lfoB sway + rotation active) ----
+        {
+            const int n = 96000;
+            Rng ra { 11u }, rb { 22u }, rc { 33u };
+            std::vector<float> l ((size_t) n), r ((size_t) n), lfo ((size_t) n);
+
+            LFOEngine lfoB;
+            lfoB.prepare (fs);
+            lfoB.setShape (LFOEngine::Shape::Sine);
+            lfoB.setTargetRateHz (1.5f);
+            lfoB.reset();
+
+            for (int i = 0; i < n; ++i)
+            {
+                const float c = rc.next(), a = ra.next(), b = rb.next();
+                l[(size_t) i] = 0.5f * (c + 0.7f * a);
+                r[(size_t) i] = 0.5f * (c + 0.7f * b);
+                lfo[(size_t) i] = lfoB.next();
+            }
+
+            double mIn = 0.0, sIn = 0.0;
+            for (int i = 24000; i < n; ++i)
+            {
+                const double m = 0.5 * ((double) l[(size_t) i] + r[(size_t) i]), s = 0.5 * ((double) l[(size_t) i] - r[(size_t) i]);
+                mIn += m * m; sIn += s * s;
+            }
+
+            StereoWidth w;
+            w.prepare (fs);
+            w.setTargets (2.4f, 0.8f, 0.5f, true);
+            for (int pos = 0; pos < n; pos += 32)
+                w.process (l.data() + pos, r.data() + pos, std::min (32, n - pos), lfo.data() + pos);
+
+            double mOut = 0.0, sOut = 0.0;
+            bool finite = true;
+            for (int i = 24000; i < n; ++i)
+            {
+                if (! std::isfinite (l[(size_t) i]) || ! std::isfinite (r[(size_t) i])) finite = false;
+                const double m = 0.5 * ((double) l[(size_t) i] + r[(size_t) i]), s = 0.5 * ((double) l[(size_t) i] - r[(size_t) i]);
+                mOut += m * m; sOut += s * s;
+            }
+
+            const double lossDb = 10.0 * std::log10 (mIn / mOut);
+            std::printf ("  (max width 2.4 + sway/rotation: mono-sum loss %.2f dB, side gain %.2f dB)\n", lossDb, 10.0 * std::log10 (sOut / sIn));
+            check (finite && lossDb <= 3.0, "mono-sum energy loss <= 3 dB at max width (lfoB sway + rotation on)");
+        }
+
+        // ---- widening actually widens (uncorrelated noise) ----
+        {
+            const int n = 96000;
+            Rng ra { 5u }, rb { 6u };
+            std::vector<float> l ((size_t) n), r ((size_t) n);
+            for (int i = 0; i < n; ++i) { l[(size_t) i] = 0.4f * ra.next(); r[(size_t) i] = 0.4f * rb.next(); }
+
+            double sIn = 0.0;
+            for (int i = 24000; i < n; ++i) { const double s = 0.5 * ((double) l[(size_t) i] - r[(size_t) i]); sIn += s * s; }
+
+            StereoWidth w;
+            w.prepare (fs);
+            w.setTargets (2.1f, 0.0f, 0.0f, true);
+            for (int pos = 0; pos < n; pos += 32)
+                w.process (l.data() + pos, r.data() + pos, std::min (32, n - pos), nullptr);
+
+            double sOut = 0.0;
+            for (int i = 24000; i < n; ++i) { const double s = 0.5 * ((double) l[(size_t) i] - r[(size_t) i]); sOut += s * s; }
+            check (sOut / sIn > 3.0, "width 2.1 expands the side channel (~ w^2 in energy)");
+        }
+
+        // ---- low-band side collapse ----
+        {
+            StereoWidth w;
+            w.prepare (fs);
+            w.setTargets (1.0f, 1.0f, 0.0f, true);
+
+            std::vector<float> l ((size_t) total), r ((size_t) total);
+            for (int i = 0; i < total; ++i)
+            {
+                l[(size_t) i] = 0.5f * (float) std::sin (2.0 * kPi * 60.0 * (double) i / fs);
+                r[(size_t) i] = -l[(size_t) i];                               // pure side at 60 Hz
+            }
+            const auto l0 = l;
+            renderStereo (w, l, r, nullptr);
+            const double ratio = rmsOf (l, skip, total) / rmsOf (l0, skip, total);
+            std::printf ("  (60 Hz pure side, k = 1: gain %.3f, expected ~0.2)\n", ratio);
+            check (ratio > 0.12 && ratio < 0.35, "lows: side collapses by (1 - 0.8k) while the widener is bypassed");
+        }
+    }
+
+    // =======================================================================
+    // T11 - real chain in circuit
+    // =======================================================================
+    void testRealChain()
+    {
+        std::printf ("\n[T11] real series chain in-circuit\n");
+
+        // ---- block-size invariance with the real modules (ramps + sync on/off, absolute control grid) ----
+        {
+            const int n = 6 * 4096;
+            const Signal in = makeNoise (n, 2, 2025u, 0.5f, false);
+
+            for (bool sync : { true, false })
+            {
+                auto schedule = [sync] (int pos)
+                {
+                    const float t = pos < 8192 ? 0.3f : (pos < 16384 ? 0.9f : 0.0f);
+                    return makeParams (t, 0.7f, -3.0f, sync, 2);
+                };
+
+                Signal ref;
+                {
+                    TensionEngine eng;
+                    eng.prepare (48000.0, 32, 2);
+                    render (eng, in, ref, 32, schedule);
+                }
+
+                for (int block : { 64, 512, 4096 })
+                {
+                    TensionEngine eng;
+                    eng.prepare (48000.0, block, 2);
+                    Signal out;
+                    render (eng, in, out, block, schedule);
+
+                    const float d = maxAbsDiff (ref, out, 0, n);
+                    char name[128];
+                    std::snprintf (name, sizeof name, "real chain, block %4d vs 32 (sync %d): max diff %.2e", block, sync ? 1 : 0, (double) d);
+                    check (d <= 1.0e-6f && allFinite (out), name);
+                }
+            }
+        }
+
+        // ---- the chain actually does something, stays finite and below the safety ceiling ----
+        {
+            TensionEngine eng;
+            eng.prepare (48000.0, 512, 2);
+            const Signal in = makeNoise (48000, 2, 4711u, 0.5f, false);
+            Signal out;
+            render (eng, in, out, 512, [&] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, 1); });
+
+            float peak = 0.0f;
+            for (int c = 0; c < 2; ++c) for (float v : out.ch[c]) peak = std::max (peak, std::abs (v));
+            const float d = maxAbsDiff (in, out, 24000, 48000);
+            std::printf ("  (t = 1: peak %.3f, max |out - in| %.3f)\n", (double) peak, (double) d);
+            check (allFinite (out) && d > 0.05f && peak <= 1.0001f, "t = 1: processed (differs from input), finite, <= 0 dBFS after the safety knee");
+        }
+
+        // ---- NaN / Inf with the real modules: finite output, no poisoned state ----
+        {
+            const float nan = std::numeric_limits<float>::quiet_NaN();
+            const float inf = std::numeric_limits<float>::infinity();
+
+            for (float t : { 0.4f, 1.0f })
+            {
+                TensionEngine eng;
+                eng.prepare (48000.0, 512, 2);
+
+                Signal in = makeNoise (16384, 2, 2718u, 0.4f, false);
+                in.ch[0][100] = nan; in.ch[0][1000] = inf; in.ch[1][1500] = -inf; in.ch[1][3000] = nan;
+
+                Signal out;
+                render (eng, in, out, 512, [&] (int) { return makeParams (t, 1.0f, 0.0f, true, 1); });
+
+                const double tailRms = rmsOf (out.ch[0], 12000, 16384);
+                char name[128];
+                std::snprintf (name, sizeof name, "NaN/Inf into the real chain (t %.1f): finite, recovers (tail RMS %.3f)", (double) t, tailRms);
+                check (allFinite (out) && tailRms > 0.02, name);
+            }
+        }
+
+        // ---- mono host through the real chain ----
+        {
+            TensionEngine eng;
+            eng.prepare (48000.0, 512, 2);
+            const Signal in = makeNoise (24000, 1, 31u, 0.4f, false);
+            Signal out;
+            render (eng, in, out, 512, [&] (int) { return makeParams (0.8f, 1.0f, 0.0f, true, 1); });
+            check (allFinite (out) && maxAbsDiff (in, out, 12000, 24000) > 0.02f, "mono host: processed and finite");
+        }
+
+        // ---- transport start: sync LFO alignment path, finite, phase published ----
+        {
+            TensionEngine eng;
+            eng.prepare (48000.0, 512, 2);
+
+            juce::AudioBuffer<float> buf (2, 512);
+            bool ok = true;
+            HostTransport tr;
+            tr.bpm = 140.0; tr.hasBpm = true; tr.ppq = 8.37; tr.hasPpq = true; tr.isPlaying = true;
+
+            for (int b = 0; b < 40; ++b)
+            {
+                const Signal src = makeNoise (512, 2, 900u + (std::uint32_t) b, 0.4f, false);
+                for (int c = 0; c < 2; ++c)
+                    std::memcpy (buf.getWritePointer (c), src.ch[c].data(), 512 * sizeof (float));
+
+                eng.process (buf, makeParams (0.7f, 1.0f, 0.0f, true, 0), tr);
+                tr.ppq += 512.0 / 48000.0 * 140.0 / 60.0;
+
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < 512; ++i)
+                        if (! std::isfinite (buf.getReadPointer (c)[i])) ok = false;
+            }
+            const float ph = eng.getTelemetry().lfoPhaseA.load();
+            check (ok && ph >= 0.0f && ph < 1.0f, "playing transport with host BPM/ppq: finite, lfoPhaseA in [0,1)");
+        }
     }
 }
+
 
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf ("TENSION tests - Phase 3.1 (engine skeleton + transparent routing)\n");
+    std::printf ("TENSION tests - Phase 3.2 (core series modules + Phase 3.1 regression)\n");
 
     testUnits();
     testBitExact();
@@ -714,6 +1549,12 @@ int main()
     testBlockInvariance();
     testNoAllocation();
     testTelemetry();
+
+    testLFO();
+    testFilter();
+    testSaturation();
+    testWidth();
+    testRealChain();
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILURES", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

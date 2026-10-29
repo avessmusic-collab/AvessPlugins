@@ -31,6 +31,11 @@ set(TENSION_CORE_SOURCES
     # DSP - Stage 3 Phase 3.1 (engine skeleton + OutputSafety; TensionMapping.h is header-only)
     Source/DSP/TensionEngine.cpp
     Source/DSP/OutputSafety.cpp
+    # DSP - Stage 3 Phase 3.2 (core series modules)
+    Source/DSP/LFOEngine.cpp
+    Source/DSP/FilterEngine.cpp
+    Source/DSP/SaturationEngine.cpp
+    Source/DSP/StereoWidth.cpp
 )
 
 target_sources(TENSION PRIVATE ${TENSION_CORE_SOURCES})

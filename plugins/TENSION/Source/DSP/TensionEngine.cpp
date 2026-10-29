@@ -9,6 +9,7 @@ namespace
     constexpr double kEngageSmoothSec  = 0.015;
     constexpr double kMixSmoothSec     = 0.020;
     constexpr double kTrimSmoothSec    = 0.020;
+    constexpr double kModSmoothSec     = 0.050;
 
     // Exact-zero snapping: tiny targets become exactly 0 so t = 0 is bit-exact once settled.
     inline float snapZero (float v) noexcept
@@ -57,6 +58,26 @@ void TensionEngine::prepare (double newSampleRate, int maxBlockSize, int /*numCh
 
     safety.prepare (sampleRate);
 
+    // ---- Phase 3.2 series modules ----
+    lfoA.setSeed (0xA5F1C3D7u);
+    lfoA.setShape (LFOEngine::Shape::Sine);
+    lfoA.setPhaseOffset (0.0f);
+    lfoA.setRateScale (1.0f);
+    lfoA.prepare (sampleRate);
+
+    lfoB.setSeed (0x3C6EF372u);
+    lfoB.setShape (LFOEngine::Shape::Sine);
+    lfoB.setPhaseOffset (0.25f);          // 90 degrees
+    lfoB.setRateScale (0.75f);            // rate ratio 0.75 of A
+    lfoB.prepare (sampleRate);
+
+    filter.prepare (sampleRate);
+    saturation.prepare (sampleRate);
+    stereoWidth.prepare (sampleRate);
+
+    ampDepthSm.reset   (sampleRate, kModSmoothSec);
+    inputTrimSm.reset  (sampleRate, kModSmoothSec);
+
     prepared = true;
     reset();
 }
@@ -75,9 +96,26 @@ void TensionEngine::reset()
 
     safety.reset();
 
-    firstBlock = true;      // next block snaps smoothers to the incoming parameters
+    lfoA.reset();
+    lfoB.reset();
+    resetSeriesModules();
+    ampDepthSm.setCurrentAndTargetValue  (0.0f);
+    inputTrimSm.setCurrentAndTargetValue (1.0f);
+    lfoBBuf.fill (0.0f);
+
+    firstBlock    = true;   // next block snaps smoothers to the incoming parameters
+    snapModules   = true;
+    seriesCleared = false;
+    prevPlaying   = false;
     controlPos = 0;
     peakHold   = 0.0f;
+}
+
+void TensionEngine::resetSeriesModules() noexcept
+{
+    filter.reset();
+    saturation.reset();
+    stereoWidth.reset();
 }
 
 bool TensionEngine::isAtRest() const noexcept
@@ -93,7 +131,11 @@ bool TensionEngine::isAtRest() const noexcept
 
 void TensionEngine::resetFeedbackModules() noexcept
 {
-    // Phase 3.3+: clear delay lines, reverb, filter states (preallocated memory, no allocation).
+    // Phase 3.2: series-module states (filter / saturator / crossover) are cleared so a poisoned IIR
+    // state can never persist. Phase 3.3+ adds delay lines and reverb (preallocated, no allocation).
+    resetSeriesModules();
+    seriesCleared = false;
+    snapModules   = true;     // module smoothers re-snap to their targets at the next control tick
     feedbackResetCount.fetch_add (1, std::memory_order_relaxed);
 }
 
@@ -132,12 +174,23 @@ void TensionEngine::process (juce::AudioBuffer<float>& buffer, const EngineParam
         trimSm.setCurrentAndTargetValue    (trimTarget);
         controlPos = 0;
         firstBlock = false;
+        snapModules = true;
     }
     else
     {
         tensionSm.setTargetValue (tensionTarget);
         mixSm.setTargetValue     (mixTarget);
         trimSm.setTargetValue    (trimTarget);
+    }
+
+    // One-shot LFO re-alignment on transport start (sync mode only; phase is otherwise integrated).
+    const bool startedPlaying = hostTransport.isPlaying && ! prevPlaying;
+    prevPlaying = hostTransport.isPlaying;
+
+    if (startedPlaying && params.sync && hostTransport.hasPpq)
+    {
+        lfoA.alignToPpq (hostTransport.ppq);
+        lfoB.alignToPpq (hostTransport.ppq);
     }
 
     statOutPeak  = 0.0f;
@@ -163,7 +216,7 @@ void TensionEngine::process (juce::AudioBuffer<float>& buffer, const EngineParam
     telemetry.outPeak.store         (peakHold,                    std::memory_order_relaxed);
     telemetry.wetRms.store          (wetRms,                      std::memory_order_relaxed);
     telemetry.noiseLevel.store      (0.0f,                        std::memory_order_relaxed); // Phase 3.3
-    telemetry.lfoPhaseA.store       (0.0f,                        std::memory_order_relaxed); // Phase 3.2
+    telemetry.lfoPhaseA.store       (lfoA.getPhase(),             std::memory_order_relaxed);
 }
 
 void TensionEngine::controlTick()
@@ -175,7 +228,119 @@ void TensionEngine::controlTick()
     engageSm.setTargetValue (snapZero (targets.engagement));
     safetySm.setTargetValue (snapZero (targets.safety));
 
-    // Phases 3.2+: push the remaining destination targets into each module here.
+    // Modules snap to their targets on the first block and while the engine is at rest (so a
+    // re-engagement never ramps in from stale values).
+    const bool snap = snapModules || isAtRest();
+    snapModules = false;
+
+    // ---- LFOs: tempo fallback 120 BPM; rate slewed in the log domain ----
+    const double bpm = (transport.hasBpm && transport.bpm > 0.0) ? transport.bpm : 120.0;
+
+    if (syncEnabled)
+    {
+        lfoA.setSyncTarget (bpm, (double) targets.lfoCyclesPerBeat);
+        lfoB.setSyncTarget (bpm, (double) targets.lfoCyclesPerBeat);
+    }
+    else
+    {
+        lfoA.setTargetRateHz (targets.lfoRateHz);
+        lfoB.setTargetRateHz (targets.lfoRateHz);
+    }
+
+    if (snap)
+    {
+        lfoA.snapRateToTarget();
+        lfoB.snapRateToTarget();
+    }
+
+    lfoA.controlStep (controlBlockSize);
+    lfoB.controlStep (controlBlockSize);
+
+    // ---- series modules (coefficients / targets change here and only here) ----
+    FilterEngine::Targets ft;
+    ft.hpHz        = targets.hpCutoffHz;
+    ft.bpBlend     = targets.bpBlend;
+    ft.bpCenterHz  = targets.bpCenterHz;
+    ft.bpQ         = targets.bpQ;
+    ft.lfoDepthOct = targets.lfoFilterDepthOct;
+
+    filter.setTargets (ft, lfoA.value(), snap, controlBlockSize);
+    saturation.setTargets (targets.satDrive, targets.satAmount, snap);
+    stereoWidth.setTargets (targets.widthFactor, targets.lowSideCollapse, targets.lfoMoveDepth, snap);
+
+    if (snap)
+    {
+        ampDepthSm.setCurrentAndTargetValue  (targets.lfoAmpDepth);
+        inputTrimSm.setCurrentAndTargetValue (targets.inputTrim);
+    }
+    else
+    {
+        ampDepthSm.setTargetValue  (targets.lfoAmpDepth);
+        inputTrimSm.setTargetValue (targets.inputTrim);
+    }
+}
+
+void TensionEngine::runSeriesChain (int pos, int count) noexcept
+{
+    float*       pL = procBuf.getWritePointer (0) + pos;
+    float*       pR = procBuf.getWritePointer (1) + pos;
+    const float* dL = dryBuf.getReadPointer (0) + pos;
+    const float* dR = dryBuf.getReadPointer (1) + pos;
+
+    if (stubProcGain != 1.0f || ! seriesChainEnabled)
+    {
+        // Phase 3.1 identity / bus-algebra test mode: modules bypassed (LFOs still advance).
+        juce::FloatVectorOperations::copy (pL, dL, count);
+        juce::FloatVectorOperations::copy (pR, dR, count);
+
+        if (stubProcGain != 1.0f)
+        {
+            juce::FloatVectorOperations::multiply (pL, stubProcGain, count);
+            juce::FloatVectorOperations::multiply (pR, stubProcGain, count);
+        }
+
+        lfoA.advance (count);
+        lfoB.advance (count);
+        return;
+    }
+
+    // Series input: dry copy with non-finite samples scrubbed so a NaN/Inf can never poison the
+    // IIR states (the dry bus itself is untouched; OutputSafety scrubs the output).
+    for (int i = 0; i < count; ++i)
+    {
+        pL[i] = finiteOrZero (dL[i]);
+        pR[i] = finiteOrZero (dR[i]);
+    }
+
+    // 1. input drive trim (identity in the 3.2 stub)
+    if (inputTrimSm.isSmoothing() || inputTrimSm.getCurrentValue() != 1.0f)
+    {
+        for (int i = 0; i < count; ++i)
+        {
+            const float g = inputTrimSm.getNextValue();
+            pL[i] *= g;
+            pR[i] *= g;
+        }
+    }
+
+    // 2. HP + BP-sweep pre-filter (coefficients fixed for this chunk)
+    filter.process (pL, pR, count);
+
+    // 3. amplitude tremolo (lfoA): g in [1 - depth, 1], a smooth gain, never a gate
+    for (int i = 0; i < count; ++i)
+    {
+        const float la    = lfoA.next();
+        lfoBBuf[(size_t) i] = lfoB.next();
+
+        const float depth = ampDepthSm.getNextValue();
+        const float g     = 1.0f - depth * 0.5f * (1.0f - la);
+        pL[i] *= g;
+        pR[i] *= g;
+    }
+
+    // 4. ADAA saturation, 5. stereo width (lfoB)
+    saturation.process (pL, pR, count);
+    stereoWidth.process (pL, pR, count, lfoBBuf.data());
 }
 
 void TensionEngine::processSegment (float* out0, float* out1, int n)
@@ -193,21 +358,9 @@ void TensionEngine::processSegment (float* out0, float* out1, int n)
     juce::FloatVectorOperations::copy (dL, out0, n);
     juce::FloatVectorOperations::copy (dR, mono ? out0 : out1, n);
 
-    // 2. Series chain (identity stubs this phase). Skipped entirely at rest.
-    if (! isAtRest())
-    {
-        juce::FloatVectorOperations::copy (pL, dL, n);
-        juce::FloatVectorOperations::copy (pR, dR, n);
-
-        if (stubProcGain != 1.0f)
-        {
-            juce::FloatVectorOperations::multiply (pL, stubProcGain, n);
-            juce::FloatVectorOperations::multiply (pR, stubProcGain, n);
-        }
-    }
-    // else: engagement e == 0 for the whole segment, proc is never read.
-
-    // 3. Bus + safety + trim, in control-rate chunks (<= 32 samples).
+    // 2./3. Series chain + bus + safety + trim, in control-rate chunks (<= 32 samples) on the
+    //       absolute control grid. The chain is skipped while the engine is at rest (e == 0:
+    //       proc is never read); module states are cleared once per rest period.
     int pos = 0;
 
     while (pos < n)
@@ -216,6 +369,23 @@ void TensionEngine::processSegment (float* out0, float* out1, int n)
             controlTick();
 
         const int chunk = std::min (n - pos, controlBlockSize - controlPos);
+
+        if (isAtRest())
+        {
+            if (! seriesCleared)
+            {
+                resetSeriesModules();
+                seriesCleared = true;
+            }
+
+            lfoA.advance (chunk);       // LFO phase keeps running (keeps beat alignment in sync mode)
+            lfoB.advance (chunk);
+        }
+        else
+        {
+            seriesCleared = false;
+            runSeriesChain (pos, chunk);
+        }
 
         for (int i = pos; i < pos + chunk; ++i)
         {

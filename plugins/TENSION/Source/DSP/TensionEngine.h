@@ -2,9 +2,14 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <array>
 #include <atomic>
 
+#include "FilterEngine.h"
+#include "LFOEngine.h"
 #include "OutputSafety.h"
+#include "SaturationEngine.h"
+#include "StereoWidth.h"
 #include "TensionMapping.h"
 
 // Host transport snapshot, read once per host block (JUCE 8 getPlayHead()->getPosition()).
@@ -39,8 +44,13 @@ struct TensionTelemetry
 
 // TensionEngine - per-block orchestrator.
 //
-// Phase 3.1: skeleton only. Series processors are identity stubs; noise / delay /
-// reverb returns are zero. What IS real: control-rate sub-blocking (<= 32 samples,
+// Phase 3.2: the series chain is now real (driven by the TEMPORARY LINEAR stub mapping):
+//   input trim -> FilterEngine (HP + BP sweep, lfoA cutoff) -> tremolo (lfoA)
+//   -> SaturationEngine (ADAA tanh) -> StereoWidth (LR4 + M/S, lfoB)  = proc
+// all driven from controlTick() on the absolute 32-sample grid. Noise / delay / reverb returns are
+// still zero (Phase 3.3).
+//
+// Phase 3.1 (unchanged): control-rate sub-blocking (<= 32 samples,
 // aligned to an absolute sample counter so output is block-size invariant), the
 // per-destination smoothers, the dry/proc/wet bus with engagement e, MIX, OutputSafety,
 // output trim AFTER safety, mono/stereo handling and telemetry.
@@ -77,11 +87,21 @@ public:
 
     // TEST HOOK (Phase 3.1): scales the identity `proc` stub so the bus algebra
     // (e / MIX) is observable. Default 1.0 == pure identity. Never set by the plugin.
+    // Any value != 1.0 also bypasses the real series modules (proc = g * dry), keeping the
+    // Phase 3.1 bus-algebra tests meaningful with the real modules in the build.
     void setStubProcGainForTesting (float g) noexcept { stubProcGain = g; }
+
+    // TEST HOOK (Phase 3.2): false == series modules bypassed (proc = dry, the Phase 3.1 identity).
+    void setSeriesChainEnabledForTesting (bool enabled) noexcept { seriesChainEnabled = enabled; }
+
+    const LFOEngine& getLfoA() const noexcept { return lfoA; }
+    const LFOEngine& getLfoB() const noexcept { return lfoB; }
 
 private:
     void processSegment (float* out0, float* out1, int n);
     void controlTick();
+    void runSeriesChain (int pos, int count) noexcept;
+    void resetSeriesModules() noexcept;
     void resetFeedbackModules() noexcept;
 
     using Smoother = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>;
@@ -102,11 +122,24 @@ private:
 
     OutputSafety safety;
 
+    // Phase 3.2 series modules
+    LFOEngine        lfoA, lfoB;               // A: amplitude + filter | B: stereo (+ delay later)
+    FilterEngine     filter;
+    SaturationEngine saturation;
+    StereoWidth      stereoWidth;
+    Smoother         ampDepthSm;               // 50 ms
+    Smoother         inputTrimSm;              // 50 ms (linear gain)
+    std::array<float, controlBlockSize> lfoBBuf {};
+
     TensionDSP::RiseMode riseMode = TensionDSP::RiseMode::Cinematic;
     HostTransport        transport;
     bool                 syncEnabled = true;
+    bool                 prevPlaying = false;
 
     bool  firstBlock = true;
+    bool  snapModules = true;       // next controlTick snaps the module smoothers (first block / at rest)
+    bool  seriesCleared = false;    // module states already reset during the current rest period
+    bool  seriesChainEnabled = true;
     int   controlPos = 0;       // samples elapsed inside the current 32-sample control period
     float stubProcGain = 1.0f;
 
