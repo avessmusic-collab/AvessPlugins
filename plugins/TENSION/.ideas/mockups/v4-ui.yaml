@@ -3,7 +3,7 @@ meta:
   plugin: TENSION
   version: 4
   changes_from_v2: ["accent colour system is now owned by RISE MODE (see mode_themes); default view = Cinematic blue"]
-  changes_from_v3: ["Cinematic ramp changed from cyan-blue/electric-blue to emerald-green (#35e08a) rising to electric blue (#2b52ff): green at low tension, blue at climax (user request)"]
+  changes_from_v3: ["Cinematic ramp changed from cyan-blue/electric-blue to teal (#2dd4c4) rising to electric blue (#2b52ff): green at low tension, blue at climax (user request)"]
   note: >
     Final GUI is NATIVE JUCE (no WebView). This mockup is the locked visual reference
     for GUI Phases 4.1-4.3, to be reproduced with juce::Graphics. Only natively drawable
@@ -239,5 +239,5 @@ mode_themes:
   intensity_gamma_unchanged: { slow_burn: 1.25, cinematic: 1.0, aggressive: 0.75 }
   themes:
     slow_burn:  { stop_low: "#ff8a3d", stop_high: "#ff2d2a", glow_k: 1.0,  secondary_inlay: "#d97633", character: "orange to red (v2 palette)" }
-    cinematic:  { stop_low: "#35e08a", stop_high: "#2b52ff", glow_k: 1.15, secondary_inlay: "#34b878", character: "emerald green rising to deep electric blue (green at low tension, blue at climax); glow_k raised because blue reads darker" }
+    cinematic:  { stop_low: "#2dd4c4", stop_high: "#2b52ff", glow_k: 1.15, secondary_inlay: "#2ab5a8", character: "teal rising to deep electric blue (green at low tension, blue at climax); glow_k raised because blue reads darker" }
     aggressive: { stop_low: "#b266ff", stop_high: "#e62bc8", glow_k: 1.1,  secondary_inlay: "#9855d9", character: "violet to saturated magenta-purple" }
