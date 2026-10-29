@@ -21,9 +21,10 @@ public:
     static constexpr int numVoices = 16;
 
     /// Message thread (prepareToPlay). Configures + warms the stretchers.
-    void prepare (double sampleRate, int maxBlockSize = 512)
+    /// `cheaperStretch` = Eco quality (Signalsmith presetCheaper, Phase 5).
+    void prepare (double sampleRate, int maxBlockSize = 512, bool cheaperStretch = false)
     {
-        stretchers.prepare (sampleRate, maxBlockSize);
+        stretchers.prepare (sampleRate, maxBlockSize, cheaperStretch);
         int index = 0;
         for (auto& v : voices)
             v.prepare (sampleRate, maxBlockSize, stretchers, index++);
@@ -40,7 +41,8 @@ public:
     void trigger (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
                   int chopIndex, float gain, int tag = ChopVoice::tagMidi,
                   juce::int64 gateSamples = ChopVoice::gateNatural,
-                  int midiNote = -1, double startNorm = 0.0) noexcept
+                  int midiNote = -1, double startNorm = 0.0,
+                  const TriggerMods& mods = {}) noexcept
     {
         ChopVoice* chosen = nullptr;
         for (auto& v : voices)
@@ -67,7 +69,7 @@ public:
                     v.fastRelease();
 
         chosen->trigger (sample, chop, chopIndex, gain, nextStamp++, tag,
-                         gateSamples, midiNote, startNorm);
+                         gateSamples, midiNote, startNorm, mods);
     }
 
     /// The OLDEST Gate/Loop voice still holding this MIDI note enters its

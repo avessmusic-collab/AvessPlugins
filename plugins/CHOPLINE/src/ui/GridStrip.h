@@ -3,15 +3,29 @@
 // button, pattern-length combo, bar-page seg, SWING knob) over the boxes
 // display (v17 cards: white hairline boxes radius 11 on an #efeff1 tray,
 // filled = chop tint + index chip + mini waveform, selected = blue outline,
-// playing = pressed grey, blue 1.5 px playhead hairline). The per-step lane
-// strip below stays a placeholder card until Phase 5.
+// playing = pressed grey, blue 1.5 px playhead hairline). Phase 5 replaces
+// the lane placeholder with the v17 lane editor: the lane_tab seg
+// (VEL·PITCH·PROB·RATCHET) over the step_lane display (1046×68) — per-step
+// bars in the v17 display style; click/drag paints values across steps,
+// double-click resets a step, only steps with events show editable bars, and
+// a paint gesture is ONE undo transaction.
 //
 // Interactions (spec §5 + v17): drop chops dragged from Strip A (a
 // multi-selection fills consecutive cells in order); with a chop selected,
 // click an empty cell to paint it and drag across cells to paint a run; drag
 // an event's right edge to span steps; drag to move; Alt-drag duplicates;
-// Delete removes; double-click selects the chop in Strip A; Cmd/Ctrl-Z and
+// Delete removes; LEFT/RIGHT arrows nudge the selected events by one step
+// (Phase 5); double-click selects the chop in Strip A; Cmd/Ctrl-Z and
 // Shift-Cmd-Z undo/redo through the pattern model's juce::UndoManager.
+// Right-click on the boxes tray opens the Phase 5 GENERATORS menu (seeded
+// randomize / shift / reverse / copy–paste / copy-to-slot — spec §5; lean,
+// no new chrome per the locked v17).
+//
+// Drag-out (Phase 5, spec §10): dragging from the EMPTY grid-header area
+// (the least-chrome home — between the bar seg and the SWING knob) exports
+// the current pattern as a MIDI file; Alt-drag renders the pattern offline
+// (background thread, subtle progress hairline) and drags the WAV out once
+// it is ready. The editor wires the callbacks.
 
 #pragma once
 
@@ -21,6 +35,7 @@
 #include "../engine/Engine.h"
 #include "CompactKnob.h"
 #include "LookAndFeel.h"
+#include "SegControl.h"
 
 #include <set>
 #include <vector>
@@ -44,11 +59,24 @@ public:
     std::function<int()> getEditChop;
     std::function<void()> onOpenChopEditor;
 
+    // ---- Phase 5 drag-out (wired by the editor; see header comment) --------------
+    /// Writes the current pattern as a temp .mid and returns it ({} on failure).
+    std::function<juce::File()> createMidiDragFile;
+    /// Starts (or restarts) the background audio render of the pattern.
+    std::function<void()> startAudioRender;
+    /// The finished render ({} while rendering / invalid).
+    std::function<juce::File()> getRenderedAudioFile;
+    /// <0 idle, 0..1 while rendering.
+    std::function<float()> getAudioRenderProgress;
+
     /// ~60 fps tick from the editor's VBlankAttachment (playhead).
     void animationTick();
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override; // header drag-out zone
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
 
 private:
     // ---- compact note-length button (v17 note_length_button) --------------------
@@ -139,7 +167,7 @@ private:
             bool isLastPiece = false; // right edge = span handle
         };
 
-        std::vector<Cell> computeCells() const;
+        const std::vector<Cell>& computeCells() const; // cached (Phase 5 perf)
         std::vector<Piece> computePieces (const std::vector<Cell>& cells) const;
         std::vector<int> getSelectedChopsSafe() const; // Strip A selection, valid chops only
         int cellIndexAt (juce::Point<float>, const std::vector<Cell>&) const; // −1 none
@@ -158,7 +186,47 @@ private:
         int dropTargetCell = -1;
         bool movedSinceDown = false;
         mutable std::vector<Piece> pieceCache; // rebuilt per paint, for cursor hits
+
+        // Cell geometry cache (Phase 5 polish): rebuilt only when the bounds
+        // or the note length change.
+        mutable std::vector<Cell> cellCache;
+        mutable int cacheW = -1, cacheH = -1, cacheNoteLen = -1;
     };
+
+    // ---- per-step lane editor (Phase 5; v17 lane_tab + step_lane) ------------------
+    class LaneDisplay final : public juce::Component,
+                              public juce::SettableTooltipClient
+    {
+    public:
+        explicit LaneDisplay (GridStrip& ownerToUse) : owner (ownerToUse) {}
+
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+        void mouseMove (const juce::MouseEvent&) override;
+        void mouseExit (const juce::MouseEvent&) override;
+
+    private:
+        struct Bar
+        {
+            int eventId = -1;
+            juce::Rectangle<float> column; // full-height event column
+            state::PatternModel::EventView view; // captured once per paint
+        };
+        std::vector<Bar> computeBars() const;
+        juce::Rectangle<float> valueArea() const;
+        void applyValueAt (const juce::MouseEvent&);
+        juce::String formatValue (const state::PatternModel::EventView&) const;
+
+        GridStrip& owner;
+        bool gestureActive = false;
+        int hoverEventId = -1;
+        int dragEventId = -1; // the bar being edited (value pill)
+    };
+
+    void showGeneratorMenu();
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void syncControlsFromModel();
@@ -168,6 +236,7 @@ private:
     engine::Engine& engine;
     state::PatternModel& model;
     int page = 0; // UI-only bar page (v17 bar_page)
+    int lane = 0; // UI-only lane tab: 0 VEL, 1 PITCH, 2 PROB, 3 RATCHET
 
     NoteLengthButton noteLenButton;
     juce::ComboBox lengthBox;
@@ -175,8 +244,16 @@ private:
     CompactKnob swingKnob { "SWING" };
     std::unique_ptr<juce::SliderParameterAttachment> swingAttachment;
     BoxesDisplay boxes { *this };
+    SegControl laneTab;              // v17 lane_tab (VEL PITCH PROB RATCHET)
+    LaneDisplay laneDisplay { *this }; // v17 step_lane (1046×68)
     ChopChip chopChip;
     juce::TextButton chopMoreButton { juce::CharPointer_UTF8 ("\xe2\x80\xa6") }; // …
+
+    // Drag-out gesture state (Phase 5).
+    bool dragArmed = false;
+    bool dragWantsAudio = false;
+    bool externalDragStarted = false;
+    float lastRenderProgress = -1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GridStrip)
 };

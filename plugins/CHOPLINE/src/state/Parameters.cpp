@@ -46,6 +46,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     layout.add (choice (id::midiBaseNote, "MIDI Base Note",
                         { "C0", "C1", "C2", "C3" }, 1)); // default C1 = 36 (chop 1)
 
+    // Phase 5 (spec §5): pattern slot A–H — host-automatable and MIDI-program-
+    // switchable; playback switches at the next bar start while running.
+    layout.add (choice (id::patternSlot, "Pattern Slot",
+                        { "A", "B", "C", "D", "E", "F", "G", "H" }, 0));
+
+    // Phase 5 (spec §8): Eco/HQ quality (v17 fl_set seg, default HQ).
+    layout.add (choice (id::quality, "Quality", { "Eco", "HQ" }, 1));
+
     // Phase 2 (spec §5): swing 0–75 % on even steps — trigger TIME only, so a
     // per-block atomic read is enough (no audio-rate smoothing needed).
     layout.add (std::make_unique<juce::AudioParameterFloat> (

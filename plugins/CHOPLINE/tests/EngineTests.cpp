@@ -182,19 +182,34 @@ TEST_CASE ("Audio thread allocates nothing (allocation detector over many blocks
 
     // Phase 2: run with a busy PATTERN playing from host PPQ as well as MIDI
     // (spec §12: the detector stays green with the pattern scheduler active).
+    // Phase 5: the pattern also carries RATCHETS, PROBABILITY rolls and the
+    // pitch lane, so the detector covers the subdivided trigger path.
     auto& pm = eng.getPatternModel();
     for (int i = 0; i < 16; ++i)
-        REQUIRE (pm.addEvent (0, i / 16.0, 1.0 / 16.0, i % 8) >= 0);
+    {
+        const auto id = pm.addEvent (0, i / 16.0, 1.0 / 16.0, i % 8);
+        REQUIRE (id >= 0);
+        if (i % 3 == 0)
+            pm.setEventRatchet (0, id, 4);
+        if (i % 4 == 0)
+            pm.setEventProbability (0, id, 50);
+        if (i % 5 == 0)
+            pm.setEventPitch (0, id, 7.0f);
+    }
 
     // Phase 3 (the hard one, spec §12): stretch voices + choke + unison + all
-    // playback modes must stay allocation-free too.
+    // playback modes must stay allocation-free too. Phase 5 adds GRANULAR and
+    // FREEZE chops (grain pool active) to the same run.
     for (int i = 0; i < 8; ++i)
     {
         auto s = eng.getChopSettings (i);
         s.chokeGroup = i % 2 == 0 ? 1 : 0;
         s.unison = 1 + (i % 3);
         s.pitchSemitones = (i % 5) - 2;
-        s.warp = i % 2 == 0 ? engine::WarpMode::stretch : engine::WarpMode::varispeed;
+        s.warp = i == 2 ? engine::WarpMode::granular
+               : i == 4 ? engine::WarpMode::freeze
+               : i % 2 == 0 ? engine::WarpMode::stretch
+                            : engine::WarpMode::varispeed;
         s.mode = i == 3 ? engine::PlaybackMode::loop
                : i == 5 ? engine::PlaybackMode::fitStep
                : i == 6 ? engine::PlaybackMode::oneShot

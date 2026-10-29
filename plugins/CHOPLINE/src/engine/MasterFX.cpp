@@ -260,6 +260,25 @@ void MasterFX::processDistortion (juce::AudioBuffer<float>& main, const MasterPa
             --dsCounter;
         }
     }
+    else if (p.ecoNoOversample && (p.distType == 0 || p.distType == 2))
+    {
+        // Eco (Phase 5): Soft clip / Tape shaped at base rate — the smooth
+        // low-order curves alias negligibly at musical drive settings.
+        auto* l = dScratch.getWritePointer (0);
+        auto* r = dScratch.getWritePointer (1);
+        for (int start = 0; start < n; start += 64)
+        {
+            const auto chunk = juce::jmin (64, n - start);
+            const auto d01 = drive.getCurrentValue();
+            drive.skip (chunk);
+            const auto ag = p.autoGain ? autoGainFor (p.distType, d01) : 1.0f;
+            for (int i = start; i < start + chunk; ++i)
+            {
+                l[i] = sanitize (shapeSample (p.distType, l[i], d01) * ag);
+                r[i] = sanitize (shapeSample (p.distType, r[i], d01) * ag);
+            }
+        }
+    }
     else
     {
         juce::dsp::AudioBlock<float> block (dScratch);

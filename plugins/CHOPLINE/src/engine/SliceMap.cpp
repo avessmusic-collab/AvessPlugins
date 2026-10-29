@@ -29,6 +29,11 @@ ChopSettings ChopSettings::clamped (ChopSettings s) noexcept
     s.decayMs = juce::jlimit (5.0f, 1000.0f, s.decayMs);
     s.sustainPct = juce::jlimit (0.0f, 100.0f, s.sustainPct);
     s.chokeGroup = juce::jlimit (0, 16, s.chokeGroup);
+    s.grainMs = juce::jlimit (5.0f, 200.0f, s.grainMs);
+    s.grainDensity = juce::jlimit (1, 8, s.grainDensity);
+    s.grainJitterMs = juce::jlimit (0.0f, 50.0f, s.grainJitterMs);
+    s.grainPitchJitterCents = juce::jlimit (0.0f, 100.0f, s.grainPitchJitterCents);
+    s.grainSprayMs = juce::jlimit (0.0f, 500.0f, s.grainSprayMs);
     return s;
 }
 
@@ -347,6 +352,12 @@ SliceMapSnapshot SliceModel::buildSnapshot (const SampleData* sample) const
         chop.loopEnd = juce::jlimit (chop.loopStart, end, chop.loopEnd);
         const auto halfLoop = static_cast<int> ((chop.loopEnd - chop.loopStart) / 2);
         chop.loopXfadeSamples = juce::jlimit (0, halfLoop, msToSamples (s.loopXfadeMs));
+
+        chop.grainLenSamples = juce::jmax (8, msToSamples (s.grainMs));
+        chop.grainDensity = s.grainDensity;
+        chop.grainJitterSamples = juce::jmax (0, msToSamples (s.grainJitterMs));
+        chop.grainSpraySamples = juce::jmax (0, msToSamples (s.grainSprayMs));
+        chop.grainPitchJitterCents = s.grainPitchJitterCents;
 
         chop.attackSamples = juce::jmax (0, msToSamples (s.attackMs));
         chop.holdSamples = juce::jmax (0, msToSamples (s.holdMs));

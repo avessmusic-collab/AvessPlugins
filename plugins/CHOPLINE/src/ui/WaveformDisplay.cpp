@@ -69,21 +69,68 @@ void WaveformDisplay::modelChanged()
 
 void WaveformDisplay::animationTick()
 {
-    // Signature of what is animating: voice positions + loading state.
+    // Phase 5 polish (spec §9): dirty-rect repaints. While only the playheads
+    // move, repaint narrow strips around the old and new hairlines; a change
+    // of the PLAYING CHOP SET (band flash) or the loading state still
+    // repaints the whole display.
     engine::Engine::VoiceView views[engine::VoicePool::numVoices];
     const auto n = engine.getVoiceViews (views, engine::VoicePool::numVoices);
+    const bool loading = engine.isLoading();
 
-    std::uint32_t sig = engine.isLoading() ? 1u : 0u;
+    std::uint64_t chopsMask = 0;
     for (int i = 0; i < n; ++i)
-        sig = sig * 131u + static_cast<std::uint32_t> (views[i].chopIndex + 2)
-              + static_cast<std::uint32_t> (views[i].normalisedPos * 4096.0f);
+        if (views[i].chopIndex >= 0 && views[i].chopIndex < 64)
+            chopsMask |= 1ull << views[i].chopIndex;
 
-    const bool animating = n > 0 || engine.isLoading();
-    if (animating || wasAnimating || sig != lastVoiceSignature)
+    // Current playhead x positions (same mapping as drawPlayheads).
+    const auto spans = chopSpans();
+    float xs[engine::VoicePool::numVoices];
+    int numXs = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const auto chop = views[i].chopIndex;
+        if (chop < 0 || chop >= static_cast<int> (spans.size()))
+            continue;
+        const auto& span = spans[static_cast<size_t> (chop)];
+        xs[numXs++] = timeToX (span.startSec
+                               + views[i].normalisedPos * (span.endSec - span.startSec));
+    }
+
+    const bool fullRepaint = loading || wasAnimating != (n > 0 || loading)
+                          || chopsMask != lastChopsMask || numXs != lastNumXs;
+    if (fullRepaint)
+    {
         repaint();
+    }
+    else
+    {
+        for (int i = 0; i < numXs; ++i)
+        {
+            if (juce::exactlyEqual (xs[i], lastXs[i]))
+                continue;
+            const auto lo = juce::jmin (xs[i], lastXs[i]);
+            const auto hi = juce::jmax (xs[i], lastXs[i]);
+            if (hi - lo < 24.0f) // close: one strip covers both
+                repaint (juce::Rectangle<float> (lo - 3.0f, 0.0f, hi - lo + 6.0f,
+                                                 static_cast<float> (getHeight()))
+                             .toNearestInt());
+            else
+            {
+                repaint (juce::Rectangle<float> (lastXs[i] - 3.0f, 0.0f, 6.0f,
+                                                 static_cast<float> (getHeight()))
+                             .toNearestInt());
+                repaint (juce::Rectangle<float> (xs[i] - 3.0f, 0.0f, 6.0f,
+                                                 static_cast<float> (getHeight()))
+                             .toNearestInt());
+            }
+        }
+    }
 
-    wasAnimating = animating;
-    lastVoiceSignature = sig;
+    wasAnimating = n > 0 || loading;
+    lastChopsMask = chopsMask;
+    lastNumXs = numXs;
+    for (int i = 0; i < numXs; ++i)
+        lastXs[i] = xs[i];
 }
 
 // ---- coordinates ------------------------------------------------------------------

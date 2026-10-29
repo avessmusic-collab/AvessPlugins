@@ -34,6 +34,9 @@ public:
 
     juce::Slider& getSlider() noexcept { return slider; }
 
+    /// Tooltip on the dial (the slider is the SettableTooltipClient).
+    void setTooltip (const juce::String& text) { slider.setTooltip (text); }
+
     std::function<void (double)> onValueChange;
     std::function<juce::String (double)> formatValue; // default: "55%"-style via suffix
     juce::String valueSuffix;

@@ -93,6 +93,14 @@ struct ChopSettings
     int chokeGroup = 1;         // 0 = off; default: ALL chops in group 1 (spec §6)
     bool formantPreserve = true; // Stretch warp formant preservation
 
+    // Granular warp (Phase 5, spec §6) — MUSICAL FIXED DEFAULTS, serialized
+    // per chop; no v17 knobs exist (advanced-drawer candidates, documented).
+    float grainMs = 80.0f;            // grain size 5–200 ms
+    int grainDensity = 3;             // overlapping grain streams 1–8
+    float grainJitterMs = 12.0f;      // position jitter 0–50 ms
+    float grainPitchJitterCents = 6.0f; // per-grain pitch jitter 0–100 cents
+    float grainSprayMs = 0.0f;        // wide position spray 0–500 ms
+
     /// Returns a range-clamped copy (offsets are clamped against neighbours
     /// in SliceModel::buildSnapshot, not here).
     static ChopSettings clamped (ChopSettings s) noexcept;
@@ -130,6 +138,13 @@ struct SliceMapSnapshot
 
         int attackSamples = 0, holdSamples = 0, decaySamples = 0, releaseSamples = 1;
         float sustainLevel = 1.0f; // 0..1
+
+        // Granular warp (Phase 5), converted to frames at session rate.
+        int grainLenSamples = 0;
+        int grainDensity = 3;
+        int grainJitterSamples = 0;
+        int grainSpraySamples = 0;
+        float grainPitchJitterCents = 0.0f;
     };
 
     int numChops = 0;

@@ -2,10 +2,96 @@
 
 #include "PluginEditor.h"
 
+#include "ui/SegControl.h"
+
 namespace chopline
 {
 
 using LnF = ui::ChoplineLookAndFeel;
+
+// ---- Phase 5 drag-out backend (spec §10) ---------------------------------------------
+
+PatternDragExporter::PatternDragExporter (ChoplineAudioProcessor& p)
+    : juce::Thread ("CHOPLINE Render"),
+      processor (p),
+      tempDir (juce::File::getSpecialLocation (juce::File::tempDirectory)
+                   .getChildFile ("CHOPLINE")
+                   .getChildFile (juce::Uuid().toString()))
+{
+}
+
+PatternDragExporter::~PatternDragExporter()
+{
+    stopThread (4000);
+    tempDir.deleteRecursively(); // temp files cleaned up on editor destruction
+}
+
+juce::File PatternDragExporter::writeMidiFile()
+{
+    auto& engine = processor.getEngine();
+    auto& model = engine.getPatternModel();
+    const auto slot = model.getActiveSlot();
+
+    engine::Engine::BlockContext ctx;
+    processor.fillContextFromParams (ctx);
+
+    const auto midi = state::buildPatternMidi (model, slot, ctx.midiBaseNote,
+                                               engine.getUiBpm());
+    if (! tempDir.createDirectory())
+        return {};
+    const auto file = tempDir.getChildFile (
+        "CHOPLINE Pattern " + juce::String::charToString (
+            static_cast<juce::juce_wchar> ('A' + slot)) + ".mid");
+    return state::writeMidiFile (midi, file) ? file : juce::File();
+}
+
+void PatternDragExporter::startRender()
+{
+    if (isThreadRunning())
+        return; // already rendering (the progress hairline shows)
+
+    ready = false;
+    progress = 0.0f;
+
+    auto& engine = processor.getEngine();
+    capturedState = processor.buildStateTree();
+    capturedSpec = {};
+    capturedSpec.sampleRate = engine.getSampleRate() > 0.0 ? engine.getSampleRate() : 48000.0;
+    capturedSpec.bpm = engine.getUiBpm();
+    capturedSpec.slot = engine.getPatternModel().getActiveSlot();
+    processor.fillContextFromParams (capturedSpec.context);
+    capturedSpec.onProgress = [this] (float f)
+    {
+        progress.store (f, std::memory_order_relaxed);
+    };
+
+    wavFile = tempDir.getChildFile (
+        "CHOPLINE Pattern " + juce::String::charToString (
+            static_cast<juce::juce_wchar> ('A' + capturedSpec.slot)) + ".wav");
+
+    startThread();
+}
+
+juce::File PatternDragExporter::getRenderedFile() const
+{
+    return ready.load (std::memory_order_acquire) ? wavFile : juce::File();
+}
+
+float PatternDragExporter::getProgress() const
+{
+    return isThreadRunning() ? progress.load (std::memory_order_relaxed) : -1.0f;
+}
+
+void PatternDragExporter::run()
+{
+    juce::String error;
+    const auto rendered = state::renderPatternOffline (capturedState, capturedSpec, error);
+    auto ok = error.isEmpty() && rendered.getNumSamples() > 0 && tempDir.createDirectory();
+    if (ok)
+        ok = state::writeWavFile (rendered, capturedSpec.sampleRate, wavFile);
+    progress.store (-1.0f, std::memory_order_relaxed);
+    ready.store (ok, std::memory_order_release);
+}
 
 // ---- header widgets ---------------------------------------------------------------
 
@@ -129,6 +215,28 @@ namespace
             title.setColour (juce::Label::textColourId, LnF::label);
             addAndMakeVisible (title);
 
+            // Phase 5 (spec §8 / v17 fl_set): Eco/HQ quality seg. The actual
+            // stretcher reconfiguration happens on the processor's timer
+            // (suspendProcessing wraps it).
+            qualityParam = apvts.getParameter (params::id::quality);
+            qualitySeg.options = { "Eco", "HQ" };
+            qualitySeg.getValue = [this]
+            {
+                return qualityParam != nullptr
+                    ? static_cast<int> (std::lround (
+                          qualityParam->convertFrom0to1 (qualityParam->getValue())))
+                    : 1;
+            };
+            qualitySeg.setValue = [this] (int v)
+            {
+                if (qualityParam != nullptr)
+                    qualityParam->setValueNotifyingHost (
+                        qualityParam->convertTo0to1 (static_cast<float> (v)));
+            };
+            qualitySeg.setTooltip ("Eco: cheaper time-stretch, capped granular density, "
+                                   "less oversampling. HQ: full quality.");
+            addAndMakeVisible (qualitySeg);
+
             baseNote.setName ("Base note");
             baseNote.addItemList ({ "C0", "C1", "C2", "C3" }, 1);
             addAndMakeVisible (baseNote);
@@ -165,7 +273,29 @@ namespace
             };
             addAndMakeVisible (bpmValue);
 
-            setSize (246, 132);
+            // Phase 5 (spec §10): export all chops as individual WAVs.
+            exportChops.setButtonText (juce::String (juce::CharPointer_UTF8 (
+                "Export chops\xe2\x80\xa6")));
+            exportChops.setTooltip ("Writes every chop's trimmed region as a 24-bit WAV");
+            exportChops.onClick = [&engRef = engine]
+            {
+                auto chooser = std::make_shared<juce::FileChooser> (
+                    "Export chops as WAVs",
+                    juce::File::getSpecialLocation (juce::File::userMusicDirectory));
+                chooser->launchAsync (juce::FileBrowserComponent::openMode
+                                          | juce::FileBrowserComponent::canSelectDirectories,
+                                      [chooser, &engRef] (const juce::FileChooser& fc)
+                                      {
+                                          const auto dir = fc.getResult();
+                                          if (dir == juce::File())
+                                              return;
+                                          juce::String error;
+                                          state::exportChopWavs (engRef, dir, error);
+                                      });
+            };
+            addAndMakeVisible (exportChops);
+
+            setSize (246, 208);
         }
 
         void resized() override
@@ -173,6 +303,8 @@ namespace
             auto b = getLocalBounds();
             title.setBounds (b.removeFromTop (14));
             b.removeFromTop (6);
+            qualitySeg.setBounds (b.removeFromTop (28));
+            b.removeFromTop (8);
             baseNote.setBounds (b.removeFromTop (28));
             b.removeFromTop (8);
             embed.setBounds (b.removeFromTop (24));
@@ -180,15 +312,109 @@ namespace
             auto row = b.removeFromTop (20);
             bpmCaption.setBounds (row.removeFromLeft (130));
             bpmValue.setBounds (row);
+            b.removeFromTop (8);
+            exportChops.setBounds (b.removeFromTop (26));
         }
 
     private:
         engine::Engine& engine;
         juce::Label title;
+        ui::SegControl qualitySeg;
+        juce::RangedAudioParameter* qualityParam = nullptr;
         juce::ComboBox baseNote;
         std::unique_ptr<juce::ComboBoxParameterAttachment> baseNoteAttachment;
         juce::ToggleButton embed;
         juce::Label bpmCaption, bpmValue;
+        juce::TextButton exportChops;
+    };
+
+    // ---- Phase 5 save-preset dialog (spec §10; v17-style minimal) ---------------------
+    class SavePresetDialog final : public juce::Component
+    {
+    public:
+        std::function<juce::String (const juce::String& name, const juce::String& category,
+                                    bool kitOnly)> onSave; // returns an error or {}
+
+        SavePresetDialog()
+        {
+            title.setText ("SAVE PRESET", juce::dontSendNotification);
+            title.setFont (LnF::labelFont (8.5f));
+            title.setColour (juce::Label::textColourId, LnF::label);
+            addAndMakeVisible (title);
+
+            name.setFont (LnF::monoFont (11.0f));
+            name.setTextToShowWhenEmpty ("Preset name", LnF::textTertiary);
+            name.setColour (juce::TextEditor::backgroundColourId, juce::Colours::white);
+            name.setColour (juce::TextEditor::outlineColourId, LnF::hairline());
+            name.setColour (juce::TextEditor::focusedOutlineColourId, LnF::accent);
+            name.setColour (juce::TextEditor::textColourId, LnF::ink);
+            name.setColour (juce::TextEditor::highlightedTextColourId, LnF::ink);
+            name.setColour (juce::CaretComponent::caretColourId, LnF::ink);
+            addAndMakeVisible (name);
+
+            category.addItemList (state::PresetManager::factoryCategories(), 1);
+            category.setSelectedId (6, juce::dontSendNotification); // User
+            addAndMakeVisible (category);
+
+            full.setButtonText ("Include sample (full preset)");
+            full.setToggleState (true, juce::dontSendNotification);
+            full.setTooltip ("Off = kit only: patterns + chops + settings, no sample");
+            addAndMakeVisible (full);
+
+            saveButton.setButtonText ("Save");
+            saveButton.onClick = [this]
+            {
+                if (onSave == nullptr)
+                    return;
+                const auto error = onSave (name.getText(), category.getText(),
+                                           ! full.getToggleState());
+                if (error.isEmpty())
+                {
+                    if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                        box->dismiss();
+                }
+                else
+                {
+                    info.setText (error, juce::dontSendNotification);
+                }
+            };
+            addAndMakeVisible (saveButton);
+
+            info.setFont (LnF::labelFont (8.0f));
+            info.setColour (juce::Label::textColourId, LnF::repeat);
+            addAndMakeVisible (info);
+
+            setSize (250, 162);
+        }
+
+        void resized() override
+        {
+            auto b = getLocalBounds();
+            title.setBounds (b.removeFromTop (14));
+            b.removeFromTop (6);
+            name.setBounds (b.removeFromTop (26));
+            b.removeFromTop (8);
+            category.setBounds (b.removeFromTop (28));
+            b.removeFromTop (8);
+            full.setBounds (b.removeFromTop (24));
+            b.removeFromTop (8);
+            auto row = b.removeFromTop (26);
+            saveButton.setBounds (row.removeFromRight (74));
+            info.setBounds (row.reduced (0, 4));
+        }
+
+        void visibilityChanged() override
+        {
+            if (isVisible())
+                name.grabKeyboardFocus();
+        }
+
+    private:
+        juce::Label title, info;
+        juce::TextEditor name;
+        juce::ComboBox category;
+        juce::ToggleButton full;
+        juce::TextButton saveButton;
     };
 } // namespace
 
@@ -204,6 +430,7 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
       masterPanel (p.getState(), p.getEngine()),
       fxPage (p.getEngine(), p.getState()),
       chopOverlay (p.getEngine()),
+      dragExporter (p),
       vblank (this, [this]
       {
           samplerStrip.animationTick();
@@ -237,13 +464,32 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
     wordmark.setColour (juce::Label::textColourId, LnF::ink);
     canvas.addAndMakeVisible (wordmark);
 
-    presetPrev.setEnabled (false); // preset browser lands with the preset system (Phase 5)
-    presetNext.setEnabled (false);
+    // Phase 5 preset browser (spec §10; v17 header prev/combo/next).
+    presetPrev.setTooltip ("Previous preset");
+    presetNext.setTooltip ("Next preset");
+    presetPrev.onClick = [this] { stepPreset (-1); };
+    presetNext.onClick = [this] { stepPreset (1); };
     presetBox.setTextWhenNothingSelected ("Init");
-    presetBox.setEnabled (false);
+    presetBox.setTooltip ("Presets");
+    presetBox.onChange = [this]
+    {
+        const auto id = presetBox.getSelectedId();
+        if (id == 0)
+            return;
+        if (id == 100000)
+        {
+            // "Save preset…": restore the display, then open the dialog.
+            presetBox.setSelectedId (currentPresetIndex >= 0 ? currentPresetIndex + 1 : 0,
+                                     juce::dontSendNotification);
+            openSavePresetDialog();
+            return;
+        }
+        loadPresetAtIndex (id - 1);
+    };
     canvas.addAndMakeVisible (presetPrev);
     canvas.addAndMakeVisible (presetBox);
     canvas.addAndMakeVisible (presetNext);
+    refreshPresetBox();
 
     canvas.addAndMakeVisible (midiDot);
     canvas.addChildComponent (holdBadge); // visible only while BR holds
@@ -273,6 +519,12 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
 
     samplerStrip.getWaveform().onSelectionChanged = [this] { selectionChanged(); };
     samplerStrip.getWaveform().onOpenChopEditor = [this] { openChopEditor (selectedChop()); };
+
+    // Phase 5 drag-out (spec §10): MIDI/WAV export from the grid header zone.
+    gridStrip.createMidiDragFile = [this] { return dragExporter.writeMidiFile(); };
+    gridStrip.startAudioRender = [this] { dragExporter.startRender(); };
+    gridStrip.getRenderedAudioFile = [this] { return dragExporter.getRenderedFile(); };
+    gridStrip.getAudioRenderProgress = [this] { return dragExporter.getProgress(); };
 
     fxPage.getChop = [this] { return selectedChop(); };
     fxPage.setChop = [this] (int chop) { setSelectedChop (chop); };
@@ -314,14 +566,22 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
                 const auto steps = engine::noteLengthStepsPerBar (model.getNoteLength (slot));
                 model.beginTransaction ("Demo pattern");
                 const int cellsToFill[] = { 0, 2, 4, 6, 7, 10, 12, 14 };
+                const int demoVels[] = { 127, 84, 110, 64, 96, 120, 72, 104 };
                 int chop = 0;
                 for (auto cell : cellsToFill)
                 {
                     if (cell >= steps)
                         break;
-                    model.addEvent (slot, step * cell,
+                    const auto id = model.addEvent (slot, step * cell,
                                     cell == 4 ? step * 2.0 : step, // one spanned event
-                                    chop % juce::jmax (1, engine.getNumChops()));
+                                    chop % juce::jmax (1, engine.getNumChops()),
+                                    demoVels[chop % 8]); // varied velocity lane
+                    if (chop == 1)
+                        model.setEventPitch (slot, id, 7.0f);
+                    if (chop == 3)
+                        model.setEventRatchet (slot, id, 4);
+                    if (chop == 5)
+                        model.setEventProbability (slot, id, 60);
                     ++chop;
                 }
                 safe->setSelectedChop (1);
@@ -331,7 +591,7 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
         // Dev-only: CHOPLINE_UI_VIEW=overlay|fx switches the view before the
         // snapshot fires (Phase 3 screenshots).
         const auto uiView = juce::SystemStats::getEnvironmentVariable ("CHOPLINE_UI_VIEW", {});
-        if (uiView == "overlay" || uiView == "fx")
+        if (uiView == "overlay" || uiView == "fx" || uiView == "presets")
         {
             juce::Timer::callAfterDelay (5500,
                 [safe = juce::Component::SafePointer<ChoplineAudioProcessorEditor> (this), uiView]
@@ -340,6 +600,8 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
                     return;
                 if (uiView == "fx")
                     safe->setPage (1);
+                else if (uiView == "presets")
+                    safe->openSavePresetDialog();
                 else
                     safe->openChopEditor (safe->selectedChop());
             });
@@ -370,19 +632,27 @@ ChoplineAudioProcessorEditor::ChoplineAudioProcessorEditor (ChoplineAudioProcess
 
 ChoplineAudioProcessorEditor::~ChoplineAudioProcessorEditor()
 {
-    // Never leave a momentary H hold stuck on when the window closes.
+    // Never leave a momentary H hold / Space preview stuck on when the window
+    // closes.
     if (momentaryHold)
         processorRef.getEngine().setMomentaryHold (false);
+    if (previewHeld)
+        processorRef.getEngine().setPreviewHeld (false);
     setLookAndFeel (nullptr);
 }
 
 void ChoplineAudioProcessorEditor::focusLost (FocusChangeType)
 {
-    // The key-up would be delivered elsewhere — release the momentary hold.
+    // The key-up would be delivered elsewhere — release the momentary holds.
     if (momentaryHold)
     {
         momentaryHold = false;
         processorRef.getEngine().setMomentaryHold (false);
+    }
+    if (previewHeld)
+    {
+        previewHeld = false;
+        processorRef.getEngine().setPreviewHeld (false);
     }
 }
 
@@ -453,12 +723,94 @@ void ChoplineAudioProcessorEditor::openSettingsFlyout()
 {
     auto content = std::make_unique<SettingsFlyout> (processorRef.getState(),
                                                      processorRef.getEngine());
+    // Parented to the editor (not the desktop): the v17 flyouts sit inside
+    // the plate, and component snapshots capture them.
     juce::CallOutBox::launchAsynchronously (std::move (content),
-                                            gearButton.getScreenBounds(), nullptr);
+                                            getLocalArea (nullptr, gearButton.getScreenBounds()), this);
+}
+
+// ---- presets (Phase 5, spec §10) ------------------------------------------------------
+
+void ChoplineAudioProcessorEditor::refreshPresetBox()
+{
+    presetBox.clear (juce::dontSendNotification);
+
+    juce::String lastCategory;
+    const auto& presets = presetManager.getPresets();
+    for (size_t i = 0; i < presets.size(); ++i)
+    {
+        const auto& p = presets[i];
+        if (p.category != lastCategory)
+        {
+            presetBox.addSectionHeading (p.category.toUpperCase());
+            lastCategory = p.category;
+        }
+        presetBox.addItem (p.name, static_cast<int> (i) + 1);
+    }
+
+    if (! presets.empty())
+        presetBox.addSeparator();
+    presetBox.addItem (juce::String (juce::CharPointer_UTF8 ("Save preset\xe2\x80\xa6")),
+                       100000);
+
+    if (currentPresetIndex >= 0 && currentPresetIndex < static_cast<int> (presets.size()))
+        presetBox.setSelectedId (currentPresetIndex + 1, juce::dontSendNotification);
+}
+
+void ChoplineAudioProcessorEditor::loadPresetAtIndex (int index)
+{
+    const auto& presets = presetManager.getPresets();
+    if (index < 0 || index >= static_cast<int> (presets.size()))
+        return;
+
+    const auto tree = presetManager.load (presets[static_cast<size_t> (index)].file);
+    if (! tree.isValid() || tree.getType() != processorRef.getState().state.getType())
+    {
+        // Unreadable / foreign file: leave the state alone AND roll the combo
+        // display back to the preset that is actually loaded.
+        presetBox.setSelectedId (currentPresetIndex >= 0 ? currentPresetIndex + 1 : 0,
+                                 juce::dontSendNotification);
+        return;
+    }
+
+    // Same glitch-safe path as a session restore (spec §10 discipline).
+    processorRef.applyStateTree (tree);
+    currentPresetIndex = index;
+    presetBox.setSelectedId (index + 1, juce::dontSendNotification);
+}
+
+void ChoplineAudioProcessorEditor::stepPreset (int delta)
+{
+    const auto n = static_cast<int> (presetManager.getPresets().size());
+    if (n <= 0)
+        return;
+    const auto base = currentPresetIndex >= 0 ? currentPresetIndex : (delta > 0 ? -1 : 0);
+    loadPresetAtIndex (((base + delta) % n + n) % n);
+}
+
+void ChoplineAudioProcessorEditor::openSavePresetDialog()
+{
+    auto content = std::make_unique<SavePresetDialog>();
+    content->onSave = [this] (const juce::String& name, const juce::String& category,
+                              bool kitOnly) -> juce::String
+    {
+        juce::String error;
+        const auto file = presetManager.save (processorRef.buildStateTree(), name,
+                                              category, kitOnly, error);
+        if (error.isNotEmpty())
+            return error;
+        currentPresetIndex = presetManager.indexOfFile (file);
+        refreshPresetBox();
+        return {};
+    };
+    juce::CallOutBox::launchAsynchronously (std::move (content),
+                                            getLocalArea (nullptr, presetBox.getScreenBounds()), this);
 }
 
 bool ChoplineAudioProcessorEditor::keyStateChanged (bool)
 {
+    bool handled = false;
+
     // H = MOMENTARY Beat Repeat hold on either page (v17 hold_pad / keyboard.h;
     // the HOLD button stays the latching toggle).
     const auto down = juce::KeyPress::isKeyCurrentlyDown ('h')
@@ -467,9 +819,24 @@ bool ChoplineAudioProcessorEditor::keyStateChanged (bool)
     {
         momentaryHold = down;
         processorRef.getEngine().setMomentaryHold (down);
-        return true;
+        handled = true;
     }
-    return false;
+
+    // Space = MOMENTARY transport preview (v17 keyboard.space, Phase 5),
+    // STANDALONE ONLY: in hosts Space must stay the DAW's play shortcut, so
+    // the plugin neither consumes nor acts on it there.
+    if (processorRef.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        const auto space = juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::spaceKey);
+        if (space != previewHeld)
+        {
+            previewHeld = space;
+            processorRef.getEngine().setPreviewHeld (space);
+            handled = true;
+        }
+    }
+
+    return handled;
 }
 
 bool ChoplineAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
@@ -507,6 +874,10 @@ bool ChoplineAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
     if ((key.isKeyCode ('h') || key.isKeyCode ('H'))
         && ! key.getModifiers().isAnyModifierKeyDown())
         return true; // momentary BR hold — handled by keyStateChanged
+    if (key.isKeyCode (juce::KeyPress::spaceKey))
+        // Momentary transport preview (keyStateChanged) — Standalone only; in
+        // hosts the key falls through so the DAW's play shortcut keeps working.
+        return processorRef.wrapperType == juce::AudioProcessor::wrapperType_Standalone;
     if (key.getKeyCode() >= '1' && key.getKeyCode() <= '8')
     {
         setSelectedChop (key.getKeyCode() - '1');

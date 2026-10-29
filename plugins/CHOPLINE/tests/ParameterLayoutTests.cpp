@@ -54,9 +54,21 @@ TEST_CASE ("Parameter layout instantiates and builds an APVTS", "[state][paramet
                                               chopline::params::createParameterLayout());
 
     // Phase 2: MIDI base note + swing. Phase 4 adds the FULL Beat Repeat set
-    // (17, spec §7 — all automatable) and the master chain (23). Slicing
-    // controls stay slice-map state per the locked v17 design.
-    REQUIRE (processor.getParameters().size() == 42);
+    // (17, spec §7 — all automatable) and the master chain (23). Phase 5 adds
+    // pattern_slot (A–H) and quality (Eco/HQ). Slicing controls stay slice-map
+    // state per the locked v17 design.
+    REQUIRE (processor.getParameters().size() == 44);
+
+    // Phase 5: pattern slot A–H (default A) and quality Eco/HQ (default HQ).
+    const auto* slot = dynamic_cast<juce::AudioParameterChoice*> (
+        apvts.getParameter (chopline::params::id::patternSlot));
+    REQUIRE (slot != nullptr);
+    REQUIRE (slot->choices.size() == 8);
+    REQUIRE (slot->getIndex() == 0);
+    const auto* quality = dynamic_cast<juce::AudioParameterChoice*> (
+        apvts.getParameter (chopline::params::id::quality));
+    REQUIRE (quality != nullptr);
+    REQUIRE (quality->getIndex() == 1); // HQ default (v17 fl_set)
 
     auto* baseNote = apvts.getParameter (chopline::params::id::midiBaseNote);
     REQUIRE (baseNote != nullptr);

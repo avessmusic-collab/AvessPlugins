@@ -7,6 +7,13 @@
 
 #include <cmath>
 
+namespace
+{
+    // Phase 5 drag-out zone: the EMPTY grid-header area between the bar seg
+    // and the SWING knob (least-chrome home, documented).
+    const juce::Rectangle<float> dragOutZone (348.0f, 12.0f, 570.0f, 44.0f);
+}
+
 namespace chopline::ui
 {
 
@@ -178,11 +185,23 @@ double GridStrip::BoxesDisplay::pageStartBar() const
     return static_cast<double> (owner.clampedPage());
 }
 
-std::vector<GridStrip::BoxesDisplay::Cell> GridStrip::BoxesDisplay::computeCells() const
+const std::vector<GridStrip::BoxesDisplay::Cell>& GridStrip::BoxesDisplay::computeCells() const
 {
-    std::vector<Cell> cells;
     const auto slot = owner.model.getActiveSlot();
     const auto noteLen = owner.model.getNoteLength (slot);
+
+    // Geometry cache (Phase 5 polish): cells depend only on the bounds and
+    // the note length; the lane editor makes paints heavier, so avoid the
+    // rebuild on every playhead frame.
+    if (cacheW == getWidth() && cacheH == getHeight()
+        && cacheNoteLen == static_cast<int> (noteLen))
+        return cellCache;
+    cacheW = getWidth();
+    cacheH = getHeight();
+    cacheNoteLen = static_cast<int> (noteLen);
+
+    auto& cells = cellCache;
+    cells.clear();
     const auto stepLen = engine::noteLengthBars (noteLen);
     const auto n = engine::noteLengthStepsPerBar (noteLen);
     if (n <= 0 || stepLen <= 0.0)
@@ -401,7 +420,7 @@ void GridStrip::BoxesDisplay::paint (juce::Graphics& g)
     g.setColour (LnF::gridLine());
     g.drawRoundedRectangle (area.reduced (0.5f), 10.0f, 1.0f);
 
-    const auto cells = computeCells();
+    const auto& cells = computeCells();
     const auto pieces = computePieces (cells);
     pieceCache = pieces;
 
@@ -528,6 +547,15 @@ void GridStrip::BoxesDisplay::mouseExit (const juce::MouseEvent&)
 void GridStrip::BoxesDisplay::mouseDown (const juce::MouseEvent& e)
 {
     grabKeyboardFocus();
+
+    // Phase 5 generators (spec §5): right-click on the boxes tray opens the
+    // lean context menu (no new chrome — locked v17).
+    if (e.mods.isPopupMenu())
+    {
+        owner.showGeneratorMenu();
+        return;
+    }
+
     movedSinceDown = false;
     hoverCell = -1;
     gesture = Gesture::none;
@@ -535,7 +563,7 @@ void GridStrip::BoxesDisplay::mouseDown (const juce::MouseEvent& e)
 
     auto& pm = owner.model;
     const auto slot = pm.getActiveSlot();
-    const auto cells = computeCells();
+    const auto& cells = computeCells();
     const auto pieces = computePieces (cells);
 
     if (const auto* piece = pieceAt (e.position, pieces))
@@ -610,7 +638,7 @@ void GridStrip::BoxesDisplay::mouseDrag (const juce::MouseEvent& e)
 
     auto& pm = owner.model;
     const auto slot = pm.getActiveSlot();
-    const auto cells = computeCells();
+    const auto& cells = computeCells();
     const auto cellIdx = cellIndexAt (e.position, cells);
     if (cellIdx < 0)
         return;
@@ -660,7 +688,7 @@ void GridStrip::BoxesDisplay::mouseUp (const juce::MouseEvent&)
     if ((gesture == Gesture::move || gesture == Gesture::duplicate)
         && movedSinceDown && hoverCell >= 0)
     {
-        const auto cells = computeCells();
+        const auto& cells = computeCells();
         if (hoverCell < static_cast<int> (cells.size()))
         {
             const auto& cell = cells[static_cast<size_t> (hoverCell)];
@@ -736,6 +764,31 @@ bool GridStrip::BoxesDisplay::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    // Phase 5 (v17 keyboard map): LEFT/RIGHT nudge the selected events by one
+    // step of the current grid, wrapping within the pattern.
+    if (key.isKeyCode (juce::KeyPress::leftKey) || key.isKeyCode (juce::KeyPress::rightKey))
+    {
+        if (selectedEventIds.empty())
+            return false;
+        const auto slot = pm.getActiveSlot();
+        const auto step = engine::noteLengthBars (pm.getNoteLength (slot));
+        const auto patBars = static_cast<double> (pm.getPatternBars (slot));
+        const auto delta = key.isKeyCode (juce::KeyPress::leftKey) ? -step : step;
+        pm.beginTransaction ("Nudge events");
+        for (auto id : selectedEventIds)
+        {
+            const auto ev = pm.getEventById (slot, id);
+            if (ev.id < 0)
+                continue;
+            auto s = std::fmod (ev.startBar + delta, patBars);
+            if (s < 0.0)
+                s += patBars;
+            pm.moveEvent (slot, id, s);
+        }
+        repaint();
+        return true;
+    }
+
     return false;
 }
 
@@ -753,7 +806,7 @@ void GridStrip::BoxesDisplay::itemDragEnter (const SourceDetails& details)
 
 void GridStrip::BoxesDisplay::itemDragMove (const SourceDetails& details)
 {
-    const auto cells = computeCells();
+    const auto& cells = computeCells();
     const auto idx = cellIndexAt (details.localPosition.toFloat(), cells);
     if (idx != dropTargetCell)
     {
@@ -789,7 +842,7 @@ void GridStrip::BoxesDisplay::paintCellsFromDrag (const juce::StringArray& chopL
 {
     auto& pm = owner.model;
     const auto slot = pm.getActiveSlot();
-    const auto cells = computeCells();
+    const auto& cells = computeCells();
     const auto numChops = owner.engine.getNumChops();
 
     pm.beginTransaction ("Drop chops");
@@ -819,6 +872,375 @@ void GridStrip::BoxesDisplay::paintCellsFromDrag (const juce::StringArray& chopL
         ++cellIdx;
     }
     repaint();
+}
+
+// ================================ LaneDisplay ==========================================
+// v17 step_lane: per-step bars in the display style (hairline grid, dark
+// bars; bipolar PITCH draws from the centre). Only steps with events show
+// editable bars; click/drag paints across steps; double-click resets a step;
+// a gesture is ONE undo transaction.
+
+juce::Rectangle<float> GridStrip::LaneDisplay::valueArea() const
+{
+    return getLocalBounds().toFloat().reduced (8.0f, 7.0f);
+}
+
+std::vector<GridStrip::LaneDisplay::Bar> GridStrip::LaneDisplay::computeBars() const
+{
+    std::vector<Bar> bars;
+    const auto slot = owner.model.getActiveSlot();
+    const auto pageStart = static_cast<double> (owner.clampedPage());
+    const auto area = valueArea();
+    const auto n = owner.model.getNumEvents (slot);
+    bars.reserve (static_cast<size_t> (n));
+
+    for (int i = 0; i < n; ++i)
+    {
+        const auto ev = owner.model.getEvent (slot, i);
+        const auto local = ev.startBar - pageStart;
+        if (local < -barEps || local >= 1.0 - barEps)
+            continue;
+        const auto x0 = area.getX() + static_cast<float> (local) * area.getWidth();
+        const auto w = juce::jmax (6.0f,
+            static_cast<float> (juce::jmin (juce::jmax (ev.lenBars, barEps), 1.0 - local))
+                * area.getWidth() - 3.0f);
+        bars.push_back ({ ev.id,
+                          juce::Rectangle<float> (x0 + 1.5f, area.getY(), w, area.getHeight()),
+                          ev }); // view captured here — no re-lookup per bar in paint
+    }
+    return bars;
+}
+
+juce::String GridStrip::LaneDisplay::formatValue (const state::PatternModel::EventView& ev) const
+{
+    switch (owner.lane)
+    {
+        case 0: return juce::String (ev.velocity);
+        case 1: return (ev.pitch > 0 ? "+" : "")
+                     + juce::String (static_cast<int> (ev.pitch)) + " st";
+        case 2: return juce::String (ev.probability) + "%";
+        default: return juce::String (juce::CharPointer_UTF8 ("\xc3\x97"))
+                      + juce::String (ev.ratchet); // ×N
+    }
+}
+
+void GridStrip::LaneDisplay::paint (juce::Graphics& g)
+{
+    const auto b = getLocalBounds().toFloat();
+    g.setColour (LnF::display);
+    g.fillRoundedRectangle (b, 10.0f);
+
+    // 22 px hairline grid (v17 display token).
+    g.setColour (LnF::gridLine());
+    for (auto gx = b.getX() + 22.0f; gx < b.getRight(); gx += 22.0f)
+        g.drawVerticalLine (static_cast<int> (gx), b.getY() + 1.0f, b.getBottom() - 1.0f);
+    for (auto gy = b.getY() + 22.0f; gy < b.getBottom(); gy += 22.0f)
+        g.drawHorizontalLine (static_cast<int> (gy), b.getX() + 1.0f, b.getRight() - 1.0f);
+
+    const auto area = valueArea();
+    const auto slot = owner.model.getActiveSlot();
+
+    // Step separators of the current grid (page-local).
+    {
+        const auto noteLen = owner.model.getNoteLength (slot);
+        const auto stepLen = engine::noteLengthBars (noteLen);
+        g.setColour (LnF::hairline());
+        for (auto t = stepLen; t < 1.0 - barEps; t += stepLen)
+        {
+            const auto x = area.getX() + static_cast<float> (t) * area.getWidth();
+            g.drawVerticalLine (static_cast<int> (x), area.getY(), area.getBottom());
+        }
+    }
+
+    // Bipolar centre line for PITCH.
+    if (owner.lane == 1)
+    {
+        g.setColour (LnF::hairline());
+        g.drawHorizontalLine (static_cast<int> (area.getCentreY()), area.getX(), area.getRight());
+    }
+
+    const auto bars = computeBars();
+    const state::PatternModel::EventView* pillEvent = nullptr;
+    juce::Rectangle<float> pillColumn;
+    state::PatternModel::EventView pillView;
+
+    for (const auto& bar : bars)
+    {
+        const auto& ev = bar.view; // captured in computeBars (single model pass)
+        if (ev.id < 0)
+            continue;
+
+        juce::Rectangle<float> r;
+        switch (owner.lane)
+        {
+            case 0: // VEL 0–127
+            {
+                const auto h = juce::jmax (1.5f, area.getHeight()
+                                                     * static_cast<float> (ev.velocity) / 127.0f);
+                r = bar.column.withTop (bar.column.getBottom() - h);
+                break;
+            }
+            case 1: // PITCH ±24 st, from the centre
+            {
+                const auto mid = area.getCentreY();
+                const auto extent = (area.getHeight() * 0.5f)
+                                    * juce::jlimit (-1.0f, 1.0f, ev.pitch / 24.0f);
+                r = extent >= 0.0f
+                    ? juce::Rectangle<float> (bar.column.getX(), mid - extent,
+                                              bar.column.getWidth(), juce::jmax (1.5f, extent))
+                    : juce::Rectangle<float> (bar.column.getX(), mid,
+                                              bar.column.getWidth(), juce::jmax (1.5f, -extent));
+                break;
+            }
+            case 2: // PROB 0–100 %
+            {
+                const auto h = juce::jmax (1.5f, area.getHeight()
+                                                     * static_cast<float> (ev.probability) / 100.0f);
+                r = bar.column.withTop (bar.column.getBottom() - h);
+                break;
+            }
+            default: // RATCHET 1,2,3,4,6,8 → 6 discrete levels
+            {
+                int idx = 0;
+                for (int c = 0; c < 6; ++c)
+                    if (engine::ratchetChoices[c] <= ev.ratchet)
+                        idx = c;
+                const auto h = area.getHeight() * static_cast<float> (idx + 1) / 6.0f;
+                r = bar.column.withTop (bar.column.getBottom() - h);
+                break;
+            }
+        }
+
+        g.setColour (LnF::ink.withAlpha (0.78f));
+        if (owner.lane == 3 && ev.ratchet > 1)
+        {
+            // Ratchet bars draw as N slivers — the subdivision is visible.
+            const auto n = ev.ratchet;
+            const auto w = (r.getWidth() - static_cast<float> (n - 1)) / static_cast<float> (n);
+            for (int k = 0; k < n; ++k)
+                g.fillRect (juce::Rectangle<float> (
+                    r.getX() + static_cast<float> (k) * (w + 1.0f), r.getY(),
+                    juce::jmax (1.0f, w), r.getHeight()));
+        }
+        else
+        {
+            g.fillRect (r);
+        }
+
+        if (bar.eventId == hoverEventId || bar.eventId == dragEventId)
+        {
+            g.setColour (LnF::accent);
+            g.drawRect (bar.column.expanded (0.5f), 1.0f);
+            pillEvent = &pillView;
+            pillView = ev;
+            pillColumn = bar.column;
+        }
+    }
+
+    // Mono value pill for the hovered / dragged bar (v17 lettering.values).
+    if (pillEvent != nullptr)
+    {
+        const auto text = formatValue (pillView);
+        const auto tw = juce::jmax (26.0f,
+            juce::GlyphArrangement::getStringWidth (LnF::monoFont (9.0f), text) + 10.0f);
+        auto pill = juce::Rectangle<float> (tw, 14.0f)
+                        .withCentre ({ pillColumn.getCentreX(), area.getY() + 8.0f });
+        pill.setX (juce::jlimit (b.getX() + 3.0f, b.getRight() - 3.0f - pill.getWidth(),
+                                 pill.getX()));
+        g.setColour (juce::Colours::white);
+        g.fillRoundedRectangle (pill, 7.0f);
+        g.setColour (LnF::hairline());
+        g.drawRoundedRectangle (pill, 7.0f, 1.0f);
+        g.setColour (LnF::ink);
+        g.setFont (LnF::monoFont (9.0f));
+        g.drawText (text, pill.toNearestInt(), juce::Justification::centred, false);
+    }
+
+    g.setColour (LnF::hairline());
+    g.drawRoundedRectangle (b.reduced (0.5f), 10.0f, 1.0f);
+}
+
+void GridStrip::LaneDisplay::applyValueAt (const juce::MouseEvent& e)
+{
+    auto& pm = owner.model;
+    const auto slot = pm.getActiveSlot();
+    const auto area = valueArea();
+    if (area.getWidth() <= 0.0f)
+        return;
+
+    const auto frac = juce::jlimit (0.0, 1.0 - 1.0e-9,
+        static_cast<double> ((e.position.x - area.getX()) / area.getWidth()));
+    const auto id = pm.findEventAt (slot, static_cast<double> (owner.clampedPage()) + frac);
+    if (id < 0)
+        return; // only steps with events are editable
+
+    const auto yn = juce::jlimit (0.0f, 1.0f,
+        (e.position.y - area.getY()) / juce::jmax (1.0f, area.getHeight()));
+
+    switch (owner.lane)
+    {
+        case 0: pm.setEventVelocity (slot, id, juce::roundToInt ((1.0f - yn) * 127.0f)); break;
+        case 1: pm.setEventPitch (slot, id,
+                    static_cast<float> (juce::roundToInt ((0.5f - yn) * 48.0f))); break;
+        case 2: pm.setEventProbability (slot, id, juce::roundToInt ((1.0f - yn) * 100.0f)); break;
+        default:
+        {
+            const auto idx = juce::jlimit (0, 5, static_cast<int> ((1.0f - yn) * 6.0f));
+            pm.setEventRatchet (slot, id, engine::ratchetChoices[idx]);
+            break;
+        }
+    }
+    dragEventId = id;
+    repaint();
+}
+
+void GridStrip::LaneDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    if (e.mods.isPopupMenu())
+    {
+        owner.showGeneratorMenu();
+        return;
+    }
+    static constexpr const char* names[] = { "Velocity lane", "Pitch lane",
+                                             "Probability lane", "Ratchet lane" };
+    owner.model.beginTransaction (names[juce::jlimit (0, 3, owner.lane)]);
+    gestureActive = true;
+    applyValueAt (e);
+}
+
+void GridStrip::LaneDisplay::mouseDrag (const juce::MouseEvent& e)
+{
+    if (gestureActive)
+        applyValueAt (e);
+}
+
+void GridStrip::LaneDisplay::mouseUp (const juce::MouseEvent&)
+{
+    gestureActive = false;
+    dragEventId = -1;
+    repaint();
+}
+
+void GridStrip::LaneDisplay::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    auto& pm = owner.model;
+    const auto slot = pm.getActiveSlot();
+    const auto area = valueArea();
+    if (area.getWidth() <= 0.0f)
+        return;
+    const auto frac = juce::jlimit (0.0, 1.0 - 1.0e-9,
+        static_cast<double> ((e.position.x - area.getX()) / area.getWidth()));
+    const auto id = pm.findEventAt (slot, static_cast<double> (owner.clampedPage()) + frac);
+    if (id < 0)
+        return;
+
+    pm.beginTransaction ("Reset step");
+    switch (owner.lane)
+    {
+        case 0: pm.setEventVelocity (slot, id, state::PatternModel::defaultVelocity); break;
+        case 1: pm.setEventPitch (slot, id, 0.0f); break;
+        case 2: pm.setEventProbability (slot, id, 100); break;
+        default: pm.setEventRatchet (slot, id, 1); break;
+    }
+    repaint();
+}
+
+void GridStrip::LaneDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    const auto area = valueArea();
+    int id = -1;
+    if (area.getWidth() > 0.0f && area.contains (e.position))
+    {
+        const auto frac = juce::jlimit (0.0, 1.0 - 1.0e-9,
+            static_cast<double> ((e.position.x - area.getX()) / area.getWidth()));
+        id = owner.model.findEventAt (owner.model.getActiveSlot(),
+                                      static_cast<double> (owner.clampedPage()) + frac);
+    }
+    if (id != hoverEventId)
+    {
+        hoverEventId = id;
+        repaint();
+    }
+}
+
+void GridStrip::LaneDisplay::mouseExit (const juce::MouseEvent&)
+{
+    if (hoverEventId != -1)
+    {
+        hoverEventId = -1;
+        repaint();
+    }
+}
+
+// ============================ generators menu (Phase 5) =================================
+
+void GridStrip::showGeneratorMenu()
+{
+    auto& pm = model;
+    const auto slot = pm.getActiveSlot();
+
+    juce::PopupMenu amount;
+    const auto currentAmount = pm.getRandomizeAmount (slot);
+    static constexpr float amounts[] = { 0.25f, 0.5f, 0.75f, 1.0f };
+    for (int i = 0; i < 4; ++i)
+        amount.addItem (10 + i, juce::String (static_cast<int> (amounts[i] * 100.0f)) + "%",
+                        true, std::abs (currentAmount - amounts[i]) < 0.01f);
+
+    juce::PopupMenu toSlot;
+    for (int i = 0; i < state::PatternModel::numSlots; ++i)
+        toSlot.addItem (20 + i, juce::String::charToString (static_cast<juce::juce_wchar> ('A' + i)),
+                        i != slot);
+
+    juce::PopupMenu m;
+    m.addSectionHeader ("GENERATORS");
+    m.addItem (1, "Randomize (seed " + juce::String (pm.getSeed (slot)) + ")");
+    m.addItem (2, "Reroll seed + randomize");
+    m.addSubMenu ("Randomize amount", amount);
+    m.addSeparator();
+    m.addItem (3, "Shift left");
+    m.addItem (4, "Shift right");
+    m.addItem (5, "Reverse pattern");
+    m.addSeparator();
+    m.addItem (6, "Copy pattern");
+    m.addItem (7, "Paste pattern", pm.hasClipboard());
+    m.addSubMenu ("Copy pattern to slot", toSlot);
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&boxes),
+                     [safe = juce::Component::SafePointer<GridStrip> (this)] (int result)
+    {
+        if (safe == nullptr || result <= 0)
+            return;
+        auto& pmr = safe->model;
+        const auto s = pmr.getActiveSlot();
+        const auto numChops = safe->engine.getNumChops();
+        switch (result)
+        {
+            case 1: pmr.randomize (s, numChops); break;
+            case 2:
+                pmr.setSeed (s, static_cast<juce::int64> (
+                    juce::Random::getSystemRandom().nextInt (0x7fffffff)) + 1);
+                pmr.randomize (s, numChops);
+                break;
+            case 3: pmr.shiftPattern (s, -1); break;
+            case 4: pmr.shiftPattern (s, 1); break;
+            case 5: pmr.reversePattern (s); break;
+            case 6: pmr.copyToClipboard (s); break;
+            case 7: pmr.pasteFromClipboard (s); break;
+            default:
+                if (result >= 10 && result < 14)
+                {
+                    static constexpr float amts[] = { 0.25f, 0.5f, 0.75f, 1.0f };
+                    pmr.setRandomizeAmount (s, amts[result - 10]);
+                }
+                else if (result >= 20 && result < 28)
+                {
+                    pmr.copyPatternToSlot (s, result - 20);
+                }
+                break;
+        }
+        safe->boxes.repaint();
+        safe->laneDisplay.repaint();
+    });
 }
 
 // ================================== GridStrip ==========================================
@@ -863,12 +1285,25 @@ GridStrip::GridStrip (engine::Engine& engineToUse, juce::AudioProcessorValueTree
     if (auto* param = apvts.getParameter (params::id::swing))
         swingAttachment = std::make_unique<juce::SliderParameterAttachment> (*param,
                                                                              swingKnob.getSlider());
+    swingKnob.setTooltip ("Swing: delays every even step by a fraction of a step");
     addAndMakeVisible (swingKnob);
 
     addAndMakeVisible (boxes);
 
-    // Lane-row chop chip + '…' (v17 chop_chip / chop_more, beside the Phase 5
-    // lanes placeholder).
+    // Phase 5 lane editor (v17 lane_tab + step_lane).
+    laneTab.options = { "VEL", "PITCH", "PROB", "RATCHET" };
+    laneTab.getValue = [this] { return lane; };
+    laneTab.setValue = [this] (int newLane)
+    {
+        lane = juce::jlimit (0, 3, newLane);
+        laneTab.repaint();
+        laneDisplay.repaint();
+    };
+    addAndMakeVisible (laneTab);
+    laneDisplay.setTooltip ("Per-step lane: drag to paint values, double-click resets a step");
+    addAndMakeVisible (laneDisplay);
+
+    // Lane-row chop chip + '…' (v17 chop_chip / chop_more).
     chopChip.getChop = [this] { return getEditChop != nullptr ? getEditChop() : 0; };
     addAndMakeVisible (chopChip);
     chopMoreButton.onClick = [this]
@@ -902,6 +1337,7 @@ void GridStrip::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     syncControlsFromModel();
     boxes.repaint();
+    laneDisplay.repaint();
 }
 
 void GridStrip::syncControlsFromModel()
@@ -931,6 +1367,14 @@ void GridStrip::animationTick()
         boxes.brHold = hold;
         boxes.repaint();
     }
+
+    // Phase 5: subtle drag-out render progress hairline in the header zone.
+    const auto progress = getAudioRenderProgress != nullptr ? getAudioRenderProgress() : -1.0f;
+    if (! juce::exactlyEqual (progress, lastRenderProgress))
+    {
+        lastRenderProgress = progress;
+        repaint (dragOutZone.toNearestInt());
+    }
 }
 
 void GridStrip::paint (juce::Graphics& g)
@@ -941,16 +1385,18 @@ void GridStrip::paint (juce::Graphics& g)
     g.setColour (LnF::hairline());
     g.drawRoundedRectangle (b.reduced (0.5f), 16.0f, 1.0f);
 
-    // Per-step lane strip area: Phase 5 placeholder (v17 lane_tab + step_lane).
-    const auto lanes = juce::Rectangle<float> (12.0f, 266.0f, 1046.0f, 102.0f);
-    g.setColour (LnF::display);
-    g.fillRoundedRectangle (lanes, 10.0f);
-    g.setColour (LnF::hairline());
-    g.drawRoundedRectangle (lanes.reduced (0.5f), 10.0f, 1.0f);
-    g.setColour (LnF::textTertiary);
-    g.setFont (LnF::labelFont (8.5f));
-    g.drawText (juce::String (juce::CharPointer_UTF8 ("LANES \xe2\x80\x94 PHASE 5")),
-                lanes.toNearestInt(), juce::Justification::centred, false);
+    // Phase 5 drag-out: subtle render progress hairline under the header zone
+    // while the offline audio render runs (Alt-drag from the empty header).
+    const auto progress = getAudioRenderProgress != nullptr ? getAudioRenderProgress() : -1.0f;
+    if (progress >= 0.0f && progress < 1.0f)
+    {
+        const auto y = dragOutZone.getBottom() - 2.0f;
+        g.setColour (LnF::knobTrack());
+        g.drawLine (dragOutZone.getX(), y, dragOutZone.getRight(), y, 1.0f);
+        g.setColour (LnF::accent);
+        g.drawLine (dragOutZone.getX(), y,
+                    dragOutZone.getX() + progress * dragOutZone.getWidth(), y, 1.5f);
+    }
 }
 
 void GridStrip::resized()
@@ -961,8 +1407,55 @@ void GridStrip::resized()
     barPageSeg.setBounds (198, 20, 140, 28);
     swingKnob.setBounds (928, 14, 130, 40);
     boxes.setBounds (12, 64, 1046, 190);
+    laneTab.setBounds (12, 266, 300, 24);        // v17 lane_tab (27,472 canvas)
+    laneDisplay.setBounds (12, 300, 1046, 68);   // v17 step_lane (27,506 canvas)
     chopChip.setBounds (878, 268, 124, 20);      // v17 chop_chip (893,474 canvas)
     chopMoreButton.setBounds (1012, 268, 46, 20); // v17 chop_more (1027,474 canvas)
+}
+
+// ---- Phase 5 drag-out (spec §10) --------------------------------------------------------
+
+void GridStrip::mouseDown (const juce::MouseEvent& e)
+{
+    // Only the EMPTY header zone arms a drag (children consume their own
+    // clicks, so anything arriving here with this position is empty card).
+    dragArmed = dragOutZone.contains (e.position);
+    dragWantsAudio = dragArmed && e.mods.isAltDown();
+    externalDragStarted = false;
+    if (dragWantsAudio && startAudioRender != nullptr)
+        startAudioRender();
+}
+
+void GridStrip::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! dragArmed || externalDragStarted || e.getDistanceFromDragStart() < 6)
+        return;
+
+    juce::File file;
+    if (dragWantsAudio)
+    {
+        if (getRenderedAudioFile != nullptr)
+            file = getRenderedAudioFile();
+        if (! file.existsAsFile())
+            return; // still rendering — the progress hairline shows
+    }
+    else
+    {
+        if (createMidiDragFile != nullptr)
+            file = createMidiDragFile();
+    }
+
+    if (! file.existsAsFile())
+        return;
+    externalDragStarted = true;
+    juce::DragAndDropContainer::performExternalDragDropOfFiles (
+        { file.getFullPathName() }, false, this);
+}
+
+void GridStrip::mouseUp (const juce::MouseEvent&)
+{
+    dragArmed = false;
+    dragWantsAudio = false;
 }
 
 } // namespace chopline::ui

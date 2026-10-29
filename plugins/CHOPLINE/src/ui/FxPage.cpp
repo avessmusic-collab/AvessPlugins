@@ -49,8 +49,6 @@ FxPage::FxPage (engine::Engine& engineToUse, juce::AudioProcessorValueTreeState&
         s.warp = static_cast<engine::WarpMode> (v);
         setSettings (s);
     };
-    warpSeg.isOptionEnabled = [] (int i) { return i < 2; }; // Granular/Freeze = Phase 5
-    warpSeg.disabledTooltip = "Granular and Freeze arrive in Phase 5";
     addAndMakeVisible (warpSeg);
 
     prevButton.onClick = [this]
@@ -101,6 +99,26 @@ FxPage::FxPage (engine::Engine& engineToUse, juce::AudioProcessorValueTreeState&
     releaseKnob.valueSuffix = " ms";
 
     buildMasterColumn();
+
+    // Tooltips (spec §9, Phase 5 polish).
+    attackKnob.setTooltip ("Amp envelope attack");
+    holdKnob.setTooltip ("Amp envelope hold");
+    decayKnob.setTooltip ("Amp envelope decay");
+    sustainKnob.setTooltip ("Amp envelope sustain");
+    releaseKnob.setTooltip ("Amp envelope release (= chop RELEASE)");
+    fxCutoff.setTooltip ("Master filter cutoff");
+    fxReso.setTooltip ("Master filter resonance");
+    fxDrive.setTooltip ("Master distortion drive");
+    fxDistMix.setTooltip ("Master distortion dry/wet");
+    fxWidth.setTooltip ("Stereo width (mid/side)");
+    fxMono.setTooltip ("Mono below this frequency");
+    fxOut.setTooltip ("Output gain into the safety limiter");
+    fxCeiling.setTooltip ("Limiter ceiling");
+    fxDelayFb.setTooltip ("Delay feedback");
+    fxDelayRtn.setTooltip ("Delay return level (fed by chop DELAY sends)");
+    fxVerbDecay.setTooltip ("Reverb decay");
+    fxVerbDamp.setTooltip ("Reverb damping");
+    fxVerbRtn.setTooltip ("Reverb return level (fed by chop VERB sends)");
 
     eng.addChangeListener (this);
     refresh();

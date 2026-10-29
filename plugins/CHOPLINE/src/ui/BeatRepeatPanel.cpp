@@ -70,10 +70,10 @@ BeatRepeatPanel::BeatRepeatPanel (juce::AudioProcessorValueTreeState& apvts,
             attachment = std::make_unique<juce::SliderParameterAttachment> (*p, knob.getSlider());
     };
     setupKnob (chanceKnob, pid::brChance, chanceAttachment);
-    chanceKnob.getSlider().setTooltip ("Probability per interval (Auto)");
+    chanceKnob.setTooltip ("Probability of a repeat at every EVERY boundary (Auto)");
     addAndMakeVisible (chanceKnob);
     setupKnob (decayKnob, pid::brDecay, decayAttachment);
-    decayKnob.getSlider().setTooltip ("Volume drop per repeat");
+    decayKnob.setTooltip ("Volume drop per repeat");
     addAndMakeVisible (decayKnob);
 }
 

@@ -1,4 +1,4 @@
-// CHOPLINE — ChopVoice (spec §3, §6; Phase 3 warp engine)
+// CHOPLINE — ChopVoice (spec §3, §6; Phase 3 warp engine + Phase 5 granular)
 // One playback voice: plays a chop's EFFECTIVE sample range (trim offsets
 // applied in the snapshot) through the per-chop chain —
 //
@@ -6,17 +6,29 @@
 //     → warp (Varispeed: fractional-rate catmull-rom playback, pitch & speed
 //              coupled ±24 st; Stretch / Fit-step: one Signalsmith Stretch
 //              instance per unison stream, independent pitch ±24 st, formant
-//              preserve, Fit input-rate clamped 0.25×–4×)
-//     → unison 1–4 (fixed cents + stereo spread, 1/√N gain)
+//              preserve, Fit input-rate clamped 0.25×–4×;
+//              Granular: Hann-windowed grain cloud from a preallocated pool,
+//              time 1:1, pitch via per-grain read rate, deterministic jitter
+//              streams (DetRng seeded per trigger — bounces repeat);
+//              Freeze: the granular engine with the read position PINNED at
+//              the playback start — holds one grain's worth of material for
+//              the event length; the pitch knob still transposes)
+//     → unison 1–4 (fixed cents + stereo spread, 1/√N gain; granular unison
+//        = per-stream jitter seeds + detuned grain rates)
 //     → AHDSR amp envelope (gate from the event span, MIDI note hold, or the
 //        chop's natural length; One-shot/Fit ignore note-off)
 //     → declick / steal handling.
 //
+// Phase 5 trigger mods: the per-step PITCH lane adds to the chop pitch
+// (clamped ±24 at the voice, applied through whichever warp engine is
+// active), the generator reverse override flips the chop's reverse flag for
+// that step, and Eco quality caps the granular density at 2.
+//
 // Playback modes (spec §6): One-shot, Gate (releases via the chop RELEASE =
 // AHDSR release), Loop (forward, crossfaded by loopXfade; keeps looping
 // through the release), Fit step (time-stretched to the event span, pitch
-// preserved; a span-less trigger falls back to One-shot). Granular/Freeze are
-// Phase 5 — they currently play as Varispeed.
+// preserved; a span-less trigger falls back to One-shot; Fit always uses the
+// stretch engine, so Granular/Freeze apply to the other modes).
 //
 // Stealing / choking never clicks: a retrigger (or choke) renders the running
 // playback's next 2 ms into a small preallocated tail buffer immediately,
@@ -37,6 +49,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "DetHash.h"
 #include "SampleStore.h"
 #include "SliceMap.h"
 #include "StretcherPool.h"
@@ -46,11 +59,22 @@
 namespace chopline::engine
 {
 
+/// Per-trigger modifiers (Phase 5): the per-step lanes / generators and the
+/// Eco quality cap. Defaults are all no-ops, so earlier-phase callers are
+/// unchanged.
+struct TriggerMods
+{
+    float pitchOffset = 0.0f; // per-step PITCH lane, semitones (adds to chop)
+    bool reverseFlip = false; // generator reverse override (XOR with the chop)
+    bool ecoGranular = false; // Eco quality: cap granular density at 2
+};
+
 class ChopVoice final
 {
 public:
     static constexpr double fastFadeSeconds = 0.002; // 2 ms steal/choke fade
     static constexpr int maxUnison = 4;
+    static constexpr int maxGrains = 12; // per unison stream (preallocated)
 
     // Trigger source tags (Phase 2: transport stop / loop jumps release only
     // pattern voices; MIDI and audition voices keep ringing — spec §8).
@@ -70,7 +94,8 @@ public:
     void trigger (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
                   int chopIndex, float gain, std::uint64_t newStamp,
                   int tag = tagMidi, juce::int64 gateSamples = gateNatural,
-                  int midiNote = -1, double startNorm = 0.0) noexcept;
+                  int midiNote = -1, double startNorm = 0.0,
+                  const TriggerMods& mods = {}) noexcept;
     void noteOff (int midiNote) noexcept;  // Gate/Loop enter release; others ignore
     /// True while a Gate/Loop playback is still held open by this MIDI note.
     bool isNoteHeld (int midiNote) const noexcept
@@ -103,6 +128,15 @@ public:
 private:
     enum class EnvStage : int { attack, hold, decay, sustain, release, idle };
 
+    struct Grain // one Hann-windowed granular grain (Phase 5)
+    {
+        bool active = false;
+        double src = 0.0;  // logical source anchor at age 0
+        double rate = 1.0; // read rate (pitch transpose incl. jitter)
+        int age = 0;       // output samples produced so far
+        int len = 0;       // grain length in output samples
+    };
+
     struct Stream
     {
         bool dead = true;
@@ -118,6 +152,13 @@ private:
         juce::int64 inFed = 0;        // logical input fed (relative to x0)
         juce::int64 outDone = 0;      // output samples produced
         juce::int64 expectedOut = -1; // −1 = unbounded (loop)
+        // Granular / Freeze (Phase 5; pool preallocated, zero audio-thread alloc).
+        bool useGranular = false;
+        Grain grains[maxGrains];
+        double grainReadPos = 0.0; // logical frames; advances 1:1 (pinned in Freeze)
+        int spawnCountdown = 0;
+        double grainBaseRate = 1.0; // pitch transpose incl. unison cents
+        DetRng grainRng;            // deterministic per-trigger jitter stream
     };
 
     struct Playback
@@ -146,13 +187,23 @@ private:
         bool fastFading = false;
         float fastGain = 1.0f;
 
+        // Granular / Freeze shared config (Phase 5; per-stream state in Stream).
+        bool granular = false;
+        bool freezeHold = false;
+        int grainLen = 0;
+        int grainInterval = 1;
+        double grainJitter = 0.0, grainSpray = 0.0;
+        float grainPitchJitCents = 0.0f;
+        float grainComp = 1.0f;
+
         int numStreams = 1;
         Stream streams[maxUnison];
     };
 
     void setupPlayback (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
                         int chopIndex, float gain, juce::int64 gateSamples,
-                        int midiNote, double startNorm) noexcept;
+                        int midiNote, double startNorm, std::uint64_t newStamp,
+                        const TriggerMods& mods) noexcept;
     void stopPlayback (Playback& p) noexcept;
     void releaseStreams (Playback& p) noexcept;
     void prerenderTail() noexcept;
@@ -161,6 +212,8 @@ private:
     void renderChunk (Playback& p, float* outL, float* outR, int numSamples) noexcept;
     void renderVarispeed (Playback& p, Stream& s, float* outL, float* outR, int n) noexcept;
     void renderStretch (Playback& p, Stream& s, float* outL, float* outR, int n) noexcept;
+    void renderGranular (Playback& p, Stream& s, float* outL, float* outR, int n) noexcept;
+    void spawnGrain (Playback& p, Stream& s, int ageOffset) noexcept;
 
     void readFrame (const Playback& p, juce::int64 logical, float& l, float& r) const noexcept;
     void readInterp (const Playback& p, double logical, float& l, float& r) const noexcept;

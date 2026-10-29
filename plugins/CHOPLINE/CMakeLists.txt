@@ -80,6 +80,8 @@ set(CHOPLINE_ENGINE_SOURCES
     src/engine/MasterFX.cpp
     src/state/Parameters.cpp
     src/state/PatternModel.cpp
+    src/state/PresetManager.cpp
+    src/state/Exporter.cpp
 )
 
 set(CHOPLINE_PLUGIN_SOURCES
@@ -166,6 +168,7 @@ set(CHOPLINE_TEST_SOURCES
     tests/WarpTests.cpp
     tests/BeatRepeatTests.cpp
     tests/MasterFXTests.cpp
+    tests/Phase5Tests.cpp
 )
 
 target_sources(CHOPLINE_Tests PRIVATE

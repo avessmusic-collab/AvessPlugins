@@ -14,6 +14,8 @@ ChoplineAudioProcessor::ChoplineAudioProcessor()
 {
     baseNoteParam = state.getRawParameterValue (params::id::midiBaseNote);
     swingParam = state.getRawParameterValue (params::id::swing);
+    patternSlotParam = state.getRawParameterValue (params::id::patternSlot);
+    qualityParam = state.getRawParameterValue (params::id::quality);
 
     // Phase 4 raw values (audio thread reads only these atomics).
     namespace pid = params::id;
@@ -67,10 +69,54 @@ ChoplineAudioProcessor::ChoplineAudioProcessor()
         if (autoload.isNotEmpty() && juce::File::isAbsolutePath (autoload))
             engine.loadFile (juce::File (autoload));
     }
+
+    startTimerHz (20); // Phase 5 housekeeping (program change / slot / quality)
+}
+
+void ChoplineAudioProcessor::timerCallback()
+{
+    // MIDI program change → pattern slot parameter (spec §5 "MIDI note
+    // switching" family; captured lock-free in processBlock, applied here on
+    // the message thread with host notification).
+    const auto program = pendingProgramChange.exchange (-1, std::memory_order_relaxed);
+    if (program >= 0)
+    {
+        if (auto* param = state.getParameter (params::id::patternSlot))
+        {
+            param->beginChangeGesture();
+            param->setValueNotifyingHost (
+                param->convertTo0to1 (static_cast<float> (program % 8)));
+            param->endChangeGesture();
+        }
+    }
+
+    // Pattern slot parameter → the model's UI-edited slot (playback switching
+    // is handled bar-quantised by the scheduler from the BlockContext).
+    if (patternSlotParam != nullptr)
+    {
+        const auto slot = juce::jlimit (0, 7,
+            static_cast<int> (patternSlotParam->load (std::memory_order_relaxed)));
+        if (slot != engine.getPatternModel().getActiveSlot())
+            engine.setUiActiveSlot (slot);
+    }
+
+    // Eco/HQ: re-warming the stretcher pool is not audio-thread safe, so the
+    // switch suspends processing for its duration (documented brief silence).
+    if (qualityParam != nullptr)
+    {
+        const auto eco = static_cast<int> (qualityParam->load (std::memory_order_relaxed)) == 0;
+        if (eco != engine.isQualityEco())
+        {
+            suspendProcessing (true);
+            engine.setQualityEco (eco);
+            suspendProcessing (false);
+        }
+    }
 }
 
 ChoplineAudioProcessor::~ChoplineAudioProcessor()
 {
+    stopTimer(); // before members die — a pending timerCallback must not fire
     *aliveFlag = false;
 }
 
@@ -94,17 +140,24 @@ bool ChoplineAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts)
         && layouts.getMainInputChannelSet().isDisabled();
 }
 
-void ChoplineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                           juce::MidiBuffer& midi)
+void ChoplineAudioProcessor::fillContextFromParams (engine::Engine::BlockContext& context) const
 {
-    juce::ScopedNoDenormals noDenormals;
-
-    engine::Engine::BlockContext context;
     if (baseNoteParam != nullptr)
         context.midiBaseNote = params::baseNoteForChoice (
             static_cast<int> (baseNoteParam->load (std::memory_order_relaxed)));
     if (swingParam != nullptr)
         context.swingPct = swingParam->load (std::memory_order_relaxed);
+
+    // Phase 5: pattern slot (bar-quantised switch in the scheduler), Eco
+    // quality, and the Standalone Space transport-preview gate (hosts always
+    // pass true — their transport is the gate).
+    if (patternSlotParam != nullptr)
+        context.patternSlot = juce::jlimit (0, 7,
+            static_cast<int> (patternSlotParam->load (std::memory_order_relaxed)));
+    context.eco = qualityParam != nullptr
+        && static_cast<int> (qualityParam->load (std::memory_order_relaxed)) == 0;
+    context.freeRunGate = wrapperType != wrapperType_Standalone
+                       || engine.isPreviewHeld();
 
     // Phase 4: Beat Repeat + master chain values from the cached atomics.
     const auto f = [] (std::atomic<float>* a, float fallback = 0.0f)
@@ -157,6 +210,26 @@ void ChoplineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     m.verbDecayPct = f (p4.verbDecay, 40.0f);
     m.verbDampPct = f (p4.verbDamp, 50.0f);
     m.verbRtnPct = f (p4.verbRtn);
+    m.ecoNoOversample = context.eco; // Phase 5 Eco: Soft/Tape at base rate
+}
+
+void ChoplineAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
+                                           juce::MidiBuffer& midi)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    engine::Engine::BlockContext context;
+    fillContextFromParams (context);
+
+    // MIDI program change → pattern slot (applied on the message thread by the
+    // housekeeping timer; the store is lock-free).
+    for (const auto metadata : midi)
+    {
+        const auto msg = metadata.getMessage();
+        if (msg.isProgramChange())
+            pendingProgramChange.store (msg.getProgramChangeNumber(),
+                                        std::memory_order_relaxed);
+    }
 
     // Host transport → scheduler view (spec §8: derive step times from the
     // host PPQ every block; no playhead at all = Standalone free-run).
@@ -192,7 +265,7 @@ juce::AudioProcessorEditor* ChoplineAudioProcessor::createEditor()
     return new ChoplineAudioProcessorEditor (*this);
 }
 
-void ChoplineAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+juce::ValueTree ChoplineAudioProcessor::buildStateTree()
 {
     // Versioned from day one (spec §10): the schema version rides on the root.
     auto stateTree = state.copyState();
@@ -204,9 +277,19 @@ void ChoplineAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     stateTree.removeChild (stateTree.getChildWithName (engine::Engine::slicesTag), nullptr);
     stateTree.removeChild (stateTree.getChildWithName (state::PatternModel::patternsTag), nullptr);
     engine.serializeTo (stateTree);
+    return stateTree;
+}
 
-    if (auto xml = stateTree.createXml())
+void ChoplineAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = buildStateTree().createXml())
         copyXmlToBinary (*xml, destData);
+}
+
+void ChoplineAudioProcessor::applyStateTree (const juce::ValueTree& newState)
+{
+    state.replaceState (newState);
+    engine.restoreFrom (newState);
 }
 
 void ChoplineAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -216,16 +299,19 @@ void ChoplineAudioProcessor::setStateInformation (const void* data, int sizeInBy
         return;
 
     const auto newState = juce::ValueTree::fromXml (*xml);
-    state.replaceState (newState);
 
     // Engine restore touches message-thread structures; hosts (and pluginval at
-    // strictness 10) may call setStateInformation from other threads.
+    // strictness 10) may call setStateInformation from other threads. The APVTS
+    // itself is replaced SYNCHRONOUSLY on the calling thread (as before the
+    // Phase 5 refactor), so parameters are correct for the very next block even
+    // when the restore came from an offline-bounce thread.
     if (juce::MessageManager::getInstance()->isThisTheMessageThread())
     {
-        engine.restoreFrom (newState);
+        applyStateTree (newState);
     }
     else
     {
+        state.replaceState (newState);
         juce::MessageManager::callAsync ([alive = aliveFlag, this, newState]
         {
             if (*alive)

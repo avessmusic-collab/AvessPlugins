@@ -71,6 +71,17 @@ public:
         /// base+1 = 1/8, … base+7 = 1/32T). −1 disables interception — notes
         /// then fall through to the chop trigger range as before.
         int brPerfBase = -1;
+
+        // Phase 5.
+        /// APVTS pattern slot (A–H). Switches quantise to the next bar start
+        /// while the transport runs; immediate when stopped.
+        int patternSlot = 0;
+        /// Gates the no-playhead free-run (Standalone Space preview). Hosts —
+        /// and earlier-phase tests — pass true (the default).
+        bool freeRunGate = true;
+        /// Eco quality: caps granular density at 2 per trigger (the stretcher
+        /// preset + master oversampling are handled elsewhere).
+        bool eco = false;
     };
     void process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi,
                   const BlockContext& context) noexcept;
@@ -126,9 +137,14 @@ public:
 
     /// Appends SAMPLE + SLICES children to the given root. Thread-safe.
     void serializeTo (juce::ValueTree& root) const;
-    /// Message thread only (the processor hops if needed). `synchronous` loads
-    /// the embedded audio inline (tests / tools) instead of on the background
-    /// thread.
+    /// Message thread only (the processor hops if needed; an offline-render
+    /// engine may call it synchronously from its own thread). `synchronous`
+    /// loads the embedded audio inline (tests / tools / offline render)
+    /// instead of on the background thread. A KIT-ONLY preset (no embedded
+    /// audio, no valid path) restores onto the CURRENT sample: stored marker
+    /// times are clamped into the sample (markers beyond its end drop) and
+    /// per-chop settings ride their markers; pattern events pointing at chops
+    /// beyond the count stay silent (documented Phase 5 mapping rule).
     void restoreFrom (const juce::ValueTree& root, bool synchronous = false);
 
     static const juce::Identifier sampleTag, slicesTag, markerTag;
@@ -162,6 +178,28 @@ public:
     /// Tests only: deterministic Beat Repeat chance.
     BeatRepeat& getBeatRepeat() noexcept { return beatRepeat; }
 
+    // ---- Phase 5 ------------------------------------------------------------------
+    /// Space transport-preview (Standalone): the pattern free-runs only while
+    /// held (message thread → audio thread via the processor's BlockContext).
+    void setPreviewHeld (bool held) noexcept
+    {
+        previewHeld.store (held, std::memory_order_relaxed);
+    }
+    bool isPreviewHeld() const noexcept
+    {
+        return previewHeld.load (std::memory_order_relaxed);
+    }
+
+    /// Eco/HQ stretcher preset (Signalsmith presetCheaper in Eco). MESSAGE
+    /// thread only, with audio processing SUSPENDED (the processor wraps this
+    /// in suspendProcessing) — it re-warms the stretcher pool and resets the
+    /// voices (documented: a quality toggle briefly silences ringing voices).
+    void setQualityEco (bool eco);
+    bool isQualityEco() const noexcept { return stretchEco; }
+
+    /// The UI-edited pattern slot (APVTS pattern_slot; message thread).
+    void setUiActiveSlot (int slot) { patternModel.setActiveSlot (slot); }
+
     /// Frees retired snapshots (call periodically from the editor / after edits).
     void collectGarbage();
 
@@ -190,6 +228,8 @@ private:
     int perfLastGrid = -1;
     std::atomic<bool> uiMomentaryHold { false };
     std::atomic<double> uiBpm { 120.0 };
+    std::atomic<bool> previewHeld { false }; // Space transport preview (Phase 5)
+    bool stretchEco = false;                 // Eco/HQ stretcher preset (Phase 5)
 
     struct AuditionEvent { int chopIndex = 0; float velocity = 1.0f; float startNorm = 0.0f; };
     static constexpr int auditionFifoSize = 64;

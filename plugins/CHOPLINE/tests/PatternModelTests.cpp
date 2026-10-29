@@ -112,9 +112,9 @@ TEST_CASE ("Note-length change keeps events at their musical positions (spec §5
 
     // The snapshot reflects the new grid but the same event time.
     const auto snap = m.buildSnapshot();
-    REQUIRE (snap.noteLength == engine::NoteLength::quarterTriplet);
-    REQUIRE (snap.numEvents == 1);
-    REQUIRE (juce::exactlyEqual (snap.events[0].startBar, 1.0 / 16.0));
+    REQUIRE (snap.slots[0].noteLength == engine::NoteLength::quarterTriplet);
+    REQUIRE (snap.slots[0].numEvents == 1);
+    REQUIRE (juce::exactlyEqual (snap.slots[0].events[0].startBar, 1.0 / 16.0));
 }
 
 TEST_CASE ("Pattern length clamps to 1/2/4 and shortening keeps events",
@@ -129,21 +129,24 @@ TEST_CASE ("Pattern length clamps to 1/2/4 and shortening keeps events",
     REQUIRE (juce::exactlyEqual (m.getEventById (0, id).startBar, 3.5)); // kept (silent until grown back)
 }
 
-TEST_CASE ("Snapshot: active slot only, sorted by time, velocity normalised",
+TEST_CASE ("Snapshot: all slots, sorted by time, velocity normalised",
            "[pattern][snapshot]")
 {
     Model m;
     m.addEvent (0, 0.5, 1.0 / 16.0, 2, 127);
     m.addEvent (0, 0.25, 1.0 / 16.0, 1, 0);
-    m.addEvent (1, 0.0, 1.0 / 16.0, 7); // other slot: not in the snapshot
+    m.addEvent (1, 0.0, 1.0 / 16.0, 7); // other slot (Phase 5: also snapshotted)
 
     const auto snap = m.buildSnapshot();
-    REQUIRE (snap.numEvents == 2);
-    REQUIRE (juce::exactlyEqual (snap.events[0].startBar, 0.25));
-    REQUIRE (juce::exactlyEqual (snap.events[1].startBar, 0.5));
-    REQUIRE (juce::exactlyEqual (snap.events[0].velocity, 0.0f));
-    REQUIRE (juce::exactlyEqual (snap.events[1].velocity, 1.0f));
-    REQUIRE (snap.events[1].chop == 2);
+    const auto& s0 = snap.slots[0];
+    REQUIRE (s0.numEvents == 2);
+    REQUIRE (juce::exactlyEqual (s0.events[0].startBar, 0.25));
+    REQUIRE (juce::exactlyEqual (s0.events[1].startBar, 0.5));
+    REQUIRE (juce::exactlyEqual (s0.events[0].velocity, 0.0f));
+    REQUIRE (juce::exactlyEqual (s0.events[1].velocity, 1.0f));
+    REQUIRE (s0.events[1].chop == 2);
+    REQUIRE (snap.slots[1].numEvents == 1);
+    REQUIRE (snap.slots[1].events[0].chop == 7);
 }
 
 TEST_CASE ("Per-step override fields survive restore → serialize untouched",

@@ -115,6 +115,7 @@ SamplerStrip::SamplerStrip (engine::Engine& engineToUse)
     {
         engine.setSensitivity (static_cast<float> (v) / 100.0f);
     };
+    sensKnob.setTooltip ("Slice control: sensitivity (Transient), division (Grid), count (Equal)");
     addAndMakeVisible (sensKnob);
 
     syncControlsFromEngine();

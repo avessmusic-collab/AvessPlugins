@@ -34,7 +34,7 @@ void Engine::prepare (double sampleRate, int maxBlockSize, int numOutputChannels
     currentNumChannels = numOutputChannels;
 
     const auto block = maxBlockSize > 0 ? maxBlockSize : 512;
-    pool.prepare (sampleRate, block);
+    pool.prepare (sampleRate, block, stretchEco);
     pool.reset();
     scheduler.prepare (sampleRate);
 
@@ -58,6 +58,23 @@ void Engine::prepare (double sampleRate, int maxBlockSize, int numOutputChannels
 void Engine::release()
 {
     pool.reset();
+}
+
+void Engine::setQualityEco (bool eco)
+{
+    if (eco == stretchEco)
+        return;
+    stretchEco = eco;
+    if (currentSampleRate > 0.0)
+    {
+        // Re-warm the stretchers with the new preset and drop ringing voices
+        // (they hold pointers into the pool). The processor suspends audio
+        // around this call; the brief silence is the documented cost of a
+        // quality toggle.
+        pool.prepare (currentSampleRate,
+                      currentMaxBlockSize > 0 ? currentMaxBlockSize : 512, stretchEco);
+        pool.reset();
+    }
 }
 
 // ---- audio thread --------------------------------------------------------------
@@ -101,8 +118,10 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
         int note = -1;                             // MIDI note (noteOff pairing)
         float startNorm = 0.0f;                    // audition-from (overlay editor)
         bool isNoteOff = false;
+        float pitchOffset = 0.0f;                  // per-step pitch lane (Phase 5)
+        bool reverseFlip = false;                  // generator reverse (Phase 5)
     };
-    static constexpr int maxEvents = 128;
+    static constexpr int maxEvents = 192; // pattern(≤128 with ratchets) + MIDI + audition
     Event events[maxEvents];
     int numEvents = 0;
 
@@ -124,7 +143,8 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
         const auto numTriggers = scheduler.process (
             pattern, host, context.swingPct,
             freeBpmCache.load (std::memory_order_relaxed),
-            numSamples, triggers, releasePatternVoices);
+            numSamples, context.patternSlot, context.freeRunGate,
+            triggers, releasePatternVoices);
 
         if (releasePatternVoices)
             pool.releaseTagged (ChopVoice::tagPattern);
@@ -132,7 +152,8 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
         for (int i = 0; i < numTriggers && numEvents < maxEvents; ++i)
             events[numEvents++] = { triggers[i].offset, triggers[i].chop,
                                     triggers[i].velocity, ChopVoice::tagPattern,
-                                    triggers[i].lengthSamples, -1, 0.0f, false };
+                                    triggers[i].lengthSamples, -1, 0.0f, false,
+                                    triggers[i].pitchOffset, triggers[i].reverseFlip };
     }
 
     // Audition triggers (lock-free SPSC FIFO; UI is the producer).
@@ -247,10 +268,16 @@ void Engine::process (juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& 
         if (events[i].isNoteOff)
             pool.noteOff (events[i].note);
         else if (sample != nullptr && slices != nullptr && events[i].chop < slices->numChops)
+        {
+            TriggerMods mods;
+            mods.pitchOffset = events[i].pitchOffset;
+            mods.reverseFlip = events[i].reverseFlip;
+            mods.ecoGranular = context.eco;
             pool.trigger (sample, slices->chops[static_cast<size_t> (events[i].chop)],
                           events[i].chop, events[i].gain, events[i].tag,
                           events[i].gate, events[i].note,
-                          static_cast<double> (events[i].startNorm));
+                          static_cast<double> (events[i].startNorm), mods);
+        }
     }
     pool.renderAdd (buffer, cursor, numSamples - cursor, delayBusPtr, verbBusPtr);
 
@@ -583,6 +610,12 @@ void Engine::serializeTo (juce::ValueTree& root) const
         marker.setProperty ("su", s.sustainPct, nullptr);
         marker.setProperty ("ck", s.chokeGroup, nullptr);
         marker.setProperty ("fp", s.formantPreserve, nullptr);
+        // Phase 5 granular fields (missing in earlier states → defaults).
+        marker.setProperty ("gs", s.grainMs, nullptr);
+        marker.setProperty ("gd", s.grainDensity, nullptr);
+        marker.setProperty ("gj", s.grainJitterMs, nullptr);
+        marker.setProperty ("gp", s.grainPitchJitterCents, nullptr);
+        marker.setProperty ("gy", s.grainSprayMs, nullptr);
         slicesTree.appendChild (marker, nullptr);
     }
 
@@ -594,7 +627,9 @@ void Engine::serializeTo (juce::ValueTree& root) const
 
 void Engine::restoreFrom (const juce::ValueTree& root, bool synchronous)
 {
-    JUCE_ASSERT_MESSAGE_THREAD
+    // Message thread for live restores; a private offline-render engine may
+    // call the synchronous path from its own (single-owner) thread instead.
+    jassert (synchronous || juce::MessageManager::getInstance()->isThisTheMessageThread());
 
     // Patterns: a missing PATTERNS child (Phase 1 state) resets to defaults.
     patternModel.restoreFrom (root);
@@ -656,6 +691,11 @@ void Engine::restoreFrom (const juce::ValueTree& root, bool synchronous)
                 s.sustainPct = getF ("su", defaults.sustainPct);
                 s.chokeGroup = static_cast<int> (child.getProperty ("ck", defaults.chokeGroup));
                 s.formantPreserve = static_cast<bool> (child.getProperty ("fp", defaults.formantPreserve));
+                s.grainMs = getF ("gs", defaults.grainMs);
+                s.grainDensity = static_cast<int> (child.getProperty ("gd", defaults.grainDensity));
+                s.grainJitterMs = getF ("gj", defaults.grainJitterMs);
+                s.grainPitchJitterCents = getF ("gp", defaults.grainPitchJitterCents);
+                s.grainSprayMs = getF ("gy", defaults.grainSprayMs);
                 pendingMarkers.push_back (m);
             }
         }
@@ -695,7 +735,30 @@ void Engine::restoreFrom (const juce::ValueTree& root, bool synchronous)
     }
     else
     {
-        sendChangeMessage(); // nothing to load (empty state or missing file)
+        // No audio in the state (a KIT-ONLY preset, or an empty/missing-file
+        // state). Phase 5 mapping rule: when a sample is already loaded, the
+        // kit's markers apply onto it — times clamped into the sample (markers
+        // at or beyond its end drop; the 0 s marker is re-seeded by
+        // setMarkersFromState) and per-chop settings ride their markers.
+        {
+            const juce::ScopedLock sl (modelLock);
+            if (stateSample != nullptr && restorePendingMarkers)
+            {
+                const auto length = stateSample->lengthSeconds();
+                std::vector<SliceMarker> kept;
+                kept.reserve (pendingMarkers.size());
+                for (auto& m : pendingMarkers)
+                    if (m.timeSec < length - 1.0e-6)
+                        kept.push_back (m);
+                model.setMarkersFromState (std::move (kept));
+                if (pendingBpm > 1.0)
+                    model.sampleBpm = pendingBpm;
+                pendingMarkers.clear();
+                restorePendingMarkers = false;
+                rebuildAndPublishSlices();
+            }
+        }
+        sendChangeMessage(); // nothing (more) to load
     }
 }
 

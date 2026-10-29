@@ -5,7 +5,7 @@ is `SPEC.md` (user-authored); the locked visual direction is the v17 mockup
 (`.ideas/mockups/v17-ui.yaml`, see `.ideas/creative-brief.md` "UI Design — FINAL").
 Work phase by phase (spec §11) and STOP after each phase for user approval.
 
-**Current phase: 4 (Beat Repeat + master chain) — complete, awaiting approval.**
+**Current phase: 5 (Pro features) — complete, awaiting approval.**
 
 ## Build commands
 
@@ -405,6 +405,177 @@ Do NOT install to system plugin folders until the user asks.
 - **Free-run BPM stays in the settings flyout** (it is the free-run tempo
   CONTROL; the MASTER BPM readout is display-only per v17 `host_readonly`).
 
+## Decisions made (Phase 5 — lanes, generators, slots, granular/freeze, presets, eco, drag-out)
+
+- **Lane editor** (v17 lane_tab + step_lane replace the placeholder, exact
+  geometry): one lane visible at a time (VEL 0–127 / PITCH ±24 st bipolar from
+  centre, step 1 / PROB 0–100 % / RATCHET 1,2,3,4,6,8 drawn as N slivers).
+  Only steps WITH events show editable bars; click/drag paints values across
+  steps; double-click resets a step; hovered/dragged bar shows the mono value
+  pill; a paint gesture is ONE UndoManager transaction. Bars are positioned by
+  event time (off-grid events paint at their true position); the lane shows
+  the current bar PAGE of the ACTIVE slot.
+- **Ratchet playback**: the scheduler subdivides the event span into N equal
+  retriggers riding the swung onset; each sub-trigger carries span/N as its
+  gate (Gate mode gives the classic chopped ratchet; Fit stretches into the
+  subdivision). **Fixed musical decay: 0.8× velocity per hit (≈ −1.9 dB)** —
+  documented constant `engine::ratchetDecay`. Probability rolls ONCE per step
+  occurrence (not per sub-trigger).
+- **Determinism (spec §5 "repeatable" + reproducible bounces)**: new
+  `engine/DetHash.h` (SplitMix64). PROBABILITY is keyed by a hash of
+  (pattern seed, slot, cycle index, event position + event index — layered
+  same-step events roll independently) — never a running RNG —
+  so offline bounces fire exactly like the live pass at ANY block size
+  (unit-tested at 256 vs 1024). **BR AUTO chance is now keyed by the interval
+  boundary index** (closes the Phase 4 open question; `setRandomSeed` still
+  seeds it for tests; `rnd grid` keeps the juce::Random — advanced, unsurfaced).
+  Granular jitter streams are `DetRng`s seeded per trigger from
+  (voice stamp, chop, stream) — stamps repeat in a fresh render, so
+  bounce == bounce (unit-tested sample-exact, incl. BR auto + granular).
+- **Per-step reverse override**: event field `rev` (model + snapshot), played
+  as an XOR against the chop's reverse flag at the voice. Surfaced ONLY
+  through Randomize — it is deliberately NOT a lane (v17 has four lanes);
+  spec §5's reverse lane is folded into the generator per the brief.
+- **Per-step pitch** is applied at the VOICE: effective pitch = clamp(chop ±24)
+  of chop pitch + step pitch, routed through whichever warp engine is active
+  (varispeed rate, stretch transpose, granular/freeze grain rate) —
+  unit-tested within 2 cents on all four engines.
+- **Generators** (spec §5; UI home = right-click context menu on the boxes
+  tray AND the lane display — lean, no new chrome per v17): Randomize
+  (seed + amount stored per pattern, serialized, themselves not undoable like
+  freeBpm), Reroll seed, amount submenu 25/50/75/100 %, Shift left/right (one
+  step of the current grid, wrapping), Reverse pattern (mirrors event starts),
+  Copy/Paste pattern (internal clipboard) and Copy-to-slot A–H submenu.
+  Randomize algorithm (deterministic per seed+amount): an amount-sized subset
+  of events gets its CHOP assignments permuted (Fisher-Yates); every event
+  rewrites pitch (musical set −12…+12 scaled by amount, hit rate 0.6·amount),
+  reverse flip (0.3·amount) and ratchet (0.35·amount, weighted to 2/3/4).
+  Each generator call = one undo transaction (unit-tested round trips).
+- **Pattern slots (spec §5)**: new APVTS `pattern_slot` choice A–H (default A).
+  The PatternSnapshot now carries ALL 8 slots; the scheduler owns the playing
+  slot — a parameter change **quantises to the next bar start while the
+  transport runs** (the block is split at the boundary sample: old slot before,
+  new slot from the boundary) **and applies immediately when stopped** or on a
+  pattern (re)start. MIDI PROGRAM CHANGE selects the slot (captured lock-free
+  in processBlock, applied to the parameter on the message thread by a 20 Hz
+  housekeeping timer, which also mirrors the param into the model's UI-edited
+  slot). STILL no header slot UI — the v17 deferral stands (open question:
+  bring back the v12-style single pattern button?).
+- **Granular warp (spec §6)** — engine in ChopVoice, zero audio-thread
+  allocation (12-grain pool per unison stream, preallocated; Hann lookup table
+  filled in prepare): time runs 1:1 (read position advances one frame per
+  output sample; Loop mode wraps it), pitch transposes per-grain read rate.
+  **Musical fixed defaults, per-chop state fields (serialized `gs gd gj gp gy`,
+  no v17 knobs — advanced-drawer candidates)**: grain 80 ms (5–200), density 3
+  overlapping streams (1–8), position jitter 12 ms (0–50), pitch jitter
+  6 cents (0–100), spray 0 ms (0–500). Grain amplitude compensation
+  1/max(1, d/2); grains prefill staggered so the onset reaches steady state.
+  Unison on granular = per-stream jitter seeds + the unison cents detune the
+  grain rates (documented choice). Fit step still forces the stretch engine.
+  KNOWN CHARACTER: with position jitter forced to 0, overlapping grains add a
+  coherent phase-slip detune (inherent to granular clouds; the default jitter
+  randomises it away) — the pitch-accuracy unit test therefore measures
+  grain-level pitch with non-overlapping grains.
+- **Freeze warp (spec §6)**: the granular engine with the read position PINNED
+  at the playback start (chop start + startOffset, or the audition point) —
+  fixed params 100 ms grains / density 4 / 4 ms jitter / no pitch jitter.
+  Fills the EVENT length (Gate span; release still applies); a span-less
+  One-shot freeze caps at one chop's worth so it can never ring forever.
+  Declick/AHDSR apply unchanged (env multiplies the grain sum).
+- **Warp seg enabled**: Granular/Freeze are selectable in the overlay + FX
+  mirrors (the Phase 3 "disabled, Phase 5" state removed).
+- **Preset system (spec §10; v17 header browser)**: XML presets in
+  `~/Documents/CHOPLINE/Presets/<Category>/<Name>.xml`, categories Chops /
+  Glitch / Stutter / Tape / Granular / User (+ any extra directory found).
+  A preset IS the full state tree, so loading uses the exact glitch-safe
+  session-restore path (`applyStateTree`). **Kit-only** strips the embedded
+  FLAC + path/hash (keeps the sample BPM) and marks `kitOnly`; **loading a
+  kit onto the current sample keeps the sample** — mapping rule (documented):
+  stored marker TIMES clamp into the current sample (markers at/past its end
+  drop), per-chop settings ride their markers, and pattern events pointing at
+  chops beyond the count stay silent. Header combo lists presets under
+  category headings + a "Save preset…" item; prev/next step through with
+  wrap; the Save dialog (name / category / include-sample toggle) is a
+  CallOutBox PARENTED TO THE EDITOR (v17 flyouts sit inside the plate; also
+  makes component snapshots capture them — the settings flyout was moved
+  in-window too). NO factory content ships this phase (user supplies samples
+  and tunes the 30 factory presets later; the dev vocal is never embedded).
+- **Eco/HQ (spec §8)**: new APVTS `quality` choice (Eco|HQ, default HQ),
+  surfaced as a seg row in the settings flyout (v17 fl_set). Eco =
+  Signalsmith **presetCheaper** stretchers + **granular density capped at 2**
+  per trigger + **distortion oversampling dropped for Soft clip and Tape**
+  (smooth low-order saturators — aliasing negligible at musical drives; Hard
+  clip and Fold keep 2×, Bitcrush/Downsample are base-rate by design).
+  Switching quality re-warms the stretcher pool, which is not audio-safe, so
+  the processor's housekeeping timer wraps it in `suspendProcessing` and
+  resets voices — a quality toggle briefly silences ringing voices
+  (documented cost). **Measured CPU (Release, this M-series Mac, 48 kHz/256,
+  8 stretch voices + ratchets + BR Auto + full master): HQ 1.84 %, Eco 1.24 %
+  of one core — comfortably inside the spec §8 < 5 % target.**
+- **Drag-out (spec §10)**: the drag source is the EMPTY grid-header area
+  between the bar seg and the SWING knob (least-chrome option, documented;
+  tooltip-free zone — the progress hairline appears under it). Plain drag =
+  the current pattern as a `.mid` (960 PPQ, tempo meta; ratchets export as
+  their audible subdivision with the 0.8× decay; probability events export
+  unconditionally — the file is the pattern, not one roll; the per-step pitch
+  lane has no MIDI representation and is not exported). **Alt-drag = audio**:
+  a background thread renders the pattern through a PRIVATE offline engine
+  (full chain: voices + BR + master, forced HQ per spec §8), TWO cycles with
+  the second kept so tails wrap into the loop start (seamless loop); the
+  subtle blue progress hairline shows in the header zone, and the drag starts
+  as soon as the file is ready (release early → re-renders on the next
+  Alt-drag). Temp files live in a per-editor-instance folder of the system
+  temp dir, deleted on editor destruction. Export-all-chops (24-bit WAVs of
+  each chop's trimmed region, raw, no FX — documented) lives in the settings
+  flyout.
+- **Space = transport preview (v17 keyboard map)**: the Standalone free-run
+  now plays ONLY while Space is held (momentary, like H; released on focus
+  loss/close). Implemented as `BlockContext.freeRunGate` defaulting TRUE, so
+  hosts (their transport gates) and all earlier-phase tests are untouched;
+  the processor passes the gate only for the Standalone wrapper. This closes
+  the Phase 2 "free-runs permanently" known issue.
+- **UI polish (spec §9, within the locked v17 look)**: WaveformDisplay now
+  repaints only narrow strips around moving playheads (full repaint only when
+  the playing-chop set/loading changes) — closes the Phase 1 dirty-rect note;
+  the boxes display caches its cell geometry (bounds + note length keyed) —
+  closes the Phase 2 note; LEFT/RIGHT arrows nudge the selected events one
+  step (wrapping); tooltips across the header, grid, lanes, BR, master,
+  overlay and FX knobs (`CompactKnob::setTooltip` forwards to its slider).
+- **WCAG AA audit (report only, spec §9)**: ink/label/dim text on the light
+  surfaces measure 8.5:1–19.4:1 (PASS AA normal). Flagged: `textTertiary`
+  #a4a4aa on displays = 2.42:1 (fails AA — it is the DELIBERATE disabled/dim
+  tone); accent blue on paper = 4.24:1 (passes 3:1 large-text/UI-component,
+  fails 4.5:1 normal text — blue is a thin accent, not body text); BR red on
+  white = 3.08:1 (passes 3:1; the REPEAT HOLD badge text is small — consider
+  darkening if it ever bothers); idle MIDI dot #c7c7cc = 1.57:1 (non-text
+  indicator below the 3:1 non-text bound — flagged, not redesigned).
+- **44 APVTS parameters** (42 + pattern_slot + quality); schemaVersion stays 1
+  (every addition is an additive child/property; Phase 1/2/3/4-shaped states
+  load with defaults — unit-tested).
+- **Tests**: 97 Catch2 cases / ~1.5 M assertions. New Phase 5 coverage: pitch
+  lane within 2 cents through all four warp engines; ratchet counts + EXACT
+  sample timing at block sizes 1–4096; probability 0/100 + seeded, block-size-
+  independent determinism; BR AUTO determinism (two passes bit-identical);
+  generator determinism/round-trips/undo; bar-quantised + stopped-immediate
+  slot switching; granular/freeze finite + event-length fill + declick-clean +
+  one-shot-freeze termination; preset scan/full/kit/mismatch mapping; MIDI
+  export parse-back; offline render determinism; Eco+HQ clean; Phase 4-shaped
+  state load; the allocation detector now runs granular + freeze + ratchets +
+  probability + pitch lanes on top of the Phase 4 everything-on scenario.
+  Hidden `[.bench]` case prints the CPU numbers above.
+- **Post-review hardening (scoped self code-review, Phase 5)**: off-thread
+  `setStateInformation` replaces the APVTS SYNCHRONOUSLY again (only the
+  engine restore hops to the message thread — an offline bounce renders its
+  first blocks with the restored parameters); Space is swallowed/handled in
+  the STANDALONE only (in hosts it stays the DAW play shortcut even when the
+  editor has focus); the probability hash gained event identity (layered
+  same-step events no longer fire in lockstep); the Hann table fill is a
+  `std::call_once` (concurrent prepares of multiple instances / the offline
+  render engine are race-free); picking an unreadable preset rolls the combo
+  back to the loaded one; LaneDisplay captures each EventView once per paint
+  (no second locked tree scan per bar); the processor stops its housekeeping
+  timer first in its destructor; duplicate BR knob tooltips removed.
+
 ## Known issues / notes
 
 - **auval not run locally**: validating an AU requires the component to be
@@ -426,25 +597,23 @@ Do NOT install to system plugin folders until the user asks.
 - **Transient defaults by ear pending**: default SENS 55 / min 80 ms gave 9
   chops on the 34 s dev vocal — musically plausible but tune with the user in
   DAW testing (Phase 1 user test).
-- Waveform repaints the whole display on animated frames (playheads); fine at
-  60 fps on M-series — sub-region dirty rects are a Phase 5 polish item.
+- ~~Waveform repaints the whole display on animated frames~~ RESOLVED in
+  Phase 5 (dirty-rect strips around moving playheads).
 - **Pattern events spanning a bar-page boundary** render only on the page
-  where they start (playback is unaffected). Revisit with the Phase 5 lane UI.
-- **Standalone free-runs the pattern permanently** (spec §8 "free run at
-  manual BPM") — as soon as events exist they play. If that proves annoying in
-  practice, gate it on a transport/preview control (Space is reserved for
-  "transport_preview" in v17's keyboard map).
+  where they start (playback is unaffected); the Phase 5 lane bars behave the
+  same way (bars draw on the page where the event starts).
+- ~~Standalone free-runs the pattern permanently~~ RESOLVED in Phase 5: the
+  pattern plays only while the Space transport-preview is held (or a host
+  transport runs).
 - **Undo via Cmd/Ctrl-Z needs keyboard focus** on the grid or the editor;
   some hosts swallow Cmd-Z before the plugin sees it (standard JUCE
   limitation). Edits remain undoable via the model regardless.
-- The boxes display rebuilds its cell/piece geometry per paint (≤24 cells,
-  ≤256 events, message thread only) — simple and fast enough; cache if the
-  Phase 5 lane editor makes paints heavier.
-- **Stretch CPU is untested against the spec §8 budget** (<5% of an M1 core
-  with 8 stretch voices): per-trigger outputSeek bursts and per-stream FFTs
-  are the hot spots. Measure during the Phase 3 DAW test; mitigations ready:
-  presetCheaper for an Eco mode (Phase 5 quality switch), smaller shared
-  unison pool.
+- The boxes display caches its CELL geometry since Phase 5 (bounds + note
+  length keyed); event pieces still rebuild per paint (≤256 events, message
+  thread only) — measured fine.
+- ~~Stretch CPU is untested against the spec §8 budget~~ MEASURED in Phase 5
+  (Release, M-series, 48 kHz/256, 8 stretch voices + ratchets + BR + full
+  master): HQ 1.84 %, Eco 1.24 % of one core — inside the < 5 % target.
 - **Gate length / Fit ratio are frozen at trigger time** — a tempo change
   mid-note doesn't re-scale a ringing gate or an in-flight Fit stretch (the
   next trigger follows the new tempo). Matches how most samplers behave.
@@ -457,12 +626,30 @@ Do NOT install to system plugin folders until the user asks.
   a heavily trimmed chop's strip playhead is slightly offset (the overlay
   editor maps it correctly). Cosmetic; revisit with the Phase 5 polish.
 
-- **Phase 4 — BR auto chance is NOT seeded per project**: the audio-thread
-  RNG seeds to a constant at construction, so a bounce after a reopen rolls
-  the same sequence from time zero, but live chance is effectively random.
-  Spec §5's seeded randomize applies to the Phase 5 pattern generators; if
-  reproducible BOUNCES of Auto repeats are wanted, add a bar-position-keyed
-  hash instead of a running RNG (revisit in Phase 5).
+- ~~Phase 4 — BR auto chance is NOT seeded per project~~ RESOLVED in Phase 5:
+  the AUTO roll is keyed by a hash of the interval boundary index on the
+  musical timeline, so bounces repeat exactly (`rnd grid` remains live-random
+  — advanced, unsurfaced).
+
+- **Phase 5 — quality toggle silences ringing voices** for ~100 ms: re-warming
+  the stretcher pool is not audio-thread safe, so the switch suspends
+  processing and resets voices (documented product cost; automation of
+  `quality` mid-performance is therefore not recommended).
+- **Phase 5 — granular coherent phase-slip**: with position jitter at 0,
+  overlapping grains of a pitched cloud detune audibly (inherent artifact);
+  the default 12 ms jitter randomises it. If a user zeroes jitter via a future
+  advanced drawer, expect that character.
+- **Phase 5 — audio drag-out needs the render to finish inside the gesture**
+  (or a second Alt-drag): external file drags can only start while the mouse
+  is down. 1–4 bar patterns render in well under a second, so in practice the
+  first drag works; the progress hairline covers the rest.
+- **Phase 5 — lane bars for spanned events** cover the whole span (one bar per
+  EVENT, not per step cell) — matches "per-step overrides" since an event IS
+  one placed step (spans are one event).
+- **Phase 5 — kit-preset APVTS**: loading any preset (full or kit) restores
+  the saved APVTS too (master chain, BR, swing, slots, quality) — intended
+  ("a preset is the whole instrument"); flag if kit-only should keep the
+  current master settings instead.
 - **Phase 4 — BR ring writes pause while repeating** (after slot 0's
   crossfade): the pinned slice survives holds/freezes of any length; the only
   cost is that the ring's dry history restarts at the next (re)capture —
@@ -503,10 +690,23 @@ Do NOT install to system plugin folders until the user asks.
 - **Swing feel**: implemented literally per spec — the even step is delayed by
   swing% of one step (75 % max keeps order). If the user expects MPC-style
   percentages (50 % = straight), remap the knob in Phase 5 polish.
-- **Pitch envelope / glide and scale lock (spec §6) are deferred**: v17 has
+- **MACROS (spec §10: 8 macros × 8 targets) are DESCOPED from Phase 5**: the
+  locked v17 UI has no home for them (no macro strip, knobs or drawer). The
+  parameter architecture doesn't block them (APVTS + per-chop model both
+  addressable); decide in Phase 6 whether they return with an advanced
+  drawer/settings page or get cut for 1.0.
+- **Pattern-slot UI (user decision pending)**: slots are fully functional via
+  the `pattern_slot` parameter + MIDI program change, but the header has no
+  slot control (v17 "remove abcdefg" deferral upheld). Should the v12-style
+  single pattern button (click cycles, hold/right-click dropdown) return?
+- **Granular knobs**: grain size/density/jitter/pitch-jitter/spray are
+  per-chop state with musical fixed defaults (80 ms / 3 / 12 ms / 6 c / 0) and
+  serialize, but have no UI — prime advanced-drawer candidates together with
+  the Phase 4 BR advanced params and formant preserve.
+- **Pitch envelope / glide and scale lock (spec §6) remain deferred**: v17 has
   no UI for them (no glide/curve/scale controls anywhere). Engine-side they
-  would slot into the per-chop settings + voice pitch path; ask the user
-  whether they return in Phase 5 (advanced drawer?) or get cut.
+  would slot into the per-chop settings + voice pitch path; decide in Phase 6
+  (advanced drawer?) or cut.
 - **Formant preserve has no v17 control** (spec §6 wants on/off + shift
   ±12 st): the engine stores per-chop formantPreserve (default ON, the vocal
   default) and it round-trips, but nothing surfaces it. Candidate for the

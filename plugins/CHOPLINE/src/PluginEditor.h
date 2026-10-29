@@ -1,13 +1,17 @@
-// CHOPLINE — PluginEditor (Phases 1–3)
+// CHOPLINE — PluginEditor (Phases 1–5)
 // Native-JUCE editor on the locked v17 wireframe-light design. MAIN page:
-// header + Strip A sampler + Strip B grid (+ Phase 4 placeholders). FX page
-// (Phase 3): CHOP column (PLAYBACK + ENVELOPE) with a MASTER placeholder.
-// Both pages stay alive (setVisible toggling) so playhead/meters keep running
-// (v17 note_for_production). The chop detail overlay (sample editor) opens on
-// double-click of a filled box / strip chop, the '…' chop button, or Enter.
-// Keyboard: Tab toggles the page, M/F jump, 1–8 select the chop, Esc closes
-// the overlay, Cmd/Ctrl-Z undo. The whole UI is laid out on a fixed 1100x720
-// canvas that scales 75%–200% with the window (fixed aspect).
+// header (wordmark, Phase 5 preset browser, MIDI dot, MAIN|FX, gear) +
+// Strip A sampler + Strip B grid (with the Phase 5 lane editor) + Beat
+// Repeat / Master cards. FX page: CHOP column (PLAYBACK + ENVELOPE) + MASTER
+// column. Both pages stay alive (setVisible toggling) so playhead/meters
+// keep running (v17 note_for_production). The chop detail overlay (sample
+// editor) opens on double-click of a filled box / strip chop, the '…' chop
+// button, or Enter.
+// Keyboard (v17 map): Tab toggles the page, M/F jump, 1–8 select the chop,
+// H = momentary Beat Repeat hold, SPACE = momentary transport preview
+// (Standalone free-run gate, Phase 5), Enter opens / Esc closes the overlay,
+// Cmd/Ctrl-Z undo. The whole UI is laid out on a fixed 1100x720 canvas that
+// scales 75%–200% with the window (fixed aspect).
 
 #pragma once
 
@@ -15,6 +19,8 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "PluginProcessor.h"
+#include "state/Exporter.h"
+#include "state/PresetManager.h"
 #include "ui/BeatRepeatPanel.h"
 #include "ui/ChopEditorOverlay.h"
 #include "ui/FxPage.h"
@@ -25,6 +31,36 @@
 
 namespace chopline
 {
+
+/// Phase 5 drag-out backend (spec §10): writes the pattern MIDI temp file on
+/// the message thread and renders the pattern WAV on a background thread
+/// through a private offline engine (state/Exporter). Temp files live in a
+/// per-instance folder of the system temp dir, cleaned up on destruction.
+class PatternDragExporter final : private juce::Thread
+{
+public:
+    explicit PatternDragExporter (ChoplineAudioProcessor& p);
+    ~PatternDragExporter() override;
+
+    juce::File writeMidiFile();        // message thread (drag start)
+    void startRender();                // message thread; always renders fresh
+    juce::File getRenderedFile() const; // {} while rendering / failed
+    float getProgress() const;         // <0 idle, 0..1 rendering
+
+private:
+    void run() override;
+
+    ChoplineAudioProcessor& processor;
+    juce::File tempDir;
+    juce::File wavFile;
+
+    // Captured on the message thread at startRender, read by run().
+    juce::ValueTree capturedState;
+    state::OfflineRenderSpec capturedSpec;
+
+    std::atomic<float> progress { -1.0f };
+    std::atomic<bool> ready { false };
+};
 
 class ChoplineAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                            public juce::DragAndDropContainer
@@ -79,6 +115,12 @@ private:
 
     void openSettingsFlyout();
 
+    // ---- presets (Phase 5, spec §10; v17 header browser) --------------------------
+    void refreshPresetBox();
+    void loadPresetAtIndex (int index);
+    void stepPreset (int delta);
+    void openSavePresetDialog();
+
     // ---- pages / selection / overlay -------------------------------------------
     void setPage (int newPage); // 0 = MAIN, 1 = FX (closes the overlay, v17)
     int selectedChop();
@@ -119,9 +161,16 @@ private:
     // Chop detail overlay (topmost, v17 overlay).
     ui::ChopEditorOverlay chopOverlay;
 
+    // Phase 5: presets + drag-out (declared before the VBlank so the lambda
+    // can safely touch them).
+    state::PresetManager presetManager;
+    int currentPresetIndex = -1;
+    PatternDragExporter dragExporter;
+
     juce::VBlankAttachment vblank;
     int gcCountdown = 0;
-    bool momentaryHold = false; // H key state (mirrors engine.setMomentaryHold)
+    bool momentaryHold = false;    // H key state (mirrors engine.setMomentaryHold)
+    bool previewHeld = false;      // Space key state (Phase 5 transport preview)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChoplineAudioProcessorEditor)
 };

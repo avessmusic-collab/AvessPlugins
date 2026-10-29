@@ -61,27 +61,34 @@ public:
 
     /// Message thread (prepareToPlay). Configures and warms every instance so
     /// later audio-thread reset()/seek()/process() calls never allocate.
-    void prepare (double sampleRate, int maxBlockSize)
+    /// `cheaper` = Eco quality (Phase 5): Signalsmith presetCheaper — shorter
+    /// blocks, noticeably less CPU, slightly rougher sound.
+    void prepare (double sampleRate, int maxBlockSize, bool cheaper = false)
     {
         const auto rate = sampleRate > 0.0 ? sampleRate : 48000.0;
         const auto newMaxBlock = juce::jmax (16, maxBlockSize);
 
         // Warming 24 stretchers costs real time — skip when nothing grew
         // (pluginval / hosts call prepareToPlay repeatedly).
-        if (juce::exactlyEqual (preparedRate, rate) && newMaxBlock <= maxBlock)
+        if (juce::exactlyEqual (preparedRate, rate) && newMaxBlock <= maxBlock
+            && cheaper == preparedCheaper)
         {
             sharedInUse.fill (false);
             return;
         }
         preparedRate = rate;
+        preparedCheaper = cheaper;
         maxBlock = newMaxBlock;
         maxSeekLength = 0;
 
-        auto warm = [this, rate] (Stretcher& st)
+        auto warm = [this, rate, cheaper] (Stretcher& st)
         {
-            // presetDefault block/interval, splitComputation=true to spread the
-            // FFT work across process() calls (fewer CPU spikes per block).
-            st.presetDefault (2, static_cast<float> (rate), true);
+            // presetDefault/presetCheaper block/interval, splitComputation=true
+            // to spread the FFT work across process() calls (fewer CPU spikes).
+            if (cheaper)
+                st.presetCheaper (2, static_cast<float> (rate), true);
+            else
+                st.presetDefault (2, static_cast<float> (rate), true);
 
             const auto seekLen = st.outputSeekLength (static_cast<float> (maxInputRate)) + 8;
             std::vector<float> zeros (static_cast<size_t> (seekLen), 0.0f);
@@ -153,6 +160,7 @@ private:
     std::array<Stretcher, numShared> sharedStretchers;
     std::array<bool, numShared> sharedInUse {};
     double preparedRate = 0.0;
+    bool preparedCheaper = false;
     int maxBlock = 512;
     int maxSeekLength = 0;
 

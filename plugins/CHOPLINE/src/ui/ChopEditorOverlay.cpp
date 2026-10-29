@@ -67,8 +67,6 @@ ChopEditorOverlay::ChopEditorOverlay (engine::Engine& engineToUse)
         s.warp = static_cast<engine::WarpMode> (v);
         setSettings (s);
     };
-    warpSeg.isOptionEnabled = [] (int i) { return i < 2; }; // Granular/Freeze = Phase 5
-    warpSeg.disabledTooltip = "Granular and Freeze arrive in Phase 5";
     addAndMakeVisible (warpSeg);
 
     closeButton.onClick = [this]
@@ -128,6 +126,14 @@ ChopEditorOverlay::ChopEditorOverlay (engine::Engine& engineToUse)
                [] (engine::ChopSettings& s, double v) { s.loopXfadeMs = static_cast<float> (v); });
     xfadeKnob.valueSuffix = " ms";
     xfadeKnob.getSlider().setDoubleClickReturnValue (true, 10.0);
+
+    // Tooltips (spec §9, Phase 5 polish).
+    pitchKnob.setTooltip ("Chop pitch, semitones (the step PITCH lane adds to this)");
+    releaseKnob.setTooltip ("Release when the step span / note ends");
+    delayKnob.setTooltip ("Send to the master delay (set DLY RTN above 0)");
+    verbKnob.setTooltip ("Send to the master reverb (set VERB RTN above 0)");
+    unisonKnob.setTooltip ("Unison voices with fixed detune + stereo spread");
+    xfadeKnob.setTooltip ("Loop crossfade (Loop mode)");
 
     eng.addChangeListener (this);
     refresh();

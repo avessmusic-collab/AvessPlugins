@@ -65,6 +65,12 @@ struct MasterParams
     bool outOn = false;        // OUTPUT section (gain + limiter) bypass
     float outDb = 0.0f;        // −24…+12
     float ceilingDb = -0.3f;   // −12…0
+
+    // Phase 5 Eco quality: run Soft clip / Tape at BASE rate (low-order smooth
+    // saturators — aliasing negligible at musical drives). Hard clip and Fold
+    // keep the 2× oversampling even in Eco (audible aliasing otherwise);
+    // Bitcrush/Downsample are base-rate by design.
+    bool ecoNoOversample = false;
 };
 
 class MasterFX final

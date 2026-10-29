@@ -15,7 +15,8 @@
 namespace chopline
 {
 
-class ChoplineAudioProcessor final : public juce::AudioProcessor
+class ChoplineAudioProcessor final : public juce::AudioProcessor,
+                                     private juce::Timer
 {
 public:
     ChoplineAudioProcessor();
@@ -54,11 +55,34 @@ public:
     juce::AudioProcessorValueTreeState& getState() noexcept { return state; }
     engine::Engine& getEngine() noexcept { return engine; }
 
+    /// Message thread: applies a full state tree (same shape as
+    /// get/setStateInformation) glitch-safely. Used by setStateInformation and
+    /// the Phase 5 preset loads.
+    void applyStateTree (const juce::ValueTree& newState);
+
+    /// Message thread: the full state tree (APVTS + engine children) — the
+    /// same tree getStateInformation serialises. Used by preset save and the
+    /// Phase 5 offline drag-out render.
+    juce::ValueTree buildStateTree();
+
+    /// Fills a BlockContext from the cached parameter atomics (no transport).
+    /// Used by processBlock and by the offline drag-out render.
+    void fillContextFromParams (engine::Engine::BlockContext& context) const;
+
 private:
+    // Message-thread housekeeping (Phase 5): MIDI program change → pattern
+    // slot param, slot param → the model's UI-edited slot, and the Eco/HQ
+    // stretcher reconfiguration (wrapped in suspendProcessing). Polling keeps
+    // the audio thread free of allocation (no AsyncUpdater message posts).
+    void timerCallback() override;
+
     juce::AudioProcessorValueTreeState state;
     engine::Engine engine;
     std::atomic<float>* baseNoteParam = nullptr;
     std::atomic<float>* swingParam = nullptr;
+    std::atomic<float>* patternSlotParam = nullptr; // Phase 5
+    std::atomic<float>* qualityParam = nullptr;     // Phase 5 (0 Eco, 1 HQ)
+    std::atomic<int> pendingProgramChange { -1 };   // MIDI program → slot
 
     // Phase 4: cached raw parameter values (spec §8 — no APVTS lookups on the
     // audio thread). Filled once in the constructor.

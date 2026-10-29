@@ -87,9 +87,11 @@ private:
     bool draggedSinceDown = false;
     std::set<int> selection; // chop ordinals
 
-    // animation bookkeeping
+    // animation bookkeeping (Phase 5: dirty-rect playhead repaints)
     bool wasAnimating = false;
-    std::uint32_t lastVoiceSignature = 0;
+    std::uint64_t lastChopsMask = 0;
+    int lastNumXs = 0;
+    float lastXs[engine::VoicePool::numVoices] = {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformDisplay)
 };

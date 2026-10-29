@@ -3,6 +3,7 @@
 #include "ChopVoice.h"
 
 #include <cmath>
+#include <mutex>
 
 namespace chopline::engine
 {
@@ -32,6 +33,29 @@ namespace
     };
 
     constexpr int microEndFade = 32; // samples: output-domain fade at a hard cut
+
+    // Hann window lookup for the granular engine. Filled exactly once (any
+    // prepare(), guarded — a private offline-render engine may prepare while
+    // another instance is already playing); reads are audio-thread safe after.
+    constexpr int hannTableSize = 1024;
+    std::array<float, hannTableSize + 1> hannTable {};
+    std::once_flag hannTableOnce;
+
+    inline float hannAt (float phase01) noexcept
+    {
+        const auto x = juce::jlimit (0.0f, 1.0f, phase01) * static_cast<float> (hannTableSize);
+        const auto i = static_cast<int> (x);
+        const auto f = x - static_cast<float> (i);
+        const auto a = hannTable[static_cast<size_t> (i)];
+        const auto b = hannTable[static_cast<size_t> (juce::jmin (i + 1, hannTableSize))];
+        return a + (b - a) * f;
+    }
+
+    // Freeze uses FIXED musical grain parameters (documented): 100 ms grains,
+    // density 4, 4 ms position jitter (decorrelates the hold), no pitch jitter.
+    constexpr double freezeGrainMs = 100.0;
+    constexpr int freezeDensity = 4;
+    constexpr double freezeJitterMs = 4.0;
 } // namespace
 
 // ---- lifecycle --------------------------------------------------------------------
@@ -46,6 +70,14 @@ void ChopVoice::prepare (double newSampleRate, int maxBlockSize, StretcherPool& 
 
     fastFadeSamples = juce::jmax (1, static_cast<int> (std::llround (sampleRate * fastFadeSeconds)));
     fastFadeStep = 1.0f / static_cast<float> (fastFadeSamples);
+
+    std::call_once (hannTableOnce, []
+    {
+        for (int i = 0; i <= hannTableSize; ++i)
+            hannTable[static_cast<size_t> (i)] = 0.5f
+                - 0.5f * std::cos (juce::MathConstants<float>::twoPi
+                                   * static_cast<float> (i) / static_cast<float> (hannTableSize));
+    });
 
     envScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
     outScratchL.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -95,13 +127,15 @@ void ChopVoice::releaseStreams (Playback& p) noexcept
 
 void ChopVoice::trigger (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
                          int chopIndex, float gain, std::uint64_t newStamp, int tag,
-                         juce::int64 gateSamples, int midiNote, double startNorm) noexcept
+                         juce::int64 gateSamples, int midiNote, double startNorm,
+                         const TriggerMods& mods) noexcept
 {
     sourceTag = tag;
     if (pb.active)
         prerenderTail(); // 2 ms fade of the running playback, rendered now
 
-    setupPlayback (sample, chop, chopIndex, gain, gateSamples, midiNote, startNorm);
+    setupPlayback (sample, chop, chopIndex, gain, gateSamples, midiNote, startNorm,
+                   newStamp, mods);
     stamp = newStamp;
 
     if (pb.active)
@@ -121,18 +155,31 @@ void ChopVoice::trigger (const SampleData* sample, const SliceMapSnapshot::Chop&
 
 void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot::Chop& chop,
                                int chopIndex, float gain, juce::int64 gateSamples,
-                               int midiNote, double startNorm) noexcept
+                               int midiNote, double startNorm, std::uint64_t newStamp,
+                               const TriggerMods& mods) noexcept
 {
     auto& p = pb;
     p.chop = chop;
     p.chop.fadeInSamples = juce::jmax (1, chop.fadeInSamples);
     p.chop.fadeOutSamples = juce::jmax (1, chop.fadeOutSamples);
+
+    // Phase 5 trigger mods: the per-step pitch lane adds to the chop pitch
+    // (clamped ±24 at the voice) and the generator reverse override flips the
+    // chop's reverse flag for this trigger only (the copy is ours).
+    if (mods.reverseFlip)
+        p.chop.reverse = ! p.chop.reverse;
+    p.chop.pitchSemitones = juce::jlimit (-24.0f, 24.0f,
+                                          chop.pitchSemitones + mods.pitchOffset);
+    if (mods.ecoGranular)
+        p.chop.grainDensity = juce::jmin (p.chop.grainDensity, 2); // Eco density cap
+
+    const auto& ch = p.chop; // effective settings for this playback
     p.chopIndex = chopIndex;
     p.midiNote = midiNote;
     p.outPos = 0;
     p.fastFading = false;
     p.fastGain = 1.0f;
-    p.chopLen = static_cast<double> (chop.end - chop.start);
+    p.chopLen = static_cast<double> (ch.end - ch.start);
 
     if (sample == nullptr || p.chopLen < 2.0 || sample->audio.getNumSamples() <= 0)
     {
@@ -141,28 +188,28 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
         return;
     }
 
-    auto mode = chop.mode;
+    auto mode = ch.mode;
     if (mode == PlaybackMode::fitStep && gateSamples < 0)
         mode = PlaybackMode::oneShot; // span-less Fit (plain MIDI / audition) = One-shot
 
     // Loop region in the LOGICAL domain (x = 0 at playback start, increasing).
-    p.looping = mode == PlaybackMode::loop && chop.loopEnd > chop.loopStart + 1;
+    p.looping = mode == PlaybackMode::loop && ch.loopEnd > ch.loopStart + 1;
     if (p.looping)
     {
-        if (chop.reverse)
+        if (ch.reverse)
         {
-            p.loopA = chop.end - chop.loopEnd;
-            p.loopB = chop.end - chop.loopStart;
+            p.loopA = ch.end - ch.loopEnd;
+            p.loopB = ch.end - ch.loopStart;
         }
         else
         {
-            p.loopA = chop.loopStart - chop.start;
-            p.loopB = chop.loopEnd - chop.start;
+            p.loopA = ch.loopStart - ch.start;
+            p.loopB = ch.loopEnd - ch.start;
         }
         // Crossfade needs pre-loop content and at most half the loop.
         p.loopXfade = static_cast<int> (juce::jlimit<juce::int64> (
             0, juce::jmin (p.loopA, (p.loopB - p.loopA) / 2),
-            static_cast<juce::int64> (chop.loopXfadeSamples)));
+            static_cast<juce::int64> (ch.loopXfadeSamples)));
     }
     else
     {
@@ -174,10 +221,41 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
     const auto x0i = static_cast<juce::int64> (std::llround (p.x0));
     const auto remaining = juce::jmax (1.0, p.chopLen - p.x0);
 
-    const bool useStretch = mode == PlaybackMode::fitStep || chop.warp == WarpMode::stretch;
-    // (Granular / Freeze are Phase 5: they currently play as Varispeed.)
+    // Fit step always stretches (pitch preserved by definition); otherwise the
+    // chop's warp picks the engine. Granular and Freeze share the grain engine
+    // (Freeze pins the read position at the playback start).
+    const bool useStretch = mode == PlaybackMode::fitStep || ch.warp == WarpMode::stretch;
+    const bool useGranular = ! useStretch
+                          && (ch.warp == WarpMode::granular || ch.warp == WarpMode::freeze);
+    const bool freeze = useGranular && ch.warp == WarpMode::freeze;
 
-    p.numStreams = juce::jlimit (1, maxUnison, chop.unison);
+    p.granular = useGranular;
+    p.freezeHold = freeze;
+    if (useGranular)
+    {
+        if (freeze)
+        {
+            p.grainLen = juce::jmax (8, static_cast<int> (std::llround (
+                freezeGrainMs * 0.001 * sampleRate)));
+            p.grainInterval = juce::jmax (1, p.grainLen / freezeDensity);
+            p.grainJitter = freezeJitterMs * 0.001 * sampleRate;
+            p.grainSpray = 0.0;
+            p.grainPitchJitCents = 0.0f;
+            p.grainComp = 1.0f / juce::jmax (1.0f, 0.5f * static_cast<float> (freezeDensity));
+        }
+        else
+        {
+            const auto density = juce::jlimit (1, 8, ch.grainDensity);
+            p.grainLen = juce::jmax (8, ch.grainLenSamples);
+            p.grainInterval = juce::jmax (1, p.grainLen / density);
+            p.grainJitter = static_cast<double> (ch.grainJitterSamples);
+            p.grainSpray = static_cast<double> (ch.grainSpraySamples);
+            p.grainPitchJitCents = ch.grainPitchJitterCents;
+            p.grainComp = 1.0f / juce::jmax (1.0f, 0.5f * static_cast<float> (density));
+        }
+    }
+
+    p.numStreams = juce::jlimit (1, maxUnison, ch.unison);
     const auto uniIdx = p.numStreams - 1;
     p.gain = gain / std::sqrt (static_cast<float> (p.numStreams));
 
@@ -193,9 +271,17 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
         const auto natural = static_cast<juce::int64> (std::llround (remaining / inRate));
         p.expectedOut = mode == PlaybackMode::fitStep ? juce::jmin (gateSamples, natural) : natural;
     }
+    else if (freeze)
+    {
+        // Freeze fills the EVENT length (gate closes it); a span-less One-shot
+        // freeze holds for one chop's worth so it can never ring forever.
+        p.expectedOut = mode == PlaybackMode::oneShot
+            ? juce::jmax<juce::int64> (1, static_cast<juce::int64> (std::llround (remaining)))
+            : -1;
+    }
     else
     {
-        p.expectedOut = -1; // varispeed streams end individually at the chop end
+        p.expectedOut = -1; // varispeed/granular streams end at the chop end
     }
 
     // Envelope + gate.
@@ -204,7 +290,7 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
     p.envLevel = 0.0;
     p.releaseStep = 0.0;
     p.gateApplies = mode == PlaybackMode::gate || mode == PlaybackMode::loop;
-    const auto baseRate = std::pow (2.0, static_cast<double> (chop.pitchSemitones) / 12.0);
+    const auto baseRate = std::pow (2.0, static_cast<double> (ch.pitchSemitones) / 12.0);
     if (! p.gateApplies)
     {
         p.gateRemaining = -3; // no gate (One-shot / Fit ignore note-off, spec §6)
@@ -216,7 +302,9 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
     else if (gateSamples == gateNatural)
     {
         const auto naturalOut = p.looping ? p.chopLen
-                              : (useStretch ? remaining / inRate : remaining / baseRate);
+                              : useStretch ? remaining / inRate
+                              : useGranular ? remaining // granular time is 1:1
+                                            : remaining / baseRate;
         p.gateRemaining = juce::jmax<juce::int64> (1, static_cast<juce::int64> (std::llround (naturalOut)));
     }
     else
@@ -233,6 +321,7 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
         auto& s = p.streams[k];
         s.st = nullptr;
         s.sharedStretcher = false;
+        s.useGranular = false;
         s.dead = k >= p.numStreams;
         if (s.dead)
             continue;
@@ -258,10 +347,10 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
             s.expectedOut = p.looping ? -1
                 : static_cast<juce::int64> (std::llround (remaining / inRate));
 
-            s.st->setTransposeSemitones (chop.pitchSemitones + cents / 100.0f,
+            s.st->setTransposeSemitones (ch.pitchSemitones + cents / 100.0f,
                                          static_cast<float> (8000.0 / sampleRate));
             s.st->setFormantBase (0.0f);
-            if (chop.formantPreserve)
+            if (ch.formantPreserve)
                 s.st->setFormantSemitones (0.0f, true); // formants stay put under transpose
             else
                 s.st->setFormantFactor (1.0f, false);
@@ -276,10 +365,30 @@ void ChopVoice::setupPlayback (const SampleData* sample, const SliceMapSnapshot:
             s.st->outputSeek (ins, seekLen);
             s.inFed = seekLen;
         }
+        else if (useGranular)
+        {
+            s.useGranular = true;
+            s.grainBaseRate = std::pow (2.0, (static_cast<double> (ch.pitchSemitones)
+                                              + static_cast<double> (cents) / 100.0) / 12.0);
+            s.grainReadPos = p.x0;
+            s.spawnCountdown = 0;
+            for (auto& g : s.grains)
+                g.active = false;
+            // Deterministic per-trigger jitter seed: unison = per-stream seeds
+            // (documented); the trigger stamp sequence repeats in an offline
+            // bounce, so two identical renders jitter identically.
+            s.grainRng.seed (detHash (newStamp,
+                                      static_cast<std::uint64_t> (chopIndex + 1),
+                                      static_cast<std::uint64_t> (k + 1)));
+            // Prefill staggered grains so the cloud reaches steady state at
+            // the onset (no density fade-in).
+            for (int a = p.grainInterval; a < p.grainLen; a += p.grainInterval)
+                spawnGrain (p, s, a);
+        }
         else
         {
             s.pos = p.x0;
-            s.rate = std::pow (2.0, (static_cast<double> (chop.pitchSemitones)
+            s.rate = std::pow (2.0, (static_cast<double> (ch.pitchSemitones)
                                      + static_cast<double> (cents) / 100.0) / 12.0);
         }
     }
@@ -530,6 +639,96 @@ void ChopVoice::renderStretch (Playback& p, Stream& s, float* outL, float* outR,
         s.dead = true;
 }
 
+// ---- granular / freeze (Phase 5) -----------------------------------------------------
+
+void ChopVoice::spawnGrain (Playback& p, Stream& s, int ageOffset) noexcept
+{
+    Grain* slot = nullptr;
+    for (auto& g : s.grains)
+    {
+        if (! g.active)
+        {
+            slot = &g;
+            break;
+        }
+    }
+    if (slot == nullptr)
+        return; // pool full: skip this grain (graceful degradation, no alloc)
+
+    // Fixed draw order keeps the jitter stream deterministic: position jitter,
+    // spray, then pitch jitter.
+    const auto jit = p.grainJitter * static_cast<double> (s.grainRng.nextBipolar())
+                   + p.grainSpray * static_cast<double> (s.grainRng.nextBipolar());
+    const auto cents = p.grainPitchJitCents * s.grainRng.nextBipolar();
+
+    const auto anchor = p.freezeHold ? p.x0 : s.grainReadPos;
+    auto& g = *slot;
+    g.src = anchor + jit - static_cast<double> (ageOffset);
+    g.rate = s.grainBaseRate * std::pow (2.0, static_cast<double> (cents) / 1200.0);
+    g.len = p.grainLen;
+    g.age = ageOffset;
+    g.active = ageOffset < g.len;
+}
+
+void ChopVoice::renderGranular (Playback& p, Stream& s, float* outL, float* outR, int n) noexcept
+{
+    const bool stereo = outR != outL; // mono bus: left only (no double-add)
+    const auto lenF = static_cast<float> (juce::jmax (1, p.grainLen));
+    const bool sourceEnded = ! p.freezeHold && ! p.looping && s.grainReadPos >= p.chopLen;
+
+    for (int i = 0; i < n; ++i)
+    {
+        if (s.spawnCountdown <= 0)
+        {
+            // Stop spawning once the read position has passed the chop end
+            // (non-loop); live grains ring out through their windows.
+            if (p.freezeHold || p.looping || s.grainReadPos < p.chopLen)
+                spawnGrain (p, s, 0);
+            s.spawnCountdown = p.grainInterval;
+        }
+        --s.spawnCountdown;
+
+        float gl = 0.0f, grs = 0.0f;
+        for (auto& g : s.grains)
+        {
+            if (! g.active)
+                continue;
+            const auto w = hannAt (static_cast<float> (g.age) / lenF);
+            float l, r;
+            readInterp (p, g.src + static_cast<double> (g.age) * g.rate, l, r);
+            gl += l * w;
+            grs += r * w;
+            if (++g.age >= g.len)
+                g.active = false;
+        }
+
+        const auto e = envScratch[static_cast<size_t> (i)] * p.grainComp;
+        outL[i] += gl * e * s.panL;
+        if (stereo)
+            outR[i] += grs * e * s.panR;
+
+        if (! p.freezeHold)
+        {
+            s.grainReadPos += 1.0; // granular time is 1:1 (pitch via grain rate)
+            if (p.looping && p.loopB > p.loopA
+                && s.grainReadPos >= static_cast<double> (p.loopB))
+                s.grainReadPos = static_cast<double> (p.loopA)
+                    + std::fmod (s.grainReadPos - static_cast<double> (p.loopA),
+                                 static_cast<double> (p.loopB - p.loopA));
+        }
+    }
+
+    // Non-loop, non-freeze stream death: past the end with no grain still alive.
+    if (sourceEnded)
+    {
+        bool any = false;
+        for (const auto& g : s.grains)
+            any = any || g.active;
+        if (! any)
+            s.dead = true;
+    }
+}
+
 void ChopVoice::renderChunk (Playback& p, float* outL, float* outR, int n) noexcept
 {
     // 1. Envelope × gate × fast fade × end micro-fade into envScratch.
@@ -602,6 +801,8 @@ void ChopVoice::renderChunk (Playback& p, float* outL, float* outR, int n) noexc
                 continue;
             if (s.useStretch)
                 renderStretch (p, s, outL, outR, effN);
+            else if (s.useGranular)
+                renderGranular (p, s, outL, outR, effN);
             else
                 renderVarispeed (p, s, outL, outR, effN);
         }
@@ -772,7 +973,7 @@ void ChopVoice::updateUiFeedback() noexcept
         const auto& s0 = pb.streams[0];
         auto x = s0.useStretch
             ? pb.x0 + s0.inRate * static_cast<double> (s0.outDone)
-            : s0.pos;
+            : (s0.useGranular ? s0.grainReadPos : s0.pos);
         if (pb.looping && pb.loopB > pb.loopA && x >= static_cast<double> (pb.loopB))
             x = static_cast<double> (pb.loopA)
               + std::fmod (x - static_cast<double> (pb.loopA),

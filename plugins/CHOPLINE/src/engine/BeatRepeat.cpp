@@ -263,7 +263,17 @@ void BeatRepeat::process (juce::AudioBuffer<float>& buffer, const Params& p,
             auto toInterval = samplesToBoundary (phaseNow, iv, ivOffset);
             if (toInterval <= 0)
             {
-                const auto fire = rng.nextFloat() * 100.0f
+                // Deterministic roll keyed by the interval boundary INDEX on
+                // the musical timeline (Phase 5): a bounce over the same bars
+                // repeats the live pass exactly, at any block size.
+                const auto boundaryIdx = static_cast<juce::int64> (
+                    std::llround ((phaseNow - ivOffset) / iv));
+                const auto roll = det01 (detHash (chanceSeed,
+                                                  static_cast<std::uint64_t> (
+                                                      boundaryIdx + (1ll << 32)),
+                                                  static_cast<std::uint64_t> (
+                                                      p.intervalIndex + 1)));
+                const auto fire = roll * 100.0f
                                   < juce::jlimit (0.0f, 100.0f, p.chancePct);
                 if (fire && ! (repeating && holdNow))
                     startRepeat (p, samplesPerBar); // (re)capture at the boundary

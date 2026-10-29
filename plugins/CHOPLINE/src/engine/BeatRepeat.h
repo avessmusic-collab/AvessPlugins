@@ -34,6 +34,8 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include "DetHash.h"
+
 #include <atomic>
 #include <vector>
 
@@ -108,8 +110,15 @@ public:
     void prepare (double sampleRate, int maxBlockSize);
     void reset() noexcept;
 
-    /// Tests only (message thread, before processing): deterministic chance.
-    void setRandomSeed (juce::int64 seed) noexcept { rng.setSeed (seed); }
+    /// Tests only (message thread, before processing): deterministic chance /
+    /// random-grid seeds. Phase 5: the AUTO chance roll is keyed by a HASH of
+    /// the interval boundary index (+ this seed), not a running RNG, so an
+    /// offline bounce fires exactly like the live pass over the same timeline.
+    void setRandomSeed (juce::int64 seed) noexcept
+    {
+        rng.setSeed (seed);
+        chanceSeed = static_cast<std::uint64_t> (seed);
+    }
 
     // ---- audio thread ---------------------------------------------------------------
     /// In-place. `barPhase` = musical position in bars at block start (host
@@ -166,7 +175,8 @@ private:
     double fA1 = 0.0, fA2 = 0.0, fA3 = 0.0, fK = 1.414;
     double lastFc = -1.0;
 
-    juce::Random rng { 0x43484f50 }; // deterministic default seed ("CHOP")
+    juce::Random rng { 0x43484f50 };          // random-grid slots ("CHOP" seed)
+    std::uint64_t chanceSeed = 0x43484f50;    // AUTO chance hash key (Phase 5)
 
     std::atomic<bool> uiActive { false };
 

@@ -29,6 +29,10 @@ namespace id
     inline constexpr auto midiBaseNote = "midiBaseNote"; // choice: C0 C1 C2 C3
     inline constexpr auto swing = "swing";               // float: 0–75 % (Phase 2)
 
+    // ---- Phase 5 -------------------------------------------------------------
+    inline constexpr auto patternSlot = "pattern_slot";  // choice: A–H (spec §5)
+    inline constexpr auto quality = "quality";           // choice: Eco | HQ (spec §8)
+
     // ---- Beat Repeat (Phase 4, spec §7; ids = locked v17 ids) ----------------
     inline constexpr auto brMode = "br_mode";             // choice: Auto Manual Off
     inline constexpr auto brHold = "br_hold";             // bool: manual latch (HOLD)
