@@ -2,6 +2,10 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
+
+#include "DSP/TensionEngine.h"
+
 namespace TensionParams
 {
     // Stable parameter IDs (parameter-spec.md, LOCKED). Never rename.
@@ -48,8 +52,23 @@ public:
 
     static const juce::Identifier stateType;
 
+    // Lock-free audio -> UI telemetry (tension, out peak, wet RMS, noise level, LFO phase).
+    const TensionTelemetry& getTelemetry() const noexcept { return engine.getTelemetry(); }
+    TensionEngine& getEngine() noexcept { return engine; }
+
 private:
     juce::AudioProcessorValueTreeState parameters;
+
+    TensionEngine engine;
+
+    // Cached raw parameter pointers (no string lookups on the audio thread).
+    std::atomic<float>* tensionParam  = nullptr;
+    std::atomic<float>* mixParam      = nullptr;
+    std::atomic<float>* outputParam   = nullptr;
+    std::atomic<float>* syncParam     = nullptr;
+    std::atomic<float>* riseModeParam = nullptr;
+
+    HostTransport readHostTransport() const;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 

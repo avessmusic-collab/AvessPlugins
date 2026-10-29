@@ -84,18 +84,57 @@ TENSIONAudioProcessor::TENSIONAudioProcessor()
     , parameters (*this, nullptr, stateType, createParameterLayout())
 {
     parameters.state.setProperty ("schemaVersion", TensionParams::stateSchemaVersion, nullptr);
+
+    tensionParam  = parameters.getRawParameterValue (TensionParams::tension);
+    mixParam      = parameters.getRawParameterValue (TensionParams::mix);
+    outputParam   = parameters.getRawParameterValue (TensionParams::output);
+    syncParam     = parameters.getRawParameterValue (TensionParams::sync);
+    riseModeParam = parameters.getRawParameterValue (TensionParams::riseMode);
 }
 
 TENSIONAudioProcessor::~TENSIONAudioProcessor() = default;
 
 void TENSIONAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // DSP preparation arrives in Stage 3 (Phase 3.x).
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    // Allocation happens here (never in processBlock). Zero latency.
+    engine.prepare (sampleRate, samplesPerBlock, 2);
+    setLatencySamples (0);
 }
 
 void TENSIONAudioProcessor::releaseResources()
 {
+}
+
+HostTransport TENSIONAudioProcessor::readHostTransport() const
+{
+    HostTransport transport;
+
+    // JUCE 8: getPosition() returns Optional<PositionInfo>. The deprecated
+    // getCurrentPosition() is intentionally never used.
+    if (auto* playHead = getPlayHead())
+    {
+        if (const auto position = playHead->getPosition())
+        {
+            if (const auto bpm = position->getBpm())
+            {
+                if (*bpm > 0.0)
+                {
+                    transport.bpm    = *bpm;
+                    transport.hasBpm = true;
+                }
+            }
+
+            if (const auto ppq = position->getPpqPosition())
+            {
+                transport.ppq    = *ppq;
+                transport.hasPpq = true;
+            }
+
+            transport.isPlaying = position->getIsPlaying();
+        }
+    }
+
+    return transport;
 }
 
 bool TENSIONAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -114,10 +153,20 @@ void TENSIONAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     juce::ScopedNoDenormals noDenormals;
     juce::ignoreUnused (midiMessages);
 
-    // Transparent passthrough stub (zero latency). Clear any output channels
-    // without matching input (not reachable with supported layouts, but safe).
+    // Clear any output channels without matching input (not reachable with
+    // supported layouts, but safe).
     for (int ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
+
+    // Atomic parameter reads (real-time safe)
+    EngineParams params;
+    params.tension  = tensionParam->load (std::memory_order_relaxed);
+    params.mix      = mixParam->load (std::memory_order_relaxed);
+    params.outputDb = outputParam->load (std::memory_order_relaxed);
+    params.sync     = syncParam->load (std::memory_order_relaxed) > 0.5f;
+    params.riseMode = juce::roundToInt (riseModeParam->load (std::memory_order_relaxed));
+
+    engine.process (buffer, params, readHostTransport());
 }
 
 juce::AudioProcessorEditor* TENSIONAudioProcessor::createEditor()

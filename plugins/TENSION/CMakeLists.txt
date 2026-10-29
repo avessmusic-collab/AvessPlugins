@@ -28,6 +28,9 @@ juce_add_plugin(TENSION
 set(TENSION_CORE_SOURCES
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    # DSP - Stage 3 Phase 3.1 (engine skeleton + OutputSafety; TensionMapping.h is header-only)
+    Source/DSP/TensionEngine.cpp
+    Source/DSP/OutputSafety.cpp
 )
 
 target_sources(TENSION PRIVATE ${TENSION_CORE_SOURCES})
@@ -70,4 +73,38 @@ target_compile_definitions(TENSION
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+)
+
+# ---------------------------------------------------------------------------
+# Console test runner (not part of the default build; run:
+#   cmake --build build --target TENSION_Tests
+#   ./build/plugins/TENSION/TENSION_Tests )
+# ---------------------------------------------------------------------------
+add_executable(TENSION_Tests EXCLUDE_FROM_ALL
+    Source/Tests/RunTests.cpp
+    ${TENSION_CORE_SOURCES}
+)
+target_compile_features(TENSION_Tests PRIVATE cxx_std_20)
+target_include_directories(TENSION_Tests PRIVATE Source)
+target_link_libraries(TENSION_Tests
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(TENSION_Tests
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
 )
