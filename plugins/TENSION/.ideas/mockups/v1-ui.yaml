@@ -1,0 +1,162 @@
+# TENSION UI mockup v1 - spec section 6 radial pulse design
+meta:
+  plugin: TENSION
+  version: 1
+  note: >
+    Final GUI is NATIVE JUCE (no WebView). This mockup is the locked visual reference
+    for GUI Phases 4.1-4.3, to be reproduced with juce::Graphics. Only natively drawable
+    primitives are used (gradients, arcs, layered-stroke glows, ellipses, lines). No CSS
+    filters or backdrop blur. All coordinates are in a 520x520 pixel space.
+window:
+  width: 520
+  height: 520
+  resizable: false
+controls:
+  - id: tension
+    type: slider            # rotary, 0..100 %, default 0, linear
+    label: "TENSION"
+    position: { x: 165, y: 140 }
+    size: { diameter: 190 }
+    center: { x: 260, y: 235 }
+    range: [0.0, 100.0]
+    default: 0.0
+    readout: "{n}%  (integer, 40px semibold, centered at knob centre y-6)"
+    reset: double-click
+    drag: relative, 0.005 normalised per px vertical (up = increase), shift = 0.1x
+  - id: mix
+    type: slider
+    label: "MIX"
+    position: { x: 40, y: 420 }
+    size: { diameter: 56 }
+    center: { x: 68, y: 448 }
+    range: [0.0, 100.0]
+    default: 100.0
+    readout: "{n}%"
+    reset: double-click
+  - id: output
+    type: slider
+    label: "OUTPUT"
+    position: { x: 424, y: 420 }
+    size: { diameter: 56 }
+    center: { x: 452, y: 448 }
+    range: [-24.0, 12.0]
+    default: 0.0
+    readout: "{+0.0} dB"
+    reset: double-click
+  - id: sync
+    type: toggle
+    label: "SYNC"
+    position: { x: 424, y: 24 }
+    size: { width: 72, height: 26 }
+    default: true
+  - id: riseMode
+    type: combo             # 3-way segmented selector
+    label: "RISE MODE"
+    position: { x: 150, y: 440 }
+    size: { width: 220, height: 30 }
+    choices: ["Slow Burn", "Cinematic", "Aggressive"]
+    default: 1
+styling:
+  colors:
+    background_top: "#0d0b0c"
+    background_bottom: "#050405"
+    vignette: "rgba(0,0,0,0.55) radial from r=180 to r=370 around (260,260)"
+    text_primary: "#ece6e1"
+    text_secondary: "#8a817b"
+    text_dim: "#4f4945"
+    accent_orange: "#ff8a3d"
+    accent_red: "#ff2d2a"
+    track: "#241f1e"
+    knob_face_top: "#2a2625"
+    knob_face_bottom: "#0f0d0d"
+    knob_rim: "#3a3433"
+    hairline: "#2d2827"
+  fonts:
+    primary: "Helvetica Neue / Arial (JUCE default sans)"
+    wordmark: { size: 13, weight: bold, letter_spacing_px: 6, color: text_secondary, position: { x: 28, y: 37 } }
+    label: { size: 10, weight: bold, letter_spacing_px: 2, color: text_secondary }
+    main_readout: { size: 40, weight: bold, color: text_primary }
+    small_readout: { size: 11, weight: normal, color: text_primary }
+  accent_ramp: "color(t) = lerp(accent_orange, accent_red, smoothstep(0.35, 1.0, tension))"
+knob_geometry:
+  sweep: { start_deg: 135, end_deg: 405, note: "0 deg = +x axis, clockwise (screen coords); 270 deg total" }
+  main:
+    track_radius: 88
+    track_stroke: 5
+    value_stroke: 5
+    value_color: accent ramp
+    glow: "2 extra strokes of the value arc: width 11 alpha 0.18*i, width 18 alpha 0.08*i (i = intensity)"
+    face_radius: 74
+    face_fill: "radial gradient centre offset (-0.25r,-0.35r): knob_face_top -> knob_face_bottom"
+    rim: "1.5px knob_rim ring at r=74"
+    indicator: "line from r=44 to r=66, width 3, round cap, colour = accent ramp (white-ish #ece6e1 at tension 0)"
+    tick_ring: "41 ticks at r=96..100, 1px, text_dim; ticks inside value range tinted accent at alpha 0.6"
+    readout_y_offset: 16
+    label_y_offset: 46
+  secondary:
+    track_radius: 25
+    track_stroke: 3
+    face_radius: 20
+    indicator: "line r=9..17 width 2"
+    value_color: "#c9743a (orange at 0.85 brightness, not intensity-driven)"
+    label_y: "centre + 44 (label below knob)"
+    readout_y: "centre + 3, centred inside face, 11px"
+selector:
+  background: "#141111, radius 15, 1px hairline border"
+  segment_width: 73.33
+  active: "pill radius 12, fill rgba(255,138,61,0.16), 1px border accent_orange at alpha 0.7, text text_primary"
+  inactive_text: text_secondary
+  text: "11px bold, letter spacing 1px"
+  caption: "RISE MODE label 10px at y=432, centred x=260"
+sync_toggle:
+  shape: "pill 72x26 radius 13"
+  on: "border accent_orange, fill rgba(255,138,61,0.14), 8px LED dot (accent_orange + glow ring r=7 alpha 0.25) left, text 'SYNC' text_primary"
+  off: "border hairline, LED dot text_dim, text text_dim"
+pulse_field:
+  description: "Radial pulse field behind the knob. Centre (260,235). Pure vector drawing, GUI timer ~60 Hz, independent of audio."
+  intensity_input: "i = tension^gamma, gamma by riseMode (Slow Burn 1.25, Cinematic 1.0, Aggressive 0.75), smoothed with one-pole (0.12 per frame at 60Hz)"
+  transparency_gate: "g = smoothstep(0.0, 0.04, tension): everything below is multiplied by g, so the field is fully invisible at 0%"
+  stages:
+    "0%": transparent, no field
+    "10%": faint slow breathing ticks, a few drifting sparks
+    "60%": atmospheric - full ring of moving spikes, regular outward rings, visible particle haze
+    "100%": intense climax - long fast spikes, dense particles, rapid double rings, red-dominant, halo glow
+  radial_segments:
+    count: 72
+    inner_radius: 104
+    base_length: "2 + 6*i"
+    max_extra_length: "70 * i^1.2 * activity"
+    activity_per_segment: "0.5 + 0.5*sin(phase + k*0.7 + t*rate*2pi) combined with 0.5 + 0.5*sin(k*1.9 - t*rate*1.37*2pi)  -> averaged"
+    rate_hz: "0.15 + 2.6*i"
+    stroke_width: "1.2 + 1.3*i"
+    alpha: "g * (0.10 + 0.75*i) * (0.35 + 0.65*activity)"
+    colour: accent ramp
+    rotation_deg_per_sec: "2 + 22*i"
+  pulse_rings:
+    spawn_rate_hz: "0.2 + 2.8*i"
+    lifetime_sec: "3.2 - 1.9*i (min 1.3)"
+    radius: "from 100 to 215 using easeOutCubic(age/lifetime)"
+    stroke_width: "2.2 - 1.2*age_norm"
+    alpha: "g * (0.08 + 0.4*i) * (1 - age_norm)^1.5"
+    max_alive: 12
+  particles:
+    count_alive_target: "round(g * (6 + 130*i^1.1))"
+    spawn: "angle random, radius 100..110"
+    speed_px_per_sec: "25 + 140*i (random 0.6..1.4x)"
+    lifetime_sec: "1.6 - 0.8*i (random 0.7..1.3x)"
+    size_px: "1 + 1.6*i (random 0.6..1.2x)"
+    alpha: "g * (0.15 + 0.6*i) * (1 - age_norm)"
+    colour: accent ramp
+    drift: "tangential 6 + 30*i px/sec"
+  halo:
+    description: "Radial gradient ellipse centred on knob, r 90 -> 230"
+    inner_alpha: "0.0"
+    mid_alpha: "g * 0.14 * i^1.3  at r=130"
+    outer_alpha: 0
+    colour: accent ramp
+  breathing: "overall radial scale 1 + 0.015*i*sin(t*2pi*(0.5+1.5*i)) applied to segment inner radius"
+interaction:
+  drag: relative (frame delta), vertical, 0.005 normalised/px, shift = 0.1x
+  double_click: reset to default
+  cursor: ns-resize over knobs, pointer over toggle/selector
+test_html_readout: small parameter readout bottom of page (outside the 520x520 plugin area), mock Juce state logging
