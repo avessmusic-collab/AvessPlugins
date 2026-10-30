@@ -176,7 +176,7 @@ void Visualizer::paint (juce::Graphics& g)
             {
                 if (! p.alive) continue;
                 const float an = p.age / p.life;
-                const float alpha = gt * (0.15f + 0.6f * i) * (1.0f - an);
+                const float alpha = gt * (0.15f + 0.6f * i) * (0.8f + 0.4f * state.noise) * (1.0f - an);
                 g.setColour (accent.withAlpha (juce::jlimit (0.0f, 1.0f, alpha)));
                 const float px = cx + std::cos (p.angle) * p.radius;
                 const float py = cy + std::sin (p.angle) * p.radius;

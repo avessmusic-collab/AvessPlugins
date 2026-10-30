@@ -47,7 +47,6 @@ TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor&
     outputKnob.setDoubleClickReturnValue (true, 0.0);
     tensionKnob.setNumDecimalPlacesToDisplay (3);
 
-    tensionKnob.onValueChange = [this] { pushVisualizerState(); };
 
     // Sync pill: bool param, plain value 0/1. The attachment also drives the LED from host changes.
     syncAttach = std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (P::sync),
@@ -68,8 +67,6 @@ TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor&
 
     syncAttach->sendInitialUpdate();
     riseAttach->sendInitialUpdate();
-
-    pushVisualizerState();
 
     setSize (TensionUI::kWidth, TensionUI::kHeight);   // fixed, non-resizable
     setResizable (false, false);
@@ -98,7 +95,6 @@ void TENSIONAudioProcessorEditor::setPreviewState (double tensionPercent, int ri
     tensionKnob.setValue (tensionPercent / 100.0, juce::dontSendNotification);
     riseSelector.setSelectedIndex (riseMode, false);
     applyRiseMode (riseMode, false);
-    pushVisualizerState();
 }
 
 void TENSIONAudioProcessorEditor::applyRiseMode (int mode, bool animate)
@@ -109,10 +105,33 @@ void TENSIONAudioProcessorEditor::applyRiseMode (int mode, bool animate)
         timerCallback();   // refresh controls immediately
 }
 
-void TENSIONAudioProcessorEditor::pushVisualizerState()
+// Reads the engine telemetry (relaxed atomic loads only; no locks, no allocation)
+// and feeds the visualizer. Level ballistics per 60 Hz frame: attack 0.4,
+// decay 0.15 (fast attack / slow decay). tensionSmoothed is already smoothed
+// audio-side; the visualizer adds a light 0.12/frame one-pole on top.
+void TENSIONAudioProcessorEditor::pumpTelemetry()
 {
+    const auto& t = processorRef.getTelemetry();
+    const float tension = t.tensionSmoothed.load (std::memory_order_relaxed);
+    const float peak    = t.outPeak.load (std::memory_order_relaxed);
+    const float wet     = t.wetRms.load (std::memory_order_relaxed);
+    const float noise   = t.noiseLevel.load (std::memory_order_relaxed);
+    const float lfo     = t.lfoPhaseA.load (std::memory_order_relaxed);
+
+    auto norm = [] (float lin, float floorDb)
+    {
+        const float db = juce::Decibels::gainToDecibels (lin, floorDb);
+        return juce::jlimit (0.0f, 1.0f, (db - floorDb) / -floorDb);
+    };
+    const float levelTarget = juce::jmax (norm (peak, -48.0f), norm (wet, -48.0f));
+    levelSm += (levelTarget > levelSm ? 0.4f : 0.15f) * (levelTarget - levelSm);
+    noiseSm += (norm (noise, -60.0f) > noiseSm ? 0.4f : 0.15f) * (norm (noise, -60.0f) - noiseSm);
+
     Visualizer::State s;
-    s.tension = (float) tensionKnob.getValue();
+    s.tension = juce::jlimit (0.0f, 1.0f, std::isfinite (tension) ? tension : 0.0f);
+    s.level   = levelSm;
+    s.noise   = noiseSm;
+    s.phase   = std::isfinite (lfo) ? lfo * juce::MathConstants<float>::twoPi : 0.0f;
     visualizer.setState (s);
 }
 
@@ -122,6 +141,8 @@ void TENSIONAudioProcessorEditor::timerCallback()
     const double now = juce::Time::getMillisecondCounterHiRes();
     const double dt = juce::jlimit (0.0, 100.0, now - lastTimerMs);
     lastTimerMs = now;
+
+    pumpTelemetry();
 
     if (lnf.getTheme().advance (dt))
     {

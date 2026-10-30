@@ -10,12 +10,10 @@
 // hairline. It fills the whole editor (520x520) and is clipped to the 500x500
 // inner window.
 //
-// PHASE 4.1 STATUS: drawing is complete; the data source is a settable State
-// (tension / level / phase) pushed by the editor, and a basic 60 Hz juce::Timer
-// advances the animation so the editor is not frozen. Phase 4.3 replaces the
-// data source with the real lock-free telemetry (TensionTelemetry via
-// processor.getTelemetry()) read on this same timer. The animation itself is
-// UI-owned and independent of audio.
+// PHASE 4.3: the State is fed by the editor's 60 Hz juce::Timer from the
+// engine's lock-free telemetry atomics (relaxed loads, with fast-attack /
+// slow-decay ballistics on the level). This class' own 60 Hz timer advances the
+// UI-owned animation, which is independent of audio.
 class Visualizer : public juce::Component, private juce::Timer
 {
 public:
@@ -23,13 +21,21 @@ public:
     {
         float tension = 0.0f;   // 0..1 (already smoothed upstream in 4.3)
         float level   = 0.0f;   // 0..1 output level (slight halo modulation)
-        float phase   = 0.0f;   // radians, seeds spike phase (LFO phase in 4.3)
+        float phase   = 0.0f;   // radians, seeds spike phase (LFO phase A in 4.3)
+        float noise   = 0.0f;   // 0..1 noise-bed level (drives particle brightness)
     };
 
     explicit Visualizer (const TensionUI::ThemeState& themeState);
     ~Visualizer() override;
 
-    void setState (const State& s) noexcept { state = s; wake(); }
+    void setState (const State& s) noexcept
+    {
+        // Only wake the idle gate on a meaningful change so a silent, 0 % field
+        // never repaints (the editor pushes telemetry every frame).
+        if (std::abs (s.tension - state.tension) > 1.0e-4f || s.tension > 0.0005f)
+            wake();
+        state = s;
+    }
     void setRiseMode (int mode) noexcept { riseMode = mode; wake(); }
 
     void paint (juce::Graphics&) override;

@@ -28,7 +28,7 @@ public:
 
 private:
     void timerCallback() override;
-    void pushVisualizerState();
+    void pumpTelemetry();
     void applyRiseMode (int mode, bool animate);
 
     TENSIONAudioProcessor& processorRef;
@@ -46,6 +46,8 @@ private:
     EnclosureBezel bezel;
 
     double lastTimerMs = 0.0;
+    float levelSm = 0.0f;   // ballistics state (fast attack / slow decay)
+    float noiseSm = 0.0f;
     bool firstRiseUpdate = true;
 
     // Attachments are declared AFTER the controls they drive (destroyed first).

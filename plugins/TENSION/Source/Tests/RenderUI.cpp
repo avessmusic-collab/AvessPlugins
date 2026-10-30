@@ -20,7 +20,28 @@ int main (int argc, char** argv)
     ed->setBounds (0, 0, 520, 520);
     ed->setPreviewState (tension, mode);
 
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (animMs);
+    // The visualizer reads engine telemetry, so pump real audio (pink-ish noise)
+    // through the processor in ~real time while the dispatch loop animates.
+    proc.setPlayConfigDetails (2, 2, 48000.0, 512);
+    proc.prepareToPlay (48000.0, 512);
+    {
+        juce::Random rng (1234);
+        juce::AudioBuffer<float> buf (2, 512);
+        juce::MidiBuffer midi;
+        float lp = 0.0f;
+        const juce::int64 endMs = juce::Time::currentTimeMillis() + animMs;
+        while (juce::Time::currentTimeMillis() < endMs)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                lp += 0.2f * (rng.nextFloat() * 2.0f - 1.0f - lp);
+                buf.setSample (0, n, lp * 1.2f);
+                buf.setSample (1, n, lp * 1.2f);
+            }
+            proc.processBlock (buf, midi);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);   // ~48k real time
+        }
+    }
 
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 2.0f);
     juce::File f (juce::File::getCurrentWorkingDirectory().getChildFile (out));
