@@ -40,6 +40,11 @@ set(TENSION_CORE_SOURCES
     Source/DSP/NoiseGenerator.cpp
     Source/DSP/ReverbEngine.cpp
     Source/DSP/DelayEngine.cpp
+    # GUI - Stage 4 Phase 4.1 (native JUCE; juce_gui_basics/graphics only, already linked by the test targets)
+    Source/UI/CustomLookAndFeel.cpp
+    Source/UI/TensionKnob.cpp
+    Source/UI/Visualizer.cpp
+    Source/UI/ControlWidgets.cpp
 )
 
 target_sources(TENSION PRIVATE ${TENSION_CORE_SOURCES})
@@ -151,4 +156,39 @@ target_compile_definitions(TENSION_Profiles
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
+)
+
+# ---------------------------------------------------------------------------
+# Offscreen editor snapshot (dev tool for GUI review; not part of the default build):
+#   cmake --build build --target TENSION_UISnapshot
+#   ./build/plugins/TENSION/TENSION_UISnapshot out.png [tension%] [riseMode] [animSeconds]
+# ---------------------------------------------------------------------------
+add_executable(TENSION_UISnapshot EXCLUDE_FROM_ALL
+    Source/Tests/RenderUI.cpp
+    ${TENSION_CORE_SOURCES}
+)
+target_compile_features(TENSION_UISnapshot PRIVATE cxx_std_20)
+target_include_directories(TENSION_UISnapshot PRIVATE Source)
+target_link_libraries(TENSION_UISnapshot
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(TENSION_UISnapshot
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_MODAL_LOOPS_PERMITTED=1
 )
