@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 // TensionMapping - converts (tension t in [0,1], RiseMode) into a flat struct of
 // destination targets. Pure functions, no JUCE dependency, unit-testable without audio.
@@ -60,6 +61,28 @@ namespace TensionDSP
         float satAmount         = 0.0f;     // SaturationEngine parallel amount 0 -> 0.85
         float widthFactor       = 1.0f;     // StereoWidth highs width    1 -> 2.1
         float lowSideCollapse   = 0.0f;     // StereoWidth k (S_low *= 1 - 0.8k)  0 -> 1
+
+        // ---- PHASE 3.3 TEMPORARY LINEAR STUB destinations (Cinematic end values; real curves in 3.4) ----
+        // Noise level is the one non-linear stub: gate S(0.04,0.28,t) * dB-linear(-66 -> -16 dBFS),
+        // so it is EXACTLY 0 at t = 0 and emerges near 25% as the spec requires.
+        float noiseGain         = 0.0f;     // linear (RMS-ish), exactly 0 at t = 0
+        float noiseBrightness   = 0.0f;     // pink -> white            0 -> 1
+        float noiseHpfHz        = 80.0f;    // noise HPF                80 -> 2500 Hz
+        float noiseTopHz        = 2500.0f;  // noise LPF / BP centre  2500 -> 16000 Hz
+        float noiseFilteredAmt  = 0.0f;     // resonant BP colour        0 -> 0.30
+        float reverbSend        = 0.0f;     // reverb send gain          0 -> 1 (full by t = 0.1)
+        float reverbReturn      = 0.0f;     // reverb return (linear)    0 -> -9 dB, exactly 0 at t = 0
+        float reverbRoom        = 0.35f;    //                         0.35 -> 0.92
+        float reverbDamping     = 0.7f;     //                          0.7 -> 0.3
+        float reverbWidth       = 0.6f;     //                          0.6 -> 1.0
+        float reverbPreDelayMs  = 0.0f;     //                            0 -> 38 ms
+        float reverbReturnLpfHz = 14000.0f; //                        14000 -> 7000 Hz
+        float reverbSendHpfHz   = 120.0f;   //                          120 -> 220 Hz
+        float delaySend         = 0.0f;     // delay send gain           0 -> 1 (full by t = 0.1)
+        float delayReturn       = 0.0f;     // delay return (linear)     0 -> -8 dB, exactly 0 at t = 0
+        float delayFeedback     = 0.0f;     //                           0 -> 0.62 (engine caps at 0.85)
+        float delayFbLpfHz      = 9000.0f;  //                        9000 -> 3200 Hz
+        float delayLfoDepthMs   = 0.0f;     // lfoB time wobble          0 -> 0.9 ms
     };
 
     namespace stub
@@ -91,6 +114,31 @@ namespace TensionDSP
         out.satAmount         = stub::lerp (0.0f,    0.85f,   tc);
         out.widthFactor       = stub::lerp (1.0f,    2.1f,    tc);
         out.lowSideCollapse   = tc;
+
+        // PHASE 3.3 STUB (linear, except the noise onset gate / dB-linear level).
+        const float noiseGate = curves::smooth (0.04f, 0.28f, tc);
+        const float noiseDb   = stub::lerp (-66.0f, -16.0f, tc);
+        out.noiseGain         = noiseGate > 0.0f ? noiseGate * std::pow (10.0f, noiseDb / 20.0f) : 0.0f;
+        out.noiseBrightness   = tc;
+        out.noiseHpfHz        = stub::lerp (80.0f,    2500.0f,  tc);
+        out.noiseTopHz        = stub::lerp (2500.0f,  16000.0f, tc);
+        out.noiseFilteredAmt  = stub::lerp (0.0f,     0.30f,    tc);
+
+        const float sendRamp  = std::min (1.0f, tc / 0.1f);
+        out.reverbSend        = sendRamp;
+        out.reverbReturn      = tc * std::pow (10.0f, -9.0f / 20.0f);
+        out.reverbRoom        = stub::lerp (0.35f,    0.92f,    tc);
+        out.reverbDamping     = stub::lerp (0.7f,     0.3f,     tc);
+        out.reverbWidth       = stub::lerp (0.6f,     1.0f,     tc);
+        out.reverbPreDelayMs  = stub::lerp (0.0f,     38.0f,    tc);
+        out.reverbReturnLpfHz = stub::lerp (14000.0f, 7000.0f,  tc);
+        out.reverbSendHpfHz   = stub::lerp (120.0f,   220.0f,   tc);
+
+        out.delaySend         = sendRamp;
+        out.delayReturn       = tc * std::pow (10.0f, -8.0f / 20.0f);
+        out.delayFeedback     = stub::lerp (0.0f,     0.62f,    tc);
+        out.delayFbLpfHz      = stub::lerp (9000.0f,  3200.0f,  tc);
+        out.delayLfoDepthMs   = stub::lerp (0.0f,     0.9f,     tc);
         return out;
     }
 }

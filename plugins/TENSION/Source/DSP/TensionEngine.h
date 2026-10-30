@@ -5,9 +5,12 @@
 #include <array>
 #include <atomic>
 
+#include "DelayEngine.h"
 #include "FilterEngine.h"
 #include "LFOEngine.h"
+#include "NoiseGenerator.h"
 #include "OutputSafety.h"
+#include "ReverbEngine.h"
 #include "SaturationEngine.h"
 #include "StereoWidth.h"
 #include "TensionMapping.h"
@@ -47,8 +50,13 @@ struct TensionTelemetry
 // Phase 3.2: the series chain is now real (driven by the TEMPORARY LINEAR stub mapping):
 //   input trim -> FilterEngine (HP + BP sweep, lfoA cutoff) -> tremolo (lfoA)
 //   -> SaturationEngine (ADAA tanh) -> StereoWidth (LR4 + M/S, lfoB)  = proc
-// all driven from controlTick() on the absolute 32-sample grid. Noise / delay / reverb returns are
-// still zero (Phase 3.3).
+// all driven from controlTick() on the absolute 32-sample grid.
+//
+// Phase 3.3: NoiseGenerator (parallel add), DelayEngine and ReverbEngine (parallel sends from proc,
+// asymmetric return smoothing) are summed into the wet bus:
+//   wet = dry*(1-e) + proc*e + noise + delayReturn + reverbReturn
+// All three are skipped while the engine is at rest (RNG still advances); isAtRest() now also
+// requires the noise to be silent and the delay / reverb tail trackers to be below -120 dBFS.
 //
 // Phase 3.1 (unchanged): control-rate sub-blocking (<= 32 samples,
 // aligned to an absolute sample counter so output is block-size invariant), the
@@ -102,7 +110,11 @@ private:
     void controlTick();
     void runSeriesChain (int pos, int count) noexcept;
     void resetSeriesModules() noexcept;
+    void resetSendModules() noexcept;
     void resetFeedbackModules() noexcept;
+    void runWetSources (int pos, int count) noexcept;
+    void zeroWetSources() noexcept;
+    bool sendsEnabled() const noexcept { return stubProcGain == 1.0f && seriesChainEnabled; }
 
     using Smoother = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>;
 
@@ -130,6 +142,14 @@ private:
     Smoother         ampDepthSm;               // 50 ms
     Smoother         inputTrimSm;              // 50 ms (linear gain)
     std::array<float, controlBlockSize> lfoBBuf {};
+    std::array<float, controlBlockSize> lfoABuf {};
+
+    // Phase 3.3 wet-bus sources
+    NoiseGenerator noise;
+    ReverbEngine   reverb;
+    DelayEngine    delay;
+    std::array<float, controlBlockSize> nzL {}, nzR {}, dlL {}, dlR {}, rvL {}, rvR {};
+    bool sendsCleared = true;      // delay / reverb / noise filters already reset during the current rest period
 
     TensionDSP::RiseMode riseMode = TensionDSP::RiseMode::Cinematic;
     HostTransport        transport;

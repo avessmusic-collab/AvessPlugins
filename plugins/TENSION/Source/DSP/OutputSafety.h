@@ -65,6 +65,9 @@ public:
     // True once per scrub event batch; the engine resets feedback modules at the next block boundary.
     bool consumeResetRequest() noexcept        { return resetRequested.exchange (false, std::memory_order_relaxed); }
 
+    // Raised by modules whose own loop guard tripped (Phase 3.3: DelayEngine / ReverbEngine).
+    void requestReset() noexcept               { resetRequested.store (true, std::memory_order_relaxed); }
+
     int  getNonFiniteCount() const noexcept    { return nonFiniteCount.load (std::memory_order_relaxed); }
 
 private:

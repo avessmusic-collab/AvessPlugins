@@ -75,6 +75,12 @@ void TensionEngine::prepare (double newSampleRate, int maxBlockSize, int /*numCh
     saturation.prepare (sampleRate);
     stereoWidth.prepare (sampleRate);
 
+    // ---- Phase 3.3 wet-bus sources ----
+    noise.setSeed (0x5EED7E57u);
+    noise.prepare (sampleRate);
+    reverb.prepare (sampleRate);
+    delay.prepare (sampleRate);
+
     ampDepthSm.reset   (sampleRate, kModSmoothSec);
     inputTrimSm.reset  (sampleRate, kModSmoothSec);
 
@@ -102,8 +108,15 @@ void TensionEngine::reset()
     ampDepthSm.setCurrentAndTargetValue  (0.0f);
     inputTrimSm.setCurrentAndTargetValue (1.0f);
     lfoBBuf.fill (0.0f);
+    lfoABuf.fill (0.0f);
+    zeroWetSources();
 
-    firstBlock    = true;   // next block snaps smoothers to the incoming parameters
+    noise.reset();            // restores the seeds: bit-identical noise after every reset
+    reverb.reset();
+    delay.reset();
+    sendsCleared = true;
+
+    firstBlock    = true;  // next block snaps smoothers to the incoming parameters
     snapModules   = true;
     seriesCleared = false;
     prevPlaying   = false;
@@ -118,10 +131,25 @@ void TensionEngine::resetSeriesModules() noexcept
     stereoWidth.reset();
 }
 
+void TensionEngine::resetSendModules() noexcept
+{
+    // Preallocated memory is cleared in place; no allocation.
+    delay.reset();
+    reverb.reset();
+    noise.resetFilters();      // the RNG is NOT touched (history independence)
+}
+
+void TensionEngine::zeroWetSources() noexcept
+{
+    nzL.fill (0.0f); nzR.fill (0.0f);
+    dlL.fill (0.0f); dlR.fill (0.0f);
+    rvL.fill (0.0f); rvR.fill (0.0f);
+}
+
 bool TensionEngine::isAtRest() const noexcept
 {
-    // Phase 3.3 adds: && tail energy trackers < -120 dBFS
-    const bool tailsQuiet = true;
+    // Tail energy trackers: noise silent (exact 0 gain), delay writes and reverb in/out below -120 dBFS.
+    const bool tailsQuiet = noise.isSilent() && delay.isQuiet() && reverb.isQuiet();
 
     return tailsQuiet
         && tensionSm.getCurrentValue() == 0.0f && tensionSm.getTargetValue() == 0.0f && ! tensionSm.isSmoothing()
@@ -131,10 +159,13 @@ bool TensionEngine::isAtRest() const noexcept
 
 void TensionEngine::resetFeedbackModules() noexcept
 {
-    // Phase 3.2: series-module states (filter / saturator / crossover) are cleared so a poisoned IIR
-    // state can never persist. Phase 3.3+ adds delay lines and reverb (preallocated, no allocation).
+    // Series-module states (filter / saturator / crossover) plus the delay lines, the reverb and their
+    // filters are cleared so a poisoned IIR / feedback state can never persist (preallocated memory,
+    // no allocation). The noise RNG is left alone (only its filters are cleared).
     resetSeriesModules();
+    resetSendModules();
     seriesCleared = false;
+    sendsCleared  = false;
     snapModules   = true;     // module smoothers re-snap to their targets at the next control tick
     feedbackResetCount.fetch_add (1, std::memory_order_relaxed);
 }
@@ -215,7 +246,7 @@ void TensionEngine::process (juce::AudioBuffer<float>& buffer, const EngineParam
     telemetry.tensionSmoothed.store (tensionSm.getCurrentValue(), std::memory_order_relaxed);
     telemetry.outPeak.store         (peakHold,                    std::memory_order_relaxed);
     telemetry.wetRms.store          (wetRms,                      std::memory_order_relaxed);
-    telemetry.noiseLevel.store      (0.0f,                        std::memory_order_relaxed); // Phase 3.3
+    telemetry.noiseLevel.store      (noise.getLevel(),            std::memory_order_relaxed);
     telemetry.lfoPhaseA.store       (lfoA.getPhase(),             std::memory_order_relaxed);
 }
 
@@ -278,6 +309,73 @@ void TensionEngine::controlTick()
         ampDepthSm.setTargetValue  (targets.lfoAmpDepth);
         inputTrimSm.setTargetValue (targets.inputTrim);
     }
+
+    // ---- Phase 3.3 wet-bus sources: noise (parallel add), delay + reverb (sends from proc) ----
+    if (sendsEnabled())
+    {
+        // Runaway guard: halves the delay feedback and the reverb send (smoothed inside OutputSafety).
+        const float fbClamp = safety.getFeedbackClamp();
+
+        NoiseGenerator::Targets nt;
+        nt.gain        = targets.noiseGain;
+        nt.brightness  = targets.noiseBrightness;
+        nt.hpfHz       = targets.noiseHpfHz;
+        nt.topHz       = targets.noiseTopHz;
+        nt.filteredAmt = targets.noiseFilteredAmt;
+        nt.tremDepth   = targets.lfoAmpDepth;
+        noise.setTargets (nt, snap, controlBlockSize);
+
+        ReverbEngine::Targets rt;
+        rt.sendGain    = targets.reverbSend * fbClamp;
+        rt.returnGain  = targets.reverbReturn;
+        rt.roomSize    = targets.reverbRoom;
+        rt.damping     = targets.reverbDamping;
+        rt.width       = targets.reverbWidth;
+        rt.preDelayMs  = targets.reverbPreDelayMs;
+        rt.returnLpfHz = targets.reverbReturnLpfHz;
+        rt.sendHpfHz   = targets.reverbSendHpfHz;
+        reverb.setTargets (rt, snap, controlBlockSize);
+
+        DelayEngine::Targets dt;
+        dt.sendGain    = targets.delaySend;
+        dt.returnGain  = targets.delayReturn;
+        dt.feedback    = targets.delayFeedback * fbClamp;
+        dt.fbLpfHz     = targets.delayFbLpfHz;
+        dt.delayMs     = (float) DelayEngine::computeDelayMs (syncEnabled, bpm, (int) riseMode);
+        dt.lfoDepthMs  = targets.delayLfoDepthMs;
+        delay.setTargets (dt, snap, controlBlockSize);
+    }
+    else
+    {
+        // Phase 3.1 / 3.2 test hooks: the three sources stay neutral (all gains exactly 0).
+        noise.setTargets  (NoiseGenerator::Targets {}, true, controlBlockSize);
+        reverb.setTargets (ReverbEngine::Targets {},   true, controlBlockSize);
+        delay.setTargets  (DelayEngine::Targets {},    true, controlBlockSize);
+    }
+}
+
+void TensionEngine::runWetSources (int pos, int count) noexcept
+{
+    if (! sendsEnabled())
+    {
+        zeroWetSources();
+        return;
+    }
+
+    const float* inL = procBuf.getReadPointer (0) + pos;
+    const float* inR = procBuf.getReadPointer (1) + pos;
+
+    noise.process  (nzL.data(), nzR.data(), count, lfoABuf.data());
+    delay.process  (inL, inR, dlL.data(), dlR.data(), count, lfoBBuf.data());
+    reverb.process (inL, inR, rvL.data(), rvR.data(), count);
+
+    // A tripped loop guard (non-finite in a feedback path) is forwarded to OutputSafety, which
+    // resets the feedback modules at the next block boundary.
+    const bool delayFailed  = delay.consumeFailure();
+    const bool reverbFailed = reverb.consumeFailure();
+
+    if (delayFailed || reverbFailed)
+        safety.requestReset();
 }
 
 void TensionEngine::runSeriesChain (int pos, int count) noexcept
@@ -299,8 +397,11 @@ void TensionEngine::runSeriesChain (int pos, int count) noexcept
             juce::FloatVectorOperations::multiply (pR, stubProcGain, count);
         }
 
-        lfoA.advance (count);
-        lfoB.advance (count);
+        for (int i = 0; i < count; ++i)       // same LFO advance as before, values recorded
+        {
+            lfoABuf[(size_t) i] = lfoA.next();
+            lfoBBuf[(size_t) i] = lfoB.next();
+        }
         return;
     }
 
@@ -330,6 +431,7 @@ void TensionEngine::runSeriesChain (int pos, int count) noexcept
     for (int i = 0; i < count; ++i)
     {
         const float la    = lfoA.next();
+        lfoABuf[(size_t) i] = la;
         lfoBBuf[(size_t) i] = lfoB.next();
 
         const float depth = ampDepthSm.getNextValue();
@@ -378,17 +480,28 @@ void TensionEngine::processSegment (float* out0, float* out1, int n)
                 seriesCleared = true;
             }
 
+            if (! sendsCleared)
+            {
+                resetSendModules();
+                sendsCleared = true;
+            }
+
             lfoA.advance (chunk);       // LFO phase keeps running (keeps beat alignment in sync mode)
             lfoB.advance (chunk);
+            noise.skip (chunk);         // RNG advances every sample (automation-history independence)
+            zeroWetSources();
         }
         else
         {
             seriesCleared = false;
+            sendsCleared  = false;
             runSeriesChain (pos, chunk);
+            runWetSources (pos, chunk);
         }
 
         for (int i = pos; i < pos + chunk; ++i)
         {
+            const int k = i - pos;
             const float e   = engageSm.getNextValue();
             const float s   = safetySm.getNextValue();
             const float mix = mixSm.getNextValue();
@@ -397,9 +510,16 @@ void TensionEngine::processSegment (float* out0, float* out1, int n)
             const float dl = dL[i];
             const float dr = dR[i];
 
-            // wet bus (noise / delay / reverb returns are zero in Phase 3.1)
-            const float wl = wetBus (dl, pL[i], e);
-            const float wr = wetBus (dr, pR[i], e);
+            // wet bus: dry*(1-e) + proc*e + noise + delayReturn + reverbReturn.
+            // The additive sources are skipped when their sum is exactly 0 so that t = 0 stays
+            // bit-exact (dry + 0.0f would turn a -0.0 sample into +0.0).
+            float wl = wetBus (dl, pL[i], e);
+            float wr = wetBus (dr, pR[i], e);
+
+            const float xl = nzL[(size_t) k] + dlL[(size_t) k] + rvL[(size_t) k];
+            const float xr = nzR[(size_t) k] + dlR[(size_t) k] + rvR[(size_t) k];
+            if (xl != 0.0f) wl += xl;
+            if (xr != 0.0f) wr += xr;
             wL[i] = wl;
             wR[i] = wr;
 

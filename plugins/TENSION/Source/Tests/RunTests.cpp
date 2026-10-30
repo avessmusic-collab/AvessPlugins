@@ -20,6 +20,17 @@
       T11 real chain in-circuit (block invariance, NaN/Inf, bounded output, telemetry, transport)
     Regression: T1..T6 run unchanged against the real modules (T2 safety-clamp and T6 telemetry use
     the series-chain bypass hook to keep their Phase 3.1 identity-proc assumption).
+
+    Phase 3.3 (parallel sends and noise, driven by the linear stub mapping):
+      T12 NoiseGenerator (xorshift anchors, golden hash, determinism, exact silence at t = 0,
+          RMS monotone, spectral centroid rises, engine-level silent-input ramp)
+      T13 ReverbEngine (tail rings out ungated, RT60 scales with roomSize, finite after random sweeps)
+      T14 DelayEngine (time table, ping-pong alternation, feedback cap, 60 s soak, tempo jump, NaN guard)
+      T15 tails regression (loud burst at t = 1, then t -> 0: bit-exact passthrough again once tails decay)
+      T16 NaN injection with sends active (feedback reset via the OutputSafety flag path, recovery)
+    Note: with the real sources in the chain the T1 "settled back at t = 0" check waits for the tails
+    (10 s after the excursion) instead of 0.2 s; the Phase 3.1 bus-algebra tests keep using the stub /
+    bypass hooks, which also switch the three Phase 3.3 sources off.
 */
 #include "PluginProcessor.h"
 #include "DSP/TensionEngine.h"
@@ -29,6 +40,9 @@
 #include "DSP/FilterEngine.h"
 #include "DSP/SaturationEngine.h"
 #include "DSP/StereoWidth.h"
+#include "DSP/NoiseGenerator.h"
+#include "DSP/ReverbEngine.h"
+#include "DSP/DelayEngine.h"
 
 #include <juce_dsp/juce_dsp.h>
 
@@ -356,13 +370,15 @@ namespace
         {
             TensionEngine eng;
             eng.prepare (48000.0, 512, 2);
-            const int n = 48000;
+            // Phase 3.3: delay / reverb tails now ring after t -> 0, so the exact-passthrough point is
+            // "after the tails decayed below -120 dBFS" (the architecture's transparency criterion).
+            const int n = 48000 * 14;
             const Signal in = makeNoise (n, 2, 99u + (std::uint32_t) mode, 1.2f, true);
             Signal out;
             const int switchPos = 28 * 512;   // 14336
             render (eng, in, out, 512, [&] (int pos) { return makeParams (pos < switchPos ? 0.8f : 0.0f, 1.0f, 0.0f, true, mode); });
 
-            const bool exact = bitEqual (in, out, switchPos + 9600, n);
+            const bool exact = bitEqual (in, out, switchPos + 48000 * 10, n);
             const bool fin   = allFinite (out);
             char name[96];
             std::snprintf (name, sizeof name, "settled back at t = 0 -> bit-exact again (mode %d)", mode);
@@ -1533,6 +1549,673 @@ namespace
             check (ok && ph >= 0.0f && ph < 1.0f, "playing transport with host BPM/ppq: finite, lfoPhaseA in [0,1)");
         }
     }
+
+    // =======================================================================
+    // Phase 3.3 helpers
+    // =======================================================================
+    std::uint64_t fnv1a (const float* data, size_t count, std::uint64_t h = 1469598103934665603ull)
+    {
+        for (size_t i = 0; i < count; ++i)
+        {
+            std::uint32_t bits = 0;
+            std::memcpy (&bits, &data[i], sizeof bits);
+
+            for (int b = 0; b < 4; ++b)
+            {
+                h ^= (std::uint64_t) ((bits >> (8 * b)) & 0xFFu);
+                h *= 1099511628211ull;
+            }
+        }
+        return h;
+    }
+
+    NoiseGenerator::Targets noiseTargetsAt (float t)
+    {
+        const auto tg = TensionDSP::evaluateTensionMapping (t, TensionDSP::RiseMode::Cinematic);
+        NoiseGenerator::Targets nt;
+        nt.gain        = tg.noiseGain;
+        nt.brightness  = tg.noiseBrightness;
+        nt.hpfHz       = tg.noiseHpfHz;
+        nt.topHz       = tg.noiseTopHz;
+        nt.filteredAmt = tg.noiseFilteredAmt;
+        nt.tremDepth   = 0.0f;
+        return nt;
+    }
+
+    // n must be a multiple of 32. lfo == 1 (no tremolo).
+    void renderNoise (float t, int n, std::vector<float>& l, std::vector<float>& r, std::uint32_t seed = 0x5EED1234u)
+    {
+        NoiseGenerator ng;
+        ng.prepare (48000.0);
+        ng.setSeed (seed);
+        ng.reset();
+
+        const auto nt = noiseTargetsAt (t);
+        const std::vector<float> ones (32, 1.0f);
+        l.assign ((size_t) n, 0.0f);
+        r.assign ((size_t) n, 0.0f);
+
+        for (int pos = 0; pos < n; pos += 32)
+        {
+            ng.setTargets (nt, pos == 0, 32);
+            ng.process (l.data() + pos, r.data() + pos, 32, ones.data());
+        }
+    }
+
+    double spectralCentroidHz (const std::vector<float>& x, double fs)
+    {
+        constexpr int order = 14;
+        constexpr int N = 1 << order;
+        std::vector<float> data ((size_t) (2 * N), 0.0f);
+
+        for (int i = 0; i < N; ++i)
+        {
+            const float w = 0.5f - 0.5f * (float) std::cos (2.0 * kPi * (double) i / (double) N);
+            data[(size_t) i] = x[(size_t) i] * w;
+        }
+
+        juce::dsp::FFT fft (order);
+        fft.performRealOnlyForwardTransform (data.data(), true);
+
+        double num = 0.0, den = 0.0;
+        for (int k = 1; k <= N / 2; ++k)
+        {
+            const double re = data[(size_t) (2 * k)], im = data[(size_t) (2 * k + 1)];
+            const double mag = std::sqrt (re * re + im * im);
+            num += mag * ((double) k * fs / (double) N);
+            den += mag;
+        }
+        return num / std::max (den, 1.0e-30);
+    }
+
+    float u01 (Rng& r) { return 0.5f * (r.next() + 1.0f); }
+
+    // =======================================================================
+    // T12 - NoiseGenerator
+    // =======================================================================
+    void testNoise()
+    {
+        std::printf ("\n[T12] NoiseGenerator\n");
+        const double fs = 48000.0;
+
+        // ---- stub mapping (Phase 3.3 destinations) ----
+        {
+            using namespace TensionDSP;
+            const auto z = evaluateTensionMapping (0.0f, RiseMode::Cinematic);
+            check (z.noiseGain == 0.0f && z.reverbReturn == 0.0f && z.delayReturn == 0.0f && z.reverbSend == 0.0f
+                   && z.delaySend == 0.0f && z.delayFeedback == 0.0f, "stub mapping 3.3: noise / returns / sends / feedback exactly 0 at t = 0");
+
+            bool mono = true;
+            float prevN = 0.0f, prevR = 0.0f, prevD = 0.0f;
+            bool capOk = true;
+            for (int i = 0; i <= 1000; ++i)
+            {
+                const auto c = evaluateTensionMapping ((float) i / 1000.0f, RiseMode::Aggressive);
+                if (c.noiseGain < prevN || c.reverbReturn < prevR || c.delayReturn < prevD) mono = false;
+                if (c.delayFeedback > DelayEngine::kHardFeedbackCap) capOk = false;
+                prevN = c.noiseGain; prevR = c.reverbReturn; prevD = c.delayReturn;
+            }
+            check (mono && capOk, "stub mapping 3.3: noise gain / returns monotone in t, feedback below the 0.85 cap");
+
+            const auto lowT = evaluateTensionMapping (0.04f, RiseMode::Cinematic);
+            const auto mid  = evaluateTensionMapping (0.25f, RiseMode::Cinematic);
+            check (lowT.noiseGain == 0.0f && mid.noiseGain > 0.0f, "stub mapping 3.3: noise gate opens above 4% and has emerged by 25%");
+        }
+
+        // ---- xorshift32 anchors (Marsaglia: seed 1 -> 270369, 67634689) ----
+        {
+            std::uint32_t s = 1u;
+            const std::uint32_t a = NoiseGenerator::xorshift32 (s);
+            const std::uint32_t b = NoiseGenerator::xorshift32 (s);
+            check (a == 270369u && b == 67634689u, "xorshift32: seed 1 gives 270369, 67634689");
+        }
+
+        // ---- golden hash of the first 4096 raw samples (fixed seed) vs an independent reference ----
+        const std::uint32_t seed = 0xC0DE1234u;
+        {
+            std::vector<float> gl (4096), gr (4096), rl (4096), rr (4096);
+            {
+                NoiseGenerator g;
+                g.prepare (fs);
+                g.setSeed (seed);
+                g.reset();
+                g.renderRawWhiteForTesting (gl.data(), gr.data(), 4096);
+            }
+            {
+                std::uint32_t a = seed, b = seed ^ 0x9E3779B9u;
+                for (size_t i = 0; i < 4096; ++i)
+                {
+                    a ^= a << 13; a ^= a >> 17; a ^= a << 5;
+                    b ^= b << 13; b ^= b >> 17; b ^= b << 5;
+                    rl[i] = (float) (a >> 8) / 8388608.0f - 1.0f;
+                    rr[i] = (float) (b >> 8) / 8388608.0f - 1.0f;
+                }
+            }
+            const std::uint64_t hGen = fnv1a (gr.data(), 4096, fnv1a (gl.data(), 4096));
+            const std::uint64_t hRef = fnv1a (rr.data(), 4096, fnv1a (rl.data(), 4096));
+            std::printf ("  (golden hash, seed 0x%08X, 4096 samples/ch: %016llx)\n", (unsigned) seed, (unsigned long long) hGen);
+            check (hGen == hRef, "golden hash: first 4096 samples per channel match the independent xorshift32 reference");
+
+            float mn = 1.0f, mx = -1.0f;
+            double dot = 0.0, el = 0.0, er = 0.0;
+            for (size_t i = 0; i < 4096; ++i)
+            {
+                mn = std::min (mn, std::min (gl[i], gr[i]));
+                mx = std::max (mx, std::max (gl[i], gr[i]));
+                dot += (double) gl[i] * gr[i]; el += (double) gl[i] * gl[i]; er += (double) gr[i] * gr[i];
+            }
+            check (mn >= -1.0f && mx < 1.0f, "white: uniform range [-1, 1)");
+            check (std::abs (dot / std::sqrt (el * er)) < 0.05, "L / R streams are decorrelated (seedR = S ^ 0x9E3779B9)");
+        }
+
+        // ---- determinism: setSeed + reset restore a bit-identical stream (raw and processed) ----
+        {
+            NoiseGenerator g;
+            g.prepare (fs);
+            g.setSeed (seed);
+            g.reset();
+            std::vector<float> a (4096), ar (4096), b (4096), br (4096), junk (5000), junkR (5000);
+            g.renderRawWhiteForTesting (a.data(), ar.data(), 4096);
+            g.renderRawWhiteForTesting (junk.data(), junkR.data(), 5000);
+            g.setSeed (seed);
+            g.reset();
+            g.renderRawWhiteForTesting (b.data(), br.data(), 4096);
+            check (std::memcmp (a.data(), b.data(), 4096 * sizeof (float)) == 0 && std::memcmp (ar.data(), br.data(), 4096 * sizeof (float)) == 0,
+                   "setSeed + reset() reproduces the raw stream bit-identically");
+
+            std::vector<float> p1l, p1r, p2l, p2r, p3l, p3r;
+            renderNoise (0.7f, 4096, p1l, p1r, seed);
+            renderNoise (0.7f, 4096, p2l, p2r, seed);
+            renderNoise (0.7f, 4096, p3l, p3r, seed + 1u);
+            check (std::memcmp (p1l.data(), p2l.data(), 4096 * sizeof (float)) == 0 && std::memcmp (p1r.data(), p2r.data(), 4096 * sizeof (float)) == 0,
+                   "processed noise is bit-identical for the same seed");
+            check (std::memcmp (p1l.data(), p3l.data(), 4096 * sizeof (float)) != 0, "a different seed gives different noise");
+        }
+
+        // ---- RNG advances at gain 0: output after a gain-0 history equals the always-on output ----
+        {
+            NoiseGenerator A, B;
+            for (auto* g : { &A, &B }) { g->prepare (fs); g->setSeed (seed); g->reset(); }
+
+            auto nt = noiseTargetsAt (0.7f);
+            auto nt0 = nt;
+            nt0.gain = 0.0f;
+            const std::vector<float> ones (32, 1.0f);
+            std::vector<float> al (32), ar (32), bl (32), br (32);
+            bool same = true;
+
+            for (int c = 0; c < 64; ++c)
+            {
+                A.setTargets (c < 30 ? nt0 : nt, c <= 30, 32);
+                B.setTargets (nt, c == 0, 32);
+                A.process (al.data(), ar.data(), 32, ones.data());
+                B.process (bl.data(), br.data(), 32, ones.data());
+
+                if (c >= 30 && (std::memcmp (al.data(), bl.data(), 32 * sizeof (float)) != 0 || std::memcmp (ar.data(), br.data(), 32 * sizeof (float)) != 0))
+                    same = false;
+            }
+            check (same, "RNG advances at gain 0: noise after a silent history is bit-identical to the always-on stream");
+        }
+
+        // ---- exact silence at t = 0; RMS monotone; centroid rises ----
+        {
+            std::vector<float> l, r;
+            renderNoise (0.0f, 48000, l, r);
+            bool zero = true;
+            for (size_t i = 0; i < l.size(); ++i) if (l[i] != 0.0f || r[i] != 0.0f) zero = false;
+            check (zero, "t = 0: noise output is EXACTLY zero for 1 s");
+
+            double prev = 0.0;
+            bool mono = true;
+            std::printf ("  (noise RMS by tension:");
+            for (int k = 1; k <= 10; ++k)
+            {
+                renderNoise ((float) k / 10.0f, 32768, l, r);
+                const double rms = rmsOf (l, 16384, 32768);
+                std::printf (" %.1f:%.2e", (double) k / 10.0, rms);
+                if (rms <= prev) mono = false;
+                prev = rms;
+            }
+            std::printf (")\n");
+            check (mono && prev > 0.1, "noise RMS strictly monotone in tension (0.1 .. 1.0), loud at t = 1");
+
+            std::vector<float> l3, r3, l6, r6, l10, r10;
+            renderNoise (0.3f, 16384, l3, r3);
+            renderNoise (0.6f, 16384, l6, r6);
+            renderNoise (1.0f, 16384, l10, r10);
+            const double c3 = spectralCentroidHz (l3, fs), c6 = spectralCentroidHz (l6, fs), c10 = spectralCentroidHz (l10, fs);
+            std::printf ("  (spectral centroid: t 0.3 -> %.0f Hz, 0.6 -> %.0f Hz, 1.0 -> %.0f Hz)\n", c3, c6, c10);
+            check (c3 < c6 && c6 < c10, "spectral centroid rises with tension");
+        }
+
+        // ---- engine level: silent input + tension ramp produces noise, exact silence at t = 0 ----
+        {
+            TensionEngine eng;
+            eng.prepare (fs, 512, 2);
+            const Signal in = makeConst (6 * 48000, 0.0f);
+            Signal out;
+            render (eng, in, out, 512, [&] (int pos)
+            {
+                const float t = pos < 48000 ? 0.0f : std::min (1.0f, (float) (pos - 48000) / (3.0f * 48000.0f));
+                return makeParams (t, 1.0f, 0.0f, true, 1);
+            });
+
+            bool silent = true;
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < 40000; ++i)
+                    if (out.ch[c][(size_t) i] != 0.0f) silent = false;
+            check (silent, "engine: silent input at t = 0 gives all-zero output");
+
+            const double a = rmsOf (out.ch[0], 96000, 115200), b = rmsOf (out.ch[0], 134400, 153600);
+            const double c = rmsOf (out.ch[0], 163200, 182400), d = rmsOf (out.ch[0], 211200, 230400);
+            std::printf ("  (engine silent-input ramp RMS: %.2e  %.2e  %.2e  %.2e)\n", a, b, c, d);
+            check (allFinite (out) && a > 1.0e-5 && a < b && b < c && c < d, "engine: silent input + tension ramp generates noise, level rises monotonically");
+
+            // stereo decorrelation survives the engine
+            double dot = 0.0, el = 0.0, er = 0.0;
+            for (int i = 211200; i < 230400; ++i) { dot += (double) out.ch[0][(size_t) i] * out.ch[1][(size_t) i]; el += (double) out.ch[0][(size_t) i] * out.ch[0][(size_t) i]; er += (double) out.ch[1][(size_t) i] * out.ch[1][(size_t) i]; }
+            check (std::abs (dot / std::sqrt (el * er)) < 0.5, "engine: noise is decorrelated L/R at t = 1");
+            check (eng.getTelemetry().noiseLevel.load() > 0.01f, "telemetry: noiseLevel published (Phase 3.3)");
+        }
+    }
+
+    // =======================================================================
+    // T13 - ReverbEngine
+    // =======================================================================
+    template <typename TargetsFn>
+    void runReverb (const std::vector<float>& inL, const std::vector<float>& inR, TargetsFn targetsAt, std::vector<float>& oL, std::vector<float>& oR)
+    {
+        ReverbEngine rv;
+        rv.prepare (48000.0);
+        const int n = (int) inL.size();
+        oL.assign ((size_t) n, 0.0f);
+        oR.assign ((size_t) n, 0.0f);
+
+        for (int pos = 0; pos < n; pos += 32)
+        {
+            rv.setTargets (targetsAt (pos), pos == 0, 32);
+            rv.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32);
+        }
+    }
+
+    void testReverb()
+    {
+        std::printf ("\n[T13] ReverbEngine\n");
+        const double fs = 48000.0;
+
+        // ---- tail rings out after the send / return targets drop to 0 (no gating) ----
+        {
+            const int n = 3 * 48000;
+            std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), oL, oR;
+            Rng rng { 4242u };
+            for (int i = 0; i < 24000; ++i) { inL[(size_t) i] = 0.5f * rng.next(); inR[(size_t) i] = 0.5f * rng.next(); }
+
+            runReverb (inL, inR, [] (int pos)
+            {
+                ReverbEngine::Targets t;
+                t.roomSize = 0.9f; t.damping = 0.3f; t.width = 1.0f;
+                t.sendGain = pos < 24000 ? 1.0f : 0.0f;
+                t.returnGain = pos < 24000 ? 0.5f : 0.0f;
+                return t;
+            }, oL, oR);
+
+            const double burst = rmsOf (oL, 12000, 24000);
+            const double tail1 = rmsOf (oL, 24000 + 4800, 24000 + 9600);
+            const double tail2 = rmsOf (oL, 24000 + 48000, 24000 + 52800);
+            std::printf ("  (burst RMS %.3e, tail +0.1..0.2 s %.3e, tail +1.0..1.1 s %.3e)\n", burst, tail1, tail2);
+            check (allFinite ([&] { Signal s; s.numCh = 2; s.ch[0] = oL; s.ch[1] = oR; return s; }()), "reverb output finite");
+            check (tail1 > 0.1 * burst && tail1 > 1.0e-4, "tail rings out after send / return drop to 0 (not gated by the smoothers)");
+            check (tail2 > 1.0e-5 && tail2 < tail1, "tail keeps evolving and decays (reverb instance is always processed)");
+        }
+
+        // ---- RT time scales with roomSize (impulse, energy decay to -40 dB) ----
+        {
+            const int n = 10 * 48000;
+            std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), oL, oR;
+            inL[0] = inR[0] = 1.0f;
+
+            double t40[3] = {};
+            const float rooms[3] = { 0.3f, 0.6f, 0.9f };
+
+            for (int k = 0; k < 3; ++k)
+            {
+                runReverb (inL, inR, [&] (int)
+                {
+                    ReverbEngine::Targets t;
+                    t.sendGain = 1.0f; t.returnGain = 1.0f; t.roomSize = rooms[k]; t.damping = 0.5f; t.width = 1.0f;
+                    return t;
+                }, oL, oR);
+
+                constexpr int W = 2048;
+                const int nw = n / W;
+                std::vector<double> e ((size_t) nw, 0.0);
+                double peak = 0.0;
+                for (int w = 0; w < nw; ++w)
+                {
+                    for (int i = w * W; i < (w + 1) * W; ++i) e[(size_t) w] += (double) oL[(size_t) i] * oL[(size_t) i] + (double) oR[(size_t) i] * oR[(size_t) i];
+                    peak = std::max (peak, e[(size_t) w]);
+                }
+                int last = 0;
+                for (int w = 0; w < nw; ++w) if (e[(size_t) w] > peak * 1.0e-4) last = w;
+                t40[k] = (double) (last + 1) * W / fs;
+            }
+            std::printf ("  (T40 by roomSize 0.3 / 0.6 / 0.9: %.2f s / %.2f s / %.2f s)\n", t40[0], t40[1], t40[2]);
+            check (t40[0] < t40[1] && t40[1] < t40[2] && t40[2] < 9.5, "RT time scales monotonically with roomSize");
+        }
+
+        // ---- finite after random parameter sweeps ----
+        {
+            const int n = 10 * 48000;
+            Rng rng { 777u }, rp { 91u };
+            std::vector<float> inL ((size_t) n), inR ((size_t) n), oL, oR;
+            for (int i = 0; i < n; ++i) { inL[(size_t) i] = 0.9f * rng.next(); inR[(size_t) i] = 0.9f * rng.next(); }
+
+            runReverb (inL, inR, [&] (int)
+            {
+                ReverbEngine::Targets t;
+                t.sendGain = u01 (rp); t.returnGain = u01 (rp);
+                t.roomSize = u01 (rp); t.damping = u01 (rp); t.width = u01 (rp);
+                t.preDelayMs = 80.0f * u01 (rp);
+                t.returnLpfHz = 500.0f + 19000.0f * u01 (rp);
+                t.sendHpfHz = 20.0f + 380.0f * u01 (rp);
+                return t;
+            }, oL, oR);
+
+            float peak = 0.0f;
+            bool fin = true;
+            for (size_t i = 0; i < oL.size(); ++i)
+            {
+                if (! std::isfinite (oL[i]) || ! std::isfinite (oR[i])) fin = false;
+                peak = std::max (peak, std::max (std::abs (oL[i]), std::abs (oR[i])));
+            }
+            std::printf ("  (random sweep: peak %.2f)\n", (double) peak);
+            check (fin && peak < 50.0f, "finite and bounded after 10 s of random parameter sweeps (all ranges, every control tick)");
+        }
+
+        // ---- engine level: tail rings after tension drops ----
+        {
+            TensionEngine eng;
+            eng.prepare (fs, 512, 2);
+            Signal in = makeConst (4 * 48000, 0.0f);
+            Rng rng { 31u };
+            for (int c = 0; c < 2; ++c) for (int i = 0; i < 48000; ++i) in.ch[c][(size_t) i] = 0.5f * rng.next();
+
+            Signal out;
+            render (eng, in, out, 512, [&] (int pos) { return makeParams (pos < 48000 ? 0.9f : 0.0f, 1.0f, 0.0f, true, 1); });
+
+            const double ring = rmsOf (out.ch[0], 48000 + 2400, 48000 + 16800);
+            std::printf ("  (engine ring-out RMS 50..350 ms after t -> 0: %.3e)\n", ring);
+            check (allFinite (out) && ring > 1.0e-3, "engine: delay + reverb returns ring out after tension drops to 0 (no gating)");
+        }
+    }
+
+    // =======================================================================
+    // T14 - DelayEngine
+    // =======================================================================
+    void testDelay()
+    {
+        std::printf ("\n[T14] DelayEngine\n");
+        const double fs = 48000.0;
+
+        // ---- time table ----
+        {
+            const bool ok =
+                std::abs (DelayEngine::computeDelayMs (true, 120.0, 1) - 375.0) < 1.0e-9
+                && std::abs (DelayEngine::computeDelayMs (true, 120.0, 0) - 750.0) < 1.0e-9
+                && std::abs (DelayEngine::computeDelayMs (true, 120.0, 2) - 60000.0 / 120.0 / 6.0) < 1.0e-9
+                && std::abs (DelayEngine::computeDelayMs (true, 40.0, 0) - 1125.0) < 1.0e-9       // 2250 ms halved
+                && DelayEngine::computeDelayMs (true, 20.0, 0) <= 2000.0
+                && DelayEngine::computeDelayMs (false, 90.0, 0) == 560.0
+                && DelayEngine::computeDelayMs (false, 90.0, 1) == 375.0
+                && DelayEngine::computeDelayMs (false, 90.0, 2) == 190.0;
+            check (ok, "delay time: dotted 1/4 | dotted 1/8 | 1/16 triplet by mode, halved above 2 s, free 560 / 375 / 190 ms");
+        }
+
+        // ---- ping-pong alternation at the division time ----
+        {
+            const double D = 4800.0;                              // 100 ms
+            const int n = 48000;
+            DelayEngine d;
+            d.prepare (fs);
+
+            DelayEngine::Targets tg;
+            tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.feedback = 0.6f; tg.fbLpfHz = 9000.0f; tg.delayMs = 100.0f;
+
+            std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), oL ((size_t) n), oR ((size_t) n);
+            inL[0] = inR[0] = 1.0f;
+
+            for (int pos = 0; pos < n; pos += 32)
+            {
+                d.setTargets (tg, pos == 0, 32);
+                d.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32, nullptr);
+            }
+
+            bool alternates = true, timing = true;
+            for (int k = 1; k <= 5; ++k)
+            {
+                const auto& prim = (k % 2 == 1) ? oL : oR;
+                const auto& oth  = (k % 2 == 1) ? oR : oL;
+                const int from = (int) (k * D) - 4, to = (int) (k * D) + 3 * k + 8;
+                double ep = 0.0, eo = 0.0;
+                float best = 0.0f;
+                int arg = from;
+
+                for (int i = from; i < to; ++i)
+                {
+                    ep += (double) prim[(size_t) i] * prim[(size_t) i];
+                    eo += (double) oth[(size_t) i] * oth[(size_t) i];
+                    if (std::abs (prim[(size_t) i]) > best) { best = std::abs (prim[(size_t) i]); arg = i; }
+                }
+
+                if (! (ep > 1.0e-4 && eo < 1.0e-4 * ep)) alternates = false;
+                if (std::abs ((double) arg - k * D) > 3 * k + 3) timing = false;
+            }
+            check (alternates, "ping-pong: impulse appears alternately in L, R, L, R, L (the other channel stays silent)");
+            check (timing, "ping-pong: echoes land on k * division time (Lagrange3rd, one read-pointer advance per sample)");
+            const float firstEcho = std::max ({ std::abs (oL[4799]), std::abs (oL[4800]), std::abs (oL[4801]) });
+            check (firstEcho > 0.95f && std::abs (oL[4800]) > 0.95f, "first echo is the delayed impulse at N samples (pop-then-push, return gain 1)");
+        }
+
+        // ---- feedback hard cap ----
+        {
+            DelayEngine d;
+            d.prepare (fs);
+            DelayEngine::Targets tg;
+            tg.feedback = 5.0f;
+            d.setTargets (tg, true, 32);
+            check (d.getFeedbackTarget() <= 0.85f + 1.0e-6f && d.getFeedbackTarget() > 0.84f, "feedback hard-capped at 0.85 in code");
+        }
+
+        // ---- 60 s soak at max feedback ----
+        {
+            DelayEngine d;
+            d.prepare (fs);
+            DelayEngine::Targets tg;
+            tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.feedback = 1.0f; tg.fbLpfHz = 3200.0f; tg.delayMs = 190.0f; tg.lfoDepthMs = 0.9f;
+
+            Rng ra { 1u }, rb { 2u };
+            std::vector<float> inL (32), inR (32), oL (32), oR (32), lfo (32);
+            float peak = 0.0f;
+            bool fin = true;
+            double ph = 0.0;
+            const int chunks = 60 * 48000 / 32;
+
+            for (int c = 0; c < chunks; ++c)
+            {
+                for (int i = 0; i < 32; ++i)
+                {
+                    inL[(size_t) i] = 0.9f * ra.next();
+                    inR[(size_t) i] = 0.9f * rb.next();
+                    lfo[(size_t) i] = (float) std::sin (ph);
+                    ph += 2.0 * kPi * 0.7 / fs;
+                }
+                d.setTargets (tg, c == 0, 32);
+                d.process (inL.data(), inR.data(), oL.data(), oR.data(), 32, lfo.data());
+
+                for (int i = 0; i < 32; ++i)
+                {
+                    if (! std::isfinite (oL[(size_t) i]) || ! std::isfinite (oR[(size_t) i])) fin = false;
+                    peak = std::max (peak, std::max (std::abs (oL[(size_t) i]), std::abs (oR[(size_t) i])));
+                }
+            }
+            std::printf ("  (60 s soak at feedback 1.0 -> capped 0.85: peak %.3f)\n", (double) peak);
+            check (fin && peak <= 2.0f && ! d.consumeFailure(), "60 s soak at max feedback: finite, peak bounded (<= 2.0), loop guard never tripped");
+        }
+
+        // ---- tempo jump click-free through the 250 ms slew ----
+        {
+            const int n = 6 * 48000;
+            DelayEngine d;
+            d.prepare (fs);
+
+            DelayEngine::Targets tg;
+            tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.feedback = 0.3f; tg.fbLpfHz = 9000.0f;
+
+            std::vector<float> in ((size_t) n), oL ((size_t) n), oR ((size_t) n);
+            for (int i = 0; i < n; ++i)
+            {
+                const double fade = std::min (1.0, (double) i / 9600.0);
+                in[(size_t) i] = 0.5f * (float) (std::sin (2.0 * kPi * 100.0 * (double) i / fs) * (0.5 - 0.5 * std::cos (kPi * fade)));
+            }
+
+            double prevDelay = 0.0, maxStep = 0.0;
+            for (int pos = 0; pos < n; pos += 32)
+            {
+                tg.delayMs = (float) DelayEngine::computeDelayMs (true, pos < 48000 ? 120.0 : 60.0, 1);   // 375 -> 750 ms
+                d.setTargets (tg, pos == 0, 32);
+                d.process (in.data() + pos, in.data() + pos, oL.data() + pos, oR.data() + pos, 32, nullptr);
+
+                const double cur = d.getCurrentDelaySamples();
+                if (pos > 0) maxStep = std::max (maxStep, std::abs (cur - prevDelay) / 32.0);
+                prevDelay = cur;
+            }
+
+            const float m = maxSecondDiffFrom (oL, 20000);
+            std::printf ("  (tempo jump 120 -> 60 BPM: max |second difference| %.3e, max delay slew %.2f samples/sample, final delay %.0f)\n",
+                         (double) m, maxStep, d.getCurrentDelaySamples());
+            // Bound derivation. Output y(n) = x(n - delay(n)); with read speed s = 1 - delay' in [0.1, 1.0]:
+            //   y'' ~ s^2 x'' + s' x'.   x = sum of the 100 Hz sine (0.5) and its filtered feedback echoes
+            //   (0.3 * ~0.5 HPF gain * ...): peak A <= 0.65, w = 2 pi 100 / 48000 = 0.01309.
+            //   curvature term  A w^2        = 0.65 * 1.71e-4          = 1.1e-4
+            //   speed-change term: delay velocity is low-passed over 20 ms and capped at 0.9, so
+            //   |s'| <= 0.9 / 960 = 9.4e-4 -> s' * A w = 9.4e-4 * 8.5e-3 = 8e-6
+            //   float delay quantisation (ulp 0.004 at 36000) -> ~ +-0.002 sample jitter * A w, 2nd diff ~ 7e-5
+            //   sum ~ 2e-4; bound 4e-4 (2x margin). The previous plain one-pole slew started with a velocity
+            //   STEP of 1.5 (read speed +1 -> -0.5): kink = 1.5 * 0.5 * w = 9.8e-3, i.e. 25x over this bound.
+            check (m < 4.0e-4f, "tempo jump is click-free (second-difference bound through the capped, velocity-smoothed 250 ms slew)");
+            check (maxStep > 0.5 && maxStep <= 0.9 + 1.0e-6 && std::abs (d.getCurrentDelaySamples() - 36000.0) < 50.0,
+                   "delay time glides at <= 0.9 samples/sample (read head never stalls) and converges on the new tempo");
+        }
+
+        // ---- NaN into the loop: lines reset, flag raised, recovers ----
+        {
+            const int n = 48000;
+            DelayEngine d;
+            d.prepare (fs);
+            DelayEngine::Targets tg;
+            tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.feedback = 0.6f; tg.delayMs = 100.0f;
+
+            std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), oL ((size_t) n), oR ((size_t) n);
+            inL[10] = std::numeric_limits<float>::quiet_NaN();
+            inL[4000] = inR[4000] = 1.0f;
+
+            for (int pos = 0; pos < n; pos += 32)
+            {
+                d.setTargets (tg, pos == 0, 32);
+                d.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32, nullptr);
+            }
+
+            bool fin = true;
+            for (size_t i = 0; i < (size_t) n; ++i) if (! std::isfinite (oL[i]) || ! std::isfinite (oR[i])) fin = false;
+
+            float best = 0.0f; int arg = 0;
+            for (int i = 8700; i < 8900; ++i) if (std::abs (oL[(size_t) i]) > best) { best = std::abs (oL[(size_t) i]); arg = i; }
+
+            check (fin, "delay: NaN on the loop write -> output stays finite");
+            check (d.consumeFailure() && ! d.consumeFailure(), "delay: loop guard raises the failure flag exactly once");
+            check (best > 0.5f && std::abs (arg - 8800) <= 3, "delay: after the reset the loop works again (clean echo at 4000 + 4800)");
+        }
+    }
+
+    // =======================================================================
+    // T15 - tails regression (bit-exact passthrough returns once the tails decay)
+    // =======================================================================
+    void testTailsRegression()
+    {
+        std::printf ("\n[T15] tails regression\n");
+
+        for (int mode : { 0, 2 })
+            for (bool sync : { true, false })
+            {
+                TensionEngine eng;
+                eng.prepare (48000.0, 512, 2);
+
+                const int n = 14 * 48000;
+                const int sw = 48000;
+                const Signal in = makeNoise (n, 2, 6060u + (std::uint32_t) mode, 0.9f, true);
+                Signal out;
+                render (eng, in, out, 512, [&] (int pos) { return makeParams (pos < sw ? 1.0f : 0.0f, 1.0f, 0.0f, sync, mode); });
+
+                const bool tailPresent = ! bitEqual (in, out, sw + 2400, sw + 7200);
+                const bool exact = bitEqual (in, out, sw + 9 * 48000, n);
+
+                char name[160];
+                std::snprintf (name, sizeof name, "loud burst at t = 1 then t -> 0 (mode %d, sync %d): tails ring, then bit-exact passthrough again (-120 dBFS)", mode, sync ? 1 : 0);
+                check (allFinite (out) && tailPresent && exact && eng.isAtRest(), name);
+            }
+    }
+
+    // =======================================================================
+    // T16 - NaN injection with sends active
+    // =======================================================================
+    void testNaNWithSends()
+    {
+        std::printf ("\n[T16] NaN / Inf injection with the sends active\n");
+
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+
+        for (int mode = 0; mode < 3; ++mode)
+        {
+            TensionEngine eng;
+            eng.prepare (48000.0, 512, 2);
+
+            Signal in = makeNoise (5 * 16384, 2, 8128u + (std::uint32_t) mode, 0.4f, false);
+            in.ch[0][100] = nan; in.ch[0][1000] = inf; in.ch[1][1500] = -inf; in.ch[1][3000] = nan; in.ch[0][20000] = nan;
+
+            Signal out;
+            render (eng, in, out, 512, [&] (int) { return makeParams (0.7f, 0.6f, 0.0f, true, mode); });
+
+            const double tailRms = rmsOf (out.ch[0], 5 * 16384 - 8192, 5 * 16384);
+            char name[160];
+            std::snprintf (name, sizeof name, "mode %d, t 0.7, mix 0.6: finite, feedback modules reset via the OutputSafety flag, recovers (tail RMS %.3f)", mode, tailRms);
+            check (allFinite (out) && eng.getFeedbackResetCount() >= 1 && tailRms > 0.02, name);
+        }
+
+        // reverb loop guard
+        {
+            ReverbEngine rv;
+            rv.prepare (48000.0);
+            ReverbEngine::Targets tg;
+            tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.roomSize = 0.8f;
+
+            const int n = 4 * 48000;
+            Rng rng { 5u };
+            std::vector<float> inL ((size_t) n), inR ((size_t) n), oL ((size_t) n), oR ((size_t) n);
+            for (int i = 0; i < n; ++i) { inL[(size_t) i] = 0.3f * rng.next(); inR[(size_t) i] = 0.3f * rng.next(); }
+            inL[100] = nan;
+
+            for (int pos = 0; pos < n; pos += 32)
+            {
+                rv.setTargets (tg, pos == 0, 32);
+                rv.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32);
+            }
+
+            bool fin = true;
+            for (size_t i = 0; i < (size_t) n; ++i) if (! std::isfinite (oL[i]) || ! std::isfinite (oR[i])) fin = false;
+            check (fin && rv.consumeFailure() && rmsOf (oL, n - 24000, n) > 1.0e-3, "reverb: NaN input -> state cleared, flag raised, output finite and alive again");
+        }
+    }
 }
 
 
@@ -1540,7 +2223,7 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf ("TENSION tests - Phase 3.2 (core series modules + Phase 3.1 regression)\n");
+    std::printf ("TENSION tests - Phase 3.3 (parallel sends and noise + Phase 3.1/3.2 regression)\n");
 
     testUnits();
     testBitExact();
@@ -1555,6 +2238,12 @@ int main()
     testSaturation();
     testWidth();
     testRealChain();
+
+    testNoise();
+    testReverb();
+    testDelay();
+    testTailsRegression();
+    testNaNWithSends();
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILURES", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

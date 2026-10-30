@@ -36,6 +36,10 @@ set(TENSION_CORE_SOURCES
     Source/DSP/FilterEngine.cpp
     Source/DSP/SaturationEngine.cpp
     Source/DSP/StereoWidth.cpp
+    # DSP - Stage 3 Phase 3.3 (parallel sends and noise; AsymSmoother.h is header-only)
+    Source/DSP/NoiseGenerator.cpp
+    Source/DSP/ReverbEngine.cpp
+    Source/DSP/DelayEngine.cpp
 )
 
 target_sources(TENSION PRIVATE ${TENSION_CORE_SOURCES})
