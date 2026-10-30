@@ -38,6 +38,33 @@ namespace
     {
         return OutputSafety::isFinite (x) ? x : 0.0f;
     }
+
+    // TensionDSP::LfoShape and LFOEngine::Shape share their numeric order.
+    static_assert ((int) TensionDSP::LfoShape::Sine       == (int) LFOEngine::Shape::Sine);
+    static_assert ((int) TensionDSP::LfoShape::Triangle   == (int) LFOEngine::Shape::Triangle);
+    static_assert ((int) TensionDSP::LfoShape::Saw        == (int) LFOEngine::Shape::Saw);
+    static_assert ((int) TensionDSP::LfoShape::ReverseSaw == (int) LFOEngine::Shape::ReverseSaw);
+    static_assert ((int) TensionDSP::LfoShape::SampleHold == (int) LFOEngine::Shape::SampleHold);
+
+    inline LFOEngine::Shape toShape (TensionDSP::LfoShape s) noexcept
+    {
+        return static_cast<LFOEngine::Shape> (static_cast<int> (s));
+    }
+
+    // Weighted shape evaluation at the LFO's current phase (single shape == plain evaluation).
+    inline float mixValue (const LFOEngine& lfo, const TensionDSP::ShapeMix& m) noexcept
+    {
+        if (m.count <= 1)
+            return lfo.valueFor (toShape (m.shape[0]));
+
+        float acc = 0.0f;
+        for (int k = 0; k < m.count; ++k)
+            acc += m.weight[(size_t) k] * lfo.valueFor (toShape (m.shape[(size_t) k]));
+        return acc;
+    }
+
+    constexpr double kAmpLfoSlewSec    = 0.0015;
+    constexpr double kFilterLfoSlewSec = 0.004;
 }
 
 void TensionEngine::prepare (double newSampleRate, int maxBlockSize, int /*numChannels*/)
@@ -84,6 +111,9 @@ void TensionEngine::prepare (double newSampleRate, int maxBlockSize, int /*numCh
     ampDepthSm.reset   (sampleRate, kModSmoothSec);
     inputTrimSm.reset  (sampleRate, kModSmoothSec);
 
+    ampLfoCoef    = (float) (1.0 - std::exp (-1.0 / (kAmpLfoSlewSec * sampleRate)));
+    filterLfoCoef = (float) (1.0 - std::exp (-(double) controlBlockSize / (kFilterLfoSlewSec * sampleRate)));
+
     prepared = true;
     reset();
 }
@@ -109,6 +139,12 @@ void TensionEngine::reset()
     inputTrimSm.setCurrentAndTargetValue (1.0f);
     lfoBBuf.fill (0.0f);
     lfoABuf.fill (0.0f);
+    lfoDBuf.fill (0.0f);
+    ampLfoState    = 0.0f;
+    filterLfoState = 0.0f;
+    modeBlender.snapTo (riseMode);
+    lastTargets = TensionDSP::TensionTargets {};
+    ampMix = filterMix = stereoMix = delayMix = TensionDSP::ShapeMix {};
     zeroWetSources();
 
     noise.reset();            // restores the seeds: bit-identical noise after every reset
@@ -206,9 +242,11 @@ void TensionEngine::process (juce::AudioBuffer<float>& buffer, const EngineParam
         controlPos = 0;
         firstBlock = false;
         snapModules = true;
+        modeBlender.snapTo (riseMode);          // no crossfade on the first block / after a reset
     }
     else
     {
+        modeBlender.setTarget (riseMode);       // a changed mode crossfades over 600 ms (stepped per control tick)
         tensionSm.setTargetValue (tensionTarget);
         mixSm.setTargetValue     (mixTarget);
         trimSm.setTargetValue    (trimTarget);
@@ -254,7 +292,17 @@ void TensionEngine::controlTick()
 {
     // Once per control period (absolute sample grid, so independent of host block size).
     const float t = tensionSm.getCurrentValue();
-    const auto targets = TensionDSP::evaluateTensionMapping (t, riseMode);
+
+    // Rise-mode crossfade: advance the 600 ms blend by one control period, evaluate every profile
+    // that still carries weight and lerp the whole targets struct.
+    modeBlender.step ((float) ((double) controlBlockSize / sampleRate));
+    const auto targets = modeBlender.evaluate (t);
+    lastTargets = targets;
+
+    ampMix    = modeBlender.shapeMix (&TensionDSP::LfoShapes::amp);
+    filterMix = modeBlender.shapeMix (&TensionDSP::LfoShapes::filter);
+    stereoMix = modeBlender.shapeMix (&TensionDSP::LfoShapes::stereo);
+    delayMix  = modeBlender.shapeMix (&TensionDSP::LfoShapes::delay);
 
     engageSm.setTargetValue (snapZero (targets.engagement));
     safetySm.setTargetValue (snapZero (targets.safety));
@@ -295,7 +343,21 @@ void TensionEngine::controlTick()
     ft.bpQ         = targets.bpQ;
     ft.lfoDepthOct = targets.lfoFilterDepthOct;
 
-    filter.setTargets (ft, lfoA.value(), snap, controlBlockSize);
+    // Filter LFO: per-mode shape (Aggressive = S&H), sampled once per control period and smoothed
+    // (4 ms) so plateau changes never zipper the cutoff. Amp LFO state is re-seeded on a snap.
+    const float filterRaw = mixValue (lfoA, filterMix);
+
+    if (snap)
+    {
+        filterLfoState = filterRaw;
+        ampLfoState    = mixValue (lfoA, ampMix);
+    }
+    else
+    {
+        filterLfoState += filterLfoCoef * (filterRaw - filterLfoState);
+    }
+
+    filter.setTargets (ft, filterLfoState, snap, controlBlockSize);
     saturation.setTargets (targets.satDrive, targets.satAmount, snap);
     stereoWidth.setTargets (targets.widthFactor, targets.lowSideCollapse, targets.lfoMoveDepth, snap);
 
@@ -365,8 +427,8 @@ void TensionEngine::runWetSources (int pos, int count) noexcept
     const float* inL = procBuf.getReadPointer (0) + pos;
     const float* inR = procBuf.getReadPointer (1) + pos;
 
-    noise.process  (nzL.data(), nzR.data(), count, lfoABuf.data());
-    delay.process  (inL, inR, dlL.data(), dlR.data(), count, lfoBBuf.data());
+    noise.process  (nzL.data(), nzR.data(), count, lfoABuf.data());       // amplitude-destination LFO
+    delay.process  (inL, inR, dlL.data(), dlR.data(), count, lfoDBuf.data());   // delay-destination LFO
     reverb.process (inL, inR, rvL.data(), rvR.data(), count);
 
     // A tripped loop guard (non-finite in a feedback path) is forwarded to OutputSafety, which
@@ -385,6 +447,9 @@ void TensionEngine::runSeriesChain (int pos, int count) noexcept
     const float* dL = dryBuf.getReadPointer (0) + pos;
     const float* dR = dryBuf.getReadPointer (1) + pos;
 
+    // Per-destination LFO values for this chunk (shapes mixed with the mode-blend weights); both LFOs advance.
+    fillLfoBuffers (count);
+
     if (stubProcGain != 1.0f || ! seriesChainEnabled)
     {
         // Phase 3.1 identity / bus-algebra test mode: modules bypassed (LFOs still advance).
@@ -395,12 +460,6 @@ void TensionEngine::runSeriesChain (int pos, int count) noexcept
         {
             juce::FloatVectorOperations::multiply (pL, stubProcGain, count);
             juce::FloatVectorOperations::multiply (pR, stubProcGain, count);
-        }
-
-        for (int i = 0; i < count; ++i)       // same LFO advance as before, values recorded
-        {
-            lfoABuf[(size_t) i] = lfoA.next();
-            lfoBBuf[(size_t) i] = lfoB.next();
         }
         return;
     }
@@ -430,19 +489,34 @@ void TensionEngine::runSeriesChain (int pos, int count) noexcept
     // 3. amplitude tremolo (lfoA): g in [1 - depth, 1], a smooth gain, never a gate
     for (int i = 0; i < count; ++i)
     {
-        const float la    = lfoA.next();
-        lfoABuf[(size_t) i] = la;
-        lfoBBuf[(size_t) i] = lfoB.next();
-
+        const float la    = lfoABuf[(size_t) i];
         const float depth = ampDepthSm.getNextValue();
         const float g     = 1.0f - depth * 0.5f * (1.0f - la);
         pL[i] *= g;
         pR[i] *= g;
     }
 
-    // 4. ADAA saturation, 5. stereo width (lfoB)
+    // 4. ADAA saturation, 5. stereo width (stereo-destination lfoB)
     saturation.process (pL, pR, count);
     stereoWidth.process (pL, pR, count, lfoBBuf.data());
+}
+
+void TensionEngine::fillLfoBuffers (int count) noexcept
+{
+    // Called once per chunk BEFORE the audio is touched (the LFO values do not depend on it).
+    // amp : mode-mixed shape through a 1.5 ms one-pole (a reverse-saw reset is a ramp, never a step)
+    // stereo / delay : mode-mixed shapes of lfoB.
+    for (int i = 0; i < count; ++i)
+    {
+        ampLfoState += ampLfoCoef * (mixValue (lfoA, ampMix) - ampLfoState);
+
+        lfoABuf[(size_t) i] = ampLfoState;
+        lfoBBuf[(size_t) i] = mixValue (lfoB, stereoMix);
+        lfoDBuf[(size_t) i] = mixValue (lfoB, delayMix);
+
+        lfoA.advanceOne();
+        lfoB.advanceOne();
+    }
 }
 
 void TensionEngine::processSegment (float* out0, float* out1, int n)

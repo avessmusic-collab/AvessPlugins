@@ -57,7 +57,13 @@ public:
 
     float value() const noexcept;                                // output at the current phase (no advance)
     float next() noexcept;                                       // returns value(), then advances one sample
-    void  advance (int numSamples) noexcept { for (int i = 0; i < numSamples; ++i) (void) next(); }
+
+    // Phase 3.4: any shape evaluated at the CURRENT phase (all destinations share one phase; the
+    // engine crossfades shapes per destination on a rise-mode change). The S&H slew runs for every
+    // shape, so switching to SampleHold never starts from a stale value.
+    float valueFor (Shape s) const noexcept;
+    void  advanceOne() noexcept;                                 // advances one sample without computing a value
+    void  advance (int numSamples) noexcept { for (int i = 0; i < numSamples; ++i) advanceOne(); }
 
     float  getPhase() const noexcept                { return (float) phase; }
     double getCurrentRateHz() const noexcept;

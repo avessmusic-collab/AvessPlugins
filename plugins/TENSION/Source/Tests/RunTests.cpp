@@ -31,6 +31,20 @@
     Note: with the real sources in the chain the T1 "settled back at t = 0" check waits for the tails
     (10 s after the excursion) instead of 0.2 s; the Phase 3.1 bus-algebra tests keep using the stub /
     bypass hooks, which also switch the three Phase 3.3 sources off.
+
+    Phase 3.4 (real TensionMapping, rise-mode profile tables, 600 ms mode crossfade, per-mode LFO shapes):
+      T17 mapping: curve primitives, monotone in t (all destinations x 3 modes), nothing linear, exact zeros
+          at t = 0, profile end values vs the architecture tables, stage onsets (spec section 4), rise
+          modes differ measurably (noise level, LFO rate, saturation THD)
+      T18 ModeBlender (600 ms ramp, mid-blend between the profiles, retarget mid-blend, shape mixes) +
+          LFOEngine::valueFor / always-on S&H slew
+      T19 engine: mode switch during a t-ramp (targets mid-blend between the two profiles, 600 ms blend,
+          click-free by second-difference bound against the steady-state references), t = 0 stays
+          bit-exact while the mode changes every block
+      T20 full chain: sweep 0 -> 1 -> 0 finite in all modes; no output level jump > 3 dB per 100 ms
+          during a linear 8-bar (16 s @ 120 BPM) ramp
+    Regression: T1..T16 run unchanged against the real mapping (T7 only retargets its Cinematic end-value
+    check for BP centre to the real 300 * 2^4.9 Hz).
 */
 #include "PluginProcessor.h"
 #include "DSP/TensionEngine.h"
@@ -799,9 +813,10 @@ namespace
             check (a.satDrive == 1.0f && a.satAmount == 0.0f && a.widthFactor == 1.0f && a.lowSideCollapse == 0.0f
                    && a.lfoAmpDepth == 0.0f && a.lfoMoveDepth == 0.0f && a.bpBlend == 0.0f && a.inputTrim == 1.0f,
                    "stub mapping: neutral destinations at t = 0");
+            // Phase 3.4: the real Cinematic BP centre is oct(300, 4.9, P(1,1.6)) = 300 * 2^4.9 Hz (~8.96 kHz).
             check (std::abs (b.satDrive - 4.2f) < 1e-5f && std::abs (b.widthFactor - 2.1f) < 1e-5f && std::abs (b.hpCutoffHz - 640.0f) < 1e-3f
-                   && std::abs (b.bpCenterHz - 9000.0f) < 1e-2f && std::abs (b.bpQ - 3.2f) < 1e-5f && std::abs (b.satAmount - 0.85f) < 1e-5f,
-                   "stub mapping: Cinematic end values at t = 1");
+                   && std::abs (b.bpCenterHz - 300.0f * std::exp2 (4.9f)) < 0.5f && std::abs (b.bpQ - 3.2f) < 1e-5f && std::abs (b.satAmount - 0.85f) < 1e-5f,
+                   "mapping: Cinematic end values at t = 1");
 
             bool mono = true;
             auto prev = evaluateTensionMapping (0.0f, RiseMode::Cinematic);
@@ -2216,6 +2231,601 @@ namespace
             check (fin && rv.consumeFailure() && rmsOf (oL, n - 24000, n) > 1.0e-3, "reverb: NaN input -> state cleared, flag raised, output finite and alive again");
         }
     }
+
+    // =======================================================================
+    // Phase 3.4 helpers
+    // =======================================================================
+    double dbOfGain (float g) { return 20.0 * std::log10 (std::max ((double) g, 1.0e-12)); }
+
+    double windowMaxSecondDiff (const std::vector<float>& x, int from, int to)
+    {
+        double m = 0.0;
+        for (int i = std::max (2, from); i < std::min (to, (int) x.size()); ++i)
+            m = std::max (m, (double) std::abs (x[(size_t) i] - 2.0f * x[(size_t) i - 1] + x[(size_t) i - 2]));
+        return m;
+    }
+
+    // Harmonic energy relative to the fundamental (dB) of the saturator for a 1 kHz / 0.3 sine
+    // (integer number of cycles in the analysis window; DC and the fundamental are removed).
+    double saturationHarmonicDb (float drive, float amount)
+    {
+        const double fs = 48000.0;
+        const int settle = 48000, N = 48000;
+
+        SaturationEngine s;
+        s.prepare (fs);
+        s.setTargets (drive, amount, true);
+
+        std::vector<float> l ((size_t) (settle + N)), r;
+        for (size_t i = 0; i < l.size(); ++i)
+            l[i] = 0.3f * (float) std::sin (2.0 * kPi * 1000.0 * (double) i / fs);
+        r = l;
+
+        for (size_t pos = 0; pos < l.size(); pos += 32)
+            s.process (l.data() + pos, r.data() + pos, (int) std::min<size_t> (32, l.size() - pos));
+
+        double c = 0.0, sn = 0.0, mean = 0.0, sq = 0.0;
+        for (int i = 0; i < N; ++i)
+        {
+            const double x = l[(size_t) (settle + i)];
+            const double ph = 2.0 * kPi * 1000.0 * (double) i / fs;
+            c += x * std::cos (ph);
+            sn += x * std::sin (ph);
+            mean += x;
+            sq += x * x;
+        }
+
+        const double amp = 2.0 * std::sqrt (c * c + sn * sn) / (double) N;
+        const double pFund = 0.5 * amp * amp;
+        const double pAc = sq / (double) N - (mean / (double) N) * (mean / (double) N);
+        return 10.0 * std::log10 (std::max (pAc - pFund, 1.0e-20) / std::max (pFund, 1.0e-20));
+    }
+
+    // =======================================================================
+    // T17 - TensionMapping
+    // =======================================================================
+    void testMappingCurves()
+    {
+        std::printf ("\n[T17] TensionMapping: curves, profiles, stage onsets, rise modes\n");
+
+        using namespace TensionDSP;
+        const RiseMode modes[3]    = { RiseMode::SlowBurn, RiseMode::Cinematic, RiseMode::Aggressive };
+        const char*    modeName[3] = { "Slow Burn", "Cinematic", "Aggressive" };
+
+        // ---- curve primitives ----
+        {
+            using namespace TensionDSP::curves;
+            const bool smoothOk = smooth (0.2f, 0.8f, 0.2f) == 0.0f && smooth (0.2f, 0.8f, 0.0f) == 0.0f
+                                  && smooth (0.2f, 0.8f, 0.8f) == 1.0f && smooth (0.2f, 0.8f, 1.0f) == 1.0f
+                                  && std::abs (smooth (0.2f, 0.8f, 0.5f) - 0.5f) < 1.0e-6f;
+            check (smoothOk, "primitive S(a,b,t): exactly 0 below a, exactly 1 above b, 0.5 at the midpoint");
+
+            bool expoOk = expo (0.0f, 2.4f) == 0.0f && expo (1.0f, 2.4f) == 1.0f
+                          && std::abs (expo (0.5f, 2.4f) - (std::exp (1.2f) - 1.0f) / (std::exp (2.4f) - 1.0f)) < 1.0e-6f
+                          && expo (0.5f, 2.4f) < 0.5f;                    // back-loaded
+            float prev = 0.0f;
+            for (int i = 1; i <= 1000; ++i)
+            {
+                const float v = expo ((float) i / 1000.0f, 2.6f);
+                if (v < prev) expoOk = false;
+                prev = v;
+            }
+            check (expoOk, "primitive E(t,k) = (e^kt - 1)/(e^k - 1): 0 at 0, 1 at 1, monotone, back-loaded");
+
+            check (power (0.0f, 1.6f) == 0.0f && power (1.0f, 1.6f) == 1.0f && std::abs (power (0.5f, 2.0f) - 0.25f) < 1.0e-6f,
+                   "primitive P(t,p): 0 at 0, 1 at 1, P(0.5,2) = 0.25");
+            check (oct (100.0f, 2.0f, 0.5f) > 199.99f && oct (100.0f, 2.0f, 0.5f) < 200.01f && oct (123.0f, 5.0f, 0.0f) == 123.0f,
+                   "primitive oct(f0, octaves, c) = f0 * 2^(octaves*c); c = 0 returns f0 exactly");
+            check (std::abs (dbLinear (-60.0f, 0.0f, 0.5f) - dbToGain (-30.0f)) < 1.0e-7f && std::abs (dbLinear (-66.0f, -16.0f, 1.0f) - dbToGain (-16.0f)) < 1.0e-7f,
+                   "primitive dB(lo,hi,c): dB-linear interpolation then dbToGain");
+        }
+
+        // ---- every destination monotone in t (all modes), nothing linear, finite ----
+        {
+            int bad = 0, nonLinear = 0, nonFinite = 0;
+
+            for (int mi = 0; mi < 3; ++mi)
+                for (size_t f = 0; f < kTargetFields.size(); ++f)
+                {
+                    const auto m = kTargetFields[f];
+                    const bool falling = isFallingTarget (m);
+
+                    float prev = evaluateTensionMapping (0.0f, modes[mi]).*m;
+                    const float v0 = prev;
+                    float maxDev = 0.0f;
+                    bool ok = true;
+                    const float v1 = evaluateTensionMapping (1.0f, modes[mi]).*m;
+
+                    for (int i = 1; i <= 1000; ++i)
+                    {
+                        const float t = (float) i / 1000.0f;
+                        const float v = evaluateTensionMapping (t, modes[mi]).*m;
+                        const float tol = 2.0e-6f * std::abs (prev);
+
+                        if (! std::isfinite (v)) ++nonFinite;
+                        if (falling ? (v > prev + tol) : (v < prev - tol)) ok = false;
+
+                        maxDev = std::max (maxDev, std::abs (v - (v0 + (v1 - v0) * t)));
+                        prev = v;
+                    }
+
+                    if (! ok)
+                    {
+                        std::printf ("    non-monotone: %s (%s)\n", kTargetFieldNames[f], modeName[mi]);
+                        ++bad;
+                    }
+
+                    const float span = std::abs (v1 - v0);
+                    if (span > 1.0e-6f && maxDev < 0.02f * span)
+                    {
+                        std::printf ("    (near-)linear in t: %s (%s)\n", kTargetFieldNames[f], modeName[mi]);
+                        ++nonLinear;
+                    }
+                }
+
+            check (bad == 0 && nonFinite == 0, "every destination is monotone in t (t = 0..1 in 1e-3 steps, 34 destinations x 3 modes; damping / LPF fall)");
+            check (nonLinear == 0, "nothing is linear in t (max deviation from the 0 -> 1 chord >= 2 % of the span)");
+        }
+
+        // ---- t = 0: exact zeros, neutral starts, identical across modes ----
+        {
+            bool zeros = true, neutral = true, sameStarts = true;
+            const auto ref = evaluateTensionMapping (0.0f, RiseMode::Cinematic);
+
+            for (int mi = 0; mi < 3; ++mi)
+            {
+                const auto z = evaluateTensionMapping (0.0f, modes[mi]);
+                zeros = zeros && z.engagement == 0.0f && z.safety == 0.0f && z.noiseGain == 0.0f && z.reverbReturn == 0.0f
+                        && z.delayReturn == 0.0f && z.delayFeedback == 0.0f && z.reverbSend == 0.0f && z.delaySend == 0.0f
+                        && z.lfoAmpDepth == 0.0f && z.lfoFilterDepthOct == 0.0f && z.lfoMoveDepth == 0.0f && z.delayLfoDepthMs == 0.0f
+                        && z.bpBlend == 0.0f && z.satAmount == 0.0f && z.lowSideCollapse == 0.0f && z.noiseBrightness == 0.0f
+                        && z.noiseFilteredAmt == 0.0f;
+                neutral = neutral && z.satDrive == 1.0f && z.widthFactor == 1.0f && z.inputTrim == 1.0f;
+
+                for (auto m : kTargetFields)
+                    if (z.*m != ref.*m) sameStarts = false;
+            }
+            check (zeros, "t = 0: noise gate, both returns, both sends, feedback, LFO depths, sat amount, BP blend, side collapse are EXACTLY 0");
+            check (neutral, "t = 0: drive 1, width 1, trim 1 (neutral)");
+            check (sameStarts, "t = 0: every destination has the same value in all three modes (a switch at rest is a no-op)");
+        }
+
+        // ---- profile end values vs the architecture tables ----
+        {
+            const auto sb = evaluateTensionMapping (1.0f, RiseMode::SlowBurn);
+            const auto ci = evaluateTensionMapping (1.0f, RiseMode::Cinematic);
+            const auto ag = evaluateTensionMapping (1.0f, RiseMode::Aggressive);
+
+            auto closeTo = [] (float a, float b, float tol) { return std::abs (a - b) <= tol; };
+
+            check (closeTo (sb.satDrive, 3.0f, 1e-4f) && closeTo (ci.satDrive, 4.2f, 1e-4f) && closeTo (ag.satDrive, 7.0f, 1e-4f), "sat drive max 3.0 / 4.2 / 7.0");
+            check (closeTo (sb.widthFactor, 1.8f, 1e-4f) && closeTo (ci.widthFactor, 2.1f, 1e-4f) && closeTo (ag.widthFactor, 2.4f, 1e-4f), "width max 1.8 / 2.1 / 2.4");
+            check (closeTo (sb.lfoRateHz, 4.0f, 0.02f) && closeTo (ci.lfoRateHz, 9.0f, 0.04f) && closeTo (ag.lfoRateHz, 16.0f, 0.06f), "LFO max rate (free) 4 / 9 / 16 Hz");
+            check (closeTo ((float) dbOfGain (sb.noiseGain), -20.0f, 0.01f) && closeTo ((float) dbOfGain (ci.noiseGain), -16.0f, 0.01f)
+                   && closeTo ((float) dbOfGain (ag.noiseGain), -12.0f, 0.01f), "noise ceiling -20 / -16 / -12 dBFS");
+            check (closeTo (sb.delayFeedback, 0.55f, 1e-5f) && closeTo (ci.delayFeedback, 0.62f, 1e-5f) && closeTo (ag.delayFeedback, 0.72f, 1e-5f)
+                   && ag.delayFeedback < DelayEngine::kHardFeedbackCap, "delay feedback max 0.55 / 0.62 / 0.72 (below the 0.85 cap)");
+            check (closeTo ((float) dbOfGain (sb.reverbReturn), -7.0f, 0.01f) && closeTo ((float) dbOfGain (ci.reverbReturn), -9.0f, 0.01f)
+                   && closeTo ((float) dbOfGain (ag.reverbReturn), -11.0f, 0.01f), "reverb return ceiling -7 / -9 / -11 dB");
+            check (closeTo (sb.reverbRoom, 0.97f, 1e-5f) && closeTo (ci.reverbRoom, 0.92f, 1e-5f) && closeTo (ag.reverbRoom, 0.82f, 1e-5f)
+                   && closeTo (sb.reverbPreDelayMs, 60.0f, 1e-3f) && closeTo (ci.reverbPreDelayMs, 38.0f, 1e-3f), "reverb size 0.97 / 0.92 / 0.82, pre-delay 60 / 38 ms");
+            check (closeTo (sb.lfoAmpDepth / ci.lfoAmpDepth, 0.7f, 1e-4f) && closeTo (ag.lfoAmpDepth / ci.lfoAmpDepth, 1.5f, 1e-4f)
+                   && closeTo (sb.lfoFilterDepthOct / ci.lfoFilterDepthOct, 0.7f, 1e-4f) && closeTo (ag.lfoFilterDepthOct / ci.lfoFilterDepthOct, 1.5f, 1e-4f)
+                   && closeTo (sb.lfoMoveDepth / ci.lfoMoveDepth, 0.7f, 1e-4f) && closeTo (ag.lfoMoveDepth / ci.lfoMoveDepth, 1.5f, 1e-4f)
+                   && closeTo (sb.delayLfoDepthMs / ci.delayLfoDepthMs, 0.7f, 1e-4f) && closeTo (ag.delayLfoDepthMs / ci.delayLfoDepthMs, 1.5f, 1e-4f),
+                   "LFO depths x0.7 / 1.0 / 1.5 (amp, filter, stereo, delay)");
+            check (closeTo (ci.hpCutoffHz, 640.0f, 1e-3f) && closeTo (ci.bpBlend, 0.30f, 1e-6f) && closeTo (ci.bpQ, 3.2f, 1e-5f)
+                   && closeTo (ci.reverbReturnLpfHz, 7000.0f, 1.0f) && closeTo (ci.reverbSendHpfHz, 220.0f, 0.5f)
+                   && closeTo (ci.delayFbLpfHz, 9000.0f * std::exp2 (-1.5f), 0.5f) && closeTo (ci.reverbDamping, 0.3f, 1e-5f) && closeTo (ci.reverbWidth, 1.0f, 1e-5f),
+                   "Cinematic table end values (HP 640 Hz, BP blend 0.30, Q 3.2, LPF 7 kHz, FB LPF 3.18 kHz, damping 0.3, width 1.0)");
+            check (closeTo (ci.lfoCyclesPerBeat, 4.0f, 1e-3f) && sb.lfoCyclesPerBeat < ci.lfoCyclesPerBeat && ag.lfoCyclesPerBeat > ci.lfoCyclesPerBeat,
+                   "LFO sync cycles/beat 1/8 -> 4 (Cinematic), slower / faster in Slow Burn / Aggressive");
+
+            const auto& s0 = profileFor (RiseMode::SlowBurn).shapes;
+            const auto& s1 = profileFor (RiseMode::Cinematic).shapes;
+            const auto& s2 = profileFor (RiseMode::Aggressive).shapes;
+            check (s0.amp == LfoShape::Sine && s0.filter == LfoShape::Sine && s0.stereo == LfoShape::Triangle && s0.delay == LfoShape::Sine
+                   && s1.amp == LfoShape::Triangle && s1.filter == LfoShape::Sine && s1.stereo == LfoShape::Sine && s1.delay == LfoShape::Sine
+                   && s2.amp == LfoShape::ReverseSaw && s2.filter == LfoShape::SampleHold && s2.stereo == LfoShape::Triangle && s2.delay == LfoShape::Sine,
+                   "LFO shapes (amp / filter / stereo / delay): Slow Burn sine/sine/tri/sine, Cinematic tri/sine/sine/sine, Aggressive rev-saw/S&H/tri/sine");
+        }
+
+        // ---- stage onsets (spec section 4, Cinematic) ----
+        {
+            auto at = [] (float t) { return evaluateTensionMapping (t, RiseMode::Cinematic); };
+
+            const double n10 = dbOfGain (at (0.10f).noiseGain), n15 = dbOfGain (at (0.15f).noiseGain), n20 = dbOfGain (at (0.20f).noiseGain);
+            const double n25 = dbOfGain (at (0.25f).noiseGain), n30 = dbOfGain (at (0.30f).noiseGain);
+            std::printf ("  (noise level dBFS: 10%% %.1f  15%% %.1f  20%% %.1f  25%% %.1f  30%% %.1f  50%% %.1f  75%% %.1f  100%% %.1f)\n",
+                         n10, n15, n20, n25, n30, dbOfGain (at (0.5f).noiseGain), dbOfGain (at (0.75f).noiseGain), dbOfGain (at (1.0f).noiseGain));
+            check (at (0.0f).noiseGain == 0.0f && n10 < -75.0 && n20 < -64.0, "noise: silent below ~20 % (exact 0 at t = 0, < -75 dBFS at 10 %, < -64 dBFS at 20 %)");
+            check (n30 > -63.0 && n30 - n10 > 15.0 && n25 - n15 > 5.0, "noise: emerges around 25 % and is audible by 30 % (rising > 15 dB from 10 %)");
+
+            const float fbMax = at (1.0f).delayFeedback;
+            check (at (0.30f).delayFeedback == 0.0f && at (0.60f).delayFeedback < 0.25f * fbMax && at (0.85f).delayFeedback > 0.7f * fbMax,
+                   "delay feedback: floor at 30 %, near-floor at 60 %, clearly rising at 85 %");
+
+            bool crossOk = true;
+            for (int mi = 0; mi < 3; ++mi)
+            {
+                const float mx = evaluateTensionMapping (1.0f, modes[mi]).delayFeedback;
+                float cross = -1.0f;
+                for (int i = 0; i <= 1000 && cross < 0.0f; ++i)
+                    if (evaluateTensionMapping ((float) i / 1000.0f, modes[mi]).delayFeedback >= 0.5f * mx) cross = (float) i / 1000.0f;
+                std::printf ("  (%s: feedback reaches 50 %% of its maximum at t = %.3f)\n", modeName[mi], (double) cross);
+                if (! (cross >= 0.65f && cross <= 0.80f)) crossOk = false;
+            }
+            check (crossOk, "delay feedback rises around 75 % in every mode (50 % point within 65..80 %)");
+
+            const float wMax = at (1.0f).widthFactor - 1.0f;
+            check (at (0.20f).widthFactor == 1.0f && at (0.60f).widthFactor >= 1.0f + 0.35f * wMax && at (0.60f).widthFactor < at (1.0f).widthFactor,
+                   "width: unchanged below 25 %, wider (>= 35 % of the range) by 60 %");
+
+            const float rc = juce::Decibels::decibelsToGain (-9.0f), dc = juce::Decibels::decibelsToGain (-8.0f);
+            check (at (0.20f).reverbReturn < 0.25f * rc && at (0.60f).reverbReturn >= 0.9f * rc,
+                   "reverb return: still small at 20 %, atmospheric (>= 90 % of the ceiling) by 60 %");
+            check (at (0.20f).delayReturn == 0.0f && at (0.60f).delayReturn >= 0.8f * dc && at (0.10f).delayReturn == 0.0f,
+                   "delay return: silent below 20 %, atmospheric (>= 80 % of the ceiling) by 60 %");
+            check (at (0.75f).lfoRateHz > 2.0f * at (0.40f).lfoRateHz && at (0.75f).lfoRateHz < at (1.0f).lfoRateHz,
+                   "modulation speed: 75 % is more than twice as fast as 40 %");
+        }
+
+        // ---- rise modes differ measurably ----
+        {
+            float nz[3], rate[3], cpb[3];
+            for (int mi = 0; mi < 3; ++mi)
+            {
+                nz[mi]   = (float) dbOfGain (evaluateTensionMapping (0.5f, modes[mi]).noiseGain);
+                rate[mi] = evaluateTensionMapping (0.75f, modes[mi]).lfoRateHz;
+                cpb[mi]  = evaluateTensionMapping (0.75f, modes[mi]).lfoCyclesPerBeat;
+            }
+            std::printf ("  (noise level @50%%: %.1f / %.1f / %.1f dBFS;  LFO rate @75%%: %.2f / %.2f / %.2f Hz)\n",
+                         (double) nz[0], (double) nz[1], (double) nz[2], (double) rate[0], (double) rate[1], (double) rate[2]);
+
+            bool noiseOk = true, rateOk = true, cpbOk = true;
+            for (int a = 0; a < 3; ++a)
+                for (int b = a + 1; b < 3; ++b)
+                {
+                    if (std::abs (nz[a] - nz[b]) < 2.0f) noiseOk = false;
+                    if (std::abs (rate[a] / rate[b] - 1.0f) < 0.25f) rateOk = false;
+                    if (std::abs (cpb[a] / cpb[b] - 1.0f) < 0.25f) cpbOk = false;
+                }
+            check (noiseOk, "modes differ: noise level at t = 0.5 differs >= 2 dB between every pair of modes");
+            check (rateOk && cpbOk, "modes differ: LFO rate (free Hz and sync cycles/beat) at t = 0.75 differs >= 25 % between every pair");
+
+            double thd[3];
+            for (int mi = 0; mi < 3; ++mi)
+            {
+                const auto tg = evaluateTensionMapping (1.0f, modes[mi]);
+                thd[mi] = saturationHarmonicDb (tg.satDrive, tg.satAmount);
+            }
+            std::printf ("  (harmonic energy vs fundamental @100%%, 1 kHz / 0.3: %.1f / %.1f / %.1f dB)\n", thd[0], thd[1], thd[2]);
+            check (std::abs (thd[0] - thd[1]) >= 2.0 && std::abs (thd[1] - thd[2]) >= 2.0 && std::abs (thd[0] - thd[2]) >= 2.0
+                   && thd[0] < thd[1] && thd[1] < thd[2],
+                   "modes differ: saturation harmonic energy at t = 1 differs >= 2 dB (Slow Burn < Cinematic < Aggressive)");
+        }
+    }
+
+    // =======================================================================
+    // T18 - ModeBlender + LFO shape evaluation
+    // =======================================================================
+    void testModeBlender()
+    {
+        std::printf ("\n[T18] ModeBlender (600 ms) + LFO shape mixes\n");
+
+        using namespace TensionDSP;
+
+        auto same = [] (const TensionTargets& a, const TensionTargets& b)
+        {
+            for (auto m : kTargetFields)
+                if (a.*m != b.*m) return false;
+            return true;
+        };
+
+        // ---- settled == plain evaluation ----
+        {
+            ModeBlender b;
+            bool ok = true;
+            for (int mi = 0; mi < 3; ++mi)
+            {
+                b.snapTo (riseModeFromIndex (mi));
+                for (float t : { 0.0f, 0.13f, 0.5f, 0.99f, 1.0f })
+                    if (! same (b.evaluate (t), evaluateTensionMapping (t, riseModeFromIndex (mi)))) ok = false;
+            }
+            check (ok && ! b.isBlending(), "settled blender evaluates exactly the plain profile");
+        }
+
+        // ---- 600 ms blend, mid-blend strictly between the two profiles ----
+        {
+            ModeBlender b;
+            b.snapTo (RiseMode::Cinematic);
+            b.setTarget (RiseMode::Aggressive);
+            check (b.isBlending() && b.getBlend() == 0.0f, "after setTarget the new profile has weight 0");
+
+            const float tt = 0.7f;
+            const auto A = evaluateTensionMapping (tt, RiseMode::Cinematic);
+            const auto B = evaluateTensionMapping (tt, RiseMode::Aggressive);
+
+            for (int i = 0; i < 30; ++i) b.step (0.010f);        // 300 ms
+            const auto M = b.evaluate (tt);
+            std::printf ("  (blend after 300 ms: %.3f)\n", (double) b.getBlend());
+
+            bool between = true;
+            int strictly = 0;
+            for (auto m : kTargetFields)
+            {
+                const float lo = std::min (A.*m, B.*m), hi = std::max (A.*m, B.*m);
+                const float tol = 1.0e-5f * std::max (1.0f, std::abs (hi));
+                if (M.*m < lo - tol || M.*m > hi + tol) between = false;
+                if (hi - lo > 1.0e-4f * std::max (1.0f, std::abs (hi)) && M.*m > lo && M.*m < hi) ++strictly;
+            }
+            check (between && strictly >= 15 && std::abs (b.getBlend() - 0.5f) < 0.01f,
+                   "mid-blend (300 ms): every destination lies between the old and new profile (>= 15 strictly between), blend 0.5");
+
+            const float frac = (M.noiseGain - A.noiseGain) / (B.noiseGain - A.noiseGain);
+            check (std::abs (frac - 0.5f) < 0.02f, "mid-blend noise level is the 50/50 lerp of the two profiles");
+
+            for (int i = 0; i < 29; ++i) b.step (0.010f);        // 590 ms total
+            const bool stillBlending = b.isBlending();
+            b.step (0.010f);                                     // 600 ms
+            check (stillBlending && ! b.isBlending() && same (b.evaluate (tt), B), "blend takes 600 ms, then evaluates exactly the new profile");
+        }
+
+        // ---- a switch at t = 0 is a no-op at every blend state (bit-identical, zeros stay zero) ----
+        {
+            ModeBlender b;
+            b.snapTo (RiseMode::SlowBurn);
+            b.setTarget (RiseMode::Aggressive);
+            bool ok = true;
+            const auto z = evaluateTensionMapping (0.0f, RiseMode::Cinematic);
+            for (int i = 0; i < 70; ++i)
+            {
+                if (! same (b.evaluate (0.0f), z)) ok = false;
+                b.step (0.010f);
+            }
+            check (ok, "t = 0: all targets bit-identical during a mode crossfade (exact zeros preserved)");
+        }
+
+        // ---- retarget mid-blend: continuous, converges, weights stay normalised ----
+        {
+            ModeBlender b;
+            b.snapTo (RiseMode::SlowBurn);
+            b.setTarget (RiseMode::Cinematic);
+            for (int i = 0; i < 20; ++i) b.step (0.010f);
+            const auto before = b.evaluate (0.8f);
+            b.setTarget (RiseMode::Aggressive);
+            const auto after = b.evaluate (0.8f);
+            check (same (before, after), "retarget mid-blend does not jump (weights unchanged at the switch)");
+
+            bool sumOk = true;
+            for (int i = 0; i < 80; ++i)
+            {
+                b.step (0.010f);
+                const float s = b.getWeight (RiseMode::SlowBurn) + b.getWeight (RiseMode::Cinematic) + b.getWeight (RiseMode::Aggressive);
+                if (std::abs (s - 1.0f) > 1.0e-5f) sumOk = false;
+            }
+            check (sumOk && ! b.isBlending() && same (b.evaluate (0.8f), evaluateTensionMapping (0.8f, RiseMode::Aggressive)),
+                   "retarget mid-blend: weights stay normalised and converge on the last mode within 600 ms");
+        }
+
+        // ---- shape mixes ----
+        {
+            ModeBlender b;
+            b.snapTo (RiseMode::Cinematic);
+            const auto settled = b.shapeMix (&LfoShapes::amp);
+            b.setTarget (RiseMode::Aggressive);
+            for (int i = 0; i < 30; ++i) b.step (0.010f);
+            const auto f = b.shapeMix (&LfoShapes::filter);
+            const auto d = b.shapeMix (&LfoShapes::delay);
+            const auto a = b.shapeMix (&LfoShapes::amp);
+
+            check (settled.count == 1 && settled.shape[0] == LfoShape::Triangle && settled.weight[0] == 1.0f, "settled Cinematic: amp LFO shape is a single triangle");
+            check (f.count == 2 && std::abs (f.weight[0] + f.weight[1] - 1.0f) < 1.0e-6f && std::abs (f.weight[0] - 0.5f) < 0.02f
+                   && ((f.shape[0] == LfoShape::Sine && f.shape[1] == LfoShape::SampleHold) || (f.shape[1] == LfoShape::Sine && f.shape[0] == LfoShape::SampleHold)),
+                   "mid-blend Cinematic -> Aggressive: filter LFO crossfades sine <-> S&H with normalised 50/50 weights");
+            check (d.count == 1 && d.shape[0] == LfoShape::Sine && std::abs (d.weight[0] - 1.0f) < 1.0e-6f, "identical shapes (delay: sine in both) are merged");
+            check (a.count == 2 && ((a.shape[0] == LfoShape::Triangle && a.shape[1] == LfoShape::ReverseSaw) || (a.shape[1] == LfoShape::Triangle && a.shape[0] == LfoShape::ReverseSaw)),
+                   "mid-blend: amp LFO crossfades triangle <-> reverse saw");
+        }
+
+        // ---- LFOEngine::valueFor + always-on S&H slew ----
+        {
+            const double fs = 48000.0;
+            LFOEngine l;
+            l.prepare (fs);
+            l.setShape (LFOEngine::Shape::Triangle);
+            l.setTargetRateHz (5.0f);
+            l.reset();
+
+            bool consistent = true;
+            float mn = 1.0f, mx = -1.0f, maxStep = 0.0f, prev = l.valueFor (LFOEngine::Shape::SampleHold);
+            for (int i = 0; i < 96000; ++i)
+            {
+                if (l.valueFor (LFOEngine::Shape::Triangle) != l.value()) consistent = false;
+                const float sh = l.valueFor (LFOEngine::Shape::SampleHold);
+                mn = std::min (mn, sh); mx = std::max (mx, sh);
+                maxStep = std::max (maxStep, std::abs (sh - prev));
+                prev = sh;
+                l.advanceOne();
+            }
+            check (consistent, "valueFor(configured shape) == value()");
+            check (mx - mn > 0.6f && maxStep < 0.03f, "S&H slew runs while another shape is configured (plateaus change, no steps > 0.03)");
+
+            // advanceOne == next() for the phase
+            LFOEngine a, b;
+            for (auto* x : { &a, &b }) { x->prepare (fs); x->setTargetRateHz (7.3f); x->reset(); }
+            for (int i = 0; i < 5000; ++i) { (void) a.next(); b.advanceOne(); }
+            check (a.getPhase() == b.getPhase(), "advanceOne() advances the phase exactly like next()");
+        }
+    }
+
+    // =======================================================================
+    // T19 - engine: mode switch during a ramp
+    // =======================================================================
+    void testModeSwitchEngine()
+    {
+        std::printf ("\n[T19] engine mode switch (600 ms crossfade, click-free, t = 0 exact)\n");
+
+        using namespace TensionDSP;
+
+        // ---- targets mid-blend are between the two profiles; blend completes in 600 ms ----
+        {
+            auto targetsAt = [] (int totalSamples, bool* blending)
+            {
+                TensionEngine eng;
+                eng.prepare (48000.0, 512, 2);
+                const Signal in = makeNoise (totalSamples, 2, 4040u, 0.3f, false);
+                Signal out;
+                render (eng, in, out, 512, [] (int pos) { return makeParams (0.8f, 1.0f, 0.0f, true, pos < 24000 ? 1 : 2); });
+                if (blending != nullptr) *blending = eng.getModeBlender().isBlending();
+                return eng.getLastTargets();
+            };
+
+            const auto A = evaluateTensionMapping (0.8f, RiseMode::Cinematic);
+            const auto B = evaluateTensionMapping (0.8f, RiseMode::Aggressive);
+
+            bool blendBefore = false, blendMid = false, blendEnd = true;
+            const auto before = targetsAt (23552, &blendBefore);                 // still Cinematic
+            const auto mid    = targetsAt (24064 + 14848, &blendMid);            // ~309 ms after the switch took effect
+            const auto after  = targetsAt (24064 + 34304, &blendEnd);            // ~715 ms after
+
+            auto frac = [&] (const TensionTargets& x, float TensionTargets::* m) { return (x.*m - A.*m) / (B.*m - A.*m); };
+
+            bool exactBefore = true, exactAfter = true;
+            for (auto m : kTargetFields)
+            {
+                if (std::abs (before.*m - A.*m) > 1.0e-6f * std::max (1.0f, std::abs (A.*m))) exactBefore = false;
+                if (std::abs (after.*m - B.*m) > 1.0e-5f * std::max (1.0f, std::abs (B.*m))) exactAfter = false;
+            }
+
+            const float fn = frac (mid, &TensionTargets::noiseGain), fr = frac (mid, &TensionTargets::lfoRateHz);
+            const float fs = frac (mid, &TensionTargets::satDrive),  ff = frac (mid, &TensionTargets::delayFeedback);
+            std::printf ("  (mid-blend lerp fractions: noise %.3f  lfoRate %.3f  satDrive %.3f  feedback %.3f)\n", (double) fn, (double) fr, (double) fs, (double) ff);
+
+            bool between = true;
+            for (auto m : kTargetFields)
+            {
+                const float lo = std::min (A.*m, B.*m), hi = std::max (A.*m, B.*m);
+                if (mid.*m < lo - 1.0e-5f * std::max (1.0f, std::abs (hi)) || mid.*m > hi + 1.0e-5f * std::max (1.0f, std::abs (hi))) between = false;
+            }
+
+            check (exactBefore && ! blendBefore, "before the switch the engine targets are the Cinematic profile");
+            check (blendMid && between, "300 ms into the switch every engine target lies between the Cinematic and Aggressive profile");
+            check (std::abs (fn - 0.5f) < 0.1f && std::abs (fr - 0.5f) < 0.1f && std::abs (fs - 0.5f) < 0.1f && std::abs (ff - 0.5f) < 0.1f,
+                   "300 ms into the switch the targets are ~halfway (the 600 ms linear modeBlend)");
+            check (exactAfter && ! blendEnd, "after 700 ms the engine targets are exactly the Aggressive profile");
+        }
+
+        // ---- click-free: second-difference bound against the steady-state references ----
+        {
+            const int n = 3 * 48000, switchAt = 48000;
+            const int wFrom = switchAt, wTo = switchAt + 57600;              // 600 ms blend + 600 ms margin
+            const Signal sine = makeSine (n, 48000.0, 200.0, 0.3f);
+
+            for (int variant = 0; variant < 2; ++variant)                    // 0: constant t, 1: linear t ramp 0.3 -> 0.9
+            {
+                auto tAt = [variant, n] (int pos) { return variant == 0 ? 0.7f : 0.3f + 0.6f * (float) pos / (float) n; };
+
+                double ref[3];
+                for (int m = 0; m < 3; ++m)
+                {
+                    TensionEngine eng;
+                    eng.prepare (48000.0, 512, 2);
+                    Signal out;
+                    render (eng, sine, out, 512, [&] (int pos) { return makeParams (tAt (pos), 1.0f, 0.0f, true, m); });
+                    ref[m] = windowMaxSecondDiff (out.ch[0], wFrom, wTo);
+                }
+
+                const int pairs[6][2] = { { 0, 1 }, { 1, 0 }, { 1, 2 }, { 2, 1 }, { 0, 2 }, { 2, 0 } };
+                bool allOk = true;
+                double worstRatio = 0.0;
+
+                for (const auto& pr : pairs)
+                {
+                    TensionEngine eng;
+                    eng.prepare (48000.0, 512, 2);
+                    Signal out;
+                    render (eng, sine, out, 512, [&] (int pos) { return makeParams (tAt (pos), 1.0f, 0.0f, true, pos < switchAt ? pr[0] : pr[1]); });
+
+                    const double got = windowMaxSecondDiff (out.ch[0], wFrom, wTo);
+                    const double bound = 2.0 * std::max (ref[pr[0]], ref[pr[1]]) + 2.0e-3;
+                    worstRatio = std::max (worstRatio, got / bound);
+                    if (! (got <= bound) || ! allFinite (out)) allOk = false;
+                }
+
+                std::printf ("  (%s: steady-state max |second difference| %.2e / %.2e / %.2e; worst switch / bound = %.2f)\n",
+                             variant == 0 ? "constant t = 0.7" : "t ramp 0.3 -> 0.9", ref[0], ref[1], ref[2], worstRatio);
+                check (allOk, variant == 0 ? "mode switch at constant tension is click-free (all 6 switches, second difference <= 2x steady state)"
+                                           : "mode switch during a t-ramp is click-free (all 6 switches, second difference <= 2x steady state)");
+            }
+        }
+
+        // ---- t = 0 stays bit-exact while the rise mode changes every block ----
+        {
+            for (bool sync : { true, false })
+            {
+                TensionEngine eng;
+                eng.prepare (48000.0, 512, 2);
+                const int n = 48000;
+                const Signal in = makeNoise (n, 2, 321u, 1.2f, true);
+                Signal out;
+                render (eng, in, out, 512, [&] (int pos) { return makeParams (0.0f, 0.8f, 0.0f, sync, (pos / 512) % 3); });
+                check (bitEqual (in, out, 0, n), sync ? "t = 0: bit-exact while the mode changes every block (sync on)" : "t = 0: bit-exact while the mode changes every block (sync off)");
+            }
+        }
+    }
+
+    // =======================================================================
+    // T20 - full chain sweep + 8-bar ramp gain bound
+    // =======================================================================
+    void testFullChainSweep()
+    {
+        std::printf ("\n[T20] full chain: 0 -> 1 -> 0 sweep, 8-bar ramp level jumps\n");
+
+        const double fs = 48000.0;
+        const int rampSamples = 16 * 48000;                 // 8 bars @ 120 BPM (4/4) = 16 s
+        const int downSamples = 4 * 48000;
+        const int n = rampSamples + downSamples;
+
+        for (int mode = 0; mode < 3; ++mode)
+        {
+            TensionEngine eng;
+            eng.prepare (fs, 512, 2);
+            const Signal in = makeNoise (n, 2, 9100u + (std::uint32_t) mode, 0.2f, false);   // white, ~ -19 dBFS RMS
+            Signal out;
+
+            render (eng, in, out, 512, [&] (int pos)
+            {
+                const float t = pos < rampSamples ? (float) pos / (float) rampSamples
+                                                  : std::max (0.0f, 1.0f - (float) (pos - rampSamples) / (float) downSamples);
+                return makeParams (t, 1.0f, 0.0f, true, mode);
+            });
+
+            float peak = 0.0f;
+            for (int c = 0; c < 2; ++c) for (float v : out.ch[c]) peak = std::max (peak, std::abs (v));
+
+            // Level in 400 ms windows (long enough to average the deliberate tremolo), hop 100 ms.
+            const int win = 19200, hop = 4800;
+            double prevDb = 0.0, worst = 0.0, minDb = 1.0e9, maxDb = -1.0e9;
+            bool first = true;
+            for (int start = 0; start + win <= rampSamples; start += hop)
+            {
+                const double db = toDb (rmsOf (out.ch[0], start, start + win));
+                if (! first) worst = std::max (worst, std::abs (db - prevDb));
+                prevDb = db;
+                first = false;
+                minDb = std::min (minDb, db);
+                maxDb = std::max (maxDb, db);
+            }
+
+            char name[160];
+            std::printf ("  (mode %d: peak %.3f, level %.1f .. %.1f dB, worst 100 ms step %.2f dB)\n", mode, (double) peak, minDb, maxDb, worst);
+            std::snprintf (name, sizeof name, "mode %d: 0 -> 1 -> 0 sweep finite and <= 0 dBFS after the safety knee", mode);
+            check (allFinite (out) && peak <= 1.0001f, name);
+            std::snprintf (name, sizeof name, "mode %d: no output level jump > 3 dB per 100 ms during the linear 8-bar ramp", mode);
+            check (worst <= 3.0, name);
+        }
+    }
 }
 
 
@@ -2223,7 +2833,7 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf ("TENSION tests - Phase 3.3 (parallel sends and noise + Phase 3.1/3.2 regression)\n");
+    std::printf ("TENSION tests - Phase 3.4 (real TensionMapping + rise modes; Phase 3.1-3.3 regression)\n");
 
     testUnits();
     testBitExact();
@@ -2244,6 +2854,11 @@ int main()
     testDelay();
     testTailsRegression();
     testNaNWithSends();
+
+    testMappingCurves();
+    testModeBlender();
+    testModeSwitchEngine();
+    testFullChainSweep();
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILURES", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

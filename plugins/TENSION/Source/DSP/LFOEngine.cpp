@@ -111,9 +111,14 @@ double LFOEngine::getCurrentRateHz() const noexcept
 
 float LFOEngine::value() const noexcept
 {
+    return valueFor (shape);
+}
+
+float LFOEngine::valueFor (Shape s) const noexcept
+{
     const float p = (float) phase;
 
-    switch (shape)
+    switch (s)
     {
         case Shape::Sine:       return (float) std::sin (kTwoPi * phase);
         case Shape::Triangle:   return p < 0.25f ? 4.0f * p : (p < 0.75f ? 2.0f - 4.0f * p : 4.0f * p - 4.0f);
@@ -124,10 +129,8 @@ float LFOEngine::value() const noexcept
     return 0.0f;
 }
 
-float LFOEngine::next() noexcept
+void LFOEngine::advanceOne() noexcept
 {
-    const float y = value();
-
     phase += phaseInc;
 
     if (phase >= 1.0)
@@ -136,8 +139,14 @@ float LFOEngine::next() noexcept
         drawSampleHold();
     }
 
-    if (shape == Shape::SampleHold)
-        shValue += (float) shCoef * (shTarget - shValue);
+    // Phase 3.4: the S&H slew always runs (the plateau value is only READ when a destination uses
+    // SampleHold), so a rise-mode switch to S&H is continuous.
+    shValue += (float) shCoef * (shTarget - shValue);
+}
 
+float LFOEngine::next() noexcept
+{
+    const float y = value();
+    advanceOne();
     return y;
 }

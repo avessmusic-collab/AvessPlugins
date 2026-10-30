@@ -58,6 +58,15 @@ struct TensionTelemetry
 // All three are skipped while the engine is at rest (RNG still advances); isAtRest() now also
 // requires the noise to be silent and the delay / reverb tail trackers to be below -120 dBFS.
 //
+// Phase 3.4: the temporary linear stub mapping is replaced by the real TensionMapping. controlTick()
+// asks a TensionDSP::ModeBlender (600 ms rise-mode crossfade, evaluates every profile with weight > 0
+// and lerps the whole TensionTargets struct) for the targets. LFO shapes are per destination and per
+// mode (amp / filter on lfoA, stereo / delay on lfoB): every destination evaluates the shapes of the
+// profiles that currently carry weight, mixed with the SAME blend weights, so a shape change is a
+// click-free crossfade (no zero-crossing switching needed). The amplitude LFO passes a 1.5 ms one-pole
+// (so Aggressive's reverse-saw edge is a ramp, never a hard step) and the filter LFO sampled at the
+// control rate a 4 ms one-pole (S&H plateaus do not zipper the cutoff).
+//
 // Phase 3.1 (unchanged): control-rate sub-blocking (<= 32 samples,
 // aligned to an absolute sample counter so output is block-size invariant), the
 // per-destination smoothers, the dry/proc/wet bus with engagement e, MIX, OutputSafety,
@@ -105,6 +114,10 @@ public:
     const LFOEngine& getLfoA() const noexcept { return lfoA; }
     const LFOEngine& getLfoB() const noexcept { return lfoB; }
 
+    // Phase 3.4 introspection (tests / UI): the mode crossfade state and the targets of the last control tick.
+    const TensionDSP::ModeBlender&    getModeBlender() const noexcept { return modeBlender; }
+    const TensionDSP::TensionTargets& getLastTargets() const noexcept { return lastTargets; }
+
 private:
     void processSegment (float* out0, float* out1, int n);
     void controlTick();
@@ -114,6 +127,7 @@ private:
     void resetFeedbackModules() noexcept;
     void runWetSources (int pos, int count) noexcept;
     void zeroWetSources() noexcept;
+    void fillLfoBuffers (int count) noexcept;
     bool sendsEnabled() const noexcept { return stubProcGain == 1.0f && seriesChainEnabled; }
 
     using Smoother = juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>;
@@ -141,8 +155,16 @@ private:
     StereoWidth      stereoWidth;
     Smoother         ampDepthSm;               // 50 ms
     Smoother         inputTrimSm;              // 50 ms (linear gain)
-    std::array<float, controlBlockSize> lfoBBuf {};
-    std::array<float, controlBlockSize> lfoABuf {};
+    std::array<float, controlBlockSize> lfoBBuf {};     // stereo-destination LFO (per sample)
+    std::array<float, controlBlockSize> lfoABuf {};     // amplitude-destination LFO (per sample, slewed)
+    std::array<float, controlBlockSize> lfoDBuf {};     // delay-destination LFO (per sample)
+
+    // Phase 3.4: rise-mode crossfade + per-destination LFO shape mixes
+    TensionDSP::ModeBlender    modeBlender;
+    TensionDSP::TensionTargets lastTargets;
+    TensionDSP::ShapeMix       ampMix, filterMix, stereoMix, delayMix;
+    float ampLfoState = 0.0f, ampLfoCoef = 0.01f;           // 1.5 ms one-pole, per sample
+    float filterLfoState = 0.0f, filterLfoCoef = 0.1f;      // 4 ms one-pole, per control tick
 
     // Phase 3.3 wet-bus sources
     NoiseGenerator noise;
