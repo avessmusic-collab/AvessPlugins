@@ -45,6 +45,12 @@
           during a linear 8-bar (16 s @ 120 BPM) ramp
     Regression: T1..T16 run unchanged against the real mapping (T7 only retargets its Cinematic end-value
     check for BP centre to the real 300 * 2^4.9 Hz).
+
+    Phase 3.5 (musical tuning + metric harness; the harness itself is the separate TENSION_Profiles target):
+      T21 optional wet-bus level compensator (default OFF): off by default, bit-exact at t = 0 even when
+          enabled, never louder than OFF and held near the +6 dB budget at t = 1
+    Retune: noise level exponent E(t,k): Cinematic 2.6 -> 2.0 (Slow Burn 3.64 -> 2.8, Aggressive 1.82 -> 1.4).
+    No T17 threshold constant had to change (see the tuning log in DSP/TensionMapping.h).
 */
 #include "PluginProcessor.h"
 #include "DSP/TensionEngine.h"
@@ -2826,6 +2832,63 @@ namespace
             check (worst <= 3.0, name);
         }
     }
+
+    // =======================================================================
+    // T21 - Phase 3.5 optional wet-bus level compensator (default OFF)
+    // =======================================================================
+    void testLevelCompensator()
+    {
+        std::printf ("\n[T21] level compensator (Phase 3.5 fallback, default OFF)\n");
+
+        {
+            TensionEngine eng;
+            check (! eng.isLevelCompensatorEnabled() && eng.getLevelCompensatorGain() == 1.0f, "compensator is OFF by default (gain exactly 1)");
+        }
+
+        // enabled, t = 0: still bit-exact (gain stays exactly 1)
+        for (int mode = 0; mode < 3; ++mode)
+        {
+            TensionEngine eng;
+            eng.prepare (48000.0, 512, 2);
+            eng.setLevelCompensatorEnabled (true);
+            const int n = 48000;
+            const Signal in = makeNoise (n, 2, 555u + (std::uint32_t) mode, 1.2f, true);
+            Signal out;
+            render (eng, in, out, 512, [&] (int) { return makeParams (0.0f, 0.8f, 0.0f, true, mode); });
+
+            char name[120];
+            std::snprintf (name, sizeof name, "compensator enabled, t = 0 (mode %d): bit-exact passthrough preserved", mode);
+            check (bitEqual (in, out, 0, n), name);
+        }
+
+        // enabled at full tension: never louder than OFF, and held near the +6 dB budget (7.5 dB incl. LFO / tremolo margin)
+        {
+            const int n = 12 * 48000;
+            const Signal in = makeNoise (n, 2, 777u, 0.2f, false);       // white, about -19 dBFS RMS
+
+            Signal off, on;
+            {
+                TensionEngine e;
+                e.prepare (48000.0, 512, 2);
+                render (e, in, off, 512, [] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, 2); });
+            }
+            float gainEnd = 1.0f;
+            {
+                TensionEngine e;
+                e.prepare (48000.0, 512, 2);
+                e.setLevelCompensatorEnabled (true);
+                render (e, in, on, 512, [] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, 2); });
+                gainEnd = e.getLevelCompensatorGain();
+            }
+
+            const double rIn = rmsOf (in.ch[0], n - 3 * 48000, n);
+            const double rOff = rmsOf (off.ch[0], n - 3 * 48000, n), rOn = rmsOf (on.ch[0], n - 3 * 48000, n);
+            std::printf ("  (Aggressive t = 1, last 3 s: input %.1f dBFS, OFF %+.1f dB, ON %+.1f dB over the input, final comp gain %.3f)\n",
+                         toDb (rIn), toDb (rOff) - toDb (rIn), toDb (rOn) - toDb (rIn), (double) gainEnd);
+            check (allFinite (on) && rOn <= rOff * 1.001, "compensator ON is never louder than OFF at t = 1");
+            check (toDb (rOn) - toDb (rIn) <= 7.5, "compensator ON holds the wet bus within ~+6 dB (<= 7.5 dB measured at the output) of the input RMS");
+        }
+    }
 }
 
 
@@ -2833,7 +2896,7 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf ("TENSION tests - Phase 3.4 (real TensionMapping + rise modes; Phase 3.1-3.3 regression)\n");
+    std::printf ("TENSION tests - Phase 3.5 (level compensator + noise retune; Phase 3.1-3.4 regression)\n");
 
     testUnits();
     testBitExact();
@@ -2859,6 +2922,8 @@ int main()
     testModeBlender();
     testModeSwitchEngine();
     testFullChainSweep();
+
+    testLevelCompensator();
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILURES", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

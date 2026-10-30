@@ -117,3 +117,38 @@ target_compile_definitions(TENSION_Tests
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
 )
+
+# ---------------------------------------------------------------------------
+# Phase 3.5 metric harness (offline renders, text/CSV report; not part of the default build):
+#   cmake --build build --target TENSION_Profiles
+#   ./build/plugins/TENSION/TENSION_Profiles [--quick] [--comp] [--out <dir>]
+# Writes logs/TENSION/metrics_<timestamp>/summary.txt + one CSV per ramp render.
+# ---------------------------------------------------------------------------
+add_executable(TENSION_Profiles EXCLUDE_FROM_ALL
+    Source/Tests/RunProfiles.cpp
+    ${TENSION_CORE_SOURCES}
+)
+target_compile_features(TENSION_Profiles PRIVATE cxx_std_20)
+target_include_directories(TENSION_Profiles PRIVATE Source)
+target_link_libraries(TENSION_Profiles
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+target_compile_definitions(TENSION_Profiles
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+)

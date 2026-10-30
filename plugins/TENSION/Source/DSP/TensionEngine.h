@@ -118,6 +118,20 @@ public:
     const TensionDSP::ModeBlender&    getModeBlender() const noexcept { return modeBlender; }
     const TensionDSP::TensionTargets& getLastTargets() const noexcept { return lastTargets; }
 
+    // Phase 3.5 FALLBACK (architecture.md, Implementation Risks -> TensionMapping): slow (1 s RMS)
+    // wet-bus level compensator. Default OFF; the plugin never enables it unless Phase 3.5 metrics
+    // prove the retuned tables still exceed the loudness budget. When enabled it measures the dry
+    // input and the (pre-compensation) wet bus with 1 s one-pole power trackers and, only while the
+    // wet bus is more than kCompMaxOverInputDb above the input (and the input is above
+    // kCompMinInputPower), pulls the wet bus down towards that limit with a 1 s gain slew. Gain is
+    // exactly 1.0 otherwise, so t = 0 stays bit-exact even with the compensator enabled.
+    void  setLevelCompensatorEnabled (bool enabled) noexcept { levelCompEnabled = enabled; }
+    bool  isLevelCompensatorEnabled() const noexcept         { return levelCompEnabled; }
+    float getLevelCompensatorGain() const noexcept           { return compGain; }
+
+    static constexpr float kCompMaxOverInputDb = 6.0f;
+    static constexpr float kCompMinInputPower  = 1.0e-5f;    // mean-square, about -50 dBFS RMS
+
 private:
     void processSegment (float* out0, float* out1, int n);
     void controlTick();
@@ -172,6 +186,12 @@ private:
     DelayEngine    delay;
     std::array<float, controlBlockSize> nzL {}, nzR {}, dlL {}, dlR {}, rvL {}, rvR {};
     bool sendsCleared = true;      // delay / reverb / noise filters already reset during the current rest period
+
+    // Phase 3.5 optional level compensator (default OFF)
+    bool  levelCompEnabled = false;
+    float compInPow = 0.0f, compWetPow = 0.0f;       // 1 s one-pole mean-square trackers (per channel average)
+    float compGain = 1.0f;                           // slewed (1 s) wet-bus gain, exactly 1.0 when idle
+    float compPowCoef = 0.0001f, compGainCoef = 0.001f;
 
     TensionDSP::RiseMode riseMode = TensionDSP::RiseMode::Cinematic;
     HostTransport        transport;

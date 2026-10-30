@@ -63,6 +63,7 @@ namespace
         return acc;
     }
 
+    constexpr double kCompSeconds      = 1.0;      // Phase 3.5 level compensator time constant
     constexpr double kAmpLfoSlewSec    = 0.0015;
     constexpr double kFilterLfoSlewSec = 0.004;
 }
@@ -114,6 +115,10 @@ void TensionEngine::prepare (double newSampleRate, int maxBlockSize, int /*numCh
     ampLfoCoef    = (float) (1.0 - std::exp (-1.0 / (kAmpLfoSlewSec * sampleRate)));
     filterLfoCoef = (float) (1.0 - std::exp (-(double) controlBlockSize / (kFilterLfoSlewSec * sampleRate)));
 
+    // Phase 3.5 level compensator: 1 s power trackers (per sample) and 1 s gain slew (per control tick)
+    compPowCoef  = (float) (1.0 - std::exp (-1.0 / (kCompSeconds * sampleRate)));
+    compGainCoef = (float) (1.0 - std::exp (-(double) controlBlockSize / (kCompSeconds * sampleRate)));
+
     prepared = true;
     reset();
 }
@@ -146,6 +151,8 @@ void TensionEngine::reset()
     lastTargets = TensionDSP::TensionTargets {};
     ampMix = filterMix = stereoMix = delayMix = TensionDSP::ShapeMix {};
     zeroWetSources();
+    compInPow = compWetPow = 0.0f;
+    compGain  = 1.0f;
 
     noise.reset();            // restores the seeds: bit-identical noise after every reset
     reverb.reset();
@@ -311,6 +318,28 @@ void TensionEngine::controlTick()
     // re-engagement never ramps in from stale values).
     const bool snap = snapModules || isAtRest();
     snapModules = false;
+
+    // ---- Phase 3.5 level compensator: slew the wet-bus gain towards "limit / measured" (1 s) ----
+    if (levelCompEnabled)
+    {
+        float target = 1.0f;
+
+        if (compInPow > kCompMinInputPower)
+        {
+            const float limit = std::pow (10.0f, kCompMaxOverInputDb / 10.0f);       // power ratio
+            const float ratio = compWetPow / compInPow;
+            if (ratio > limit)
+                target = std::sqrt (limit / ratio);
+        }
+
+        compGain += compGainCoef * (target - compGain);
+        if (target == 1.0f && std::abs (compGain - 1.0f) < 1.0e-5f)
+            compGain = 1.0f;                                   // exact identity again
+    }
+    else
+    {
+        compGain = 1.0f;
+    }
 
     // ---- LFOs: tempo fallback 120 BPM; rate slewed in the log domain ----
     const double bpm = (transport.hasBpm && transport.bpm > 0.0) ? transport.bpm : 120.0;
@@ -594,6 +623,23 @@ void TensionEngine::processSegment (float* out0, float* out1, int n)
             const float xr = nzR[(size_t) k] + dlR[(size_t) k] + rvR[(size_t) k];
             if (xl != 0.0f) wl += xl;
             if (xr != 0.0f) wr += xr;
+
+            // Phase 3.5 optional level compensator (default OFF): trackers see the pre-compensation
+            // wet bus; the slewed gain is exactly 1.0 (skipped) whenever it is idle.
+            if (levelCompEnabled)
+            {
+                const float cdl = finiteOrZero (dl), cdr = finiteOrZero (dr);
+                const float cwl = finiteOrZero (wl), cwr = finiteOrZero (wr);
+                compInPow  += compPowCoef * (0.5f * (cdl * cdl + cdr * cdr) - compInPow);
+                compWetPow += compPowCoef * (0.5f * (cwl * cwl + cwr * cwr) - compWetPow);
+
+                if (compGain != 1.0f)
+                {
+                    wl *= compGain;
+                    wr *= compGain;
+                }
+            }
+
             wL[i] = wl;
             wR[i] = wr;
 
