@@ -41,10 +41,8 @@
 | Words | 💡 Ideated | - | Utility (MIDI Sequencer) | 2025-11-13 |
 | PadForge | 💡 Ideated | - | Synth (Instrument) | 2025-11-14 |
 | AngelGrain | 📦 Installed | 1.0.0 | Audio Effect (Granular Delay) | 2025-11-19 |
-| Transitionist | 📦 Installed | 1.0.0 | Audio Effect (Transition Chain) | 2026-08-26 |
 | KICKR | 📦 Installed | 1.0.0 | Synth (Kick Instrument + Sampler) | 2026-09-07 |
 | CORRUPTR | 📦 Installed | 1.0.2 | Audio Effect (Multi-Distortion/Glitch) | 2026-10-08 |
-| Materia | 📦 Installed | 1.0.0 | Synth (Material Percussion Instrument) | 2026-09-09 |
 | DROP | 📦 Installed | 1.0.0 | Audio Effect (Transition Engine) | 2026-09-24 |
 | PRISM | 📦 Installed | 1.0.0 | Audio Effect (Multi-Source Analyzer/Visualizer) | 2026-10-18 |
 | CHOPLINE | 🚧 Phase 5 | - | Synth (Vocal Chop/Warp/Glitch Instrument) | 2026-10-29 |
