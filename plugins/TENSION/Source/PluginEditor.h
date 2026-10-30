@@ -9,9 +9,11 @@
 #include "UI/Visualizer.h"
 
 // Native JUCE editor (NO WebView). Fixed 520x520 per the locked v4 mockup.
-// GUI Phase 4.1: layout + static rendering. Controls are interactive but NOT yet
-// bound to the APVTS (Phase 4.2); the visualizer is fed from the TENSION knob's
-// own value (Phase 4.3 switches it to processor telemetry).
+// GUI Phase 4.2: all five controls are bound to the APVTS. tension/mix/output use
+// juce::SliderParameterAttachment, sync and riseMode use juce::ParameterAttachment
+// (the custom pill/segment widgets call setValueAsCompleteGesture on click, so
+// begin/endChangeGesture bracket every interaction). The visualizer is still fed
+// from the TENSION knob value (Phase 4.3 switches it to processor telemetry).
 class TENSIONAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -44,6 +46,11 @@ private:
     EnclosureBezel bezel;
 
     double lastTimerMs = 0.0;
+    bool firstRiseUpdate = true;
+
+    // Attachments are declared AFTER the controls they drive (destroyed first).
+    std::unique_ptr<juce::SliderParameterAttachment> tensionAttach, mixAttach, outputAttach;
+    std::unique_ptr<juce::ParameterAttachment> syncAttach, riseAttach;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TENSIONAudioProcessorEditor)
 };

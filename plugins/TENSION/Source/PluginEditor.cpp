@@ -2,7 +2,7 @@
 
 namespace
 {
-    juce::String percentText (double v) { return juce::String (juce::roundToInt (v)) + "%"; }
+    juce::String percentText (double v) { return juce::String (juce::roundToInt (v * 100.0)) + "%"; }
 
     juce::String dbText (double v)
     {
@@ -14,8 +14,8 @@ namespace
 TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor& p)
     : AudioProcessorEditor (&p), processorRef (p),
       visualizer (lnf.getTheme()),
-      tensionKnob (lnf.getTheme(), TensionKnob::Kind::Hero, "TENSION", percentText, 0.0, 100.0, 0.0),
-      mixKnob (lnf.getTheme(), TensionKnob::Kind::Compact, "MIX", percentText, 0.0, 100.0, 100.0),
+      tensionKnob (lnf.getTheme(), TensionKnob::Kind::Hero, "TENSION", percentText, 0.0, 1.0, 0.0),
+      mixKnob (lnf.getTheme(), TensionKnob::Kind::Compact, "MIX", percentText, 0.0, 1.0, 1.0),
       outputKnob (lnf.getTheme(), TensionKnob::Kind::Compact, "OUTPUT", dbText, -24.0, 12.0, 0.0),
       riseSelector (lnf.getTheme()),
       syncPill (lnf.getTheme())
@@ -31,11 +31,44 @@ TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor&
     addAndMakeVisible (syncPill);
     addAndMakeVisible (bezel);            // always on top
 
-    // Phase 4.1: local wiring only (4.2 replaces these with APVTS attachments).
-    tensionKnob.onValueChange = [this] { pushVisualizerState(); };
-    riseSelector.onChange = [this] (int mode) { applyRiseMode (mode, true); };
+    auto& apvts = processorRef.getAPVTS();
+    namespace P = TensionParams;
 
-    applyRiseMode (riseSelector.getSelectedIndex(), false);
+    // Sliders: SliderParameterAttachment sets the range from the parameter, brackets
+    // drag gestures (Slider::startedDragging/stoppedDragging) and handles host updates.
+    tensionAttach = std::make_unique<juce::SliderParameterAttachment> (*apvts.getParameter (P::tension), tensionKnob, nullptr);
+    mixAttach     = std::make_unique<juce::SliderParameterAttachment> (*apvts.getParameter (P::mix), mixKnob, nullptr);
+    outputAttach  = std::make_unique<juce::SliderParameterAttachment> (*apvts.getParameter (P::output), outputKnob, nullptr);
+
+    // Double-click resets (0 % / 100 % / 0 dB). Slider's double-click path brackets the
+    // gesture itself via the attachment (sliderValueChanged inside start/stop).
+    tensionKnob.setDoubleClickReturnValue (true, 0.0);
+    mixKnob.setDoubleClickReturnValue (true, 1.0);
+    outputKnob.setDoubleClickReturnValue (true, 0.0);
+    tensionKnob.setNumDecimalPlacesToDisplay (3);
+
+    tensionKnob.onValueChange = [this] { pushVisualizerState(); };
+
+    // Sync pill: bool param, plain value 0/1. The attachment also drives the LED from host changes.
+    syncAttach = std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (P::sync),
+        [this] (float v) { syncPill.setOn (v > 0.5f, false); }, nullptr);
+    syncPill.onChange = [this] (bool on) { syncAttach->setValueAsCompleteGesture (on ? 1.0f : 0.0f); };
+
+    // Rise mode: ParameterAttachment drives the 3-segment pill by index (no hidden ComboBox).
+    // Parameter changes (click, host automation, state restore) -> theme + visualizer gamma.
+    riseAttach = std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (P::riseMode),
+        [this] (float v)
+        {
+            const int mode = juce::jlimit (0, 2, juce::roundToInt (v));
+            riseSelector.setSelectedIndex (mode, false);
+            applyRiseMode (mode, ! firstRiseUpdate);
+            firstRiseUpdate = false;
+        }, nullptr);
+    riseSelector.onChange = [this] (int mode) { riseAttach->setValueAsCompleteGesture ((float) mode); };
+
+    syncAttach->sendInitialUpdate();
+    riseAttach->sendInitialUpdate();
+
     pushVisualizerState();
 
     setSize (TensionUI::kWidth, TensionUI::kHeight);   // fixed, non-resizable
@@ -48,12 +81,21 @@ TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor&
 TENSIONAudioProcessorEditor::~TENSIONAudioProcessorEditor()
 {
     stopTimer();
+    // attachments first (they reference the controls)
+    tensionAttach.reset(); mixAttach.reset(); outputAttach.reset();
+    syncAttach.reset(); riseAttach.reset();
     setLookAndFeel (nullptr);
 }
 
 void TENSIONAudioProcessorEditor::setPreviewState (double tensionPercent, int riseMode)
 {
-    tensionKnob.setValue (tensionPercent, juce::dontSendNotification);
+    // Drives the real parameters; the attachments then update the controls.
+    namespace P = TensionParams;
+    auto& apvts = processorRef.getAPVTS();
+    apvts.getParameter (P::tension)->setValueNotifyingHost ((float) (tensionPercent / 100.0));
+    apvts.getParameter (P::riseMode)->setValueNotifyingHost (
+        apvts.getParameter (P::riseMode)->convertTo0to1 ((float) riseMode));
+    tensionKnob.setValue (tensionPercent / 100.0, juce::dontSendNotification);
     riseSelector.setSelectedIndex (riseMode, false);
     applyRiseMode (riseMode, false);
     pushVisualizerState();
@@ -70,7 +112,7 @@ void TENSIONAudioProcessorEditor::applyRiseMode (int mode, bool animate)
 void TENSIONAudioProcessorEditor::pushVisualizerState()
 {
     Visualizer::State s;
-    s.tension = (float) (tensionKnob.getValue() / 100.0);
+    s.tension = (float) tensionKnob.getValue();
     visualizer.setState (s);
 }
 
