@@ -29,8 +29,8 @@ No non-parameter persistent state in v1 (fixed window size; no seeds/curves expo
 ### mix
 - **Type:** Float
 - **Range:** 0 to 100 %, linear skew
-- **Default:** 100 %
-- **UI Control:** Compact rotary knob "MIX" + `SliderParameterAttachment`. Double-click resets to 100%.
+- **Default:** 50 % (**AMENDED 2026-10-30, user-directed** — was 100 %; double-click reset follows)
+- **UI Control:** Compact rotary knob "MIX" + `SliderParameterAttachment`. Double-click resets to 50%.
 - **DSP Usage:** `out = dry·(1−mix) + wet·mix`, 20 ms smoother. The wet bus contains proc, noise, delay and reverb returns — MIX at 0% is fully dry (user-confirmed; noise is NOT independent of MIX).
 
 ### output

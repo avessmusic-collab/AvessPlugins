@@ -43,7 +43,7 @@ TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor&
     // Double-click resets (0 % / 100 % / 0 dB). Slider's double-click path brackets the
     // gesture itself via the attachment (sliderValueChanged inside start/stop).
     tensionKnob.setDoubleClickReturnValue (true, 0.0);
-    mixKnob.setDoubleClickReturnValue (true, 1.0);
+    mixKnob.setDoubleClickReturnValue (true, 0.5);
     outputKnob.setDoubleClickReturnValue (true, 0.0);
     tensionKnob.setNumDecimalPlacesToDisplay (3);
 

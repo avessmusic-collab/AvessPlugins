@@ -17,7 +17,7 @@ public:
 
     std::function<void (int)> onChange;
 
-    static juce::Rectangle<int> defaultBounds() { return { 150, 424, 220, 46 }; }
+    static juce::Rectangle<int> defaultBounds() { return { 115, 420, 290, 50 }; }
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;

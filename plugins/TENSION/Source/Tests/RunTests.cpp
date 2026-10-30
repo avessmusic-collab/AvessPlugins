@@ -3536,7 +3536,7 @@ namespace
             TENSIONAudioProcessor d;
             const char junk[] = "not a state";
             d.setStateInformation (junk, (int) sizeof junk);
-            check (raw (d, TensionParams::tension) == 0.0f && raw (d, TensionParams::mix) == 1.0f, "invalid state data is ignored (defaults retained)");
+            check (raw (d, TensionParams::tension) == 0.0f && raw (d, TensionParams::mix) == 0.5f, "invalid state data is ignored (defaults retained)");
         }
 
         // -------------------------------------------------------------------

@@ -1,5 +1,13 @@
 # TENSION Changelog
 
+## 1.0.0 — 2026-10-30 (post-release tweak, stays 1.0.0 per factory convention)
+
+User-directed UI/default changes after first install:
+- MIX default 100% → 50% (double-click reset follows; parameter-spec.md amended)
+- RISE MODE selector enlarged 220×30 → 290×34 pill with roomier segments so
+  SLOW BURN / CINEMATIC / AGGRESSIVE fit comfortably (v4-ui.yaml amendment)
+Full suite re-run ALL PASS; reinstalled.
+
 ## 1.0.0 — 2026-10-30
 
 First complete build (version stays 1.0.0 per factory convention until public release).

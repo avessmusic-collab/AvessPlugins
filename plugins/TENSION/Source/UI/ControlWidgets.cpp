@@ -42,13 +42,14 @@ void RiseModeSelector::paint (juce::Graphics& g)
     g.setFont (makeFont (10.0f, true, 2.0f));
     g.drawSingleLineText ("RISE MODE", getWidth() / 2, 12, juce::Justification::horizontallyCentred);
 
-    const juce::Rectangle<float> pill (0.0f, 16.0f, 220.0f, 30.0f);
+    const auto w = (float) getWidth();
+    const juce::Rectangle<float> pill (0.0f, 16.0f, w, 34.0f);
     g.setColour (Palette::selectorBg);
-    g.fillRoundedRectangle (pill, 15.0f);
+    g.fillRoundedRectangle (pill, 17.0f);
     g.setColour (Palette::hairline);
-    g.drawRoundedRectangle (pill.reduced (0.5f), 14.5f, 1.0f);
+    g.drawRoundedRectangle (pill.reduced (0.5f), 16.5f, 1.0f);
 
-    const float segW = 220.0f / 3.0f;
+    const float segW = w / 3.0f;
     g.setFont (makeFont (11.0f, true, 1.0f));
     for (int i = 0; i < 3; ++i)
     {
@@ -56,11 +57,11 @@ void RiseModeSelector::paint (juce::Graphics& g)
         const bool active = (i == selected);
         if (active)
         {
-            const auto p = seg.reduced (3.0f, 3.0f);
+            const auto p = seg.reduced (4.0f, 4.0f);
             g.setColour (th.stopLow.withAlpha (0.16f));
-            g.fillRoundedRectangle (p, 12.0f);
+            g.fillRoundedRectangle (p, 13.0f);
             g.setColour (th.stopLow.withAlpha (0.7f));
-            g.drawRoundedRectangle (p.reduced (0.5f), 11.5f, 1.0f);
+            g.drawRoundedRectangle (p.reduced (0.5f), 12.5f, 1.0f);
         }
         g.setColour (active ? Palette::textPrimary : Palette::textSecondary);
         g.drawText (kModeNames[i], seg.toNearestInt(), juce::Justification::centred, false);

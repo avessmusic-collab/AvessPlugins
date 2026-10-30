@@ -39,12 +39,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout TENSIONAudioProcessor::creat
             .withStringFromValueFunction (percentToText)
             .withValueFromStringFunction (percentFromText)));
 
-    // mix - Float, 0..1 (0-100 %), linear, default 100 %
+    // mix - Float, 0..1 (0-100 %), linear, default 50 % (changed from 100 %,
+    // user-directed 2026-10-30; parameter-spec.md carries the amendment)
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { P::mix, P::parameterVersion },
         "Mix",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.0f),
-        1.0f,
+        0.5f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("%")
             .withStringFromValueFunction (percentToText)
