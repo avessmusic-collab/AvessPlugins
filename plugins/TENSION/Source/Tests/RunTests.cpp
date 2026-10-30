@@ -51,6 +51,21 @@
           enabled, never louder than OFF and held near the +6 dB budget at t = 1
     Retune: noise level exponent E(t,k): Cinematic 2.6 -> 2.0 (Slow Burn 3.64 -> 2.8, Aggressive 1.82 -> 1.4).
     No T17 threshold constant had to change (see the tuning log in DSP/TensionMapping.h).
+
+    Phase 3.6 (robustness + soak; namespace p36; no shell was available when written, first run pending):
+      T22 sample-rate matrix {44.1, 48, 88.2, 96, 176.4, 192} kHz: t = 0 bit-exact, 0 -> 1 -> 0 sweep, silent-input noise
+          emergence (+ host-rate independent level), delay sync time (centroid of the echo), filter / noise / reverb /
+          delay cutoff clamps, reverb pre-delay buffer, getTailLengthSeconds() == 8.0 and latency 0 at every rate
+      T23 60 s soak per rise mode at t = 1 (sync on, full-scale pink + full-scale impulses): finite, bounded, no scrub
+          events, linear render time (denormal proxy), wall clock, guard releases afterwards
+      T24 getStateInformation -> fresh / used instance -> setStateInformation -> prepare: bit-identical 5 s render
+      T25 runaway guard: forced overload via setWetBusGainForTesting (clamp -> 0.5, output bounded, releases); +26 dBFS input
+      T26 denormals: DelayEngine 1e-20 flush, burst then 30 s hold at t = 0.4 (tails vanish, no subnormals, linear time),
+          burst then t -> 0 (exact zeros), informational no-FTZ run
+      T27 t / mode / sync randomised every block for 10 s at 44.1 / 48 / 96 / 192 kHz
+      T28 CPU budget at 48 kHz stereo / 512 / t = 0.8 Cinematic over 30 s (asserted only in NDEBUG builds; figure printed)
+      T29 re-prepare determinism (48k -> 96k -> 48k, engine and processor level)
+    Engine changes: NoiseGenerator rateNorm = sqrt(fs / 48000) (T22 noise-level spread), TensionEngine::setWetBusGainForTesting.
 */
 #include "PluginProcessor.h"
 #include "DSP/TensionEngine.h"
@@ -68,6 +83,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -2889,6 +2905,977 @@ namespace
             check (toDb (rOn) - toDb (rIn) <= 7.5, "compensator ON holds the wet bus within ~+6 dB (<= 7.5 dB measured at the output) of the input RMS");
         }
     }
+
+    // =======================================================================
+    // Phase 3.6 - robustness + soak (T22..T29)
+    // =======================================================================
+    namespace p36
+    {
+        using Clock = std::chrono::steady_clock;
+
+        double secondsSince (Clock::time_point t0)
+        {
+            return std::chrono::duration<double> (Clock::now() - t0).count();
+        }
+
+        // Streaming Kellett pink noise (same cascade as makePink / NoiseGenerator), RMS-normalised with a
+        // constant measured once, so a 60 s signal never has to be stored.
+        struct PinkCore
+        {
+            Rng rng;
+            float b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+
+            explicit PinkCore (std::uint32_t seed) : rng { seed | 1u } {}
+
+            float next() noexcept
+            {
+                const float w = rng.next();
+                b0 = 0.99886f * b0 + w * 0.0555179f;
+                b1 = 0.99332f * b1 + w * 0.0750759f;
+                b2 = 0.96900f * b2 + w * 0.1538520f;
+                b3 = 0.86650f * b3 + w * 0.3104856f;
+                b4 = 0.55000f * b4 + w * 0.5329522f;
+                b5 = -0.7616f * b5 - w * 0.0168980f;
+                const float v = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362f;
+                b6 = w * 0.115926f;
+                return v;
+            }
+        };
+
+        float pinkUnitGain()
+        {
+            static const float g = []
+            {
+                PinkCore p (4242u);
+                double acc = 0.0;
+                constexpr int total = 1 << 18, warm = 4096;
+                for (int i = 0; i < total; ++i)
+                {
+                    const float v = p.next();
+                    if (i >= warm) acc += (double) v * (double) v;
+                }
+                return (float) (1.0 / std::sqrt (acc / (double) (total - warm)));
+            }();
+            return g;
+        }
+
+        struct PinkGen
+        {
+            PinkCore core;
+            float    level;
+            PinkGen (std::uint32_t seed, float rms) : core (seed), level (rms * pinkUnitGain()) {}
+            float next() noexcept { return core.next() * level; }
+        };
+
+        Signal pinkSignal (int n, std::uint32_t seed, float rms)
+        {
+            Signal s;
+            s.numCh = 2;
+            PinkGen gl (seed, rms), gr (seed + 101u, rms);
+            s.ch[0].resize ((size_t) n);
+            s.ch[1].resize ((size_t) n);
+            for (int i = 0; i < n; ++i)
+            {
+                s.ch[0][(size_t) i] = gl.next();
+                s.ch[1][(size_t) i] = gr.next();
+            }
+            return s;
+        }
+
+        float peakOf (const Signal& s)
+        {
+            float m = 0.0f;
+            for (int c = 0; c < s.numCh; ++c)
+                for (float v : s.ch[c]) m = std::max (m, std::abs (v));
+            return m;
+        }
+
+        struct RunStats
+        {
+            bool      finite     = true;
+            float     peak       = 0.0f;
+            long long subnormals = 0;
+            double    wallTotal  = 0.0;
+            double    worstBlock = 0.0;      // seconds
+            std::vector<double> segWall;     // wall seconds per `segSamples` of audio
+        };
+
+        // Streams `total` samples through the engine in host blocks, input generated per sample by
+        // inputAt(globalIndex, l, r). ftz == true wraps every process() call in ScopedNoDenormals exactly
+        // like TENSIONAudioProcessor::processBlock does. Wall-clock is taken around process() only.
+        template <typename InFn, typename ParamFn, typename BlockFn>
+        RunStats streamRun (TensionEngine& eng, int block, int total, int segSamples, bool ftz,
+                            InFn inputAt, ParamFn paramsAt, BlockFn blockDone, std::vector<float>* capture = nullptr)
+        {
+            RunStats st;
+            juce::AudioBuffer<float> buf (2, block);
+            const HostTransport tr {};
+            double segAcc = 0.0;
+            int segCount = 0;
+
+            if (capture != nullptr)
+                capture->assign ((size_t) total, 0.0f);
+
+            for (int pos = 0; pos < total; pos += block)
+            {
+                const int len = std::min (block, total - pos);
+                float* l = buf.getWritePointer (0);
+                float* r = buf.getWritePointer (1);
+
+                for (int i = 0; i < len; ++i)
+                    inputAt (pos + i, l[i], r[i]);
+
+                juce::AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, len);
+                const EngineParams p = paramsAt (pos);
+
+                const auto t0 = Clock::now();
+                if (ftz)
+                {
+                    juce::ScopedNoDenormals noDenormals;
+                    eng.process (view, p, tr);
+                }
+                else
+                {
+                    eng.process (view, p, tr);
+                }
+                const double dt = secondsSince (t0);
+
+                st.wallTotal += dt;
+                st.worstBlock = std::max (st.worstBlock, dt);
+                segAcc += dt;
+                segCount += len;
+                if (segCount >= segSamples)
+                {
+                    st.segWall.push_back (segAcc);
+                    segAcc = 0.0;
+                    segCount = 0;
+                }
+
+                for (int i = 0; i < len; ++i)
+                {
+                    const float a = view.getSample (0, i), b = view.getSample (1, i);
+                    if (! std::isfinite (a) || ! std::isfinite (b)) st.finite = false;
+                    st.peak = std::max (st.peak, std::max (std::abs (a), std::abs (b)));
+                    if (std::fpclassify (a) == FP_SUBNORMAL) ++st.subnormals;
+                    if (std::fpclassify (b) == FP_SUBNORMAL) ++st.subnormals;
+                    if (capture != nullptr) (*capture)[(size_t) (pos + i)] = a;
+                }
+
+                blockDone();
+            }
+
+            return st;
+        }
+
+        void renderProcessor (TENSIONAudioProcessor& p, const Signal& in, Signal& out, int block)
+        {
+            const int n = in.size();
+            out.numCh = 2;
+            for (int c = 0; c < 2; ++c) out.ch[c].assign ((size_t) n, 0.0f);
+
+            juce::AudioBuffer<float> buf (2, block);
+            juce::MidiBuffer midi;
+
+            for (int pos = 0; pos < n; pos += block)
+            {
+                const int len = std::min (block, n - pos);
+                for (int c = 0; c < 2; ++c)
+                    std::memcpy (buf.getWritePointer (c), in.ch[c].data() + pos, (size_t) len * sizeof (float));
+
+                juce::AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, len);
+                p.processBlock (view, midi);
+
+                for (int c = 0; c < 2; ++c)
+                    std::memcpy (out.ch[c].data() + pos, view.getReadPointer (c), (size_t) len * sizeof (float));
+            }
+        }
+
+        void prepareProcessor (TENSIONAudioProcessor& p, double fs, int block)
+        {
+            p.setPlayConfigDetails (2, 2, fs, block);     // BEFORE prepareToPlay (harness rule)
+            p.prepareToPlay (fs, block);
+        }
+
+        // Centroid (first moment) of the single echo of an impulse through DelayEngine (feedback 0). The
+        // Lagrange3rd interpolator has linear precision, so the centroid is the exact (fractional) delay.
+        double delayEchoCentroid (double fs, float delayMs, bool& found)
+        {
+            DelayEngine d;
+            d.prepare (fs);
+            DelayEngine::Targets tg;
+            tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.feedback = 0.0f; tg.fbLpfHz = 9000.0f; tg.delayMs = delayMs;
+
+            const double expected = (double) delayMs * 0.001 * fs;
+            int n = (int) std::ceil (expected) + 256;
+            n = ((n + 31) / 32) * 32;
+
+            std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), oL ((size_t) n, 0.0f), oR ((size_t) n, 0.0f);
+            inL[0] = inR[0] = 1.0f;
+
+            for (int pos = 0; pos < n; pos += 32)
+            {
+                d.setTargets (tg, pos == 0, 32);
+                d.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32, nullptr);
+            }
+
+            const int lo = std::max (0, (int) expected - 8), hi = std::min (n - 1, (int) expected + 9);
+            double sum = 0.0, wsum = 0.0;
+            for (int i = lo; i <= hi; ++i)
+            {
+                sum  += (double) oL[(size_t) i];
+                wsum += (double) oL[(size_t) i] * (double) i;
+            }
+
+            found = std::abs (sum) > 0.5;
+            return found ? wsum / sum : -1.0;
+        }
+
+        // Pre-delay buffer at the given rate: an 80 ms (max) pre-delay must hold (no overread / wrap) and
+        // delay the first output by about 80 ms.
+        bool reverbPreDelayOk (double fs, double& onsetMs)
+        {
+            ReverbEngine r;
+            r.prepare (fs);
+            ReverbEngine::Targets tg;
+            tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.roomSize = 0.8f; tg.preDelayMs = 80.0f;
+            tg.returnLpfHz = 20000.0f; tg.sendHpfHz = 20.0f;
+
+            const int n = (((int) fs) / 32) * 32;
+            std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), oL ((size_t) n, 0.0f), oR ((size_t) n, 0.0f);
+            inL[0] = inR[0] = 1.0f;
+
+            for (int pos = 0; pos < n; pos += 32)
+            {
+                r.setTargets (tg, pos == 0, 32);
+                r.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32);
+            }
+
+            int first = -1;
+            bool fin = true;
+            for (int i = 0; i < n; ++i)
+            {
+                if (! std::isfinite (oL[(size_t) i]) || ! std::isfinite (oR[(size_t) i])) fin = false;
+                if (first < 0 && (std::abs (oL[(size_t) i]) > 1.0e-9f || std::abs (oR[(size_t) i]) > 1.0e-9f)) first = i;
+            }
+
+            onsetMs = first >= 0 ? 1000.0 * (double) first / fs : -1.0;
+            return fin && first >= 0 && (double) first >= 0.078 * fs;
+        }
+
+        // FilterEngine clamps (also after the LFO octave modulation) at this rate.
+        bool filterClampsOk (double fs)
+        {
+            FilterEngine f;
+            f.prepare (fs);
+            FilterEngine::Targets t;
+            t.hpHz = 1.0e6f; t.bpBlend = 1.0f; t.bpCenterHz = 1.0e6f; t.bpQ = 100.0f; t.lfoDepthOct = 3.0f;
+            f.setTargets (t, 1.0f, true, 32);
+
+            const float cap = 0.45f * (float) fs * 1.0001f;
+            bool ok = f.getAppliedHpHz() <= cap && f.getAppliedBpHz() <= cap && f.getAppliedQ() <= FilterEngine::kMaxQ * 1.0001f;
+
+            t.hpHz = 1.0f; t.bpCenterHz = 1.0f; t.bpQ = 0.0f;
+            f.setTargets (t, -1.0f, true, 32);
+            ok = ok && f.getAppliedHpHz() >= 19.99f && f.getAppliedBpHz() >= 19.99f && f.getAppliedQ() >= FilterEngine::kMinQ * 0.9999f;
+
+            // and it stays finite when actually run at the clamped extremes
+            t.hpHz = 1.0e6f; t.bpCenterHz = 1.0e6f; t.bpQ = 100.0f;
+            Rng rng { 321u };
+            float peak = 0.0f;
+            for (int c = 0; c < 100; ++c)
+            {
+                f.setTargets (t, std::sin ((float) c), c == 0, 32);
+                float l[32], r[32];
+                for (int i = 0; i < 32; ++i) { l[i] = rng.next(); r[i] = rng.next(); }
+                f.process (l, r, 32);
+                for (int i = 0; i < 32; ++i)
+                {
+                    if (! std::isfinite (l[i]) || ! std::isfinite (r[i])) return false;
+                    peak = std::max (peak, std::max (std::abs (l[i]), std::abs (r[i])));
+                }
+            }
+            return ok && peak < 50.0f;
+        }
+
+        // Noise / reverb / delay filters driven far above 0.45 fs (the targets are clamped inside each module).
+        bool extremeCutoffsFinite (double fs)
+        {
+            const int n = (((int) fs) / 32) * 32;
+            Rng rng { 17u };
+            std::vector<float> inL ((size_t) n), inR ((size_t) n), oL ((size_t) n), oR ((size_t) n);
+            for (int i = 0; i < n; ++i) { inL[(size_t) i] = 0.5f * rng.next(); inR[(size_t) i] = 0.5f * rng.next(); }
+
+            auto bounded = [&] ()
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    if (! std::isfinite (oL[(size_t) i]) || ! std::isfinite (oR[(size_t) i])) return false;
+                    if (std::abs (oL[(size_t) i]) > 50.0f || std::abs (oR[(size_t) i]) > 50.0f) return false;
+                }
+                return true;
+            };
+
+            bool ok = true;
+            {
+                NoiseGenerator ng;
+                ng.setSeed (0x5EED7E57u);
+                ng.prepare (fs);
+                NoiseGenerator::Targets nt;
+                nt.gain = 1.0f; nt.brightness = 1.0f; nt.hpfHz = 40000.0f; nt.topHz = 40000.0f; nt.filteredAmt = 1.0f;
+                for (int pos = 0; pos < n; pos += 32)
+                {
+                    ng.setTargets (nt, pos == 0, 32);
+                    ng.process (oL.data() + pos, oR.data() + pos, 32, nullptr);
+                }
+                ok = ok && bounded();
+            }
+            {
+                ReverbEngine rv;
+                rv.prepare (fs);
+                ReverbEngine::Targets tg;
+                tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.roomSize = 0.9f; tg.returnLpfHz = 40000.0f; tg.sendHpfHz = 40000.0f;
+                for (int pos = 0; pos < n; pos += 32)
+                {
+                    rv.setTargets (tg, pos == 0, 32);
+                    rv.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32);
+                }
+                ok = ok && bounded();
+            }
+            {
+                DelayEngine dl;
+                dl.prepare (fs);
+                DelayEngine::Targets tg;
+                tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.feedback = 0.85f; tg.fbLpfHz = 40000.0f; tg.delayMs = 190.0f;
+                for (int pos = 0; pos < n; pos += 32)
+                {
+                    dl.setTargets (tg, pos == 0, 32);
+                    dl.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32, nullptr);
+                }
+                ok = ok && bounded();
+            }
+            return ok;
+        }
+
+        // -------------------------------------------------------------------
+        // T22 - sample-rate matrix (+ item 8: tail 8 s / latency 0 at every rate)
+        // -------------------------------------------------------------------
+        void testSampleRateMatrix()
+        {
+            std::printf ("\n[T22] sample-rate matrix 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz\n");
+
+            const double rates[] = { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 };
+            double noiseDb[6] = {};
+            int ri = 0;
+
+            // Mapped cutoffs at t = 1 stay below the 0.45 fs clamp even at 44.1 kHz (16 kHz noise LPF top included).
+            {
+                bool below = true;
+                float topSeen = 0.0f;
+                for (int mode = 0; mode < 3; ++mode)
+                {
+                    const auto g = TensionDSP::evaluateTensionMapping (1.0f, TensionDSP::riseModeFromIndex (mode));
+                    const float cut[] = { g.hpCutoffHz, g.bpCenterHz, g.noiseHpfHz, g.noiseTopHz, g.reverbReturnLpfHz, g.reverbSendHpfHz, g.delayFbLpfHz };
+                    for (float c : cut)
+                        if (c > 0.45f * 44100.0f) below = false;
+                    topSeen = std::max (topSeen, g.noiseTopHz);
+                }
+                std::printf ("  (largest noise LPF top at t = 1: %.0f Hz; clamp at 44.1 kHz: %.0f Hz)\n", (double) topSeen, 0.45 * 44100.0);
+                check (below, "mapped cutoffs at t = 1 (all modes) are below 0.45 * 44.1 kHz");
+            }
+
+            for (double fs : rates)
+            {
+                char name[220];
+                const int blk = 512;
+                const double khz = fs / 1000.0;
+
+                // a) t = 0 bit-exactness
+                {
+                    bool exact = true;
+                    for (int mode = 0; mode < 3; ++mode)
+                    {
+                        TensionEngine eng;
+                        eng.prepare (fs, blk, 2);
+                        const Signal in = makeNoise ((int) (fs * 0.5), 2, 4400u + (std::uint32_t) mode, 1.2f, true);
+                        Signal out;
+                        render (eng, in, out, blk, [&] (int) { return makeParams (0.0f, 0.6f, 0.0f, true, mode); });
+                        if (! bitEqual (in, out, 0, in.size())) exact = false;
+                    }
+                    std::snprintf (name, sizeof name, "%.1f kHz: t = 0 output is memcmp-identical to input (3 modes)", khz);
+                    check (exact, name);
+                }
+
+                // b) 0 -> 1 -> 0 sweep
+                {
+                    const int n = (int) (8.0 * fs);
+                    const Signal in = pinkSignal (n, 5100u + (std::uint32_t) ri, 0.125f);
+                    TensionEngine eng;
+                    eng.prepare (fs, blk, 2);
+                    Signal out;
+                    render (eng, in, out, blk, [&] (int pos)
+                    {
+                        const float ph = (float) pos / (float) n;
+                        const float t = ph < 0.5f ? 2.0f * ph : 2.0f - 2.0f * ph;
+                        return makeParams (t, 1.0f, 0.0f, true, 1);
+                    });
+                    const float pk = peakOf (out);
+                    std::snprintf (name, sizeof name, "%.1f kHz: 0 -> 1 -> 0 sweep finite, peak %.3f <= 0 dBFS", khz, (double) pk);
+                    check (allFinite (out) && pk <= 1.0001f, name);
+                }
+
+                // c) silent input: noise emerges at t = 0.8, exact silence at t = 0
+                {
+                    const int n = (int) (4.0 * fs);
+                    const Signal sil = makeConst (n, 0.0f);
+                    TensionEngine eng;
+                    eng.prepare (fs, blk, 2);
+                    Signal out;
+                    render (eng, sil, out, blk, [&] (int) { return makeParams (0.8f, 1.0f, 0.0f, true, 1); });
+                    const double db = toDb (rmsOf (out.ch[0], n - (int) fs, n));
+                    noiseDb[ri] = db;
+
+                    TensionEngine eng0;
+                    eng0.prepare (fs, blk, 2);
+                    Signal out0;
+                    render (eng0, sil, out0, blk, [&] (int) { return makeParams (0.0f, 1.0f, 0.0f, true, 1); });
+                    bool zero = true;
+                    for (int c = 0; c < 2; ++c)
+                        for (float v : out0.ch[c]) if (v != 0.0f) zero = false;
+
+                    std::snprintf (name, sizeof name, "%.1f kHz: silent input -> noise emerges at t = 0.8 (%.1f dBFS RMS), exact silence at t = 0", khz, db);
+                    check (allFinite (out) && db > -70.0 && db < -10.0 && zero, name);
+                }
+
+                // d) delay sync time (120 BPM, 3 division modes + the 2 s maximum)
+                {
+                    bool ok = true;
+                    double worst = 0.0;
+                    for (int mode = 0; mode < 3; ++mode)
+                    {
+                        const float ms = (float) DelayEngine::computeDelayMs (true, 120.0, mode);
+                        bool found = false;
+                        const double c = delayEchoCentroid (fs, ms, found);
+                        const double err = std::abs (c - (double) ms * 0.001 * fs);
+                        worst = std::max (worst, err);
+                        if (! found || err > 0.25) ok = false;
+                    }
+                    {
+                        bool found = false;
+                        const double c = delayEchoCentroid (fs, 2000.0f, found);
+                        const double err = std::abs (c - 2.0 * fs);
+                        worst = std::max (worst, err);
+                        if (! found || err > 0.25) ok = false;
+                    }
+                    std::snprintf (name, sizeof name, "%.1f kHz: delay echo lands on 60000/bpm*division (+ the 2 s max), worst error %.3f samples", khz, worst);
+                    check (ok, name);
+                }
+
+                // e) filter cutoffs clamped to 0.45 fs, nothing blows up with cutoffs far above it
+                {
+                    std::snprintf (name, sizeof name, "%.1f kHz: filter cutoffs clamped to [20 Hz, 0.45 fs], Q capped; extreme noise/reverb/delay cutoffs stay finite", khz);
+                    check (filterClampsOk (fs) && extremeCutoffsFinite (fs), name);
+                }
+
+                // f) reverb pre-delay / delay buffers sized for this rate
+                {
+                    double onset = 0.0;
+                    const bool ok = reverbPreDelayOk (fs, onset);
+                    std::snprintf (name, sizeof name, "%.1f kHz: reverb pre-delay buffer holds 80 ms (first output at %.1f ms), no overread", khz, onset);
+                    check (ok, name);
+                }
+
+                // g) tail 8 s, latency 0 at this rate (stereo + mono)
+                {
+                    bool ok = true;
+                    for (int nCh = 1; nCh <= 2; ++nCh)
+                    {
+                        TENSIONAudioProcessor proc;
+                        proc.setPlayConfigDetails (nCh, nCh, fs, blk);
+                        proc.prepareToPlay (fs, blk);
+                        if (proc.getTailLengthSeconds() != 8.0 || proc.getLatencySamples() != 0) ok = false;
+                    }
+                    std::snprintf (name, sizeof name, "%.1f kHz: getTailLengthSeconds() == 8.0 and latency 0 (mono + stereo)", khz);
+                    check (ok, name);
+                }
+
+                ++ri;
+            }
+
+            double mn = noiseDb[0], mx = noiseDb[0];
+            for (double v : noiseDb) { mn = std::min (mn, v); mx = std::max (mx, v); }
+            std::printf ("  (t = 0.8 silent-input noise level per rate: %.1f %.1f %.1f %.1f %.1f %.1f dBFS, spread %.2f dB)\n",
+                         noiseDb[0], noiseDb[1], noiseDb[2], noiseDb[3], noiseDb[4], noiseDb[5], mx - mn);
+            check (mx - mn <= 3.0, "noise level is host-rate independent (spread <= 3 dB across 44.1..192 kHz; NoiseGenerator rateNorm)");
+        }
+
+        // -------------------------------------------------------------------
+        // T23 - 60 s soak per mode at max settings
+        // -------------------------------------------------------------------
+        void testSoak()
+        {
+            std::printf ("\n[T23] 60 s soak per rise mode (t = 1, sync on, full-scale pink + full-scale impulses)\n");
+
+            const double fs = 48000.0;
+            const int total = 60 * 48000;
+
+            for (int mode = 0; mode < 3; ++mode)
+            {
+                TensionEngine eng;
+                eng.prepare (fs, 512, 2);
+
+                PinkGen gl (900u + (std::uint32_t) mode, 0.3f), gr (950u + (std::uint32_t) mode, 0.3f);
+                int blocks = 0, guardBlocks = 0;
+
+                auto inputAt = [&] (int i, float& l, float& r)
+                {
+                    l = std::clamp (gl.next(), -1.0f, 1.0f);       // pink at RMS 0.3, hard-limited to full scale
+                    r = std::clamp (gr.next(), -1.0f, 1.0f);
+                    if ((i % 81600) < 64)                          // a 64-sample full-scale burst every 1.7 s
+                    {
+                        const float s = ((i / 81600) & 1) ? -1.0f : 1.0f;
+                        l = s; r = -s;
+                    }
+                };
+
+                const auto st = streamRun (eng, 512, total, 10 * 48000, true, inputAt,
+                                           [&] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, mode); },
+                                           [&] { ++blocks; if (eng.getSafety().isGuardActive()) ++guardBlocks; });
+
+                const double ratio = st.segWall.size() >= 2 ? st.segWall.back() / std::max (st.segWall.front(), 1.0e-9) : 1.0;
+                std::printf ("  (mode %d: peak %.4f, wall %.2f s for 60 s (%.1f%% of real time), worst block %.3f ms, last/first 10 s segment %.2f, guard active in %d/%d blocks)\n",
+                             mode, (double) st.peak, st.wallTotal, 100.0 * st.wallTotal / 60.0, st.worstBlock * 1000.0, ratio, guardBlocks, blocks);
+
+                char name[200];
+                std::snprintf (name, sizeof name, "mode %d: 60 s at max settings is finite and bounded (peak <= 0 dBFS = ceiling, trim 0 dB)", mode);
+                check (st.finite && st.peak <= 1.0001f, name);
+
+                std::snprintf (name, sizeof name, "mode %d: no NaN/Inf scrub events and no feedback-module reset during the soak", mode);
+                check (eng.getSafety().getNonFiniteCount() == 0 && eng.getFeedbackResetCount() == 0, name);
+
+                std::snprintf (name, sizeof name, "mode %d: no denormal CPU blow-up (last 10 s segment <= 3x the first)", mode);
+                check (ratio <= 3.0, name);
+
+#ifdef NDEBUG
+                std::snprintf (name, sizeof name, "mode %d: 60 s render completes faster than real time (optimised build)", mode);
+                check (st.wallTotal < 60.0, name);
+#else
+                std::printf ("  (debug build: wall-clock bound not asserted)\n");
+#endif
+
+                // the input stops being hot: guard (if it engaged) must have released and the feedback clamp be back at 1
+                PinkGen ql (3u + (std::uint32_t) mode, 0.05f), qr (4u + (std::uint32_t) mode, 0.05f);
+                const auto rec = streamRun (eng, 512, 6 * 48000, 6 * 48000, true,
+                                            [&] (int, float& l, float& r) { l = ql.next(); r = qr.next(); },
+                                            [&] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, mode); }, [] {});
+                std::snprintf (name, sizeof name, "mode %d: after the soak the guard has released (clamp %.3f) and the output is sane", mode, (double) eng.getSafety().getFeedbackClamp());
+                check (rec.finite && ! eng.getSafety().isGuardActive() && eng.getSafety().getFeedbackClamp() > 0.99f, name);
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // T24 - state save / restore round-trip
+        // -------------------------------------------------------------------
+        void testStateRoundTrip()
+        {
+            std::printf ("\n[T24] state save / restore round-trip\n");
+
+            const double fs = 48000.0;
+            const int block = 512;
+            const Signal in = pinkSignal (5 * 48000, 2468u, 0.2f);
+
+            auto configure = [] (TENSIONAudioProcessor& p)
+            {
+                setParam (p, TensionParams::tension, 0.63f);
+                setParam (p, TensionParams::mix, 0.8f);
+                setParam (p, TensionParams::output, -3.1f);
+                setParam (p, TensionParams::sync, 0.0f);
+                setParam (p, TensionParams::riseMode, 2.0f);
+            };
+
+            TENSIONAudioProcessor a;
+            configure (a);
+            juce::MemoryBlock state;
+            a.getStateInformation (state);
+
+            TENSIONAudioProcessor b;
+            b.setStateInformation (state.getData(), (int) state.getSize());
+
+            auto raw = [] (TENSIONAudioProcessor& p, const char* id) { return p.getAPVTS().getRawParameterValue (id)->load(); };
+            const bool paramsSame = raw (a, TensionParams::tension) == raw (b, TensionParams::tension)
+                                 && raw (a, TensionParams::mix) == raw (b, TensionParams::mix)
+                                 && raw (a, TensionParams::output) == raw (b, TensionParams::output)
+                                 && raw (a, TensionParams::sync) == raw (b, TensionParams::sync)
+                                 && raw (a, TensionParams::riseMode) == raw (b, TensionParams::riseMode);
+            check (paramsSame && std::abs (raw (b, TensionParams::tension) - 0.63f) < 1.0e-6f && raw (b, TensionParams::riseMode) == 2.0f
+                   && raw (b, TensionParams::sync) == 0.0f, "restored parameter values equal the saved ones (t 0.63, mix 0.8, output -3.1, sync off, Aggressive)");
+
+            prepareProcessor (a, fs, block);
+            prepareProcessor (b, fs, block);
+            Signal outA, outB;
+            renderProcessor (a, in, outA, block);
+            renderProcessor (b, in, outB, block);
+
+            const float pk = peakOf (outA);
+            check (allFinite (outA) && pk > 0.01f, "original instance renders audible, finite audio");
+            check (bitEqual (outA, outB, 0, in.size()), "restored fresh instance renders bit-identically to the original (5 s pink)");
+
+            // restore into a DIRTY instance that already rendered something else -> no hidden state survives
+            TENSIONAudioProcessor c;
+            prepareProcessor (c, fs, block);
+            setParam (c, TensionParams::tension, 0.95f);
+            setParam (c, TensionParams::riseMode, 0.0f);
+            Signal dirty;
+            renderProcessor (c, pinkSignal (3 * 48000, 1357u, 0.3f), dirty, block);
+            c.setStateInformation (state.getData(), (int) state.getSize());
+            prepareProcessor (c, fs, block);
+            Signal outC;
+            renderProcessor (c, in, outC, block);
+            check (bitEqual (outA, outC, 0, in.size()), "state restored into a used instance + prepareToPlay -> bit-identical render (no hidden state)");
+
+            // invalid data is ignored
+            TENSIONAudioProcessor d;
+            const char junk[] = "not a state";
+            d.setStateInformation (junk, (int) sizeof junk);
+            check (raw (d, TensionParams::tension) == 0.0f && raw (d, TensionParams::mix) == 1.0f, "invalid state data is ignored (defaults retained)");
+        }
+
+        // -------------------------------------------------------------------
+        // T25 - runaway guard
+        // -------------------------------------------------------------------
+        void testRunawayGuard()
+        {
+            std::printf ("\n[T25] runaway guard behaviour\n");
+
+            const double fs = 48000.0;
+
+            {
+                TensionEngine eng;
+                eng.prepare (fs, 512, 2);
+                eng.setWetBusGainForTesting (12.0f);              // forces the wet bus far above +9 dBFS
+
+                Signal out1;
+                render (eng, pinkSignal (3 * 48000, 6001u, 0.5f), out1, 512, [] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, 2); });
+
+                const bool engaged = eng.getSafety().isGuardActive();
+                const float clampDuring = eng.getSafety().getFeedbackClamp();
+                std::printf ("  (overload x12 wet bus: guard %s, feedback clamp %.3f, env %.2f, out peak %.4f)\n",
+                             engaged ? "ACTIVE" : "inactive", (double) clampDuring, (double) eng.getSafety().getGuardEnvelope(), (double) peakOf (out1));
+                check (engaged && clampDuring < 0.55f, "guard engages under sustained > +9 dBFS wet bus and the feedback clamp drops to ~0.5");
+                check (allFinite (out1) && peakOf (out1) <= 1.0001f, "output stays finite and <= 0 dBFS during the overload (safety knee)");
+                check (eng.getSafety().getNonFiniteCount() == 0 && eng.getFeedbackResetCount() == 0, "overload does not produce NaN/Inf or a feedback reset");
+
+                eng.setWetBusGainForTesting (1.0f);               // overload ends
+                Signal out2;
+                render (eng, pinkSignal (5 * 48000, 6002u, 0.05f), out2, 512, [] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, 2); });
+                std::printf ("  (after the overload: guard %s, feedback clamp %.3f)\n",
+                             eng.getSafety().isGuardActive() ? "ACTIVE" : "released", (double) eng.getSafety().getFeedbackClamp());
+                check (allFinite (out2) && ! eng.getSafety().isGuardActive() && eng.getSafety().getFeedbackClamp() > 0.99f,
+                       "guard releases after the overload ends and the clamp returns to 1.0");
+            }
+
+            // extreme INPUT (+26 dBFS pink, no test hook): bounded and finite in every mode
+            for (int mode = 0; mode < 3; ++mode)
+            {
+                TensionEngine eng;
+                eng.prepare (fs, 512, 2);
+                Signal out;
+                render (eng, pinkSignal (6 * 48000, 6100u + (std::uint32_t) mode, 20.0f), out, 512, [&] (int) { return makeParams (1.0f, 1.0f, 0.0f, true, mode); });
+                char name[160];
+                std::snprintf (name, sizeof name, "mode %d: +26 dBFS input at t = 1 -> finite, peak %.3f <= 0 dBFS, no scrub events", mode, (double) peakOf (out));
+                check (allFinite (out) && peakOf (out) <= 1.0001f && eng.getSafety().getNonFiniteCount() == 0, name);
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // T26 - denormal soak
+        // -------------------------------------------------------------------
+        void testDenormalSoak()
+        {
+            std::printf ("\n[T26] denormal soak\n");
+
+            const double fs = 48000.0;
+
+            // (a) DelayEngine loop-write flush at |x| < 1e-20 (no FTZ involved)
+            {
+                auto runDelay = [&] (float amp, int seconds, std::vector<float>& oL)
+                {
+                    DelayEngine d;
+                    d.prepare (fs);
+                    DelayEngine::Targets tg;
+                    tg.sendGain = 1.0f; tg.returnGain = 1.0f; tg.feedback = 0.5f; tg.fbLpfHz = 9000.0f; tg.delayMs = 100.0f;
+                    const int n = seconds * 48000;
+                    std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), oR ((size_t) n, 0.0f);
+                    oL.assign ((size_t) n, 0.0f);
+                    inL[0] = inR[0] = amp;
+                    for (int pos = 0; pos < n; pos += 32)
+                    {
+                        d.setTargets (tg, pos == 0, 32);
+                        d.process (inL.data() + pos, inR.data() + pos, oL.data() + pos, oR.data() + pos, 32, nullptr);
+                    }
+                };
+
+                std::vector<float> o;
+                runDelay (1.0e-25f, 2, o);
+                bool allZero = true;
+                for (float v : o) if (v != 0.0f) allZero = false;
+                check (allZero, "delay: a 1e-25 write (|x| < 1e-20) is flushed to exact zero - the loop never sees it");
+
+                runDelay (1.0e-15f, 2, o);
+                float mxv = 0.0f;
+                for (float v : o) mxv = std::max (mxv, std::abs (v));
+                check (mxv > 1.0e-16f, "delay: a 1e-15 write (above the flush threshold) still produces its echo");
+
+                runDelay (1.0e-18f, 30, o);
+                bool tailZero = true;
+                long long sub = 0;
+                for (size_t i = 6 * 48000; i < o.size(); ++i)
+                {
+                    if (o[i] != 0.0f) tailZero = false;
+                    if (std::fpclassify (o[i]) == FP_SUBNORMAL) ++sub;
+                }
+                check (tailZero && sub == 0, "delay: a 1e-18 impulse recirculating at feedback 0.5 decays to EXACT zero (no denormal tail) within 6 s");
+            }
+
+            // (b) engine held at t = 0.4 after a loud burst: tails decay to nothing, render time stays linear
+            const int burst = 2 * 48000, total = 32 * 48000;
+
+            auto runBurst = [&] (bool withBurst, bool ftz, int totalSamples, std::vector<float>* cap)
+            {
+                TensionEngine eng;
+                eng.prepare (fs, 512, 2);
+                Rng rl { 5u }, rr { 6u };
+                auto inputAt = [&] (int i, float& l, float& r)
+                {
+                    const bool on = withBurst && i < burst;
+                    l = on ? 0.9f * rl.next() : 0.0f;
+                    r = on ? 0.9f * rr.next() : 0.0f;
+                };
+                return streamRun (eng, 512, totalSamples, 5 * 48000, ftz, inputAt, [] (int) { return makeParams (0.4f, 1.0f, 0.0f, true, 1); }, [] {}, cap);
+            };
+
+            auto segRatio = [] (const RunStats& st)
+            {
+                const size_t k = st.segWall.size();
+                if (k < 5) return 1.0;
+                const double first = 0.5 * (st.segWall[1] + st.segWall[2]);
+                const double last  = 0.5 * (st.segWall[k - 2] + st.segWall[k - 1]);
+                return last / std::max (first, 1.0e-9);
+            };
+
+            {
+                std::vector<float> capBurst, capRef;
+                const auto stB = runBurst (true,  true, total, &capBurst);
+                const auto stR = runBurst (false, true, total, &capRef);
+
+                float maxDiff = 0.0f;
+                for (size_t i = (size_t) (total - 5 * 48000); i < (size_t) total; ++i)
+                    maxDiff = std::max (maxDiff, std::abs (capBurst[i] - capRef[i]));
+
+                const double rms = rmsOf (capBurst, total - 48000, total);
+                const double ratio = segRatio (stB);
+                std::printf ("  (t = 0.4 held: tail difference vs never-excited engine in the last 5 s %.3e, noise-only RMS %.1f dBFS, wall %.2f s, last/first segment %.2f)\n",
+                             (double) maxDiff, toDb (rms), stB.wallTotal, ratio);
+                check (stB.finite && stB.subnormals == 0, "burst then 30 s at t = 0.4: finite, not a single subnormal sample in the output");
+                check (maxDiff < 1.0e-7f, "burst then 30 s at t = 0.4: the burst's delay/reverb/filter tails have decayed to nothing (< -140 dBFS vs a never-excited engine)");
+                check (rms > 1.0e-4, "burst then 30 s at t = 0.4: only the deliberate riser noise remains (silent input keeps generating it)");
+                check (ratio <= 3.0, "burst then 30 s at t = 0.4: render time is linear (last segments <= 3x the first - no denormal stall)");
+            }
+
+            // (c) burst at t = 0.4, then t -> 0 with silent input: true silence (exact zeros)
+            {
+                TensionEngine eng;
+                eng.prepare (fs, 512, 2);
+                Rng rl { 7u }, rr { 8u };
+                const int n40 = 40 * 48000;
+                std::vector<float> cap;
+                const auto st = streamRun (eng, 512, n40, 5 * 48000, true,
+                                           [&] (int i, float& l, float& r) { const bool on = i < burst; l = on ? 0.9f * rl.next() : 0.0f; r = on ? 0.9f * rr.next() : 0.0f; },
+                                           [&] (int pos) { return makeParams (pos < burst ? 0.4f : 0.0f, 1.0f, 0.0f, true, 1); }, [] {}, &cap);
+                bool zero = true;
+                for (size_t i = (size_t) (n40 - 5 * 48000); i < cap.size(); ++i) if (cap[i] != 0.0f) zero = false;
+                const double ratio = segRatio (st);
+                std::printf ("  (burst, then t -> 0 for 38 s: at rest %d, wall %.2f s, last/first segment %.2f)\n", eng.isAtRest() ? 1 : 0, st.wallTotal, ratio);
+                check (st.finite && st.subnormals == 0 && zero && eng.isAtRest(), "burst then t -> 0: output decays to exact zero (true silence) and the engine returns to rest");
+                check (ratio <= 3.0, "burst then t -> 0: render time stays linear");
+            }
+
+            // (d) informational: the same hold WITHOUT ScopedNoDenormals (what the hardware does without the FTZ guard)
+            {
+                const int n12 = 12 * 48000;
+                const auto st = runBurst (true, false, n12, nullptr);
+                std::printf ("  (info, no FTZ: 12 s wall %.2f s, last/first segment %.2f, subnormal output samples %lld)\n", st.wallTotal, segRatio (st), st.subnormals);
+                check (st.finite, "without FTZ the render is still finite (timing printed for the report, not asserted)");
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // T27 - extreme parameter jumps
+        // -------------------------------------------------------------------
+        void testExtremeJumps()
+        {
+            std::printf ("\n[T27] extreme parameter jumps (t / mode / sync randomised every block, 10 s)\n");
+
+            const double rates[] = { 44100.0, 48000.0, 96000.0, 192000.0 };
+            int ri = 0;
+
+            for (double fs : rates)
+            {
+                TensionEngine eng;
+                eng.prepare (fs, 512, 2);
+                Rng rp { 0xBEEFu + (std::uint32_t) ri };
+                PinkGen gl (700u + (std::uint32_t) ri, 0.15f), gr (800u + (std::uint32_t) ri, 0.15f);
+                int blockNo = 0;
+
+                const auto st = streamRun (eng, 512, (int) (10.0 * fs), (int) fs, true,
+                                           [&] (int, float& l, float& r) { l = gl.next(); r = gr.next(); },
+                                           [&] (int)
+                                           {
+                                               EngineParams p;
+                                               const float u = rp.next() * 0.5f + 0.5f;                 // [0, 1)
+                                               p.tension  = (blockNo % 5 == 0) ? ((blockNo / 5) % 2 == 0 ? 0.0f : 1.0f) : u;   // hard 0 / 1 jumps too
+                                               p.riseMode = std::clamp ((int) std::floor ((rp.next() * 0.5f + 0.5f) * 3.0f), 0, 2);
+                                               p.sync     = rp.next() > 0.0f;
+                                               p.mix      = 1.0f;
+                                               ++blockNo;
+                                               return p;
+                                           }, [] {});
+
+                char name[200];
+                std::snprintf (name, sizeof name, "%.1f kHz: random t/mode/sync every block for 10 s: finite (peak %.3f), no NaN counter hits, no feedback reset",
+                               fs / 1000.0, (double) st.peak);
+                check (st.finite && st.peak <= 3.0f && eng.getSafety().getNonFiniteCount() == 0 && eng.getFeedbackResetCount() == 0, name);
+                ++ri;
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // T28 - CPU budget
+        // -------------------------------------------------------------------
+        void testCpuBudget()
+        {
+            std::printf ("\n[T28] CPU budget (48 kHz stereo, 512-sample blocks, t = 0.8 Cinematic, 30 s)\n");
+
+            const double fs = 48000.0;
+            const int block = 512;
+            const int numBlocks = (30 * 48000) / block;                 // 2812 blocks (~29.99 s)
+            const int warmBlocks = 94;                                  // ~1 s untimed warm-up
+
+            TENSIONAudioProcessor proc;
+            prepareProcessor (proc, fs, block);
+            setParam (proc, TensionParams::tension, 0.8f);
+            setParam (proc, TensionParams::riseMode, 1.0f);
+            setParam (proc, TensionParams::sync, 1.0f);
+
+            const int srcLen = 188 * block;                             // whole number of blocks, looped
+            const Signal src = pinkSignal (srcLen, 4711u, 0.125f);
+            juce::AudioBuffer<float> buf (2, block);
+            juce::MidiBuffer midi;
+
+            std::vector<double> times;
+            times.reserve ((size_t) numBlocks);
+            bool fin = true;
+
+            for (int b = 0; b < warmBlocks + numBlocks; ++b)
+            {
+                const int off = (b * block) % srcLen;
+                for (int c = 0; c < 2; ++c)
+                    std::memcpy (buf.getWritePointer (c), src.ch[c].data() + off, (size_t) block * sizeof (float));
+
+                const auto t0 = Clock::now();
+                proc.processBlock (buf, midi);
+                const double dt = secondsSince (t0);
+
+                if (b >= warmBlocks)
+                    times.push_back (dt);
+
+                if (b % 64 == 0)
+                    for (int i = 0; i < block; ++i)
+                        if (! std::isfinite (buf.getSample (0, i)) || ! std::isfinite (buf.getSample (1, i))) fin = false;
+            }
+
+            double sum = 0.0;
+            for (double v : times) sum += v;
+            std::vector<double> sorted = times;
+            std::sort (sorted.begin(), sorted.end());
+
+            const double budget = (double) block / fs;
+            const double avgPct = 100.0 * (sum / (double) times.size()) / budget;
+            const double p99Pct = 100.0 * sorted[(size_t) ((double) sorted.size() * 0.99)] / budget;
+            const double maxPct = 100.0 * sorted.back() / budget;
+
+            std::printf ("  CPU: average %.2f%% of the real-time budget (%.3f ms per %d-sample block), p99 %.2f%%, worst block %.2f%%\n",
+                         avgPct, sum / (double) times.size() * 1000.0, block, p99Pct, maxPct);
+            std::printf ("  (method: wall-clock steady_clock around TENSIONAudioProcessor::processBlock, %d blocks after a %d-block warm-up, budget = block / fs = %.3f ms)\n",
+                         (int) times.size(), warmBlocks, budget * 1000.0);
+
+            check (fin, "CPU run output is finite");
+#ifdef NDEBUG
+            check (avgPct < 25.0, "average per-block time < 25% of the real-time budget (plan target < 15%; generous for CI noise)");
+            check (avgPct < 15.0, "average per-block time < 15% of the real-time budget (plan target)");
+#else
+            std::printf ("  (debug build: CPU bound not asserted)\n");
+#endif
+        }
+
+        // -------------------------------------------------------------------
+        // T29 - re-prepare determinism (rate / block change)
+        // -------------------------------------------------------------------
+        void testRePrepare()
+        {
+            std::printf ("\n[T29] re-prepare determinism (48 kHz -> 96 kHz -> 48 kHz)\n");
+
+            const Signal in48 = pinkSignal (4 * 48000, 2929u, 0.2f);
+            const Signal in96 = pinkSignal (2 * 96000, 3030u, 0.2f);
+            const int n = in48.size();
+
+            auto paramsFn = [n] (int pos)
+            {
+                const float t = 0.3f + 0.6f * (float) pos / (float) n;
+                return makeParams (t, 0.85f, -2.0f, true, 2);
+            };
+
+            {
+                TensionEngine eng;
+                eng.prepare (48000.0, 512, 2);
+                Signal a, tmp, b, c;
+                render (eng, in48, a, 512, paramsFn);
+
+                eng.prepare (96000.0, 128, 2);
+                render (eng, in96, tmp, 128, [] (int) { return makeParams (1.0f, 1.0f, 0.0f, false, 0); });
+
+                eng.prepare (48000.0, 512, 2);
+                render (eng, in48, b, 512, paramsFn);
+
+                eng.prepare (44100.0, 2048, 2);
+                render (eng, in48, tmp, 2048, [] (int) { return makeParams (0.5f, 1.0f, 0.0f, true, 1); });
+                eng.prepare (48000.0, 512, 2);
+                render (eng, in48, c, 512, paramsFn);
+
+                check (allFinite (a) && peakOf (a) > 0.01f, "engine: first 48 kHz render is audible and finite");
+                check (bitEqual (a, b, 0, n), "engine: prepare@48k -> prepare@96k (used) -> prepare@48k renders bit-identically to the first");
+                check (bitEqual (a, c, 0, n), "engine: further 44.1k/2048 detour + back to 48k/512 is still bit-identical");
+            }
+
+            {
+                TENSIONAudioProcessor proc;
+                prepareProcessor (proc, 48000.0, 512);
+                setParam (proc, TensionParams::tension, 0.7f);
+                setParam (proc, TensionParams::riseMode, 1.0f);
+                Signal a, tmp, b;
+                renderProcessor (proc, in48, a, 512);
+
+                prepareProcessor (proc, 96000.0, 256);
+                renderProcessor (proc, in96, tmp, 256);
+                proc.releaseResources();
+
+                prepareProcessor (proc, 48000.0, 512);
+                renderProcessor (proc, in48, b, 512);
+
+                check (bitEqual (a, b, 0, n), "processor: repeated prepareToPlay (48k -> 96k -> 48k) renders bit-identically (pluginval-style re-prepare)");
+                check (proc.getTailLengthSeconds() == 8.0 && proc.getLatencySamples() == 0, "processor: tail 8 s / latency 0 after repeated prepares");
+            }
+        }
+    }
 }
 
 
@@ -2896,7 +3883,7 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf ("TENSION tests - Phase 3.5 (level compensator + noise retune; Phase 3.1-3.4 regression)\n");
+    std::printf ("TENSION tests - Phase 3.6 (robustness + soak; Phase 3.1-3.5 regression)\n");
 
     testUnits();
     testBitExact();
@@ -2924,6 +3911,16 @@ int main()
     testFullChainSweep();
 
     testLevelCompensator();
+
+    // Phase 3.6 (robustness + soak)
+    p36::testSampleRateMatrix();
+    p36::testRePrepare();
+    p36::testStateRoundTrip();
+    p36::testRunawayGuard();
+    p36::testExtremeJumps();
+    p36::testDenormalSoak();
+    p36::testSoak();
+    p36::testCpuBudget();
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASS" : "FAILURES", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

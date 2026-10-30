@@ -46,6 +46,7 @@ void NoiseGenerator::prepare (double newSampleRate)
     sampleRate = newSampleRate > 0.0 ? newSampleRate : 44100.0;
     maxHz      = (float) (0.45 * sampleRate);
     pinkNorm   = pinkNormalisation();
+    rateNorm   = (float) std::sqrt (sampleRate / 48000.0);     // Phase 3.6: rate-independent noise density (== 1.0f at 48 kHz)
 
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = sampleRate;
@@ -178,7 +179,7 @@ void NoiseGenerator::process (float* outL, float* outR, int n, const float* lfo)
         const float br    = brightSm.getNextValue();
         const float fa    = filtSm.getNextValue();
         const float la    = lfo != nullptr ? lfo[i] : 1.0f;
-        const float amp   = g * (1.0f - depth * 0.5f * (1.0f - la)) * kRmsNorm;
+        const float amp   = g * (1.0f - depth * 0.5f * (1.0f - la)) * kRmsNorm * rateNorm;
 
         // pink -> white blend, rising HPF, LPF top shaper, + resonant band-pass of the white stream
         float xL = pL + br * (wL - pL);

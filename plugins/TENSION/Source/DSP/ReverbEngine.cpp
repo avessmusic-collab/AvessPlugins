@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <new>
 
 #include "OutputSafety.h"
 
@@ -14,6 +15,14 @@ void ReverbEngine::prepare (double newSampleRate)
     spec.sampleRate       = sampleRate;
     spec.maximumBlockSize = (juce::uint32) kChunk;
     spec.numChannels      = 2;
+
+    // Phase 3.6 engine fix (T29 re-prepare determinism): juce::dsp::Reverb / juce::Reverb keep internal
+    // parameter smoothers (damping, feedback, dry/wet gains) whose CURRENT values survive prepare() and
+    // reset(), so a re-prepare started the next render ramping from the previous run's final parameters.
+    // Re-construct the object in place (no heap involved, prepare() is a message-thread call) so every
+    // prepare starts from the library's pristine state.
+    reverb.~Reverb();
+    new (&reverb) juce::dsp::Reverb();
 
     reverb.prepare (spec);                       // modern API (Pattern #17)
 

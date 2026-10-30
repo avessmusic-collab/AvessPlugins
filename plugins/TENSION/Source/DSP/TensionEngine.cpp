@@ -640,6 +640,12 @@ void TensionEngine::processSegment (float* out0, float* out1, int n)
                 }
             }
 
+            if (wetBusTestGain != 1.0f)      // Phase 3.6 test hook (forced overload), off in the plugin
+            {
+                wl *= wetBusTestGain;
+                wr *= wetBusTestGain;
+            }
+
             wL[i] = wl;
             wR[i] = wr;
 

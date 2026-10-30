@@ -86,6 +86,12 @@ private:
     float  maxHz = 19845.0f;
     float  pinkNorm = 1.0f;
 
+    // Phase 3.6 engine fix (sample-rate matrix, T22): the white source has a constant per-SAMPLE RMS, so
+    // its spectral density fell with 1/fs and the band-limited noise (LPF top 2.5..16 kHz) got up to ~6 dB
+    // quieter at 192 kHz than at 48 kHz. rateNorm = sqrt(fs / 48 kHz) holds the density (and therefore the
+    // in-band level) constant across host rates. Exactly 1.0f at 48 kHz => 48 kHz output is bit-unchanged.
+    float  rateNorm = 1.0f;
+
     std::uint32_t seedL = 1u, seedR = 1u ^ kSeedXor;
     std::uint32_t stateL = 1u, stateR = 1u ^ kSeedXor;
     PinkState pinkL, pinkR;

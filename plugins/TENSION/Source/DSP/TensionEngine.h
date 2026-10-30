@@ -111,6 +111,11 @@ public:
     // TEST HOOK (Phase 3.2): false == series modules bypassed (proc = dry, the Phase 3.1 identity).
     void setSeriesChainEnabledForTesting (bool enabled) noexcept { seriesChainEnabled = enabled; }
 
+    // TEST HOOK (Phase 3.6): scales the wet bus right before the runaway guard / MIX / safety, so a
+    // synthetic overload (> +9 dBFS for > 100 ms) can be forced deterministically. Default 1.0 == off
+    // (skipped, no arithmetic). Never set by the plugin.
+    void setWetBusGainForTesting (float g) noexcept { wetBusTestGain = g; }
+
     const LFOEngine& getLfoA() const noexcept { return lfoA; }
     const LFOEngine& getLfoB() const noexcept { return lfoB; }
 
@@ -204,6 +209,7 @@ private:
     bool  seriesChainEnabled = true;
     int   controlPos = 0;       // samples elapsed inside the current 32-sample control period
     float stubProcGain = 1.0f;
+    float wetBusTestGain = 1.0f;    // Phase 3.6 test hook
 
     // Per-process() accumulators
     float  statOutPeak = 0.0f;
