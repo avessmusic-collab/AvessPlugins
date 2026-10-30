@@ -48,7 +48,7 @@
 | DROP | 📦 Installed | 1.0.0 | Audio Effect (Transition Engine) | 2026-09-24 |
 | PRISM | 📦 Installed | 1.0.0 | Audio Effect (Multi-Source Analyzer/Visualizer) | 2026-10-18 |
 | CHOPLINE | 🚧 Phase 5 | - | Synth (Vocal Chop/Warp/Glitch Instrument) | 2026-10-29 |
-| TENSION | 🚧 Stage 3 | - | Audio Effect (One-Knob Cinematic Riser) | 2026-10-29 |
+| TENSION | 📦 Installed | 1.0.0 | Audio Effect (One-Knob Cinematic Riser) | 2026-10-30 |
 
 **For detailed plugin information (lifecycle timeline, known issues, parameters, etc.), see:**
 `plugins/[PluginName]/NOTES.md`
