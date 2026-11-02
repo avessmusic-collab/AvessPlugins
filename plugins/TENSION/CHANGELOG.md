@@ -6,6 +6,11 @@ User-directed: faint animated TV-static texture over the backdrop + scoped bug r
 - Visualizer: 4 pre-rendered 128 px speckle tiles (alpha baked in, peak 8.5 %)
   cycled at 12 Hz with random tile offsets; always moving, even at 0 % tension
   (idle gate now settles to 12 Hz window-only repaints instead of a full stop)
+- Follow-up (same day): "no signal" horizontal distortion. Tiles regenerated as
+  horizontally streaked snow (decaying-max dashes, peak 7.5 %); one slowly
+  rolling band (22 px, 3x x-stretch, brighter) plus 0-2 transient tear bands
+  per flip (random y/height, 2-4.5x x-stretch) smear the static left/right
+  like a dead analog channel.
 - **Bug fix (from review):** RiseModeSelector::mouseDown still hard-coded the old
   220 px width after the selector was widened to 290 px — clicks near segment
   edges selected the wrong mode (e.g. center of CINEMATIC chose AGGRESSIVE).

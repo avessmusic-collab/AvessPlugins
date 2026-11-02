@@ -26,8 +26,10 @@ Visualizer::Visualizer (const ThemeState& themeState) : theme (themeState)
 Visualizer::~Visualizer() { stopTimer(); }
 
 // One-time: pre-render the static tiles (white speckles, alpha baked in).
-// Cubic bias keeps most pixels near-invisible with sparse brighter flecks, so
-// the overall effect stays subtle on the near-black backdrop.
+// A decaying running max along each row turns speckles into short horizontal
+// dashes with dimming tails - analog-snow look. Cubic bias keeps most pixels
+// near-invisible with sparse brighter flecks, so it stays subtle on the
+// near-black backdrop.
 void Visualizer::buildStaticFrames()
 {
     for (auto& img : staticFrames)
@@ -35,12 +37,15 @@ void Visualizer::buildStaticFrames()
         img = juce::Image (juce::Image::ARGB, kStaticTile, kStaticTile, true);
         juce::Image::BitmapData bd (img, juce::Image::BitmapData::writeOnly);
         for (int y = 0; y < kStaticTile; ++y)
+        {
+            float streak = 0.0f;
             for (int x = 0; x < kStaticTile; ++x)
             {
-                const float v = random.nextFloat();
-                const float alpha = v * v * v * 0.085f;   // mean ~2 %, peak 8.5 %
+                streak = juce::jmax (streak * 0.55f, random.nextFloat());
+                const float alpha = streak * streak * streak * 0.075f;  // peak 7.5 %
                 bd.setPixelColour (x, y, juce::Colours::white.withAlpha (alpha));
             }
+        }
     }
 }
 
@@ -54,11 +59,26 @@ void Visualizer::timerCallback()
     // random offset. This animates regardless of tension, so the idle path
     // below still repaints (at 12 Hz instead of the old full stop).
     bool staticFlipped = false;
+    rollY += rollSpeed * dt;                    // rolling distortion band
+    if (rollY > 512.0f)
+    {
+        rollY = -22.0f;
+        rollSpeed = 30.0f + random.nextFloat() * 40.0f;
+    }
     if (++staticTick >= kStaticEveryNTicks)
     {
         staticTick = 0;
         staticFrame = (staticFrame + 1) % (int) staticFrames.size();
         staticOffset = { random.nextInt (kStaticTile), random.nextInt (kStaticTile) };
+
+        // transient horizontal tears: 0-2 per flip, random position/stretch
+        numTears = random.nextInt (3);
+        for (int i = 0; i < numTears; ++i)
+            tears[(size_t) i] = { 10.0f + random.nextFloat() * 484.0f,     // y
+                                  6.0f + random.nextFloat() * 26.0f,       // h
+                                  random.nextFloat() * (float) kStaticTile,
+                                  2.0f + random.nextFloat() * 2.5f,        // x stretch
+                                  random.nextBool() };
         staticFlipped = true;
     }
 
@@ -168,9 +188,26 @@ void Visualizer::paint (juce::Graphics& g)
         g.reduceClipRegion (window);
 
         // faint moving TV-static over the backdrop (alpha baked into the tiles)
-        g.setTiledImageFill (staticFrames[(size_t) staticFrame],
-                             -staticOffset.x, -staticOffset.y, 1.0f);
+        const auto& staticImg = staticFrames[(size_t) staticFrame];
+        g.setTiledImageFill (staticImg, -staticOffset.x, -staticOffset.y, 1.0f);
         g.fillRect (10, 10, 500, 500);
+
+        // "no signal" bands: the static drawn horizontally stretched (and
+        // brighter when flagged) so the picture visibly tears left/right
+        auto fillBand = [&g, &staticImg] (const StaticBand& b)
+        {
+            const juce::Rectangle<float> r (10.0f, b.y, 500.0f, juce::jmin (b.h, 510.0f - b.y));
+            if (r.getHeight() <= 0.0f)
+                return;
+            g.setFillType (juce::FillType (staticImg,
+                juce::AffineTransform::scale (b.stretch, 1.0f).translated (b.xoff, b.y)));
+            g.fillRect (r);
+            if (b.bright)
+                g.fillRect (r);   // double-composite ~doubles the low alpha
+        };
+        fillBand ({ rollY, 22.0f, (float) -staticOffset.x * 3.0f, 3.0f, true });
+        for (int bi = 0; bi < numTears; ++bi)
+            fillBand (tears[(size_t) bi]);
 
         if (gt > 0.001f)
         {

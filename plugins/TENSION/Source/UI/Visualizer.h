@@ -82,5 +82,15 @@ private:
     int staticTick = 0;
     juce::Point<int> staticOffset;
 
+    // "No signal" horizontal distortion: bands where the static is drawn
+    // horizontally stretched (and brighter), like the picture tearing left and
+    // right. One band rolls slowly down the window; transient tears respawn at
+    // random positions on each 12 Hz flip.
+    struct StaticBand { float y = 0, h = 0, xoff = 0, stretch = 1; bool bright = false; };
+    std::array<StaticBand, 2> tears;
+    int numTears = 0;
+    float rollY = 140.0f;      // rolling band top (window coords 10..510)
+    float rollSpeed = 42.0f;   // px/s
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Visualizer)
 };
