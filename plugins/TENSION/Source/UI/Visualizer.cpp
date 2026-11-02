@@ -7,6 +7,9 @@ namespace
     constexpr float twoPi = juce::MathConstants<float>::twoPi;
     constexpr int kSpikes = 72;
 
+    constexpr int kStaticTile = 128;       // px, tiled across the 500x500 window
+    constexpr int kStaticEveryNTicks = 5;  // 60 Hz / 5 = 12 Hz frame flips
+
     float easeOutCubic (float x) { const float u = 1.0f - x; return 1.0f - u * u * u; }
 }
 
@@ -15,11 +18,31 @@ Visualizer::Visualizer (const ThemeState& themeState) : theme (themeState)
     setInterceptsMouseClicks (false, false);
     setOpaque (false);
     rings.reserve (16);
+    buildStaticFrames();
     lastTickMs = juce::Time::getMillisecondCounterHiRes();
     startTimerHz (60);
 }
 
 Visualizer::~Visualizer() { stopTimer(); }
+
+// One-time: pre-render the static tiles (white speckles, alpha baked in).
+// Cubic bias keeps most pixels near-invisible with sparse brighter flecks, so
+// the overall effect stays subtle on the near-black backdrop.
+void Visualizer::buildStaticFrames()
+{
+    for (auto& img : staticFrames)
+    {
+        img = juce::Image (juce::Image::ARGB, kStaticTile, kStaticTile, true);
+        juce::Image::BitmapData bd (img, juce::Image::BitmapData::writeOnly);
+        for (int y = 0; y < kStaticTile; ++y)
+            for (int x = 0; x < kStaticTile; ++x)
+            {
+                const float v = random.nextFloat();
+                const float alpha = v * v * v * 0.085f;   // mean ~2 %, peak 8.5 %
+                bd.setPixelColour (x, y, juce::Colours::white.withAlpha (alpha));
+            }
+    }
+}
 
 void Visualizer::timerCallback()
 {
@@ -27,11 +50,23 @@ void Visualizer::timerCallback()
     const float dt = juce::jlimit (0.0f, 0.1f, (float) ((now - lastTickMs) * 0.001));
     lastTickMs = now;
 
+    // TV-static: flip to the next pre-rendered tile at 12 Hz with a fresh
+    // random offset. This animates regardless of tension, so the idle path
+    // below still repaints (at 12 Hz instead of the old full stop).
+    bool staticFlipped = false;
+    if (++staticTick >= kStaticEveryNTicks)
+    {
+        staticTick = 0;
+        staticFrame = (staticFrame + 1) % (int) staticFrames.size();
+        staticOffset = { random.nextInt (kStaticTile), random.nextInt (kStaticTile) };
+        staticFlipped = true;
+    }
+
     const bool active = state.tension > 0.0005f || smoothedI > 0.0005f;
     if (! active)
     {
-        // Fully transparent at 0 %: nothing to animate. Repaint a few frames so
-        // the fade-out finishes, then idle without repainting.
+        // Field fully transparent at 0 %: finish the fade-out, then only the
+        // static keeps repainting (12 Hz).
         if (idleFrames < 3)
         {
             ++idleFrames;
@@ -40,6 +75,8 @@ void Visualizer::timerCallback()
             smoothedI = smoothedTension = gate = 0.0f;
             repaint();
         }
+        else if (staticFlipped)
+            repaint (10, 10, 500, 500);   // static only changes inside the window
         return;
     }
 
@@ -129,6 +166,11 @@ void Visualizer::paint (juce::Graphics& g)
         juce::Path window;
         window.addRoundedRectangle (10.0f, 10.0f, 500.0f, 500.0f, 6.0f);
         g.reduceClipRegion (window);
+
+        // faint moving TV-static over the backdrop (alpha baked into the tiles)
+        g.setTiledImageFill (staticFrames[(size_t) staticFrame],
+                             -staticOffset.x, -staticOffset.y, 1.0f);
+        g.fillRect (10, 10, 500, 500);
 
         if (gt > 0.001f)
         {

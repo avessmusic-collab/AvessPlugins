@@ -29,7 +29,7 @@ void RiseModeSelector::mouseDown (const juce::MouseEvent& e)
 {
     if (e.y < 16)
         return;
-    const float segW = 220.0f / 3.0f;
+    const float segW = (float) getWidth() / 3.0f;   // same geometry as paint()
     setSelectedIndex ((int) (e.position.x / segW), true);
 }
 

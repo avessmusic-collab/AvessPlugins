@@ -31,7 +31,8 @@ public:
     void setState (const State& s) noexcept
     {
         // Only wake the idle gate on a meaningful change so a silent, 0 % field
-        // never repaints (the editor pushes telemetry every frame).
+        // skips the 60 Hz animation wakes (the editor pushes telemetry every
+        // frame). The TV-static still repaints the window at 12 Hz while idle.
         if (std::abs (s.tension - state.tension) > 1.0e-4f || s.tension > 0.0005f)
             wake();
         state = s;
@@ -52,6 +53,7 @@ private:
     void wake() { idleFrames = 0; }
     void step (float dt);
     void spawnParticle();
+    void buildStaticFrames();
 
     const TensionUI::ThemeState& theme;
     State state;
@@ -71,6 +73,14 @@ private:
     std::vector<Ring> rings;
     std::array<Particle, 192> particles;
     juce::Random random;
+
+    // Faint animated TV-static over the backdrop. Pre-rendered tiles cycled at
+    // ~12 Hz with a random tile offset per frame; always moving, even at 0 %
+    // tension (alpha is baked into the tiles and stays "slight").
+    std::array<juce::Image, 4> staticFrames;
+    int staticFrame = 0;
+    int staticTick = 0;
+    juce::Point<int> staticOffset;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Visualizer)
 };

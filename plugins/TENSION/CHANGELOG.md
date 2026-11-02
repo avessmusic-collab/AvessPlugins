@@ -1,5 +1,20 @@
 # TENSION Changelog
 
+## 1.0.0 — 2026-11-02 (post-release tweak, stays 1.0.0 per factory convention)
+
+User-directed: faint animated TV-static texture over the backdrop + scoped bug review.
+- Visualizer: 4 pre-rendered 128 px speckle tiles (alpha baked in, peak 8.5 %)
+  cycled at 12 Hz with random tile offsets; always moving, even at 0 % tension
+  (idle gate now settles to 12 Hz window-only repaints instead of a full stop)
+- **Bug fix (from review):** RiseModeSelector::mouseDown still hard-coded the old
+  220 px width after the selector was widened to 290 px — clicks near segment
+  edges selected the wrong mode (e.g. center of CINEMATIC chose AGGRESSIVE).
+  Hit-testing now derives from getWidth(), same as paint().
+- Consistency: EngineParams::mix / reset() mixSm seed aligned to the 50 % param
+  default; editor's duplicate double-click return values removed (ctor is the
+  single source); stale comments fixed.
+Full suite re-run ALL PASS; reinstalled.
+
 ## 1.0.0 — 2026-10-30 (post-release tweak, stays 1.0.0 per factory convention)
 
 User-directed UI/default changes after first install:

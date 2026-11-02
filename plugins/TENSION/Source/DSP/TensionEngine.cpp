@@ -132,7 +132,7 @@ void TensionEngine::reset()
     tensionSm.setCurrentAndTargetValue (0.0f);
     engageSm.setCurrentAndTargetValue  (0.0f);
     safetySm.setCurrentAndTargetValue  (0.0f);
-    mixSm.setCurrentAndTargetValue     (1.0f);
+    mixSm.setCurrentAndTargetValue     (0.5f);  // parameter default; firstBlock snap overrides anyway
     trimSm.setCurrentAndTargetValue    (1.0f);
 
     safety.reset();

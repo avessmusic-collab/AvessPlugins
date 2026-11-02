@@ -15,7 +15,7 @@ TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor&
     : AudioProcessorEditor (&p), processorRef (p),
       visualizer (lnf.getTheme()),
       tensionKnob (lnf.getTheme(), TensionKnob::Kind::Hero, "TENSION", percentText, 0.0, 1.0, 0.0),
-      mixKnob (lnf.getTheme(), TensionKnob::Kind::Compact, "MIX", percentText, 0.0, 1.0, 1.0),
+      mixKnob (lnf.getTheme(), TensionKnob::Kind::Compact, "MIX", percentText, 0.0, 1.0, 0.5),
       outputKnob (lnf.getTheme(), TensionKnob::Kind::Compact, "OUTPUT", dbText, -24.0, 12.0, 0.0),
       riseSelector (lnf.getTheme()),
       syncPill (lnf.getTheme())
@@ -40,11 +40,9 @@ TENSIONAudioProcessorEditor::TENSIONAudioProcessorEditor (TENSIONAudioProcessor&
     mixAttach     = std::make_unique<juce::SliderParameterAttachment> (*apvts.getParameter (P::mix), mixKnob, nullptr);
     outputAttach  = std::make_unique<juce::SliderParameterAttachment> (*apvts.getParameter (P::output), outputKnob, nullptr);
 
-    // Double-click resets (0 % / 100 % / 0 dB). Slider's double-click path brackets the
-    // gesture itself via the attachment (sliderValueChanged inside start/stop).
-    tensionKnob.setDoubleClickReturnValue (true, 0.0);
-    mixKnob.setDoubleClickReturnValue (true, 0.5);
-    outputKnob.setDoubleClickReturnValue (true, 0.0);
+    // Double-click resets come from each TensionKnob's ctor defaultValue
+    // (0 % / 50 % / 0 dB) — set once there, not re-set here. Slider's
+    // double-click path brackets the gesture via the attachment.
     tensionKnob.setNumDecimalPlacesToDisplay (3);
 
 

@@ -7,6 +7,7 @@ meta:
   amendments:
     - "2026-10-30 (user): MIX default 100% -> 50% (reset value follows)"
     - "2026-10-30 (user): RISE MODE selector enlarged 220x46 -> 290x50 (pill 34px tall, roomier segments) so the three labels fit comfortably"
+    - "2026-11-02 (user): faint moving TV-static texture over the backdrop, clipped to the 500x500 window - 4 pre-rendered white-speckle tiles (mean ~2% alpha, peak 8.5%) cycled at 12 Hz with random offsets; animates even at 0% tension"
   changes_from_v2: ["accent colour system is now owned by RISE MODE (see mode_themes); default view = Cinematic blue"]
   changes_from_v3: ["Cinematic ramp changed from cyan-blue/electric-blue to teal (#2dd4c4) rising to electric blue (#2b52ff): green at low tension, blue at climax (user request)"]
   note: >

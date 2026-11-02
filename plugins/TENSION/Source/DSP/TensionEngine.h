@@ -29,7 +29,7 @@ struct HostTransport
 struct EngineParams
 {
     float tension  = 0.0f;   // 0..1
-    float mix      = 1.0f;   // 0..1
+    float mix      = 0.5f;   // 0..1 (matches the parameter default in createParameterLayout)
     float outputDb = 0.0f;   // -24..+12
     bool  sync     = true;
     int   riseMode = 1;      // 0 Slow Burn, 1 Cinematic, 2 Aggressive
