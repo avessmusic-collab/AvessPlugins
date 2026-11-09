@@ -37,5 +37,5 @@ Premium real-time audio visualization plugin: multi-source spectrum analyzer (ju
 v1.0 scope: 2 stereo sources (main + sidechain — Ableton Live's routing ceiling), all visual modules, WebView UI, VST3 + AU. v2: PRISM Sender companion plugin + shared-memory IPC for true 8–16 source operation in Live.
 
 Full vision: `plugins/PRISM/.ideas/creative-brief.md`
-- **Last Packaged:** 2026-10-18
-- **Distribution:** plugins/PRISM/dist/PRISM.pkg (3.6 MB, macOS); plugins/PRISM/dist/PRISM-1.0.0-Windows.exe (4.1 MB, Windows, CI-built 2026-10-22)
+- **Last Packaged:** 2026-11-09
+- **Distribution:** plugins/SPECTR/dist/SPECTR.pkg (3.5 MB, macOS; also copied to ~/Desktop/MY VST). Windows installer pending a CI re-run of spectr-windows.yml (old PRISM exe removed).
