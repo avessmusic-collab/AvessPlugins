@@ -1,0 +1,1978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SPECTR</title>
+<style>
+/* ===== WebView constraints (REQUIRED) ===== */
+html, body { height: 100%; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  user-select: none; -webkit-user-select: none; cursor: default; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  background: #0a0c0e;
+  color: var(--value);
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, "IBM Plex Mono", monospace;
+}
+/* Tokens (mirrors v2-ui.yaml) */
+:root {
+  --glass: #0a0c0e; --label: #7a8894; --value: #d3e7ee; --value-rgb: 211,231,238; --cyan: #00e5ff; --cyan-rgb: 0,229,255; --violet: #b388ff; --violet-rgb: 179,136,255; --accent-light: #bff4ff;
+  --hair: rgba(255,255,255,0.05); --slate-hi: #30363c; --slate-lo: #22272c;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, "IBM Plex Mono", monospace;
+}
+
+/* ===== Stage: fixed 1100x720 px, scaled uniformly to fit window ===== */
+#stage { position: absolute; left: 0; top: 0; width: 1100px; height: 720px; transform-origin: 0 0; }
+#stage > * { position: absolute; }
+
+/* ----- pure glass: the glass fills the whole window (no device body / bezel / strip) ----- */
+#glass { left: 0; top: 0; width: 1100px; height: 720px; z-index: 1; background: #0a0c0e; }
+
+/* ----- instrument panes: 1px frames + corner ticks, corner annotations ----- */
+.pane { z-index: 3; pointer-events: none; border: 1px solid rgba(255,255,255,0.10); }
+.pane::after { content: ""; position: absolute; left: -1px; top: -1px; right: -1px; bottom: -1px; pointer-events: none;
+  background:
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left top / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left top / 1px 9px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right top / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right top / 1px 9px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left bottom / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) left bottom / 1px 9px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right bottom / 9px 1px no-repeat,
+    linear-gradient(rgba(255,255,255,0.36), rgba(255,255,255,0.36)) right bottom / 1px 9px no-repeat; }
+.an { z-index: 4; font-size: 9px; line-height: 11px; letter-spacing: 0.03em; color: rgba(150,165,176,0.62); white-space: nowrap; pointer-events: none; text-shadow: 0 0 4px #0a0c0e, 0 0 2px #0a0c0e; }
+.an b { font-weight: normal; color: rgba(205,220,230,0.85); }
+.hair { background: var(--hair); z-index: 3; }
+.dvd { z-index: 4; touch-action: none; }
+.dvd::before { content: ""; position: absolute; background: transparent; transition: background .15s ease; }
+.dvd::after { content: ""; position: absolute; opacity: 0; transition: opacity .15s ease; background-image: radial-gradient(circle, rgba(255,255,255,0.7) 1.1px, transparent 1.6px); }
+.dh { width: 1012px; height: 12px; cursor: row-resize; }
+.dh::before { left: 0; right: 0; top: 5px; height: 1px; }
+.dh::after { left: 50%; top: 4px; width: 24px; height: 4px; margin-left: -12px; background-size: 8px 4px; background-repeat: repeat-x; }
+.dv { width: 12px; cursor: col-resize; }
+.dv::before { top: 0; bottom: 0; left: 5px; width: 1px; }
+.dv::after { top: 50%; left: 4px; width: 4px; height: 24px; margin-top: -12px; background-size: 4px 8px; background-repeat: repeat-y; }
+.dvd:hover::before, .dvd.drag::before { background: rgba(255,255,255,0.30); }
+.dvd:hover::after, .dvd.drag::after { opacity: 0.85; }
+
+/* ----- readout columns ----- */
+.col { z-index: 4; white-space: nowrap; width: 216px; }
+.lb { font-size: 10px; line-height: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--label); letter-spacing: 0.02em; }
+.big { margin: 1px 0 4px; font-size: 21px; line-height: 26px; color: var(--value); text-shadow: 0 0 14px rgba(var(--value-rgb),0.20); letter-spacing: -0.01em; }
+.sm { font-size: 11px; line-height: 13px; color: var(--value); text-shadow: 0 0 9px rgba(var(--value-rgb),0.14); }
+.sv { text-shadow: 0 0 10px var(--sg); }
+.col i { font-style: normal; color: var(--label); text-shadow: none; }
+.col .warn { color: #ffb4a8; text-shadow: 0 0 10px rgba(255,120,100,0.35); }
+
+#insp { left: 0; top: 0; width: 700px; height: 14px; z-index: 3; font-size: 11px; line-height: 14px; color: var(--label); white-space: nowrap; overflow: hidden; }
+#insp b { font-weight: normal; color: var(--value); }
+#insp .dim { opacity: 0.35; }
+
+/* ----- visualizer regions ----- */
+canvas { display: block; }
+.cvs { z-index: 2; }
+.cap { top: 0; height: 12px; z-index: 3; font-size: 10px; line-height: 12px; color: var(--label); letter-spacing: 0.04em; }
+#spec_cv { cursor: crosshair; }
+
+/* ----- legend + selectors ----- */
+.leg { top: 0; height: 20px; z-index: 5; display: flex; align-items: center; gap: 7px; padding: 0 8px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: opacity .15s ease; }
+#leg0, #leg1 { width: 68px; }
+.leg .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leg:active { background: rgba(255,255,255,0.05); }
+.leg .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.leg .nm { color: var(--c); text-shadow: 0 0 8px var(--c); letter-spacing: 0.03em; }
+.leg.off { opacity: 0.32; }
+.leg.off .dot { box-shadow: none; }
+.sgsel { top: 0; height: 20px; z-index: 5; border-radius: 6px; text-align: center; font-size: 10px; line-height: 20px; color: #55636e; cursor: pointer; transition: color .15s ease, background .15s ease, box-shadow .15s ease; letter-spacing: 0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sgsel.on { color: var(--c); background: rgba(255,255,255,0.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); text-shadow: 0 0 8px var(--c); }
+
+/* ----- v7: fullscreen presentation mode ----- */
+.fsbtn { left: 1055px; top: 684px; width: 24px; height: 20px; z-index: 9; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; opacity: 0.8; transition: left .18s ease, top .18s ease, width .18s ease, height .18s ease, opacity .18s ease, background .15s ease; }
+.fsbtn:hover { background: rgba(255,255,255,0.08); opacity: 1; }
+.fsbtn svg { width: 14px; height: 14px; fill: none; stroke: #8a98a4; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.fsbtn .co { display: none; }
+#stage.fs .fsbtn { left: 1055px; top: 18px; width: 30px; height: 20px; opacity: 0.5; }
+#stage.fs .fsbtn:hover { opacity: 1; }
+#stage.fs .fsbtn .ex { display: none; } #stage.fs .fsbtn .co { display: block; }
+#stage .sb, #stage .foot, #stage .ftp { transition: opacity .18s ease; }
+#stage.fs .sb, #stage.fs .foot:not(#flag), #stage.fs .ftp { opacity: 0; pointer-events: none; }
+#insp { transition: none; }
+#stage.fs #flag { left: 770px; top: 697px; width: 315px; }
+
+/* ----- footer status line ----- */
+.foot { top: 684px; height: 20px; z-index: 5; font-size: 11px; line-height: 20px; color: var(--label); white-space: nowrap; }
+.chip { display: flex; align-items: center; gap: 7px; height: 20px; padding: 0 6px; border-radius: 6px; cursor: pointer; transition: opacity .15s ease; overflow: hidden; }
+.chip:active { background: rgba(255,255,255,0.05); }
+.chip .nm { color: var(--c); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; max-width: 66px; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.chip .cn { color: var(--c); text-shadow: 0 0 8px var(--c); opacity: 0.9; }
+.chip.off { opacity: 0.32; }
+.chip.off .dot { box-shadow: none; }
+.stag { width: 20px; height: 20px; border-radius: 6px; text-align: center; font-size: 10px; line-height: 20px; color: #55636e; cursor: pointer; transition: all .15s ease; }
+.stag.on { color: var(--c); background: rgba(255,255,255,0.11); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18); }
+#f_sep { left: 333px; width: 8px; text-align: center; color: #34404a; }
+#f_stats { left: 351px; width: 220px; color: var(--label); }
+#f_stats b { font-weight: normal; color: #8fa4b0; }
+#f_stats .fz { color: #ffd2a3; text-shadow: 0 0 8px rgba(255,190,120,0.4); }
+#flag { left: 785px; width: 262px; transition: left .18s ease, top .18s ease, width .18s ease, opacity .18s ease; text-align: right; color: #7f9aa6; letter-spacing: 0.02em; }
+#flag i { display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: var(--cyan); vertical-align: 1px; animation: pulse 2.4s ease-in-out infinite; }
+#flag span { animation: pulseT 2.4s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 0.25; box-shadow: none; } 50% { opacity: 1; box-shadow: 0 0 8px var(--cyan); } }
+@keyframes pulseT { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+body.rm #flag i, body.rm #flag span { animation: none; }
+#flag.idle i { background: #55636e; animation: none; opacity: 0.7; }
+#flag.idle span { animation: none; opacity: 0.75; }
+
+/* ----- device strip: soft rounded-square buttons ----- */
+/* ----- right control sidebar (instrument column) ----- */
+.plate { z-index: 4; border: 1px solid rgba(255,255,255,0.22); border-radius: 2px; text-align: center; font-size: 15px; line-height: 32px; letter-spacing: 0.5em; text-indent: 0.5em; color: var(--value); text-shadow: 0 0 12px rgba(var(--value-rgb),0.25); pointer-events: none; }
+.kl { z-index: 4; width: 58px; text-align: center; font-size: 9px; line-height: 11px; letter-spacing: 0.08em; color: var(--label); pointer-events: none; }
+.kv { z-index: 4; width: 58px; text-align: center; font-size: 10px; line-height: 12px; color: var(--value); pointer-events: none; }
+.kn { z-index: 5; cursor: ns-resize; touch-action: none; }
+.sbn { z-index: 5; width: 106px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.16); border-radius: 3px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: #93a1ac; cursor: pointer; white-space: nowrap; transition: color .15s ease, background .15s ease, border-color .15s ease, opacity .18s ease; }
+.sbn:hover { color: var(--value); border-color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.04); }
+.sbn:active { background: rgba(255,255,255,0.09); }
+.sbn.on, .sbn.active { color: var(--accent-light); background: rgba(var(--cyan-rgb),0.12); border-color: rgba(var(--cyan-rgb),0.5); }
+.sbn.flash { background: rgba(var(--cyan-rgb),0.25); color: #fff; }
+.sbn.theme { text-transform: none; letter-spacing: 0.02em; }
+
+
+/* ----- hover info (custom tooltip; native titles are migrated to data-tip) ----- */
+#tip { z-index: 40; max-width: 264px; padding: 7px 10px 8px; border-radius: 8px; font-size: 10px; line-height: 14px; letter-spacing: 0.02em;
+  color: var(--value); background: rgba(15,18,21,0.96); border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  pointer-events: none; opacity: 0; visibility: hidden; transition: opacity .12s ease, visibility 0s linear .12s; white-space: normal; }
+#tip.show { opacity: 1; visibility: visible; transition: opacity .12s ease, visibility 0s; }
+
+/* ----- popovers: dark glass sheets ----- */
+.pop {
+  z-index: 20; border-radius: 18px; padding: 18px 20px 16px; font-size: 11px; color: var(--label);
+  background: rgba(15,18,21,0.93); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  box-shadow: 0 24px 50px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.07), inset 0 1px 0 rgba(255,255,255,0.07);
+  opacity: 0; visibility: hidden; transform: translateY(8px) scale(0.985); transform-origin: 50% 100%;
+  transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s;
+}
+.pop.open { opacity: 1; visibility: visible; transform: none; transition: opacity .18s ease, transform .18s ease, visibility 0s; }
+#pop_src { left: 485px; top: 541px; width: 360px; height: 134px; transform-origin: 100% 100%; }
+#pop_grid { left: 440px; top: 340px; width: 300px; padding: 12px 14px 12px; transform-origin: 0% 0%; }
+#pop_grid .prow { height: 26px; }
+#pop_grid .prow > label { width: 62px; }
+#pop_grid .seg button, #pop_grid .act { padding: 0 7px; }
+.sgsel.active { color: var(--c); background: rgba(255,255,255,0.07); }
+#pop_set { left: 445px; top: 286px; width: 400px; height: 389px; transform-origin: 100% 100%; }
+.pop h4 { margin: 0 0 12px; font-weight: normal; font-size: 11px; letter-spacing: 0.08em; color: var(--label); text-transform: uppercase; }
+.prow { display: flex; align-items: center; height: 28px; }
+.prow > label { width: 104px; flex: none; color: var(--label); }
+.prow .ctl { flex: 1; display: flex; align-items: center; }
+.seg { display: flex; gap: 3px; flex-wrap: wrap; }
+.seg button, .act, .tg {
+  font-family: var(--mono); font-size: 11px; color: #8fa0ab; height: 22px; padding: 0 9px; border: 0; border-radius: 7px; cursor: pointer; outline: none;
+  background: rgba(255,255,255,0.045); transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.seg button:active, .act:active, .tg:active { background: rgba(255,255,255,0.1); }
+.seg button.on, .tg.on { color: var(--accent-light); background: rgba(var(--cyan-rgb),0.12); box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.34); }
+.tlabel { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); margin: 0 0 6px; }
+.seg.themes { width: 100%; }
+.seg.themes button { flex: 1 1 22%; font-size: 10px; padding: 0 5px; white-space: nowrap; }
+.seg.presets { width: 100%; }
+.seg.presets button { flex: 1 0 28%; }
+.sl { display: flex; align-items: center; width: 100%; height: 22px; cursor: pointer; touch-action: none; }
+.sl .tr { position: relative; width: 160px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.1); flex: none; }
+.sl .fl { position: absolute; left: 0; top: 0; height: 3px; border-radius: 2px; background: linear-gradient(90deg, rgba(var(--cyan-rgb),0.4), var(--cyan)); box-shadow: 0 0 8px rgba(var(--cyan-rgb),0.35); }
+.sl .th { position: absolute; top: 50%; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #f5f8fa, #9aa2a9); box-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+.sl .val { width: 78px; margin-left: 12px; text-align: right; color: var(--value); }
+.acts { display: flex; gap: 8px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.act { height: 28px; flex: 1; font-size: 11px; letter-spacing: 0.04em; }
+.act.flash { background: rgba(var(--cyan-rgb),0.2); color: #fff; }
+.srow { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--hair); }
+.srow:last-child { border: 0; margin: 0; padding: 0; }
+.srow .line { display: flex; align-items: center; height: 28px; gap: 8px; }
+input.nm2 { width: 130px; height: 26px; padding: 0 9px; border: 0; border-radius: 7px; background: rgba(255,255,255,0.06); color: var(--value); font-family: var(--mono); font-size: 12px; outline: none; user-select: text; -webkit-user-select: text; cursor: text; }
+input.nm2:focus { box-shadow: inset 0 0 0 1px rgba(var(--cyan-rgb),0.4); }
+.srow .dotc { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 9px var(--c); flex: none; }
+.srow .sp { flex: 1; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="glass"></div>
+
+  <!-- readout columns (pure text on glass) -->
+  <!-- sidebar markup is injected below -->
+  <div class="leg" id="leg0"><span class="dot"></span><span class="nm" id="lgn0">Ch1</span></div>
+  <div class="leg" id="leg1"><span class="dot"></span><span class="nm" id="lgn1">Ch2</span></div>
+  <div id="insp"></div>
+
+  <!-- hero: dot-matrix spectrum -->
+  <canvas id="spec_ghost" class="cvs" data-w="1012" data-h="172" style="left:44px;top:136px"></canvas>
+  <canvas id="spec_cv" class="cvs" data-w="1012" data-h="172" style="left:44px;top:136px"></canvas>
+
+  <!-- beat waveform strip (rekordbox-style 3-band) -->
+  <div class="cap" id="cap_wf" style="left:44px;width:76px;top:316px">Waveform</div>
+  <div class="sgsel wfsel" id="wfs0" style="left:124px;width:36px">Ch1</div>
+  <div class="sgsel wfsel" id="wfs1" style="left:164px;width:36px">Ch2</div>
+  <div class="sgsel" id="wfspan" style="left:244px;width:92px" title="Waveform span in bars (click to cycle 1 / 2 / 4 / 8 / 16 / 32)">SPAN ~8 bars</div>
+  <div class="sgsel" id="wfgrid" style="left:398px;width:46px" title="Beat-grid correction: set first beat, shift, bpm, stretch, warp marker, playhead position">GRID</div>
+  <div class="sgsel" id="wfstyle" style="left:344px;width:46px" title="Waveform style: FLOW (smooth continuous waveform) / LYR (CDJ layers)">FLOW</div>
+  <div class="cap" id="cap_wfleg" style="left:856px;width:200px;top:316px;text-align:right"><span id="bd0" style="color:#8b62ff">&#9679;</span> bass &nbsp;<span id="bd1" style="color:#d85ad0">&#9679;</span> mids &nbsp;<span id="bd2" style="color:#00e5ff">&#9679;</span> highs</div>
+  <canvas id="wf_cv" class="cvs" data-w="1012" data-h="54" style="left:44px;top:334px"></canvas>
+
+  <!-- lower row -->
+  <div class="cap" id="cap_sg" style="left:44px;width:76px">Spectrogram</div>
+  <div class="sgsel" id="sgs0" style="left:124px;width:36px">Ch1</div>
+  <div class="sgsel" id="sgs1" style="left:164px;width:36px">Ch2</div>
+  <div class="sgsel" id="gns0" style="left:474px;width:36px">Ch1</div><div class="sgsel" id="gns1" style="left:514px;width:36px">Ch2</div>
+  <div class="sgsel" id="scs0" style="left:758px;width:36px">Ch1</div><div class="sgsel" id="scs1" style="left:798px;width:36px">Ch2</div>
+  <div class="sgsel" id="sgo0" style="width:22px" title="Vertical waterfall (frequency across, time down)">V</div><div class="sgsel" id="sgo1" style="width:22px" title="Horizontal scroll (frequency up, time left)">H</div>
+  <div class="cap" id="cap_gn" style="left:386px;width:300px">Vectorscope</div>
+  <div class="cap" id="cap_sc" style="left:706px;width:350px">Scope</div>
+  <canvas id="sg_cv" class="cvs" data-w="322" data-h="160" style="left:44px;top:414px"></canvas>
+  <canvas id="sg_lbl" class="cvs" data-w="322" data-h="160" style="left:44px;top:414px;z-index:3;pointer-events:none"></canvas>
+  <canvas id="gn_cv" class="cvs" data-w="300" data-h="160" style="left:386px;top:414px"></canvas>
+  <canvas id="gn_grid" class="cvs" data-w="300" data-h="160" style="left:386px;top:414px;z-index:3;pointer-events:none"></canvas>
+  <canvas id="sc_cv" class="cvs" data-w="350" data-h="160" style="left:706px;top:414px"></canvas>
+  <canvas id="sc_grid" class="cvs" data-w="350" data-h="160" style="left:706px;top:414px;z-index:3;pointer-events:none"></canvas>
+  <!-- right control sidebar -->
+  <div class="pane sb" style="left:853px;top:15px;width:232px;height:48px"></div>
+  <div class="sb plate" style="left:861px;top:22px;width:118px;height:34px">SPECTR</div>
+  <div class="sb sgsel" id="rd0" style="left:987px;top:29px;width:44px" title="Readout column + needle meter: show this source">Ch1</div>
+  <div class="sb sgsel" id="rd1" style="left:1035px;top:29px;width:44px" title="Readout column + needle meter: show this source">Ch2</div>
+  <div class="pane sb" style="left:853px;top:62px;width:232px;height:88px"></div>
+  <div class="col sb" id="rc0" style="left:861px;top:68px"><div class="lb">Loudness</div><div class="big" id="r_big0"></div><div class="sm" id="r_a0"></div><div class="sm" id="r_b0"></div></div>
+  <div class="pane sb" style="left:853px;top:149px;width:232px;height:88px"></div>
+  <div class="col sb" id="rc1" style="left:861px;top:155px"><div class="lb">True Peak</div><div class="big" id="r_big1"></div><div class="sm" id="r_a1"></div><div class="sm" id="r_b1"></div></div>
+  <div class="pane sb" style="left:853px;top:236px;width:232px;height:88px"></div>
+  <div class="col sb" id="rc2" style="left:861px;top:242px"><div class="lb">Stereo</div><div class="big" id="r_big2"></div><div class="sm" id="r_a2"></div><div class="sm" id="r_b2"></div></div>
+  <div class="pane sb" style="left:853px;top:323px;width:232px;height:136px"></div>
+  <canvas id="meter_cv" class="sb" data-w="230" data-h="134" style="left:854px;top:324px;z-index:3"></canvas>
+  <div class="pane sb" style="left:853px;top:458px;width:232px;height:94px"></div>
+  <canvas id="kb0" class="sb kn" data-w="40" data-h="40" style="left:871px;top:467px"></canvas><div class="sb kl" style="left:862px;top:512px">SMTH</div><div class="sb kv" id="kv0" style="left:862px;top:525px"></div>
+  <canvas id="kb2" class="sb kn" data-w="40" data-h="40" style="left:949px;top:467px"></canvas><div class="sb kl" style="left:940px;top:512px">GLOW</div><div class="sb kv" id="kv2" style="left:940px;top:525px"></div>
+  <canvas id="kb3" class="sb kn" data-w="40" data-h="40" style="left:1026px;top:467px"></canvas><div class="sb kl" style="left:1017px;top:512px">SPD</div><div class="sb kv" id="kv3" style="left:1017px;top:525px"></div>
+  <div class="pane sb" style="left:853px;top:551px;width:232px;height:132px"></div>
+  <div class="sb sbn" id="btn_freeze" style="left:863px;top:565px">Freeze</div><div class="sb sbn" id="btn_reset" style="left:971px;top:565px">Reset</div>
+  <div class="sb sbn" id="btn_reset_i" style="left:863px;top:601px">Reset I</div><div class="sb sbn theme" id="btn_theme" style="left:971px;top:601px" title="Color theme (click to cycle)">Cyan/Violet</div>
+  <div class="sb sbn" id="btn_src" style="left:863px;top:637px">Sources</div><div class="sb sbn" id="btn_set" style="left:971px;top:637px">Settings</div>
+  <div class="pane ftp" style="left:15px;top:682px;width:1070px;height:23px"></div>
+
+  <div class="pane" id="pn_spec"></div><div class="pane" id="pn_wf"></div><div class="pane" id="pn_sg"></div><div class="pane" id="pn_gn"></div><div class="pane" id="pn_sc"></div>
+  <div class="an" id="an_spec_l"></div><div class="an" id="an_spec_r"></div><div class="an" id="an_wf_l"></div><div class="an" id="an_sg_l"></div><div class="an" id="an_gn_l"></div><div class="an" id="an_gn_r"></div><div class="an" id="an_sc_r"></div>
+  <!-- drag-to-resize dividers (hairlines at rest; brighten + grip on pointer-over/drag) -->
+  <div class="dvd dh" id="dh1" data-axis="rows" style="left:44px;top:132px"></div>
+  <div class="dvd dh" id="dh2" data-axis="rows" style="left:44px;top:384px"></div>
+  <div class="dvd dv" id="dv1" data-axis="cols" style="left:361px;top:394px"></div>
+  <div class="dvd dv" id="dv2" data-axis="cols" style="left:681px;top:394px"></div>
+  
+  <!-- footer status line -->
+  <div class="foot chip" id="chip0" style="left:23px;width:124px"><span class="nm" id="chn0">Ch1</span><span class="dot"></span><span class="cn" id="chc0">cyan</span></div>
+  <div class="foot stag" id="solo0" style="left:151px" title="Solo">S</div>
+  <div class="foot chip" id="chip1" style="left:175px;width:124px"><span class="nm" id="chn1">Ch2</span><span class="dot"></span><span class="cn" id="chc1">violet</span></div>
+  <div class="foot stag" id="solo1" style="left:303px" title="Solo">S</div>
+  <div class="foot" id="f_sep">|</div>
+  <div class="foot" id="f_stats"></div>
+  <div class="foot idle" id="flag"><i></i><span id="flag_t">NO DATA &mdash; waiting for audio</span></div>
+  <div class="fsbtn" id="fsbtn" title="True fullscreen (F) - Esc exits"><svg class="ex" viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4.5 4.5M2.5 13.5L7 9"/></svg><svg class="co" viewBox="0 0 16 16"><path d="M13.5 6.5h-4v-4M2.5 9.5h4v4M9.5 6.5l4-4M6.5 9.5l-4 4"/></svg></div>
+
+
+  <!-- device strip -->
+  <!-- popovers -->
+  <div class="pop" id="pop_src"></div>
+  <div class="pop" id="pop_set"></div>
+  <div class="pop" id="pop_grid"></div>
+  <div id="tip"></div>
+</div>
+
+<script src="spectr-init.js"></script>
+<script>
+/* SPECTR production UI (v8). Data enters ONLY through receiveAnalysisFrame(); parameters through the JUCE event bridge. */
+(function () {
+'use strict';
+
+/* ---------- Required WebView behaviour ---------- */
+document.addEventListener("contextmenu", function (e) { e.preventDefault(); return false; });
+
+
+/* ---------- JUCE event bridge (JS -> C++ via emitEvent, C++ -> JS via addEventListener) ---------- */
+var booting = true;   // true until first layout/seed is done: nothing is posted to the host while booting
+var syncing = false;  // true while applying a value that came FROM the host: must never be echoed back
+var backend = (window.__JUCE__ && window.__JUCE__.backend) || null;
+function emit(evt, payload) {
+  try { if (backend && backend.emitEvent) { backend.emitEvent(evt, payload); return true; } } catch (err) { /* fall through */ }
+  return false;
+}
+var Bridge = {
+  gesture: function (id, phase) {   // spectrParam {id, gesture:'begin'|'end'}: brackets a continuous edit
+    if (booting || syncing) return;
+    emit('spectrParam', { id: id, gesture: phase });
+  },
+  post: function (id, value) {
+    if (booting || syncing) return;
+    if (!emit('spectrParam', { id: id, value: value })) console.log('[SPECTR -> host unavailable] ' + id + ' = ' + JSON.stringify(value));
+  }
+};
+
+var $ = function (id) { return document.getElementById(id); };
+var TAU = Math.PI * 2;
+var clamp = function (v, a, b) { return v < a ? a : (v > b ? b : v); };
+var DPR = Math.min(2, window.devicePixelRatio || 1);
+
+/* ---------- State ---------- */
+var P = { fft_size: 4096, window: 'hann', smoothing: 35, spectrum_tilt: 4.5, display_range: -90, spectrogram_speed: 1,
+          peak_decay: 12, sg_src: 0, wf_src: 0, gn_src: 0, sc_src: 0, rd_src: 0, color_theme: 'Cyan/Violet', freeze: false, analysis_mode: 'combined', preset: 'Studio', reduced_motion: false, glow_intensity: 55 };
+var THEMES = [
+  { name: 'Coral/Mint',   c1: ['coral', '#ff7a66'],    c2: ['mint', '#5df2b8'],   neutral: '#e9e2dc', light: '#ffd2c9', band: ['#ff4b4b', '#ffb84d', '#5df2b8'] },
+  { name: 'Cyan/Violet',  c1: ['cyan', '#00e5ff'],     c2: ['violet', '#b388ff'], neutral: '#d3e7ee', light: '#bff4ff', band: ['#8b62ff', '#d85ad0', '#00e5ff'] },
+  { name: 'Amber/Cyan',   c1: ['amber', '#ffb84d'],    c2: ['cyan', '#00e5ff'],   neutral: '#eae2d2', light: '#ffe2b0', band: ['#ff6b2e', '#ffd24d', '#19e6ff'] },
+  { name: 'Magenta/Blue', c1: ['magenta', '#ff55d9'],  c2: ['blue', '#5b94ff'],   neutral: '#d6e2f2', light: '#ffc2f2', band: ['#ff3fc4', '#9a6bff', '#4fa0ff'] },
+  { name: 'Green/Ice',    c1: ['phosphor', '#6dee7a'], c2: ['ice', '#9fd9ff'],    neutral: '#d5e3ea', light: '#c4f7c9', band: ['#36b866', '#7dff8a', '#bfe6ff'] },
+  { name: 'Gold/Violet',  c1: ['gold', '#f5c242'],     c2: ['violet', '#a583ff'], neutral: '#ebe3d3', light: '#ffe7a8', band: ['#d99a1e', '#fff0d0', '#a583ff'] },
+  { name: 'Ice/Steel',    c1: ['ice', '#e4f2ff'],      c2: ['steel', '#6a94bf'],  neutral: '#bfc7cf', light: '#ffffff', band: ['#5f86b3', '#aab4bf', '#f4faff'] }
+];
+function hexRgb(c) { return [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)]; }
+var CNAMES = ['', ''];   // theme colour names for the footer chips
+function themeByName(n) { for (var i = 0; i < THEMES.length; i++) if (THEMES[i].name === n) return THEMES[i]; return THEMES[0]; }
+function setColorNames(t) { CNAMES = [t.c1[0], t.c2[0]]; }
+setColorNames(THEMES[1]);
+var SRC = [
+  { name: 'Ch1', color: '#00e5ff', rgb: [0, 229, 255], visible: true, solo: false },
+  { name: 'Ch2', color: '#b388ff', rgb: [179, 136, 255], visible: true, solo: false }
+];
+function effVisible(i) { var any = SRC[0].solo || SRC[1].solo; return any ? SRC[i].solo : SRC[i].visible; }
+
+var PRESETS = {
+  'Studio':      { smoothing: 35, spectrum_tilt: 4.5, spectrogram_speed: 1,   peak_decay: 12, glow_intensity: 55,  fft_size: 4096,  window: 'hann' },
+  'Minimal':     { smoothing: 25, spectrum_tilt: 0,   spectrogram_speed: 1,   peak_decay: 20, glow_intensity: 0,   fft_size: 4096,  window: 'hann' },
+  'Neon':        { smoothing: 45, spectrum_tilt: 3,   spectrogram_speed: 1.5, peak_decay: 10, glow_intensity: 100, fft_size: 4096,  window: 'hann' },
+  'Ambient':     { smoothing: 80, spectrum_tilt: 3,   spectrogram_speed: 0.5, peak_decay: 6,  glow_intensity: 75,  fft_size: 8192,  window: 'hann' },
+  'Scientific':  { smoothing: 15, spectrum_tilt: 0,   spectrogram_speed: 1,   peak_decay: 8,  glow_intensity: 0,   fft_size: 16384, window: 'blackmanHarris' },
+  'Performance': { smoothing: 20, spectrum_tilt: 4.5, spectrogram_speed: 2.5, peak_decay: 30, glow_intensity: 70,  fft_size: 2048,  window: 'hann' }
+};
+
+
+/* ---------- Analysis data store (filled ONLY by receiveAnalysisFrame; no generator) ---------- */
+var D = {
+  lastAt: 0, hasData: false, live: false, fs: 0, bpm: null,
+  spec: [null, null],      // latest spectrum targets, dBFS, N log-spaced points 20 Hz..20 kHz
+  sgRow: [null, null],     // optional raw spectrogram row (else the smoothed spectrum is used)
+  gonio: [null, null],     // interleaved L,R sample pairs
+  scope: [null, null],     // time-domain window (any length >= 0.02*fs + 800)
+  louds: [],               // per-source { M, S, I, LRA } (null members = not available)
+  peaks: [], stereo: []    // peaks[i] = { sp, tp } max since reset (dB); stereo[i] = { corr, width, bal }
+};
+var dispSt = [null, null];   // smoothed stereo readouts actually displayed
+function isNum(v) { return typeof v === 'number' && isFinite(v); }
+function isLive() { return D.live && D.hasData && (performance.now() - D.lastAt) < 1000; }
+function f32(a) {   // accepts base64 string (little-endian float32), plain number array, or typed array
+  if (!a) return null;
+  if (typeof a === 'string') {
+    var bin = atob(a), u = new Uint8Array(bin.length), i;
+    for (i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return new Float32Array(u.buffer, 0, bin.length >> 2);
+  }
+  if (ArrayBuffer.isView(a)) return a;
+  return Float32Array.from(a);
+}
+function fitTo(arr, n) {   // linear resample to n points
+  if (!arr || arr.length === n) return arr;
+  var out = new Float32Array(n), m = arr.length, i;
+  if (m < 2) { out.fill(m ? arr[0] : -100); return out; }
+  for (i = 0; i < n; i++) { var p = i / (n - 1) * (m - 1), i0 = Math.floor(p), i1 = Math.min(m - 1, i0 + 1), fr = p - i0; out[i] = arr[i0] * (1 - fr) + arr[i1] * fr; }
+  return out;
+}
+/* ============================================================================
+   receiveAnalysisFrame(frame): THE seam between the processor's immutable
+   analysis snapshots and the renderer. Called by the C++ editor timer through
+   the 'spectrFrame' event (~60 Hz). Every field is optional; a missing field
+   leaves that module in its idle state. Float arrays may be base64 strings.
+   {
+     sampleRate: 48000, live: true, bpm: 124 | null,
+     spectrum:    [Float[N=640] ch1, Float[640] ch2]   // dBFS, log 20 Hz..20 kHz (resampled if length differs)
+     spectrogram: [Float[640] | null, ...]              // optional un-smoothed rows (else spectrum is used)
+     waveform:    [Float[4*n] ch1, Float[4*n] ch2]      // n NEW columns since last frame: bass,mids,highs (0..1), flag
+     gonio:       [Float[2k] ch1, Float[2k] ch2]        // interleaved L,R in -1..1
+     scope:       [Float[len] ch1, Float[len] ch2]      // time-domain samples in -1..1
+     meters: { loudness: {M,S,I,LRA}, peaks: [{sp,tp},{sp,tp}], stereo: [{corr,width,bal},{...}] }
+   }
+   ============================================================================ */
+var WF_ALIGN_MAX = 512, WF_RESTART_COLS = 256, wfDiverged = 0, wfPrevValid = 0, wfForceRestart = false, wfRestarts = 0;
+function wfRestartState() {   // the engine restarted: every structure keyed by ENGINE columns (anchors, edits, live column, onset state) is stale and is cleared coherently, per source
+  var s; wfRestarts++;
+  for (s = 0; s < 2; s++) { wfSegs[s].length = 0; wfLive[s] = null; wfOnsetSt[s] = { prev: 0, ref: 0.1, held: 0 }; }
+  wfTrackReset();
+  wfEdit.forEach(function (e) { e.first = null; e.warps = []; });
+  wfSynthTail = 0;
+}
+function wfIngest(a0, a1, first0, first1, stride) {   // stride: floats per column (4 = older engine; 5 adds the onset fraction)   // append every NEW column; place by absolute engine column index, per source
+  var st = stride || 4, k0 = a0 ? Math.floor(a0.length / st) : 0, k1 = a1 ? Math.floor(a1.length / st) : 0, i, p = window.__wfProbe, hot = false;
+  var v0 = first0 >= 0 && k0 > 0, v1 = first1 >= 0 && k1 > 0;
+  if (!v0 && !v1) {                                   // index-less batch (older engine): plain sequential append
+    var k = Math.max(k0, k1);
+    if (k === 0) return;                              // EMPTY batch (frames resumed, no new columns yet): leave wfSynthTail alone or the re-base against trailing synthetic idle columns is cancelled and real columns get skipped
+    wfSynthTail = 0;
+    for (i = 0; i < k; i++) {
+      var j = i * st, x0 = i < k0, x1 = i < k1;
+      wfPushCol(x0 ? a0[j] : 0, x0 ? a0[j + 1] : 0, x0 ? a0[j + 2] : 0, x0 ? a0[j + 3] : 0, x1 ? a1[j] : 0, x1 ? a1[j + 1] : 0, x1 ? a1[j + 2] : 0, x1 ? a1[j + 3] : 0, x0 && st >= 5 ? a0[j + 4] : -1, x1 && st >= 5 ? a1[j + 4] : -1);
+      if (x0 && Math.max(a0[j], a0[j + 1], a0[j + 2]) > 0.05) hot = true;
+    }
+    if (p && hot && !p.dataAt) p.dataAt = Date.now();
+    return;
+  }
+  if (k0 > 0 && !v0) { first0 = first1; v0 = true; }    // a source without its own index is assumed aligned to the other one
+  if (k1 > 0 && !v1) { first1 = first0; v1 = true; }
+  var expected = wfOffset + wfN;
+  if (v0 && v1 && Math.abs(first0 - first1) > WF_ALIGN_MAX) {   // the two sources' column streams are in DIFFERENT domains (e.g. one is a remnant of an old engine): follow the one that continues our timeline, never iterate across both
+    if (Math.abs(first0 - expected) <= Math.abs(first1 - expected)) { v1 = false; k1 = 0; } else { v0 = false; k0 = 0; }
+    wfDiverged++;
+  }
+  var e0 = Infinity, e1 = -Infinity;                     // engine column range covered by this batch (each source keeps its OWN first index)
+  if (v0) { e0 = Math.min(e0, first0); e1 = Math.max(e1, first0 + k0); }
+  if (v1) { e0 = Math.min(e0, first1); e1 = Math.max(e1, first1 + k1); }
+  if (!(e1 > e0)) return;
+  var g = e0 - expected, restart = false;
+  /* ENGINE RESTART (layout change / sample-rate change / host re-prepare rebuilds the engine: its column streams restart near 0 while the page's
+     mapping still points at the old session). Detected as the stream regressing past anything an ack-race re-send could carry (a few snapshots), a
+     source appearing or disappearing while the stream regresses at all, or a sample-rate change. The old mapping must NOT be treated as 'columns we
+     already have' (that froze the strip until the new engine caught up with the old session's length). */
+  var vset = (v0 ? 1 : 0) | (v1 ? 2 : 0);
+  if (wfN > 0 && (g < -WF_RESTART_COLS || (vset !== wfPrevValid && g < -20) || wfForceRestart)) { restart = true; wfRestartState(); }
+  wfPrevValid = vset; wfForceRestart = false;
+  if (e1 - e0 > 4096) e0 = e1 - 4096;                    // hard cap: no per-batch loop is ever longer than a few snapshots
+  if (restart || wfN === 0 || wfSynthTail > 0 || g > 2048 || g < -(WF_CAP >> 1)) {
+    // genuine discontinuity (first batch, new session, long idle, trailing SYNTHETIC idle columns, far-backwards jump): re-base the
+    // mapping. Anchors are stored in ENGINE column space, so nothing else needs shifting.
+    wfOffset = e0 - wfN; wfSynthTail = 0; expected = e0;
+  } else if (g > 0) {                                    // engine produced columns we never received (editor idle / drop): keep the elapsed time
+    for (i = 0; i < g; i++) wfPushCol(0, 0, 0, 0, 0, 0, 0, 0);
+    expected = e0;
+  }
+  // g < 0 (small): the engine re-carried columns we already have (ack race, Reset re-push): skip them by absolute index, never duplicate
+  for (var e = Math.max(e0, expected); e < e1; e++) {
+    var q0 = e - first0, q1 = e - first1, y0 = v0 && q0 >= 0 && q0 < k0, y1 = v1 && q1 >= 0 && q1 < k1, o0 = q0 * st, o1 = q1 * st;
+    wfPushCol(y0 ? a0[o0] : 0, y0 ? a0[o0 + 1] : 0, y0 ? a0[o0 + 2] : 0, y0 ? a0[o0 + 3] : 0, y1 ? a1[o1] : 0, y1 ? a1[o1 + 1] : 0, y1 ? a1[o1 + 2] : 0, y1 ? a1[o1 + 3] : 0, y0 && st >= 5 ? a0[o0 + 4] : -1, y1 && st >= 5 ? a1[o1 + 4] : -1);
+    if (y0 && Math.max(a0[o0], a0[o0 + 1], a0[o0 + 2]) > 0.05) hot = true;
+  }
+  if (p && hot && !p.dataAt) p.dataAt = Date.now();
+}
+function receiveAnalysisFrameInner(fr) {
+  if (!fr || typeof fr !== 'object') return;
+  D.lastAt = performance.now(); D.hasData = true; D.live = fr.live !== false;
+  if (isNum(fr.sampleRate) && fr.sampleRate > 0) { if (D.fs > 0 && fr.sampleRate !== D.fs) wfForceRestart = true; D.fs = fr.sampleRate; }
+  if (fr.transport === -1 || fr.transport === 0 || fr.transport === 1) WFTRANS = fr.transport;
+  D.bpm = isNum(fr.bpm) && fr.bpm > 0 ? fr.bpm : null;
+  if (D.bpm) { var wasKnown = WFI.known; WFI.bpm = D.bpm; WFI.known = true; if (!wasKnown) wfSpanPaint(); }
+  if (fr.timeSig && fr.timeSig.length === 2 && fr.timeSig[0] > 0 && fr.timeSig[1] > 0) { WFI.num = fr.timeSig[0]; WFI.den = fr.timeSig[1]; }   // optional host/analysis tempo; shown as dashes when absent
+  var s, a, wfa = [null, null];
+  for (s = 0; s < 2; s++) {
+    a = fr.spectrum ? f32(fr.spectrum[s]) : null; D.spec[s] = a ? fitTo(a, N) : null;
+    a = fr.spectrogram ? f32(fr.spectrogram[s]) : null; D.sgRow[s] = a ? fitTo(a, N) : null;
+    /* Last-array hold: a frame that OMITS gonio/scope entirely (host-side decimation to 30 Hz, risk R2 lever) keeps the
+       previous arrays; a frame that carries the key but null for a source clears that source. */
+    if (fr.gonio !== undefined) D.gonio[s] = fr.gonio ? f32(fr.gonio[s]) : null;
+    if (fr.scope !== undefined) D.scope[s] = fr.scope ? f32(fr.scope[s]) : null;
+    a = fr.waveform ? f32(fr.waveform[s]) : null;
+    wfa[s] = a;
+  }
+  if (fr.waveform) { try { wfIngest(wfa[0], wfa[1], fr.waveformFirst ? fr.waveformFirst[0] : -1, fr.waveformFirst ? fr.waveformFirst[1] : -1, fr.waveformStride); } catch (err) { console.log('[SPECTR] waveform ingest error, resyncing: ' + err); try { wfRestartState(); wfForceRestart = true; } catch (e2) { } } }   // the page must never die on an unexpected stream inconsistency: log, clear, re-base on the next batch
+  if (fr.waveformLive) for (s = 0; s < 2; s++) { var wl = fr.waveformLive[s]; wfLive[s] = (wl && wl[0] >= 0) ? { e: wl[0], b: wl[1], m: wl[2], h: wl[3] } : null; if (wfLive[s] && window.__wfProbe && !window.__wfProbe.dataAt && s === 0 && Math.max(wl[1], wl[2], wl[3]) > 0.05) window.__wfProbe.dataAt = Date.now(); }
+  var m = fr.meters;
+  if (m) { D.louds = m.louds || (m.loudness ? [m.loudness] : []); D.peaks = m.peaks || []; D.stereo = m.stereo || []; }
+}
+function receiveAnalysisFrame(fr) {   // the page must never die on one bad frame: log, resync the waveform stream, carry on
+  try { receiveAnalysisFrameInner(fr); }
+  catch (err) { console.log('[SPECTR] frame error (ignored, stream resync): ' + err); try { wfRestartState(); wfForceRestart = true; } catch (e2) { } }
+}
+window.receiveAnalysisFrame = receiveAnalysisFrame;
+
+var hooks = {};
+function on(id, fn) { (hooks[id] = hooks[id] || []).push(fn); }
+function setParam(id, val, silent) {
+  P[id] = val; if (!silent) Bridge.post(id, val);
+  var h = hooks[id]; if (h) for (var i = 0; i < h.length; i++) h[i](val);
+}
+
+/* ---------- Canvases ---------- */
+var cv = {};
+['meter_cv', 'kb0', 'kb2', 'kb3', 'spec_ghost', 'spec_cv', 'wf_cv', 'sg_cv', 'sg_lbl', 'gn_cv', 'gn_grid', 'sc_cv', 'sc_grid'].forEach(function (id) {
+  var el = $(id), w = +el.dataset.w, h = +el.dataset.h;
+  el.width = Math.round(w * DPR); el.height = Math.round(h * DPR); el.style.width = w + 'px'; el.style.height = h + 'px';
+  var g = el.getContext('2d'); g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cv[id] = { el: el, g: g, w: w, h: h };
+});
+var MONO = '"SF Mono", ui-monospace, Menlo, Consolas, monospace';
+var GLASS = '#0a0c0e';
+
+function setCv(id, w, h, left, top) {
+  var o = cv[id], el = o.el;
+  if (w !== o.w || h !== o.h) { o.w = w; o.h = h; el.width = Math.round(w * DPR); el.height = Math.round(h * DPR); el.style.width = w + 'px'; el.style.height = h + 'px'; o.g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  if (left != null) el.style.left = left + 'px';
+  if (top != null) el.style.top = top + 'px';
+}
+function fitStage() {
+  var s = Math.min(window.innerWidth / 1100, window.innerHeight / 720), st = $('stage');
+  st.style.transform = 'translate(' + ((window.innerWidth - 1100 * s) / 2) + 'px,' + ((window.innerHeight - 720 * s) / 2) + 'px) scale(' + s + ')';
+  stageScale = s;
+}
+var stageScale = 1;
+
+/* ---------- Frequency model ---------- */
+var N = 640, FMIN = 20, FMAX = 20000, OCTS = Math.log2(FMAX / FMIN), BPO = (N - 1) / OCTS;
+var freqs = new Float32Array(N), octs = new Float32Array(N), tiltOff = new Float32Array(N);
+for (var i = 0; i < N; i++) { octs[i] = OCTS * i / (N - 1); freqs[i] = FMIN * Math.pow(2, octs[i]); }
+function updateTilt() { for (var i = 0; i < N; i++) tiltOff[i] = P.spectrum_tilt * (octs[i] - Math.log2(1000 / FMIN)); }
+
+function Spec() { this.sm = new Float32Array(N).fill(-100); this.peak = new Float32Array(N).fill(-100); this.hold = new Float32Array(N); this.dom = 0; }
+var specs = [new Spec(), new Spec()];
+var domT = 0;
+
+/* Smoothing / peak-hold are display-side (per yaml mapping: attack 5 + 0.6*v ms, release 30 + 8*v ms).
+   With no live data the targets fall to the -100 dB floor, so the curves decay to an honest empty state. */
+function updateSpectra(dt) {
+  var aT = (5 + P.smoothing * 0.6) / 1000, rT = (30 + P.smoothing * 8) / 1000; if (P.reduced_motion) rT *= 1.6;
+  var ca = 1 - Math.exp(-dt / aT), cr = 1 - Math.exp(-dt / rT), decay = P.peak_decay, live = isLive();
+  for (var s = 0; s < 2; s++) {
+    var sp = specs[s], src = live ? D.spec[s] : null;
+    for (var i = 0; i < N; i++) {
+      var tgt = (src && src[i] > -100) ? src[i] : -100;
+      var cur = sp.sm[i]; cur += (tgt - cur) * (tgt > cur ? ca : cr); sp.sm[i] = cur;
+      if (cur >= sp.peak[i]) { sp.peak[i] = cur; sp.hold[i] = 1.2; } else if (sp.hold[i] > 0) sp.hold[i] -= dt; else sp.peak[i] = Math.max(cur, sp.peak[i] - decay * dt);
+    }
+  }
+  domT -= dt;
+  if (domT <= 0) { domT = 0.12; for (var q = 0; q < 2; q++) { var best = -1000, bi = 0; for (var j = 0; j < N; j++) { if (freqs[j] < 30) continue; if (specs[q].sm[j] > best) { best = specs[q].sm[j]; bi = j; } } specs[q].dom = bi; } }
+}
+
+/* ---------- Notes ---------- */
+var NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+function noteOf(f) { var x = 69 + 12 * Math.log2(f / 440), r = Math.round(x); return { name: NOTES[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1), cents: Math.round((x - r) * 100) }; }
+/* ================= v2: SMOOTH SPECTRAL CURVES ================= */
+var SPX = { pw: 980, T: 6, ph: 152 };
+function lighten(rgb, k) { return [Math.round(rgb[0] + (255 - rgb[0]) * k), Math.round(rgb[1] + (255 - rgb[1]) * k), Math.round(rgb[2] + (255 - rgb[2]) * k)]; }
+function xOfF(f) { return Math.log2(f / FMIN) / OCTS * SPX.pw; }
+function yOf(db) { var lo = P.display_range; return SPX.T + (-clamp(db, lo, 0)) / (-lo) * SPX.ph; }
+function drawSpecGrid() {
+  var o = cv.spec_ghost, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  var lo = P.display_range, step = lo / 3;
+  g.font = '10px ' + MONO; g.textBaseline = 'middle'; g.textAlign = 'left'; g.lineWidth = 1;
+  // engineering graph paper: 10 dB horizontal rules (every 30 dB stronger), decade + 2..9 vertical rules
+  for (var d = 0; d >= lo; d -= 10) { var yy = Math.round(yOf(d)) + 0.5; g.strokeStyle = d === 0 ? 'rgba(255,255,255,0.10)' : (d % 30 === 0 ? 'rgba(255,255,255,0.055)' : 'rgba(255,255,255,0.028)'); g.beginPath(); g.moveTo(0, yy); g.lineTo(SPX.pw, yy); g.stroke(); }
+  for (var k = 0; k <= 3; k++) {
+    var db = k * step, y = Math.round(yOf(db)) + 0.5;
+    if (k > 0) { g.strokeStyle = 'rgba(255,255,255,0.05)'; g.beginPath(); g.moveTo(0, y); g.lineTo(SPX.pw, y); g.stroke(); }
+    g.fillStyle = 'rgba(122,136,148,0.55)'; g.fillText(String(Math.round(db)), SPX.pw + 8, clamp(y, 7, SPX.T + SPX.ph - 6));
+  }
+  [10, 100, 1000, 10000].forEach(function (dec) {
+    for (var m = 1; m <= 9; m++) {
+      var f = m * dec; if (f < 20 || f > 20000) continue;
+      var x = Math.round(xOfF(f)) + 0.5; g.strokeStyle = m === 1 ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.026)';
+      g.beginPath(); g.moveTo(x, SPX.T); g.lineTo(x, SPX.T + SPX.ph); g.stroke();
+    }
+  });
+  g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(122,136,148,0.7)';
+  [[20, '20'], [100, '100'], [1000, '1k'], [10000, '10k'], [20000, '20k']].forEach(function (m) {
+    var x = xOfF(m[0]); g.textAlign = m[0] === 20 ? 'left' : (m[0] === 20000 ? 'right' : 'center');
+    g.fillText(m[1], clamp(x, m[0] === 20 ? 5 : 0, SPX.pw), SPX.T + SPX.ph + 13);
+  });
+  g.textAlign = 'left'; g.fillStyle = 'rgba(122,136,148,0.4)'; g.fillText('dbfs', SPX.pw + 8, SPX.T + SPX.ph + 13);
+}
+var hovIdx = -1, needRedraw = true;
+/* The visual tilt must not lift the silence floor: a silent channel sits at about -100 dB, and +4.5 dB/oct around 1 kHz would raise its high end into the
+   visible range as a rising diagonal. The tilt weight ramps from 0 at the floor (-100 dB) to 1 at -75 dB (smoothstep), so silent bins stay at the floor
+   (flat at the bottom) and a curve emerges from the floor cleanly into its tilted content. Applies to the curve, the peak-hold trace, the fill (same path)
+   and the hover ring; the inspector keeps showing the true untilted dBFS. */
+function tiltW(v) { var t = (v + 100) / 25; return t <= 0 ? 0 : (t >= 1 ? 1 : t * t * (3 - 2 * t)); }
+function tdb(v, i) { return v + tiltOff[i] * tiltW(v); }
+function curvePath(arr, tilt) {
+  var p = new Path2D(), x, y;
+  for (var i = 0; i < N; i++) { x = i / (N - 1) * SPX.pw; y = yOf(tilt ? arr[i] + tilt[i] * tiltW(arr[i]) : arr[i]); if (i) p.lineTo(x, y); else p.moveTo(x, y); }
+  return p;
+}
+function drawSpectrum() {
+  var o = cv.spec_cv, g = o.g, gl = P.glow_intensity / 100, bottom = SPX.T + SPX.ph, order = [1, 0], paths = [null, null], i, s;
+  g.clearRect(0, 0, o.w, o.h); g.lineJoin = 'round'; g.lineCap = 'round';
+  for (i = 0; i < 2; i++) { s = order[i]; if (effVisible(s)) paths[s] = curvePath(specs[s].sm, tiltOff); }
+  // 1. translucent vertical-gradient fills (source-over, low alpha: no invented third colour)
+  for (i = 0; i < 2; i++) {
+    s = order[i]; if (!paths[s]) continue; var rgb = SRC[s].rgb.join(','), f = new Path2D(paths[s]);
+    f.lineTo(SPX.pw, bottom); f.lineTo(0, bottom); f.closePath();
+    var gr = g.createLinearGradient(0, SPX.T, 0, bottom); gr.addColorStop(0, 'rgba(' + rgb + ',0.28)'); gr.addColorStop(0.5, 'rgba(' + rgb + ',0.10)'); gr.addColorStop(1, 'rgba(' + rgb + ',0.01)');
+    g.fillStyle = gr; g.fill(f);
+  }
+  // 2. thin falling peak-hold traces
+  for (i = 0; i < 2; i++) {
+    s = order[i]; if (!paths[s]) continue; g.strokeStyle = 'rgba(' + lighten(SRC[s].rgb, 0.45).join(',') + ',0.5)'; g.lineWidth = 1; g.stroke(curvePath(specs[s].peak, tiltOff));
+  }
+  // 3. glowing strokes on top (Ch1 last = on top), each in its own source colour
+  for (i = 0; i < 2; i++) {
+    s = order[i]; if (!paths[s]) continue; var c = SRC[s].rgb.join(',');
+    g.shadowColor = 'rgba(' + c + ',0.55)'; g.shadowBlur = gl > 0 ? 2 + 9 * gl : 0; g.lineWidth = 1.7; g.strokeStyle = 'rgb(' + c + ')'; g.stroke(paths[s]); g.shadowBlur = 0;
+  }
+  if (!isLive()) { g.font = '11px ' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(122,136,148,0.55)'; g.fillText(D.hasData && (performance.now() - D.lastAt) < 1000 ? 'No signal' : 'No data \u2014 waiting for audio', SPX.pw / 2, SPX.T + SPX.ph / 2); g.textAlign = 'left'; g.textBaseline = 'alphabetic'; }
+  // hover: crosshair + rings
+  if (hovIdx >= 0) {
+    var hx = Math.round(hovIdx / (N - 1) * SPX.pw) + 0.5;
+    g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = 1; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(hx, SPX.T); g.lineTo(hx, bottom); g.stroke(); g.setLineDash([]);
+    for (s = 0; s < 2; s++) { if (!paths[s]) continue; g.beginPath(); g.arc(hx, yOf(tdb(specs[s].sm[hovIdx], hovIdx)), 3.5, 0, TAU); g.lineWidth = 1.5; g.strokeStyle = SRC[s].color; g.stroke(); g.fillStyle = 'rgba(10,12,14,0.8)'; g.fill(); }
+  }
+}
+function shortName(i) { return SRC[i].name; }
+function tint(i, txt) { return '<span class="sv" style="color:' + SRC[i].color + ';--sg:rgba(' + SRC[i].rgb.join(',') + ',0.35)">' + txt + '</span>'; }
+function kv(l, v, u, si) { return '<i>' + l + '</i> ' + (si === undefined ? v + u : tint(si, v + u)); }
+function updateInsp() {
+  var idx, tag, h, s, best = -1000;
+  if (hovIdx >= 0) { idx = hovIdx; tag = 'CUR'; }
+  else { idx = 0; for (var q = 0; q < 2; q++) { if (!effVisible(q)) continue; var d = specs[q].dom, v = specs[q].sm[d]; if (v > best) { best = v; idx = d; } } tag = 'DOM'; if (best < -99.5) { $('insp').innerHTML = '<i>' + tag + '</i> <b>---</b>'; return; } }
+  var f = freqs[idx], nt = noteOf(f), fs = f >= 1000 ? (f / 1000).toFixed(2) + 'khz' : f.toFixed(2) + 'hz';
+  h = '<i>' + tag + '</i> <b>' + fs + '</b>  <i>' + nt.name + '</i> <b>' + (nt.cents >= 0 ? '+' : '') + nt.cents + 'c</b>';
+  for (s = 0; s < 2; s++) {
+    var raw = specs[s].sm[idx];
+    h += '  <span' + (effVisible(s) ? '' : ' class="dim"') + '>' + tint(s, SRC[s].name + ' ' + (raw < -99.5 ? '---' : raw.toFixed(2)) + 'dbfs') + '</span>';
+  }
+  $('insp').innerHTML = h;
+}
+(function () {
+  var el = cv.spec_cv.el;
+  function idxAt(e) { var r = el.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * cv.spec_cv.w; return (x >= 0 && x <= SPX.pw) ? Math.round(x / SPX.pw * (N - 1)) : -1; }
+  el.addEventListener('pointermove', function (e) { hovIdx = idxAt(e); needRedraw = true; if (P.freeze) { drawSpectrum(); updateInsp(); } });
+  el.addEventListener('pointerleave', function () { hovIdx = -1; needRedraw = true; if (P.freeze) { drawSpectrum(); updateInsp(); } });
+})();
+
+/* ================= SPECTROGRAM (vertical waterfall; history kept as INTENSITY so a theme change can retint it) ================= */
+var SGW = 322, SGH = 160, sgOff = null, sgCtx = null, sgW = 0, sgH = 0, sgAcc = 0, sgInt = null;
+var sgOrient = 'v';   // UI state 'v' | 'h' (spectrogram_orientation); V = vertical waterfall, H = horizontal scroll (freq bottom->top, time right->left)
+var SG_PPS = 36;   // waterfall scroll speed (CSS px of time per second) at speed 1.0
+var colLo = null, colHi = null, colFi = null, colRGB = null, prevCol = null, curCol = null, blurCol = null;
+function sgCols() {   // one index per DEVICE pixel on the log frequency axis. V: x = freq (left 20 Hz). H: y = freq (bottom 20 Hz)
+  var fN = sgOrient === 'h' ? sgH : sgW;
+  colLo = new Uint16Array(fN); colHi = new Uint16Array(fN); colFi = new Float32Array(fN); colRGB = [];
+  prevCol = null; curCol = new Float32Array(fN); blurCol = new Float32Array(fN);
+  for (var x = 0; x < fN; x++) {
+    var pL = x / fN, pR = (x + 1) / fN; if (sgOrient === 'h') { var t0 = pL; pL = 1 - pR; pR = 1 - t0; }
+    var pc = (pL + pR) / 2;
+    colFi[x] = pc * (N - 1); colLo[x] = Math.max(0, Math.floor(pL * (N - 1))); colHi[x] = Math.min(N - 1, Math.ceil(pR * (N - 1)));
+    colRGB[x] = bandRGB(pc);
+  }
+}
+function sgPixel(d, o, t, c) {
+  var lift = clamp((t - 0.9) / 0.1, 0, 1) * 0.6;
+  d[o] = Math.min(255, 10 * (1 - t) + c[0] * t * 1.08 + 255 * lift * t);
+  d[o + 1] = Math.min(255, 12 * (1 - t) + c[1] * t * 1.08 + 255 * lift * t);
+  d[o + 2] = Math.min(255, 14 * (1 - t) + c[2] * t * 1.08 + 255 * lift * t);
+  d[o + 3] = 255;
+}
+function sgRecolor() {   // re-render the whole history from the stored intensities (theme change / resize)
+  if (!sgCtx || !sgInt) return;
+  var img = sgCtx.createImageData(sgW, sgH), d = img.data, x, y;
+  var hz = sgOrient === 'h';
+  for (y = 0; y < sgH; y++) for (x = 0; x < sgW; x++) sgPixel(d, (y * sgW + x) * 4, Math.min(1, sgInt[y * sgW + x] / 255), colRGB[hz ? y : x]);
+  sgCtx.putImageData(img, 0, 0);
+}
+function sgInit() {
+  sgW = Math.round(SGW * DPR); sgH = Math.round(SGH * DPR);
+  sgOff = document.createElement('canvas'); sgOff.width = sgW; sgOff.height = sgH; sgCtx = sgOff.getContext('2d'); sgCtx.fillStyle = GLASS; sgCtx.fillRect(0, 0, sgW, sgH);
+  sgInt = new Uint8Array(sgW * sgH); sgCols();
+}
+function sgClear() { if (!sgOff) { sgInit(); return; } sgInt.fill(0); sgCtx.fillStyle = GLASS; sgCtx.fillRect(0, 0, sgW, sgH); prevCol = null; }
+function sgSetOrient(o, fromHost) {   // reproject the stored history (no clearing): transpose + flip so freq/time map correctly
+  o = o === 'h' ? 'h' : 'v'; if (o === sgOrient) return; sgOrient = o; UI.sgo = o; applySources();
+  if (sgOff && sgInt) {
+    var W = sgW, H = sgH, old = sgInt, X, Y; sgInt = new Uint8Array(W * H);
+    for (Y = 0; Y < H; Y++) { var ox = Math.min(W - 1, Math.max(0, Math.floor(W * (1 - (Y + 0.5) / H)))); for (X = 0; X < W; X++) { var oy = Math.min(H - 1, Math.max(0, Math.floor(H * (1 - (X + 0.5) / W)))); sgInt[Y * W + X] = old[oy * W + ox]; } }
+    sgCols(); sgRecolor();
+  } else sgCols();
+  drawSgLabels(); if (sgOff && !booting) drawSpectrogram();
+  if (!fromHost) postUi();
+}
+function sgResize() {   // live resize: keep (stretch) the existing history
+  if (!sgOff) { sgInit(); return; }
+  var nw = Math.round(SGW * DPR), nh = Math.round(SGH * DPR); if (nw === sgW && nh === sgH) return;
+  var ow = sgW, oh = sgH, old = sgInt, x, y; sgW = nw; sgH = nh;
+  sgInt = new Uint8Array(sgW * sgH);
+  for (y = 0; y < sgH; y++) { var oy = Math.min(oh - 1, Math.floor(y * oh / sgH)); for (x = 0; x < sgW; x++) sgInt[y * sgW + x] = old[oy * ow + Math.min(ow - 1, Math.floor(x * ow / sgW))]; }
+  sgOff = document.createElement('canvas'); sgOff.width = sgW; sgOff.height = sgH; sgCtx = sgOff.getContext('2d');
+  sgCols(); sgRecolor();
+}
+function colDb(x, sm) {
+  var lo = colLo[x], hi = colHi[x], i, v;
+  if (hi - lo >= 2) { var m = -200, a = 0; for (i = lo; i <= hi; i++) { v = sm[i]; if (v > m) m = v; a += v; } return 0.5 * m + 0.5 * a / (hi - lo + 1); }
+  var f = colFi[x], i0 = Math.floor(f), fr = f - i0, i1 = Math.min(N - 1, i0 + 1);
+  return sm[i0] * (1 - fr) + sm[i1] * fr;   // spectrogram intensity is UNTILTED (tilt is a spectrum-curve visual only)
+}
+/* Frequency-band colour (theme-derived trio): continuous low -> mid -> high along the log frequency axis (20 Hz .. 20 kHz) */
+var BAND = { low: hexRgb(THEMES[1].band[0]), mid: hexRgb(THEMES[1].band[1]), high: hexRgb(THEMES[1].band[2]) };   // retinted by applyTheme()
+function bandRGB(p) {
+  var a, b, u; if (p < 0.5) { a = BAND.low; b = BAND.mid; u = p / 0.5; } else { a = BAND.mid; b = BAND.high; u = (p - 0.5) / 0.5; }
+  u = u * u * (3 - 2 * u);   // smoothstep: soft blend across band boundaries
+  return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+}
+function sgStep(dt) {
+  var vert = sgOrient !== 'h', tdim = vert ? sgH : sgW, fN = vert ? sgW : sgH;
+  sgAcc += SG_PPS * P.spectrogram_speed * dt * DPR; var n = Math.floor(sgAcc); if (n < 1) return; sgAcc -= n; n = Math.min(n, tdim);
+  var y0;
+  if (vert) { sgCtx.drawImage(sgOff, 0, n); sgInt.copyWithin(n * sgW, 0, (sgH - n) * sgW); }   // V: history scrolls DOWN (newest on top)
+  else { sgCtx.drawImage(sgOff, -n, 0); for (y0 = 0; y0 < sgH; y0++) sgInt.copyWithin(y0 * sgW, y0 * sgW + n, (y0 + 1) * sgW); }   // H: history scrolls LEFT (newest at right)
+  var s = P.sg_src, sm = (isLive() && D.sgRow[s]) ? D.sgRow[s] : specs[s].sm, x, k, lo = P.display_range, floorDb = lo * 0.7, span = -6 - floorDb;
+  for (x = 0; x < fN; x++) curCol[x] = colDb(x, sm);
+  for (x = 0; x < fN; x++) { var a0 = curCol[x > 0 ? x - 1 : x], a2 = curCol[x < fN - 1 ? x + 1 : x]; blurCol[x] = 0.25 * a0 + 0.5 * curCol[x] + 0.25 * a2; }   // smoothing along the frequency axis: no blocks
+  if (!prevCol) prevCol = new Float32Array(blurCol);
+  var img = vert ? sgCtx.createImageData(sgW, n) : sgCtx.createImageData(n, sgH), d = img.data;
+  for (k = 0; k < n; k++) {
+    var u = (k + 1) / n, tIdx = vert ? n - 1 - k : k;   // temporal interpolation between frames; newest row on top (V) / right (H)
+    for (x = 0; x < fN; x++) {
+      var db = prevCol[x] + (blurCol[x] - prevCol[x]) * u, t = clamp((db - floorDb) / span, 0, 1);
+      t = Math.pow(t, 1.7);   // perceptual curve, deep black floor
+      if (vert) sgInt[tIdx * sgW + x] = Math.round(t * 255); else sgInt[x * sgW + (sgW - n + k)] = Math.round(t * 255);
+      sgPixel(d, (vert ? (tIdx * sgW + x) : (x * n + tIdx)) * 4, t, colRGB[x]);
+    }
+  }
+  prevCol.set(blurCol);
+  sgCtx.putImageData(img, vert ? 0 : sgW - n, 0);
+}
+function drawSpectrogram() { var o = cv.sg_cv, g = o.g; g.imageSmoothingEnabled = true; g.drawImage(sgOff, 0, 0, o.w, o.h); }
+
+function drawSgLabelsH() {
+  var o = cv.sg_lbl, g = o.g; g.clearRect(0, 0, o.w, o.h); g.font = '9px ' + MONO;
+  var yOfF = function (f) { return Math.round((1 - Math.log2(f / FMIN) / OCTS) * o.h); };
+  [10, 100, 1000, 10000].forEach(function (dec) { for (var m2 = 2; m2 <= 9; m2++) { var f2 = m2 * dec; if (f2 < 20 || f2 > 20000) continue; g.fillStyle = 'rgba(255,255,255,0.028)'; g.fillRect(0, yOfF(f2), o.w - 14, 1); } });
+  g.textAlign = 'left'; g.textBaseline = 'middle';
+  [[100, '100'], [1000, '1k'], [10000, '10k']].forEach(function (m) { var y = yOfF(m[0]); g.fillStyle = 'rgba(255,255,255,0.07)'; g.fillRect(0, y, o.w, 1); g.fillStyle = 'rgba(190,205,215,0.55)'; g.fillText(m[1], 5, y + 7); });
+  g.fillStyle = 'rgba(190,205,215,0.55)'; g.textBaseline = 'alphabetic'; g.fillText('20', 5, o.h - 14);
+  var pps = SG_PPS * P.spectrogram_speed, step = (o.w / pps) > 7 ? 2 : 1; g.textAlign = 'center';
+  g.fillStyle = 'rgba(190,205,215,0.5)'; g.textAlign = 'right'; g.fillText('now', o.w - 6, o.h - 4); g.textAlign = 'center';
+  for (var t = step; t * pps < o.w - 40; t += step) { var x = Math.round(o.w - t * pps) + 0.5; g.fillStyle = 'rgba(255,255,255,0.14)'; g.fillRect(x, o.h - 14, 1, 5); g.fillStyle = 'rgba(190,205,215,0.5)'; g.fillText('-' + t + 's', x, o.h - 3); }
+}
+function drawSgLabels() {
+  if (sgOrient === 'h') { drawSgLabelsH(); return; }
+  var o = cv.sg_lbl, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  g.font = '9px ' + MONO; g.textBaseline = 'alphabetic';
+  // frequency axis (horizontal, log 20 Hz -> 20 kHz): matches the spectrum analyzer above
+  [10, 100, 1000, 10000].forEach(function (dec) { for (var m2 = 2; m2 <= 9; m2++) { var f2 = m2 * dec; if (f2 < 20 || f2 > 20000) continue; var xm = Math.round(Math.log2(f2 / FMIN) / OCTS * o.w); g.fillStyle = 'rgba(255,255,255,0.028)'; g.fillRect(xm, 0, 1, o.h - 14); } });
+  [[100, '100'], [1000, '1k'], [10000, '10k']].forEach(function (m) {
+    var x = Math.round(Math.log2(m[0] / FMIN) / OCTS * o.w); g.fillStyle = 'rgba(255,255,255,0.07)'; g.fillRect(x, 0, 1, o.h - 14);
+    g.textAlign = 'center'; g.fillStyle = 'rgba(190,205,215,0.55)'; g.fillText(m[1], x, o.h - 4);
+  });
+  g.fillStyle = 'rgba(190,205,215,0.55)'; g.textAlign = 'left'; g.fillText('20', 4, o.h - 4); g.textAlign = 'right'; if (o.w >= 270) g.fillText('20k', o.w - 4, o.h - 4);
+  // time axis (vertical, newest at top, history flows down) on the right side
+  var pps = SG_PPS * P.spectrogram_speed, step = (o.h / pps) > 6 ? 2 : 1;
+  g.textBaseline = 'middle'; g.textAlign = 'right'; g.fillStyle = 'rgba(190,205,215,0.5)'; g.fillText('now', o.w - 6, 8);
+  for (var t = step; t * pps < o.h - 22; t += step) { var y = Math.round(t * pps) + 0.5; g.fillStyle = 'rgba(255,255,255,0.14)'; g.fillRect(o.w - 5, y, 5, 1); g.fillStyle = 'rgba(190,205,215,0.5)'; g.fillText('-' + t + 's', o.w - 8, y); }
+}
+
+/* ================= VECTORSCOPE + SCOPE ================= */
+/* ================= VECTORSCOPE + SCOPE (fed by D.gonio / D.scope) ================= */
+var GN = { cx: 150, cy: 80, R: 78 };
+function drawGonio() {
+  var o = cv.gn_cv, g = o.g, cx = GN.cx, cy = GN.cy, Rr = GN.R, live = isLive();
+  g.globalCompositeOperation = 'source-over'; g.fillStyle = P.reduced_motion ? GLASS : 'rgba(10,12,14,0.13)'; g.fillRect(0, 0, o.w, o.h);
+  g.globalCompositeOperation = 'lighter';
+  for (var s = P.gn_src; s === P.gn_src; s++) {   // the selected source only; an absent source simply draws nothing (honest emptiness)
+    var data = D.gonio[s]; if (!live || !data || !effVisible(s)) continue;
+    g.fillStyle = 'rgba(' + SRC[s].rgb.join(',') + ',' + (0.3 + 0.16 * P.glow_intensity / 100).toFixed(2) + ')';
+    for (var k = 0; k + 1 < data.length; k += 2) {
+      var L = data[k], Rv = data[k + 1], m = (L + Rv) * 0.7071, sd = (Rv - L) * 0.7071;   // 45 deg rotated M/S; S = R-L so hard-left plots upper-left (L label), hard-right upper-right
+      var x = cx + sd * Rr * 0.95, y = cy - m * Rr * 0.95, dx = x - cx, dy = y - cy, dl = Math.sqrt(dx * dx + dy * dy);
+      if (dl > Rr) { x = cx + dx / dl * Rr; y = cy + dy / dl * Rr; }
+      g.fillRect(x - 0.75, y - 0.75, 1.5, 1.5);
+    }
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+function drawGnGrid() {
+  var o = cv.gn_grid, g = o.g, cx = GN.cx, cy = GN.cy, Rr = GN.R; g.clearRect(0, 0, o.w, o.h);
+  g.lineWidth = 1;
+  [1, 0.75, 0.5, 0.25].forEach(function (k, i) { g.strokeStyle = i === 0 ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.05)'; g.beginPath(); g.arc(cx, cy, Rr * k, 0, TAU); g.stroke(); });
+  g.strokeStyle = 'rgba(255,255,255,0.06)'; g.beginPath(); g.moveTo(cx - Rr, cy + 0.5); g.lineTo(cx + Rr, cy + 0.5); g.moveTo(cx + 0.5, cy - Rr); g.lineTo(cx + 0.5, cy + Rr); g.stroke();
+  g.setLineDash([2, 4]); var d = Rr * 0.7071; g.beginPath(); g.moveTo(cx - d, cy - d); g.lineTo(cx + d, cy + d); g.moveTo(cx + d, cy - d); g.lineTo(cx - d, cy + d); g.stroke(); g.setLineDash([]);
+  g.font = '9px ' + MONO; g.fillStyle = 'rgba(122,136,148,0.75)'; g.textBaseline = 'middle'; g.textAlign = 'center';
+  g.fillText('M', cx, cy - Rr + 11); g.fillText('-M', cx, cy + Rr - 11); g.fillText('S', cx + Rr - 11, cy); g.fillText('S', cx - Rr + 11, cy);
+  g.fillText('L', cx - d + 12, cy - d + 5); g.fillText('R', cx + d - 12, cy - d + 5);
+}
+var SCP = { L: 30, T: 12, pw: 312, ph: 126 };
+function drawScope() {
+  var o = cv.sc_cv, g = o.g, live = isLive();
+  g.globalCompositeOperation = 'source-over'; g.fillStyle = P.reduced_motion ? GLASS : 'rgba(10,12,14,0.26)'; g.fillRect(0, 0, o.w, o.h);
+  g.globalCompositeOperation = 'lighter'; g.lineJoin = 'round';
+  var cy = SCP.T + SCP.ph / 2, gl = P.glow_intensity / 100, fs = D.fs || 48000;
+  for (var s = P.sc_src; s === P.sc_src; s++) {
+    var buf = D.scope[s]; if (!live || !buf || buf.length < 64 || !effVisible(s)) continue;
+    var span = Math.min(Math.round(0.02 * fs), buf.length - 1);   // 10 divisions x 2 ms
+    var trig = 0, lim = Math.min(800, buf.length - span - 2);
+    for (var q = 1; q < lim; q++) if (buf[q - 1] < 0 && buf[q] >= 0 && buf[q + 12] > buf[q]) { trig = q; break; }
+    g.beginPath();
+    for (var j = 0; j < SCP.pw; j++) { var v = buf[Math.min(buf.length - 1, trig + Math.round(j / (SCP.pw - 1) * span))], y = cy - clamp(v, -1, 1) * SCP.ph / 2 * 0.96, x = SCP.L + j; if (j) g.lineTo(x, y); else g.moveTo(x, y); }
+    var rgb = SRC[s].rgb.join(',');
+    g.lineWidth = 4; g.strokeStyle = 'rgba(' + rgb + ',' + (gl * 0.10).toFixed(3) + ')'; g.stroke();
+    g.lineWidth = 1.2; g.strokeStyle = 'rgba(' + rgb + ',0.88)'; g.stroke();
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+function drawScGrid() {
+  var o = cv.sc_grid, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  g.lineWidth = 1; g.font = '9px ' + MONO; g.textBaseline = 'middle'; g.textAlign = 'left';
+  for (var i = 0; i <= 20; i++) { var x = Math.round(SCP.L + i * SCP.pw / 20) + 0.5; g.strokeStyle = i % 10 === 0 ? 'rgba(255,255,255,0.08)' : (i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.022)'); g.beginPath(); g.moveTo(x, SCP.T); g.lineTo(x, SCP.T + SCP.ph); g.stroke(); }
+  for (var j = -4; j <= 4; j++) {   // horizontal rules every 0.25 FS
+    var v = j / 4, yy = Math.round(SCP.T + SCP.ph / 2 - v * SCP.ph / 2) + 0.5; g.strokeStyle = j === 0 ? 'rgba(255,255,255,0.11)' : (j % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.022)');
+    g.beginPath(); g.moveTo(SCP.L, yy); g.lineTo(SCP.L + SCP.pw, yy); g.stroke();
+  }
+  [[1, '+1'], [0.5, '.5'], [0, '0'], [-0.5, '-.5'], [-1, '-1']].forEach(function (a) {
+    var y = Math.round(SCP.T + SCP.ph / 2 - a[0] * SCP.ph / 2) + 0.5; g.fillStyle = 'rgba(122,136,148,0.7)'; g.fillText(a[1], 6, y);
+  });
+  g.textAlign = 'right'; g.fillStyle = 'rgba(122,136,148,0.6)'; g.textBaseline = 'alphabetic'; g.fillText('2ms/div', SCP.L + SCP.pw, o.h - 6);
+}
+/* ================= READOUTS (measured values only; unavailable -> dashes, never fabricated) ================= */
+function resetMetersLocal(all) {   // optimistic local clear; the processor is the source of truth and the next frame confirms it
+  D.louds = D.louds.map(function (l) { return l ? { M: l.M, S: l.S, I: null, LRA: null } : l; });
+  if (all) { D.peaks = []; specs.forEach(function (s) { s.peak.set(s.sm); }); }
+}
+function updateMeters(dt) {   // light smoothing of the stereo readouts toward the host values
+  var live = isLive(), a = 1 - Math.exp(-dt / 0.12);
+  for (var s = 0; s < 2; s++) {
+    var t = live ? D.stereo[s] : null;
+    if (!t || !isNum(t.corr)) { dispSt[s] = null; continue; }
+    var w = isNum(t.width) ? t.width : 0, b = isNum(t.bal) ? t.bal : 0, c = dispSt[s];
+    if (!c) dispSt[s] = { corr: t.corr, width: w, bal: b };
+    else { c.corr += (t.corr - c.corr) * a; c.width += (w - c.width) * a; c.bal += (b - c.bal) * a; }
+  }
+}
+function paintAnnot() {   // corner annotations: live parameter / measured values only
+  var sg = function (v) { return (v >= 0 ? '+' : '') + v.toFixed(2); };
+  $('an_spec_l').innerHTML = 'FFT <b>' + P.fft_size + '</b>  WIN <b>' + (P.window === 'hann' ? 'hann' : 'blkhrr') + '</b>  RES <b>' + (D.fs ? (D.fs / P.fft_size).toFixed(2) + 'hz' : '---') + '</b>';
+  $('an_spec_r').innerHTML = 'SMTH <b>' + Math.round(P.smoothing) + '%</b>  TILT <b>' + P.spectrum_tilt.toFixed(1) + '</b>  RNG <b>' + P.display_range + '</b>';
+  $('an_wf_l').innerHTML = 'BPM <b>' + (D.bpm ? D.bpm.toFixed(2).replace(/\.?0+$/, '') : '---') + '</b>';
+  $('an_sg_l').innerHTML = 'SPD <b>' + P.spectrogram_speed.toFixed(2) + 'x</b>';
+  $('an_gn_l').innerHTML = 'CORR <b>' + (dispSt[0] ? sg(dispSt[0].corr) : '---.--') + '</b>';
+  $('an_gn_r').innerHTML = 'ROT <b>45&deg;</b>';
+  $('an_sc_r').innerHTML = 'TRIG <b>+0</b>  SPAN <b>20ms</b>';
+}
+function paintReadouts() {   // whole column (Loudness / True Peak / Stereo) shows ONE source: P.rd_src (CH1/CH2 chips in the nameplate pane)
+  paintAnnot();
+  var live = isLive(), dash = '---.--', R = P.rd_src;
+  var f2 = function (v) { return isNum(v) ? (v < 0 ? '-' : '') + Math.abs(v).toFixed(2) : dash; };
+  var sg = function (v) { return (v >= 0 ? '+' : '-') + Math.abs(v).toFixed(2); };
+  var pv = function (v) { return isNum(v) && v > -98 ? v : null; };
+  var Ld = D.louds[R] || {}, Mv = live ? Ld.M : null, Sv = live ? Ld.S : null, Iv = Ld.I;
+  $('r_big0').innerHTML = tint(R, f2(Iv) + 'lufs');
+  $('r_a0').innerHTML = kv('M:', f2(Mv), 'lufs', R) + '  ' + kv('S:', f2(Sv), 'lufs', R);
+  $('r_b0').innerHTML = kv('LRA:', isNum(Ld.LRA) ? f2(Ld.LRA) : '---.--', 'lu', R) + '  ' + (isNum(Iv) ? kv('vs -14:', sg(Iv + 14), 'lu', R) : '<i>vs -14: ---.--lu</i>');
+  var p = D.peaks[R] || {}, tp = pv(p.tp), sp = pv(p.sp);
+  $('r_big1').innerHTML = tint(R, (tp === null ? dash : f2(tp)) + ' db');
+  $('r_a1').innerHTML = kv('TP:', tp === null ? dash : f2(tp), ' db', R) + '  ' + kv('SP:', sp === null ? dash : f2(sp), ' db', R);
+  $('r_b1').innerHTML = '<i>max since reset</i>';
+  var s = dispSt[R];
+  $('r_big2').innerHTML = tint(R, (s ? sg(s.corr) : dash) + 'corr');
+  $('r_a2').innerHTML = kv('WIDTH:', s ? clamp(s.width, 0, 100).toFixed(2) : dash, '%', R) + '  ' + kv('BAL:', s ? sg(s.bal) : dash, 'db', R);
+  $('r_b2').innerHTML = '';
+}
+var fpsShown = 60, fpsCount = 0, fpsT = 0;
+function paintStats() {
+  $('f_stats').innerHTML = (P.freeze ? '<span class="fz">FROZEN</span>' : '<b>' + fpsShown + 'fps</b>') + '  &nbsp;SMP: <b>' + (D.fs ? D.fs : '---') + '</b>&nbsp; FFT: <b>' + P.fft_size + '</b>';
+}
+/* data-driven status flag: LIVE (frames arriving, signal present) / NO SIGNAL (frames arriving, input silent) / NO DATA (no frames) */
+var flagState = '';
+function updateFlag() {
+  var st = isLive() ? 'live' : ((D.hasData && (performance.now() - D.lastAt) < 1000) ? 'silent' : 'idle');
+  if (st === flagState) return; flagState = st;
+  var el = $('flag'); el.className = 'foot ' + (st === 'live' ? 'live' : 'idle');
+  $('flag_t').textContent = st === 'live' ? 'LIVE' : (st === 'silent' ? 'NO SIGNAL' : 'NO DATA — waiting for audio');
+  paintStats(); paintReadouts(); needRedraw = true;
+}
+
+/* ================= v2: SOURCES (footer chips + popover) ================= */
+function colorName(i) { return CNAMES[i]; }
+function applySources() {
+  for (var i = 0; i < 2; i++) {
+    var chip = $('chip' + i), leg = $('leg' + i), sgs = $('sgs' + i); chip.style.setProperty('--c', SRC[i].color); leg.style.setProperty('--c', SRC[i].color); sgs.style.setProperty('--c', SRC[i].color); $('solo' + i).style.setProperty('--c', SRC[i].color);
+    chip.classList.toggle('off', !effVisible(i)); leg.classList.toggle('off', !effVisible(i)); $('chn' + i).textContent = shortName(i); $('lgn' + i).textContent = SRC[i].name; $('chc' + i).textContent = colorName(i);
+    sgs.textContent = SRC[i].name; sgs.classList.toggle('on', P.sg_src === i); var sgo = $('sgo' + i); if (sgo) { sgo.style.setProperty('--c', SRC[0].color); sgo.classList.toggle('on', sgOrient === (i ? 'h' : 'v')); }
+    var wfs = $('wfs' + i); wfs.style.setProperty('--c', SRC[i].color); wfs.textContent = SRC[i].name; wfs.classList.toggle('on', P.wf_src === i);
+    var gns = $('gns' + i), scs = $('scs' + i); gns.style.setProperty('--c', SRC[i].color); gns.textContent = SRC[i].name; gns.classList.toggle('on', P.gn_src === i); scs.style.setProperty('--c', SRC[i].color); scs.textContent = SRC[i].name; scs.classList.toggle('on', P.sc_src === i);
+    var rds = $('rd' + i); if (rds) { rds.style.setProperty('--c', SRC[i].color); rds.textContent = SRC[i].name; rds.classList.toggle('on', P.rd_src === i); }
+    $('solo' + i).classList.toggle('on', SRC[i].solo); var sdot = $('sd' + i); if (sdot) sdot.style.setProperty('--c', SRC[i].color);
+    var pv = $('pv' + i), ps = $('ps' + i); if (pv) { pv.classList.toggle('on', SRC[i].visible); ps.classList.toggle('on', SRC[i].solo); }
+  }
+  needRedraw = true;
+}
+[0, 1].forEach(function (i) {
+  function tv() { SRC[i].visible = !SRC[i].visible; Bridge.post('src' + (i + 1) + '_visible', SRC[i].visible); applySources(); }
+  $('chip' + i).addEventListener('click', tv); $('leg' + i).addEventListener('click', tv);
+  $('sgo' + i).addEventListener('click', function () { sgSetOrient(i ? 'h' : 'v'); });
+  $('sgs' + i).addEventListener('click', function () { P.sg_src = i; applySources(); sgClear(); });
+  $('wfs' + i).addEventListener('click', function () { P.wf_src = i; applySources(); wfInit(); });
+  $('gns' + i).addEventListener('click', function () { P.gn_src = i; applySources(); cv.gn_cv.g.globalCompositeOperation = 'source-over'; cv.gn_cv.g.fillStyle = GLASS; cv.gn_cv.g.fillRect(0, 0, cv.gn_cv.w, cv.gn_cv.h); if (typeof postUi === 'function') postUi(); });   // UI-only: both sources' arrays are kept, the selected one is rendered
+  $('scs' + i).addEventListener('click', function () { P.sc_src = i; applySources(); cv.sc_cv.g.globalCompositeOperation = 'source-over'; cv.sc_cv.g.fillStyle = GLASS; cv.sc_cv.g.fillRect(0, 0, cv.sc_cv.w, cv.sc_cv.h); if (typeof postUi === 'function') postUi(); });
+  $('solo' + i).addEventListener('click', function () { SRC[i].solo = !SRC[i].solo; Bridge.post('src' + (i + 1) + '_solo', SRC[i].solo); applySources(); });
+});
+
+(function buildSrcPop() {
+  var h = '<h4>Sources</h4>';
+  for (var i = 0; i < 2; i++) {
+    h += '<div class="srow" id="srow' + i + '"><div class="line"><i class="dotc" id="sd' + i + '"></i><input class="nm2" id="sn' + i + '" maxlength="10" spellcheck="false" value="' + SRC[i].name + '" />' +
+      '<span class="sp"></span><button class="tg" id="pv' + i + '">Visible</button><button class="tg" id="ps' + i + '">Solo</button></div></div>';
+  }
+  $('pop_src').innerHTML = h;
+  for (var j = 0; j < 2; j++) (function (i) {
+    var inp = $('sn' + i);
+    inp.addEventListener('input', function () { SRC[i].name = inp.value || ('Ch' + (i + 1)); Bridge.post('src' + (i + 1) + '_name', SRC[i].name); applySources(); });
+    inp.addEventListener('keydown', function (e) { e.stopPropagation(); if (e.key === 'Enter') inp.blur(); });
+    $('pv' + i).addEventListener('click', function () { SRC[i].visible = !SRC[i].visible; Bridge.post('src' + (i + 1) + '_visible', SRC[i].visible); applySources(); });
+    $('ps' + i).addEventListener('click', function () { SRC[i].solo = !SRC[i].solo; Bridge.post('src' + (i + 1) + '_solo', SRC[i].solo); applySources(); });
+  })(j);
+  applySources();
+})();
+
+/* ================= v2: SETTINGS POPOVER ================= */
+/* one shared value <-> normalised mapper for sliders and knobs (cfg: min, max, log, step) */
+function normOf(cfg, v) { return cfg.log ? Math.log(v / cfg.min) / Math.log(cfg.max / cfg.min) : (v - cfg.min) / (cfg.max - cfg.min); }
+function valueOf(cfg, n) { n = clamp(n, 0, 1); var v = cfg.log ? cfg.min * Math.pow(cfg.max / cfg.min, n) : cfg.min + n * (cfg.max - cfg.min); if (cfg.step) v = Math.round(v / cfg.step) * cfg.step; return clamp(v, cfg.min, cfg.max); }
+/* gesture protocol: begin on pointerdown, value events while dragging, end on release (host automation gesture) */
+function gestureOf(id) {
+  var open = false;
+  return { begin: function () { if (!open) { open = true; Bridge.gesture(id, 'begin'); } }, end: function () { if (open) { open = false; Bridge.gesture(id, 'end'); } } };
+}
+function Slider(host, cfg) {
+  var tr = host.querySelector('.tr'), fl = host.querySelector('.fl'), th = host.querySelector('.th'), val = host.querySelector('.val'), drag = false;
+  var gs = gestureOf(cfg.id);
+  function norm() { return normOf(cfg, P[cfg.id]); }
+  function fromNorm(n) { return valueOf(cfg, n); }
+  function refresh() { var n = norm() * 100; fl.style.width = n + '%'; th.style.left = n + '%'; val.textContent = cfg.fmt(P[cfg.id]); }
+  function fromEvent(e) { var r = tr.getBoundingClientRect(); setParam(cfg.id, fromNorm((e.clientX - r.left) / r.width)); }
+  host.addEventListener('pointerdown', function (e) { drag = true; host.setPointerCapture(e.pointerId); gs.begin(); fromEvent(e); });
+  host.addEventListener('pointermove', function (e) { if (drag) fromEvent(e); });
+  host.addEventListener('pointerup', function () { drag = false; gs.end(); });
+  host.addEventListener('pointercancel', function () { drag = false; gs.end(); });
+  host.addEventListener('dblclick', function () { gs.begin(); setParam(cfg.id, cfg.def); gs.end(); });
+  on(cfg.id, refresh); refresh();
+}
+function segHtml(id, items) { return '<div class="seg" id="' + id + '">' + items.map(function (it) { return '<button data-v="' + it[0] + '">' + it[1] + '</button>'; }).join('') + '</div>'; }
+function slHtml(id) { return '<div class="sl" id="' + id + '"><div class="tr"><div class="fl"></div><div class="th"></div></div><div class="val"></div></div>'; }
+(function buildSetPop() {
+  var rows = '<h4>Settings</h4>' +
+    '<div class="tlabel">Theme</div><div class="seg themes" id="sg_theme">' + THEMES.map(function (t) { return '<button data-v="' + t.name + '">' + t.name + '</button>'; }).join('') + '</div>' +
+    '<div class="prow" style="height:14px"></div>' +
+    '<div class="prow"><div class="ctl">' + '<div class="seg presets" id="sg_preset">' + Object.keys(PRESETS).map(function (n) { return '<button data-v="' + n + '">' + n + '</button>'; }).join('') + '</div></div></div>' +
+    '<div class="prow" style="height:20px"></div>' +
+    '<div class="prow"><label>FFT size</label><div class="ctl">' + segHtml('sg_fft', [[1024, '1k'], [2048, '2k'], [4096, '4k'], [8192, '8k'], [16384, '16k']]) + '</div></div>' +
+    '<div class="prow"><label>Window</label><div class="ctl">' + segHtml('sg_win', [['hann', 'Hann'], ['blackmanHarris', 'Blackman-H']]) + '</div></div>' +
+    '<div class="prow"><label>Analysis</label><div class="ctl">' + segHtml('sg_mode', [['leftRight', 'L/R'], ['midSide', 'M/S'], ['combined', 'Comb']]) + '</div></div>' +
+    '<div class="prow"><label>Range</label><div class="ctl">' + segHtml('sg_rng', [[-48, '-48'], [-60, '-60'], [-72, '-72'], [-90, '-90']]) + '</div></div>' +
+    '<div class="prow"><label>Peak decay</label><div class="ctl">' + slHtml('sl_decay') + '</div></div>' +
+    '<div class="prow"><label>Tilt</label><div class="ctl">' + slHtml('sl_tilt') + '</div></div>' +
+    '<div class="prow"><label>Reduced motion</label><div class="ctl"><button class="tg" id="tg_rm">Off</button></div></div>';
+  $('pop_set').innerHTML = rows;
+  $('pop_set').style.padding = '16px 20px 16px';
+  function bindSeg(id, param, parse) {
+    var items = $(id).children;
+    function refresh() { for (var i = 0; i < items.length; i++) items[i].classList.toggle('on', parse(items[i].dataset.v) === P[param]); }
+    for (var i = 0; i < items.length; i++) items[i].addEventListener('click', function () { setParam(param, parse(this.dataset.v)); });
+    on(param, refresh); refresh();
+  }
+  var num = function (v) { return +v; }, str = function (v) { return v; };
+  bindSeg('sg_theme', 'color_theme', str); bindSeg('sg_preset', 'preset', str); bindSeg('sg_fft', 'fft_size', num); bindSeg('sg_win', 'window', str); bindSeg('sg_mode', 'analysis_mode', str); bindSeg('sg_rng', 'display_range', num);
+  Slider($('sl_decay'), { id: 'peak_decay', min: 3, max: 60, def: 12, step: 1, fmt: function (v) { return Math.round(v) + 'db/s'; } });
+  Slider($('sl_tilt'), { id: 'spectrum_tilt', min: 0, max: 4.5, def: 4.5, step: 0.1, fmt: function (v) { return v.toFixed(1) + ' db/oct'; } });   // no dedicated knob: default 4.5 dB/oct (Pro-Q 3 analyzer slope, 1 kHz pivot)
+  $('tg_rm').addEventListener('click', function () { setParam('reduced_motion', !P.reduced_motion); });
+  on('reduced_motion', function (v) { $('tg_rm').classList.toggle('on', v); $('tg_rm').textContent = v ? 'On' : 'Off'; document.body.classList.toggle('rm', v); });
+  $('btn_freeze').addEventListener('click', function () { setParam('freeze', !P.freeze); });
+  on('freeze', function (v) { $('btn_freeze').classList.toggle('on', v); $('btn_freeze').textContent = v ? 'Frozen' : 'Freeze'; needRedraw = true; paintStats(); });
+  function momentary(id, evt, also) { $(id).addEventListener('click', function () { var b = this; Bridge.post(evt, true); also(); b.classList.add('flash'); setTimeout(function () { b.classList.remove('flash'); }, 180); }); }
+  momentary('btn_reset', 'reset_all', function () { resetMetersLocal(true); });
+  momentary('btn_reset_i', 'reset_integrated', function () { resetMetersLocal(false); });
+  $('btn_theme').addEventListener('click', function () { var i = 0; for (var k = 0; k < THEMES.length; k++) if (THEMES[k].name === P.color_theme) i = k; setParam('color_theme', THEMES[(i + 1) % THEMES.length].name); });
+  on('color_theme', function (n) { $('btn_theme').textContent = n; });
+  on('preset', function (n) { if (syncing) return; var p = PRESETS[n]; if (!p) return; Object.keys(p).forEach(function (k) { setParam(k, p[k]); }); });
+})();
+
+/* ================= v2: POPOVER OPEN/CLOSE ================= */
+(function () {
+  var pairs = [['btn_src', 'pop_src'], ['btn_set', 'pop_set'], ['wfgrid', 'pop_grid']];
+  function closeAll(except) { pairs.forEach(function (p) { if (p[1] !== except) { $(p[1]).classList.remove('open'); $(p[0]).classList.remove('active'); } }); }
+  pairs.forEach(function (p) {
+    $(p[0]).addEventListener('click', function (e) { e.stopPropagation(); closeAll(p[1]); var o = $(p[1]).classList.toggle('open'); $(p[0]).classList.toggle('active', o); });
+    $(p[1]).addEventListener('click', function (e) { e.stopPropagation(); });
+  });
+  document.addEventListener('click', function () { closeAll(null); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { closeAll(null); if (wfPick) wfPickSet(null); if (UI.fullscreen || KIOSK) userFullscreen(false); }
+    if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !e.altKey && !(e.target && e.target.tagName === 'INPUT')) userFullscreen(!UI.fullscreen);
+    if (e.code === 'Space') { e.preventDefault(); setParam('freeze', !P.freeze); }
+  });
+})();
+
+/* ================= v5: COLOR THEMES ================= */
+function setBandTrio(b) {
+  BAND.low = hexRgb(b[0]); BAND.mid = hexRgb(b[1]); BAND.high = hexRgb(b[2]); WF.c = b.slice();
+  for (var i = 0; i < 3; i++) { var e = document.getElementById('bd' + i); if (e) e.style.color = b[i]; }
+  if (colRGB && colRGB.length) for (var x = 0; x < colRGB.length; x++) colRGB[x] = bandRGB(colFi[x] / (N - 1));
+}
+function applyTheme(name) {
+  var t = themeByName(name), r = document.documentElement.style, c1 = hexRgb(t.c1[1]), c2 = hexRgb(t.c2[1]), nv = hexRgb(t.neutral);
+  setColorNames(t);
+  setBandTrio(t.band);
+  r.setProperty('--cyan', t.c1[1]); r.setProperty('--cyan-rgb', c1.join(',')); r.setProperty('--violet', t.c2[1]); r.setProperty('--violet-rgb', c2.join(','));
+  r.setProperty('--accent-light', t.light); r.setProperty('--value', t.neutral); r.setProperty('--value-rgb', nv.join(','));
+  SRC[0].color = t.c1[1]; SRC[0].rgb = c1; SRC[1].color = t.c2[1]; SRC[1].rgb = c2;   // channel colours derive solely from the theme
+  applySources(); needRedraw = true;
+  if (!booting) {   // single repaint pass: retint stored histories once, then draw each module once
+    if (sgOff) sgRecolor();
+    if (wfOff) wfRedraw();
+    [cv.gn_cv, cv.sc_cv].forEach(function (o) { o.g.globalCompositeOperation = 'source-over'; o.g.fillStyle = GLASS; o.g.fillRect(0, 0, o.w, o.h); });
+    meterVal = meterTarget();
+    if (sgOff) drawSpectrogram();
+    if (wfOff) drawWaveform();
+    drawSpectrum(); drawMeter(0.016); updateInsp(); paintReadouts();
+  }
+}
+on('color_theme', function (n) { applyTheme(n); KNOBS.forEach(function (k) { k.draw(); }); });
+/* ================= CDJ-STYLE 3-BAND BEAT WAVEFORM (real-time, fed by the engine column stream) ================= */
+/* ---- Timing model (real-time, anchored to the engine's column clock) ----
+   The engine emits columns at EXACTLY 253/3 = 84.333/s and every snapshot carries ALL columns newer than the last fetch.
+   The page therefore (1) appends every received column to a per-source ring IMMEDIATELY (no queue, no pacing, nothing dropped),
+   keeping an absolute column counter wfN (newest column = wfN-1); (2) renders the whole strip each frame from the ring, placing
+   column i at  x = W - (T - i) * pxPerCol  with pxPerCol = (W_device_px) / (span_s * 84.333), so a kick occupies exactly its
+   true duration at any span; (3) drives the sub-column scroll by a clock T that advances with wall time but is clamped to
+   [wfN, wfN + 1.2] and therefore re-syncs to the data on every batch and can never drift or fall behind. Columns beyond the
+   newest (the <=1.2 extrapolated ones) show the held newest value and are replaced as soon as real data arrives. */
+var WFSPAN = 8, WF_SPANS = [1, 2, 4, 8, 16, 32], WF_CPS = 253 / 3, WF_CAP = 16384;   // span in BARS; 16384 columns = 194 s of history: 32 bars is fully covered down to ~40 bpm in 4/4, slower tempi show the last 194 s
+var WFI = { bpm: 0, num: 0, den: 0, known: false };   // last known host tempo + meter (tempo is quarter-note bpm)
+function wfBarSec() { var bpm = WFI.bpm > 0 ? WFI.bpm : 120, num = WFI.num > 0 ? WFI.num : 4, den = WFI.den > 0 ? WFI.den : 4; return num * (4 / den) * 60 / bpm; }
+function wfSpanSec() { return Math.min(WFSPAN * wfBarSec(), (WF_CAP - 64) / WF_CPS); }   // visible window in seconds (bars -> time via the live tempo/meter)
+var WF = { pps: 0, c: THEMES[0].band.slice() };
+var wfOff = null, wfCtx = null, wfW = 0, wfH = 0;
+var wfRing = [new Float32Array(WF_CAP * 4), new Float32Array(WF_CAP * 4)];
+var wfN = 0, wfT = 0, wfIdleAcc = 0;
+var WFSTYLE = 'rgb';   // waveform style: 'rgb' (default, chip FLOW: smooth continuous waveform with additive colour; 'needles' is an alias) | 'layers' (CDJ nested bands)
+var WFTRANS = -1, wfWasFrozen = false;   // host transport: -1 unknown / no playhead (always scrolls), 0 paused (strip + grid frozen as one), 1 playing
+function wfUpdatePps() { WF.pps = (cv.wf_cv ? cv.wf_cv.w : 1012) / wfSpanSec(); }
+function wfSpanText() { var v = WFSPAN, isInt = Math.abs(v - Math.round(v)) < 0.05, t = isInt ? String(Math.round(v)) : v.toFixed(1); return t + (isInt && Math.round(v) === 1 ? ' bar' : ' bars'); }
+function wfStylePaint() { var e = $('wfstyle'); if (e) { e.textContent = WFSTYLE === 'layers' ? 'LYR' : 'FLOW'; e.classList.add('on'); e.style.setProperty('--c', SRC[0].color); } }
+function wfSetStyle(st, fromHost) {
+  st = st === 'layers' ? 'layers' : 'rgb'; var changed = st !== WFSTYLE; WFSTYLE = st; wfStylePaint();
+  if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }
+  if (changed && !fromHost && typeof postUi === 'function') postUi();
+}
+function wfSpanPaint() { var e = $('wfspan'); if (e) e.innerHTML = 'SPAN ' + (WFI.known ? '' : '~') + wfSpanText(); wfStylePaint(); }
+function wfSetSpan(s, fromHost, quiet) {   // span in BARS: continuous 0.5..32 (wheel zoom); non-finite -> 8
+  s = +s; if (!isFinite(s)) s = 8; s = Math.min(32, Math.max(0.5, s));
+  var changed = Math.abs(s - WFSPAN) > 1e-6; WFSPAN = s; wfUpdatePps(); wfSpanPaint();
+  if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }   // history is kept: re-projection only
+  if (changed && !fromHost && !quiet) { if (typeof postUi === "function") postUi(); }
+}
+/* CDJ / rekordbox 3-BAND model, NESTED-RIM structure: three solid continuous layers drawn back-to-front per column.
+   core (highs, theme high colour blended 70% toward white) innermost; mids extend beyond the core by a rim;
+   lows extend beyond the mids by a rim. Each rim is proportional to its band energy but clamped (hairline .. ~0.25A),
+   so all three colours are visible on every audible column and no layer balloons; overall height still tracks amplitude.
+   Exact rekordbox blue/amber/cream = set BAND.low/mid/high to [38,92,214] / [214,150,52] / [250,244,230]. */
+/* FLOW style (smooth continuous waveform; persisted id stays "rgb"): ONE mirrored filled envelope instead of bars.
+   GEOMETRY: every column contributes a control point (centre of its interval; the remaining part of the interval for an onset column) with the combined
+   amplitude + onset weighting; the envelope between points is a Catmull-Rom spline sampled per device pixel, clamped to [0, 97% of the half-lane]. A
+   transient (engine onset) starts a NEW spline segment at its true position column + onsetFrac, so its leading edge stays a crisp fast rise exactly where
+   the beat is while everything else flows. Silence drops to the centreline smoothly over ~1-2 columns (zero height = nothing drawn). Under 1 px per column the
+   per-pixel peak-held envelope (max over the covered columns, 1-2-1 smoothed twice) fills the same smooth shape. The path is anti-aliased by the canvas.
+   COLOUR: the approved additive mix (theme-trio anchors with deep/bright/accent tiers, linear energy weights, linear-light mixing, brightness with amplitude)
+   is computed per column and becomes a horizontal gradient (a stop every ~6 px, interpolated between column centres), so colour flows with the music; a
+   restrained vertical shade (slightly darker at the centreline) adds depth. Real data only: no fabricated detail between columns. */
+var wfTierKey = '', wfTier = null, WF_GLUT = null;
+function wfLin(c) { return Math.pow(c / 255, 2.2); }
+function wfTiers() {   // [band][deep, bright, accent][r, g, b] in linear light, rebuilt when the theme trio changes
+  var key = BAND.low.join(',') + '|' + BAND.mid.join(',') + '|' + BAND.high.join(',');
+  if (key === wfTierKey) return wfTier;
+  wfTierKey = key; wfTier = [BAND.low, BAND.mid, BAND.high].map(function (a) {
+    return [a.map(function (c) { return wfLin(c * 0.55); }), a.map(wfLin), a.map(function (c) { return wfLin(c + (255 - c) * 0.25); })];
+  });
+  if (!WF_GLUT) { WF_GLUT = new Uint8Array(1025); for (var i = 0; i <= 1024; i++) WF_GLUT[i] = Math.round(255 * Math.pow(i / 1024, 1 / 2.2)); }
+  return wfTier;
+}
+function wfRgbMix(b, m, hi) {   // additive frequency mix -> [r, g, b] (0..255), or null for a silent column
+  var peak = Math.max(b, m, hi); if (peak <= 0.015) return null;
+  var tiers = wfTiers(), e = [b, m, hi], S = b + m + hi, lr = 0, lg = 0, lb = 0, k;
+  for (k = 0; k < 3; k++) {
+    if (e[k] <= 0) continue;
+    var t = e[k], tc = t < 0.5 ? tiers[k][0] : tiers[k][1], tn = t < 0.5 ? tiers[k][1] : tiers[k][2], f = t < 0.5 ? t / 0.5 : (t - 0.5) / 0.5, wgt = e[k] / S;
+    lr += wgt * (tc[0] + (tn[0] - tc[0]) * f); lg += wgt * (tc[1] + (tn[1] - tc[1]) * f); lb += wgt * (tc[2] + (tn[2] - tc[2]) * f);
+  }
+  var bri = 0.6 + 0.4 * clamp(peak / 0.7, 0, 1);
+  return [WF_GLUT[Math.min(1024, Math.round(lr * 1024))] * bri, WF_GLUT[Math.min(1024, Math.round(lg * 1024))] * bri, WF_GLUT[Math.min(1024, Math.round(lb * 1024))] * bri];
+}
+function wfColHeight(b, m, hi, on, A, mid) {   // combined amplitude with the onset weighting (0 for a silent column)
+  var peak = Math.max(b, m, hi); if (peak <= 0.015) return 0;
+  var v = 0.75 * Math.max(b, 0.85 * m, 0.7 * hi) + 0.25 * Math.min(1, (b + m + hi) / 2);
+  return Math.min(A * (WF_ONSET_BASE + WF_ONSET_GAIN * (on || 0)) * (0.10 + 0.90 * v), mid * 0.97);
+}
+function wfRenderSmooth(g, W, T, ppc, ring, newest, lo, liveV, snap, mid, A) {
+  var cL = wfXToCol(0, W, T, ppc), cR = wfXToCol(W, W, T, ppc), i0 = Math.max(lo, 0, Math.floor(cL) - 2), i1 = Math.min(newest, Math.ceil(cR) + 2);
+  var Hc = [], Pc = [], Cc = [], segStart = [], segBound = [], on = wfOnsetRing[P.wf_src], i, j = 0, seg = -1;
+  for (i = i0; i <= i1; i++) {
+    var o = (i % WF_CAP) * 4, b = ring[o], m = ring[o + 1], h = ring[o + 2], f = snap.sh[i], lead = snap.lead[i] !== undefined;
+    if (lead || seg < 0) { seg++; segStart.push(j); segBound.push(lead ? i + f : -1e9); }
+    Hc.push(wfColHeight(b, m, h, on[i % WF_CAP], A, mid)); Pc.push(lead ? i + (1 + f) / 2 : i + 0.5); Cc.push(wfRgbMix(b, m, h)); j++;
+  }
+  if (liveV) {   // the in-progress column (real data up to the right edge)
+    Hc.push(wfColHeight(liveV.b, liveV.m, liveV.h, liveV.o, A, mid)); Pc.push((wfN + (liveV.d || 0) + Math.max(wfN + (liveV.d || 0), T)) / 2); Cc.push(wfRgbMix(liveV.b, liveV.m, liveV.h));
+    if (seg < 0) { seg = 0; segStart.push(0); segBound.push(-1e9); }
+  }
+  var n = Hc.length; if (n === 0) return;
+  (function () {   // light 1-2-1 low-pass of the control heights inside each segment (onset segments are NOT smoothed across), so the envelope reads organic rather than jittery
+    var sm = Hc.slice(), q, sg;
+    for (sg = 0; sg < segStart.length; sg++) { var s0 = segStart[sg], s1 = sg + 1 < segStart.length ? segStart[sg + 1] - 1 : n - 1; for (q = s0; q <= s1; q++) sm[q] = 0.25 * Hc[Math.max(s0, q - 1)] + 0.5 * Hc[q] + 0.25 * Hc[Math.min(s1, q + 1)]; }
+    Hc = sm;
+  })();
+  var last = null, k;   // silent columns borrow the nearest colour (their height is 0, so it only shapes the gradient near the edges of a sound)
+  for (k = 0; k < n; k++) { if (Cc[k]) last = Cc[k]; else if (last) Cc[k] = last; }
+  last = null; for (k = n - 1; k >= 0; k--) { if (Cc[k]) last = Cc[k]; else if (last) Cc[k] = last; }
+  if (!Cc[0]) return;   // all silent
+  var segEnd = []; for (k = 0; k < segStart.length; k++) segEnd.push(k + 1 < segStart.length ? segStart[k + 1] - 1 : n - 1);
+  var hpx = new Float32Array(W), cr = new Float32Array(W), cg = new Float32Array(W), cb = new Float32Array(W), x, maxH = mid * 0.97;
+  if (ppc >= 1) {
+    var s = 0, jj = 0, lastHv = -1, tail = -1;
+    for (x = 0; x < W; x++) {
+      var c = wfXToCol(x + 0.5, W, T, ppc);
+      var s0n = s; while (s + 1 < segStart.length && segBound[s + 1] <= c) s++;
+      if (s !== s0n) tail = lastHv;   // value the previous segment's envelope had just before this onset: the new rise starts exactly there
+      var js = segStart[s], je = segEnd[s]; if (jj < js) jj = js; if (jj > je) jj = je;
+      while (jj < je && Pc[jj + 1] <= c) jj++;
+      while (jj > js && Pc[jj] > c) jj--;
+      var hv, t0, c0, c1;
+      if (c <= Pc[js]) {
+        hv = Hc[js]; c0 = c1 = Cc[js]; t0 = 0;
+        if (tail >= 0 && segBound[s] > -1e8 && c >= segBound[s]) {   // onset rise: ramp from the connected tail value to the onset height (no vertical notch; <= half a column wide)
+          var ru = Math.min(1, Math.max(0, (c - segBound[s]) / Math.max(Pc[js] - segBound[s], 1e-6))); hv = tail + (Hc[js] - tail) * ru * ru * (3 - 2 * ru);
+        }
+      }
+      else if (jj >= je) { hv = Hc[je]; c0 = c1 = Cc[je]; t0 = 0; }
+      else {
+        t0 = (c - Pc[jj]) / (Pc[jj + 1] - Pc[jj]);
+        var p0 = Hc[Math.max(js, jj - 1)], p1 = Hc[jj], p2 = Hc[jj + 1], p3 = Hc[Math.min(je, jj + 2)], t2 = t0 * t0, t3 = t2 * t0;
+        hv = 0.5 * ((2 * p1) + (-p0 + p2) * t0 + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+        c0 = Cc[jj]; c1 = Cc[jj + 1];
+      }
+      lastHv = hv; hpx[x] = Math.max(0, Math.min(maxH, hv)); cr[x] = c0[0] + (c1[0] - c0[0]) * t0; cg[x] = c0[1] + (c1[1] - c0[1]) * t0; cb[x] = c0[2] + (c1[2] - c0[2]) * t0;
+    }
+  } else {   // under 1 px per column: peak-held envelope per pixel, smoothed
+    var jx = 0;
+    for (x = 0; x < W; x++) {
+      var a0 = Math.floor(wfXToCol(x, W, T, ppc)), a1 = Math.floor(wfXToCol(x + 1, W, T, ppc) - 1e-9), best = -1, bj = -1, q;
+      for (q = a0; q <= a1; q++) { var jq = q - i0; if (jq < 0 || jq >= n) continue; if (Hc[jq] > best) { best = Hc[jq]; bj = jq; } }
+      if (bj < 0) { hpx[x] = 0; var cc = x > 0 ? [cr[x - 1], cg[x - 1], cb[x - 1]] : Cc[0]; cr[x] = cc[0]; cg[x] = cc[1]; cb[x] = cc[2]; continue; }
+      hpx[x] = Math.min(maxH, best); cr[x] = Cc[bj][0]; cg[x] = Cc[bj][1]; cb[x] = Cc[bj][2];
+    }
+    for (var pass = 0; pass < 2; pass++) { var prev = hpx[0]; for (x = 1; x < W - 1; x++) { var cur = hpx[x]; hpx[x] = 0.25 * prev + 0.5 * cur + 0.25 * hpx[x + 1]; prev = cur; } }
+  }
+  if (wfNowFrac < 1) { var nx = Math.ceil(W * wfNowFrac); for (x = nx + 1; x < W; x++) hpx[x] = 0; }   // centre playhead: nothing ahead of 'now'
+  // fill: top envelope left -> right, bottom envelope right -> left
+  g.globalAlpha = 1;
+  var grad = g.createLinearGradient(0, 0, W, 0), step = 6;
+  for (x = 0; x < W; x += step) grad.addColorStop(x / W, 'rgb(' + (cr[x] | 0) + ',' + (cg[x] | 0) + ',' + (cb[x] | 0) + ')');
+  grad.addColorStop(1, 'rgb(' + (cr[W - 1] | 0) + ',' + (cg[W - 1] | 0) + ',' + (cb[W - 1] | 0) + ')');
+  g.beginPath(); g.moveTo(0, mid - hpx[0]);
+  for (x = 0; x < W; x++) g.lineTo(x + 0.5, mid - hpx[x]);
+  g.lineTo(W, mid - hpx[W - 1]); g.lineTo(W, mid + hpx[W - 1]);
+  for (x = W - 1; x >= 0; x--) g.lineTo(x + 0.5, mid + hpx[x]);
+  g.closePath(); g.fillStyle = grad; g.fill();
+  g.save(); g.clip();   // restrained vertical shade: a little darker at the centreline, full colour toward the peaks
+  var vg = g.createLinearGradient(0, 0, 0, wfH); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(0.5, 'rgba(0,0,0,0.20)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = vg; g.fillRect(0, 0, W, wfH); g.restore();
+  /* thin white centreline over each contiguous SOUNDING region only (first to last sounding column; never across silence or the full lane) */
+  g.fillStyle = 'rgba(255,255,255,0.55)';
+  var cy = Math.floor(mid), rs = -1;
+  for (x = 0; x <= W; x++) {
+    var snd = x < W && hpx[x] > 0.5;
+    if (snd && rs < 0) rs = x;
+    else if (!snd && rs >= 0) { g.fillRect(rs, cy, x - rs, 1); rs = -1; }
+  }
+}
+function wfDrawBands(g, x, w, mid, A, b, m, hi, on) {   // w = block width in device px; on = onset 0..1 (visual height weighting)
+  /* FIXED layer identity in every situation, theme and path (normal, live edge, peak-held): OUTER = lows (theme low colour), MIDDLE = mids (theme mid
+     colour), INNER = highs (theme high colour blended 70 % toward white). A band that is not meaningfully present (<= 0.015) draws NO layer at all and
+     gets no forced hairline, so bassless content never has a bass-impersonating outer block: mids-only reads as a middle-weight amber wedge (slightly
+     lighter paint when it is the outermost visible layer), highs-only as a white core. Rims keep their proportional size (a present-but-tiny band still
+     gets a 1-2 px rim). */
+  b = clamp(b, 0, 1); m = clamp(m, 0, 1); hi = clamp(hi, 0, 1); A *= WF_ONSET_BASE + WF_ONSET_GAIN * (on || 0);
+  var T = 0.015, hl = Math.max(1.5, DPR * 1.25), base = A * 0.08, hv = 0, hCore = 0, hMid = 0, hLow = 0;
+  if (hi > T) { hCore = A * (0.08 + 0.42 * hi); hv = hCore; }
+  if (m > T)  { hMid = Math.max(hv, base) + clamp(A * 0.30 * m, hl, A * 0.22); hv = hMid; }
+  if (b > T)  { hLow = Math.min(Math.max(hv, base) + clamp(A * 0.34 * b, hl, A * 0.26), mid * 0.97); }
+  var L = BAND.low, M = BAND.mid, H = BAND.high;
+  g.globalAlpha = 1;
+  if (hLow > 0) { g.fillStyle = 'rgb(' + (L[0] | 0) + ',' + (L[1] | 0) + ',' + (L[2] | 0) + ')'; g.fillRect(x + wfBandDx[0], mid - hLow, w, 2 * hLow); }
+  if (hMid > 0) { g.globalAlpha = hLow > 0 ? 1 : 0.9; g.fillStyle = 'rgb(' + (M[0] | 0) + ',' + (M[1] | 0) + ',' + (M[2] | 0) + ')'; g.fillRect(x + wfBandDx[1], mid - hMid, w, 2 * hMid); g.globalAlpha = 1; }
+  if (hCore > 0) { g.fillStyle = 'rgb(' + ((H[0] + (255 - H[0]) * 0.7) | 0) + ',' + ((H[1] + (255 - H[1]) * 0.7) | 0) + ',' + ((H[2] + (255 - H[2]) * 0.7) | 0) + ')'; g.fillRect(x + wfBandDx[2], mid - hCore, w, 2 * hCore); }
+}
+/* ---- Unified time base + ONSET-ANCHORED, CONTINUOUS beat grid (computed, not estimated) ----
+   ONE coordinate system for waveform and grid. Everything lives in COLUMN space (a column is a fixed slice of the audio stream: engine column
+   index = floor(streamFrame * 253 / (3 * fs)), 84.333 columns/s at ANY sample rate). The single time->pixel transform is
+   wfColToX(col) = W - (T - col) * pxPerCol (and its inverse wfXToCol); columns and grid lines both go through it, T is shared per frame.
+   DJ-software model: the grid ANCHOR is the first strong onset after silence (the engine's sample-accurate onsetFrac: anchor = engineColumn +
+   onsetFrac) = beat 1, NOT the host bar position. From the anchor ONE unbroken lattice covers the ENTIRE lane: backward before the anchor, through
+   silences, forward to the right edge (beat spacing from host bpm and the time-signature denominator: cpb = (253/3)*(60/bpm)*(4/den)).
+   A new sound after >= 2 beats of silence re-anchors ONLY when its onset lands > 0.25 beat from the extrapolated lattice (a genuinely new musical
+   phase); if it agrees, the lattice is kept (the +-6 ms residual snap does the rest). A tempo / meter change appends a segment on the next beat line.
+   No bpm => no anchor => no grid (honesty rule). Bar weight every timeSig-numerator beats from the anchor. Density is Ableton-style (wfGridEach). */
+var wfOffset = 0;          // engine absolute column index minus page column index (re-based on genuine stream discontinuities)
+var WF_STALE_MS = 350;   // synthetic idle columns only when FRAMES stop arriving (silent playback still delivers real zero columns)
+var wfSynthTail = 0;       // trailing SYNTHETIC (idle, wall-clock) columns in the ring: real data re-bases instead of overlapping them
+var WF_NUM_PX = 40, WF_SOUND = 0.015, WF_GAP_BEATS = 2, WF_ANCHOR_WAIT = 4, WF_REANCHOR_BEATS = 0.25, WF_MAX_SEGS = 64;
+var wfSegs = [[], []];   // per source: lattice segments [{col, cpb, num, b0}] (engine column space: a re-base can never displace them)
+var wfTrkSt = [{ silent: 1e9, last: -1, wait: false, from: 0 }, { silent: 1e9, last: -1, wait: false, from: 0 }];
+function wfColsPerBeat(bpm, den) { return WF_CPS * (60 / bpm) * (4 / (den > 0 ? den : 4)); }
+function wfTrackStep(s, ecol, b, m, h, fr) {   // called once per pushed column (engine column index ecol), per source
+  var st = wfTrkSt[s], bpm = D.bpm, num = WFI.num > 0 ? WFI.num : 4, den = WFI.den > 0 ? WFI.den : 4, segs = wfSegs[s];
+  var cpb = bpm ? wfColsPerBeat(bpm, den) : WF_CPS * 0.5, gap = WF_GAP_BEATS * cpb;
+  if (Math.max(b, m, h) > WF_SOUND) {
+    if (st.silent >= gap) { st.wait = true; st.from = ecol; }   // new sound after a long silence: candidate (re-)anchor
+    st.silent = 0; st.last = ecol;
+    if (st.wait && bpm && (fr >= 0 || ecol - st.from >= WF_ANCHOR_WAIT)) {   // first strong onset (sample-accurate) of the sound; a soft start anchors on its first column
+      st.wait = false;
+      var oc = ecol + (fr >= 0 ? fr : st.from - ecol), lastSeg = segs.length ? segs[segs.length - 1] : null;
+      if (!lastSeg) segs.push({ col: oc, cpb: cpb, num: num, b0: 0, bpm: bpm, den: den, mark: true });
+      else {
+        var d = (oc - lastSeg.col) / lastSeg.cpb, off = Math.abs(d - Math.round(d));
+        if (off > WF_REANCHOR_BEATS && oc > lastSeg.col) segs.push({ col: oc, cpb: cpb, num: num, b0: 0, bpm: bpm, den: den, mark: true });   // new musical phase: re-anchor (beat 1 = this onset)
+      }
+      if (segs.length > WF_MAX_SEGS) segs.shift();
+    }
+  }
+  else st.silent++;
+  if (segs.length && bpm) {   // tempo / meter change: a new segment starts on the next beat line (beat numbering continues)
+    var sg = segs[segs.length - 1];
+    if (ecol > sg.col && (Math.abs(cpb / sg.cpb - 1) > 0.01 || num !== sg.num)) {
+      var nb = Math.max(1, Math.ceil((ecol - sg.col) / sg.cpb - 1e-9));
+      segs.push({ col: sg.col + nb * sg.cpb, cpb: cpb, num: num, b0: sg.b0 + nb, bpm: bpm, den: den, mark: false });
+    }
+  }
+}
+function wfTrackReset() { for (var s = 0; s < 2; s++) { wfTrkSt[s].silent = 1e9; wfTrkSt[s].wait = false; } }
+var wfNowFrac = 1;   // playhead position: 1 = 'now' at the lane's right edge (default), 0.5 = centre (audio scrolls through it; the right half is grid only)
+function wfColToX(col, W, T, ppc) { return W * wfNowFrac - (T - col) * ppc; }
+function wfXToCol(x, W, T, ppc) { return T - (W * wfNowFrac - x) / ppc; }
+/* Ableton-style density. Ladder in QUARTER-BEATS (u): 1/16 note (1), 1/8 (2), beat (4), half note (8, only if the bar has an even beat count),
+   1 bar (4*num), then bar groups 2, 4, 8, 16, 32 bars. At any zoom the FINEST level whose spacing is >= 7 device px is drawn, with a 3-tier
+   hierarchy: lvl 2 = that finest level (faint), lvl 1 = the next level up that is on the lattice (medium), lvl 0 = anything above that, and bars /
+   bar groups are never weaker than lvl 0 (strong). cb(col, lvl); lvl indexes WF_GRID_STYLE. */
+function wfLadder(num) {
+  var u = [1, 2, 4], bar = 4 * num, g;
+  if (num % 2 === 0 && num > 2) u.push(8);
+  for (g = 0; g <= 5; g++) u.push(bar * (1 << g));
+  return u.filter(function (v, i, a) { return i === 0 || v > a[i - 1]; });
+}
+function wfDensityLevel(lad, cpb, ppc) { for (var m = 0; m < lad.length; m++) if (lad[m] / 4 * cpb * ppc >= 7) return m; return lad.length - 1; }
+/* ---- GRID CORRECTION (manual edits; DISPLAY ONLY: the lattice is drawn differently, no reading, meter or measurement uses it) ----
+   Per source, live-session UI state, persisted in spectrUiState.grid_edits as a compact opaque string (C++ only enforces charset + length):
+     "s0:sh=<ms>;ov=<bpm>;sc=<fraction>;f=<engine col>;w=<col>,<col>|s1:..."
+   sh  = Shift Grid (ms, applied to every segment anchor);  ov = bpm override for the LATTICE only (0 = host);  sc = Expand/Contract (bpm scale, 0.001 = 0.1 %);
+   f   = Set First Beat (engine col of the snapped transient = beat 1 of a fresh anchor segment);  w = Add Warp Marker cols (each starts a manual segment at a
+   transient; beat numbering continues). The honest waveform is never moved. Engine-space columns (f, w) are dropped on a stream re-base. */
+var wfEdit = [{ sh: 0, ov: 0, sc: 0, first: null, warps: [] }, { sh: 0, ov: 0, sc: 0, first: null, warps: [] }];
+function wfEditIsDefault(e) { return !e.sh && !e.ov && !e.sc && e.first === null && !e.warps.length; }
+function wfEffSegs(s) {   // lattice segments after the manual edits (engine column space); the auto segments untouched
+  var e = wfEdit[s], base = wfSegs[s];
+  if (wfEditIsDefault(e)) return base;
+  var shC = e.sh / 1000 * WF_CPS, collapse = e.ov > 0 || e.sc !== 0, out = [], i, g;
+  function cpbOf(q) { return (e.ov > 0 || e.sc) ? wfColsPerBeat((e.ov > 0 ? e.ov : q.bpm) * (1 + e.sc), q.den) : q.cpb; }
+  for (i = 0; i < base.length; i++) { g = base[i]; if (collapse && !g.mark) continue; out.push({ col: g.col, cpb: cpbOf(g), num: g.num, b0: g.b0, mark: g.mark, bpm: g.bpm, den: g.den }); }
+  var host = (D.bpm && WFI.num > 0) ? { bpm: D.bpm, den: WFI.den > 0 ? WFI.den : 4, num: WFI.num > 0 ? WFI.num : 4 } : null;
+  if (e.first !== null) {
+    var ref = null; for (i = 0; i < out.length; i++) if (out[i].col <= e.first + 0.5) ref = out[i]; if (!ref) ref = out[0];
+    var tpl = ref || (host && { bpm: host.bpm, den: host.den, num: host.num, cpb: cpbOf({ bpm: host.bpm, den: host.den }) });
+    if (tpl) out = [{ col: e.first, cpb: tpl.cpb, num: tpl.num, b0: 0, mark: true, bpm: tpl.bpm, den: tpl.den }].concat(out.filter(function (q) { return q.col > e.first + 0.5; }));
+  }
+  var ws = e.warps.slice().sort(function (p, q) { return p - q; });
+  for (i = 0; i < ws.length; i++) {
+    var w = ws[i], prev = null, k; for (k = 0; k < out.length; k++) if (out[k].col <= w + 1e-9) prev = out[k]; if (!prev) prev = out[0]; if (!prev) break;
+    out.push({ col: w, cpb: prev.cpb, num: prev.num, b0: prev.b0 + Math.max(0, Math.round((w - prev.col) / prev.cpb)), mark: true, bpm: prev.bpm, den: prev.den });
+    out.sort(function (p, q) { return p.col - q.col; });
+  }
+  if (shC) for (i = 0; i < out.length; i++) out[i] = { col: out[i].col + shC, cpb: out[i].cpb, num: out[i].num, b0: out[i].b0, mark: out[i].mark, bpm: out[i].bpm, den: out[i].den };
+  return out;
+}
+function wfEditSerialize() {
+  var parts = [];
+  for (var s = 0; s < 2; s++) {
+    var e = wfEdit[s], f = function (v, d) { return String(+v.toFixed(d)); }, kv = [];
+    if (e.sh) kv.push('sh=' + f(e.sh, 3)); if (e.ov) kv.push('ov=' + f(e.ov, 3)); if (e.sc) kv.push('sc=' + f(e.sc, 5));
+    if (e.first !== null) kv.push('f=' + f(e.first, 3)); if (e.warps.length) kv.push('w=' + e.warps.map(function (w) { return f(w, 3); }).join(','));
+    parts.push('s' + s + ':' + kv.join(';'));
+  }
+  return wfEdit.every(wfEditIsDefault) ? '' : parts.join('|');
+}
+function wfEditParse(str) {   // tolerant: anything unreadable is ignored (the blob is opaque to the host)
+  var s0, i;
+  for (s0 = 0; s0 < 2; s0++) wfEdit[s0] = { sh: 0, ov: 0, sc: 0, first: null, warps: [] };
+  if (typeof str !== 'string' || !str) return;
+  str.split('|').forEach(function (part) {
+    var m = /^s([01]):(.*)$/.exec(part); if (!m) return; var e = wfEdit[+m[1]];
+    m[2].split(';').forEach(function (kv) {
+      var p = kv.split('='), v = p[1] === undefined ? NaN : +p[1];
+      if (p[0] === 'sh' && isFinite(v)) e.sh = clamp(v, -2000, 2000);
+      else if (p[0] === 'ov' && isFinite(v) && v >= 20 && v <= 999) e.ov = v;
+      else if (p[0] === 'sc' && isFinite(v)) e.sc = clamp(v, -0.2, 0.2);
+      else if (p[0] === 'f' && isFinite(v) && v >= 0) e.first = v;
+      else if (p[0] === 'w' && p[1]) p[1].split(',').forEach(function (x) { var w = +x; if (isFinite(w) && w >= 0 && e.warps.length < 64) e.warps.push(w); });
+    });
+  });
+}
+function wfEditChanged() { if (wfOff) { wfRender(); if (!booting) drawWaveform(); } if (typeof postUi === 'function') postUi(); if (typeof wfGridPaint === 'function') wfGridPaint(); }
+function wfSnapTransient(pageCol) {   // engine col of the strong transient nearest to pageCol (sample-accurate onsetFrac), or pageCol itself if none is close
+  var fr = wfFracRing[P.wf_src], best = null, bd = 1e9, i, c0 = Math.floor(pageCol);
+  for (i = c0 - 8; i <= c0 + 8; i++) {
+    if (i < 0 || i >= wfN || i < wfN - WF_CAP) continue;
+    var f = fr[i % WF_CAP]; if (f < 0) continue;
+    var d = Math.abs(i + f - pageCol); if (d < bd) { bd = d; best = i + f; }
+  }
+  return { col: (best === null ? pageCol : best) + wfOffset, snapped: best !== null };
+}
+function wfGridEach(left, right, ppc, cb) {   // left/right/cb col are PAGE columns; segments live in engine space and are converted here
+  var segs = wfEffSegs(P.wf_src), off = wfOffset, si, j;
+  left += off; right += off;
+  for (si = 0; si < segs.length; si++) {
+    var a = segs[si], lo = si === 0 ? left : Math.max(a.col, left), hi = Math.min(si + 1 < segs.length ? segs[si + 1].col - 0.5 : Infinity, right);   // first segment extends backward; the next segment's anchor is authoritative
+    if (hi <= lo) continue;
+    var lad = wfLadder(a.num), barIdx = lad.indexOf(4 * a.num), f = wfDensityLevel(lad, a.cpb, ppc), uf = lad[f], step = uf / 4 * a.cpb, ln = barIdx;
+    while (ln < lad.length - 1 && lad[ln] / 4 * a.cpb * ppc < WF_NUM_PX) ln++;   // bar numbers: the finest bar / bar-group level that is >= 40 px apart   // bar-group levels are the ladder entries above barIdx
+    var j0 = Math.ceil((lo - a.col) / step - 1e-9), j1 = Math.ceil((hi - a.col) / step - 1e-9) - 1, nxt = Math.min(f + 1, lad.length - 1);
+    for (j = j0; j <= j1; j++) {
+      var q = a.b0 * 4 + j * uf, m = f, lvl;   // q: quarter-beats from the anchor (negative before it)
+      for (var mm = lad.length - 1; mm > f; mm--) if ((((q % lad[mm]) + lad[mm]) % lad[mm]) === 0) { m = mm; break; }
+      lvl = m === f ? 2 : (f >= barIdx ? (m === nxt ? 1 : 0) : (m >= barIdx ? 0 : 1));   // finest faint; below the bar level: sub-bar levels medium, bars / bar groups strong; zoomed out to bar groups: finest faint, next medium, rest strong
+      var barQ = 4 * a.num, lab = (((q % lad[ln]) + lad[ln]) % lad[ln]) === 0 ? Math.round(q / barQ) + 1 : 0;
+      cb(a.col + j * step - off, lvl, lab > 0 ? lab : 0, !!a.mark && q === a.b0 * 4);
+    }
+  }
+}
+var WF_GRID_STYLE = [ [0.32, 1.0], [0.18, 0.8], [0.08, 0.6] ];   // [alpha, css px width] per tier: strong (bars / groups / 2 tiers above the finest), medium (next level up), faint (finest drawn level); a quiet reference layer under the audio
+var wfFlagRing = new Uint8Array(WF_CAP);
+var wfFracRing = [new Float32Array(WF_CAP).fill(-1), new Float32Array(WF_CAP).fill(-1)];   // per column per source: onset fraction inside the column (-1 = none)
+/* Alignment constants (visual lane only).
+   WF_COL_CENTER = 0: columns are drawn START-aligned, spanning [i, i+1), so an onset that sits exactly on a beat (the case that matters)
+   starts exactly at the line (a mid-column onset draws up to 1 column early, which the eye forgives; the unbiased-centre convention tried before
+   pushed beat-aligned kicks half a column BEHIND their line). Onset POSITIONS come from the engine (sub-column onsetFrac, see wfOnsetShifts).
+   */
+/* Live column: the engine publishes the IN-PROGRESS column's current band peaks + its index every snapshot. It is drawn from its start to the
+   right edge (real data, so the 1.2-column extrapolation hold is gone while it is available). */
+var wfLive = [null, null];
+function wfLiveFor(s) {   // current live-column view for source s, or null
+  var L = wfLive[s]; if (!L || !isLive()) return null;
+  var d = L.e - (wfOffset + wfN); if (d < 0 || d > 2) return null;   // already completed / not contiguous with the ring
+  return { b: L.b, m: L.m, h: L.h, o: wfOnsetPeek(s, L.b, L.m, L.h), d: d };
+}
+var WF_COL_CENTER = 0, WF_BAND_DELAY_MS = [2.25, 0.4, 0.1], wfBandDx = [0, 0, 0];
+var wfOnsetRing = [new Float32Array(WF_CAP), new Float32Array(WF_CAP)], wfOnsetSt = [{ prev: 0, ref: 0.1, held: 0 }, { prev: 0, ref: 0.1, held: 0 }];
+/* Onset emphasis (VISUAL lane only: it scales the drawn height, no readout or measurement uses it).
+   E = max band energy of the column; o = clamp((E - E_prev) / max(E_ref, 0.05), 0, 1) with E_ref a running mean (~0.3 s) so it adapts to level;
+   a short hold (x0.88 per column) lets a kick's attack read for ~70 ms instead of a single 12 ms column. Drawn height factor = WF_ONSET_BASE + WF_ONSET_GAIN * o:
+   sustained content is slimmer, fresh transients taller (capped at the lane). Stored per column, so history / re-projection keep it. */
+var WF_ONSET_BASE = 0.78, WF_ONSET_GAIN = 0.5;
+function wfOnset(s, b, m, h) {
+  var st = wfOnsetSt[s], E = Math.max(b, m, h), o = Math.min(1, Math.max(0, (E - st.prev) / Math.max(st.ref, 0.05)));
+  st.held = Math.max(o, st.held * 0.88); st.prev = E; st.ref += (E - st.ref) * 0.04;
+  return st.held;
+}
+function wfOnsetPeek(s, b, m, h) {   // onset of an in-progress column, WITHOUT updating the running state
+  var st = wfOnsetSt[s], E = Math.max(b, m, h), o = Math.min(1, Math.max(0, (E - st.prev) / Math.max(st.ref, 0.05)));
+  return Math.max(o, st.held * 0.88);
+}
+function wfPushCol(b0, m0, h0, f0, b1, m1, h1, f1, fr0, fr1) {   // append one column (both sources, kept in lockstep)
+  var o = (wfN % WF_CAP) * 4, r0 = wfRing[0], r1 = wfRing[1];
+  r0[o] = b0; r0[o + 1] = m0; r0[o + 2] = h0; r0[o + 3] = f0; r1[o] = b1; r1[o + 1] = m1; r1[o + 2] = h1; r1[o + 3] = f1;
+  wfFracRing[0][wfN % WF_CAP] = fr0 === undefined ? -1 : fr0; wfFracRing[1][wfN % WF_CAP] = fr1 === undefined ? -1 : fr1;
+  wfFlagRing[wfN % WF_CAP] = f0 > f1 ? f0 : f1;   // flags are playhead-derived, so shared by both sources
+  { var o0 = wfOnset(0, b0, m0, h0); wfOnsetRing[0][wfN % WF_CAP] = o0; wfOnsetRing[1][wfN % WF_CAP] = wfOnset(1, b1, m1, h1);
+    wfTrackStep(0, wfOffset + wfN, b0, m0, h0, fr0 === undefined ? -1 : fr0); wfTrackStep(1, wfOffset + wfN, b1, m1, h1, fr1 === undefined ? -1 : fr1); }
+  wfN++;
+}
+function wfFlushRun(g, x0, x1, ring, idx, mid, A, tick, snapped) {
+  var o = (idx % WF_CAP) * 4, w = x1 - x0, f = wfFlagRing[idx % WF_CAP], sv = wfBandDx;
+  if (snapped) wfBandDx = [0, 0, 0];   // a snapped transient starts exactly on its line: no filter-delay shift on top
+  wfDrawBands(g, x0, w, mid, A, ring[o], ring[o + 1], ring[o + 2], wfOnsetRing[P.wf_src][idx % WF_CAP]);
+  wfBandDx = sv;
+  if (false && tick && f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x0 + (w >> 1), 0, Math.max(1, Math.round(DPR * 0.8)), wfH); }   // ungridded flag: column centre   // beat / bar tick over the shapes
+}
+/* Rigid coupling of grid and waveform: ONE T per frame and ONE pixel convention. A column starts at the first device px whose centre is >= its edge,
+   i.e. px = ceil(X - 0.5) with X = wfColToX(col). Grid lines use the SAME rule (start px = ceil(X - 0.5) - floor(width/2)), so a given line and a given
+   column keep an exactly constant pixel distance while the strip scrolls (no +-1 px wobble from different rounding). */
+function wfGridLinesNow(W, T, ppc) {   // visible lines [x, level, col(page)], de-duplicated (2 device px), strongest level wins
+  var L = [];
+  wfGridEach(wfXToCol(-4, W, T, ppc), wfXToCol(W + 4, W, T, ppc), ppc, function (col, lvl, lab, anc) { var x = wfColToX(col, W, T, ppc); if (x >= -4 && x <= W + 2) L.push([x, lvl, col, lab, anc]); });   // the lattice continues past 'now' (visible in centre-playhead mode)
+  L.sort(function (p, q) { return p[0] - q[0]; });
+  var out = [], i, m = 2;   // belt and braces: never two lines within 2 device px; the stronger level (lower number) wins
+  for (i = 0; i < L.length; i++) {
+    var k = out.length - 1;
+    if (k >= 0 && L[i][0] - out[k][0] < m) { var lab = out[k][3] || L[i][3], anc = out[k][4] || L[i][4]; if (L[i][1] < out[k][1]) out[k] = L[i]; out[k] = [out[k][0], out[k][1], out[k][2], lab, anc]; } else out.push(L[i]);
+  }
+  return out;
+}
+function wfDrawGridLines(g, lines) {   // drawn FIRST (behind the waveform layers, centreline and playhead)
+  for (var i = 0; i < lines.length; i++) {
+    var st = WF_GRID_STYLE[lines[i][1]], anc = lines[i][4], tw = Math.max(1, Math.round(DPR * (anc ? 1.6 : st[1]))), xr = Math.ceil(lines[i][0] - 0.5) - (tw >> 1);
+    g.fillStyle = 'rgba(255,255,255,' + (anc ? 0.6 : st[0]) + ')'; g.fillRect(xr, 0, tw, wfH);   // the downbeat (beat 1 of an anchor segment) is a brighter line
+  }
+}
+var wfAccent = null;
+function wfAccentCss() { if (!wfAccent) { var v = getComputedStyle(document.documentElement).getPropertyValue('--cyan-rgb').trim(); wfAccent = v ? 'rgb(' + v + ')' : '#ff7a66'; } return wfAccent; }
+function wfDrawBarMarks(g, lines, W) {   // drawn AFTER the waveform: bar numbers (tiny, muted, top of the lane) + the downbeat flag glyph (theme accent)
+  var fs = Math.max(8, Math.round(9 * DPR)), top = Math.round(2 * DPR), i, any = false;
+  g.font = fs + 'px ' + MONO; g.textBaseline = 'top'; g.textAlign = 'left';
+  for (i = 0; i < lines.length; i++) {
+    var ln = lines[i], x = Math.ceil(ln[0] - 0.5), off = 0;
+    if (ln[4]) { g.fillStyle = wfAccentCss(); g.beginPath(); g.moveTo(x, 0); g.lineTo(x + Math.round(8 * DPR), 0); g.lineTo(x, Math.round(8 * DPR)); g.closePath(); g.fill(); off = Math.round(9 * DPR); }
+    if (ln[3] > 0 && x < W - 12) { g.fillStyle = 'rgba(170,185,198,0.62)'; g.fillText(String(ln[3]), x + Math.round(3 * DPR) + off, top); }
+  }
+}
+/* ---- DISPLAY ALIGNMENT (page only; DISPLAY ONLY: readouts, meters and all data are untouched) ----
+   The grid anchor IS an onset (engine onsetFrac), so alignment is inherent: there is no phase-lock estimator any more. What remains is the RESIDUAL
+   ONSET SNAP (wfOnsetShifts): a strong onset whose leading edge falls within +-6 ms of a grid line is drawn exactly ON the line (the lead segment is
+   translated, duration preserved; in FLOW mode the spline-segment start moves). Shared by FLOW and LYR. */
+var WF_SNAP_MS = 6;
+/* Sample-accurate onsets: the engine reports, per column, onsetFrac = where inside the column the transient begins (-1 = none), measured on the
+   UNFILTERED mono input (sub-ms, no band-filter delay). The wedge's leading edge is drawn at exactly column + onsetFrac: the boundary between the
+   previous column and this one is moved to that true position (the earlier near-line snap hack is gone: real positions beat fake snapping). The
+   grid stays mathematically true, so an on-beat kick starts within ~1 ms of its line because BOTH are true. sh[col] = boundary shift in columns;
+   lead[col] marks a column with a measured onset (its layers use no filter-delay shift: the onset time is already delay-free). */
+function wfOnsetShifts(src, newest, lo, W, T, ppc, lines) {
+  var sh = {}, lead = {}, endSh = {}, fr = wfFracRing[src], on = wfOnsetRing[src], tol = WF_SNAP_MS / 1000 * WF_CPS, i, k;
+  var i0 = Math.max(lo, 1, Math.floor(wfXToCol(0, W, T, ppc)) - 1), i1 = Math.min(newest, Math.ceil(wfXToCol(W, W, T, ppc)) + 1);
+  for (i = i0; i <= i1; i++) {
+    var f = fr[i % WF_CAP]; if (f < 0) continue;
+    var s = f; lead[i] = true;
+    if (on[i % WF_CAP] >= 0.5 && lines && lines.length) {   // layer 2: residual snap to a line within +-6 ms (after the global offset)
+      var bd = i + f, best = null, bdist = 1e9;
+      for (k = 0; k < lines.length; k++) { var dd = Math.abs(lines[k][2] - bd); if (dd < bdist) { bdist = dd; best = lines[k][2]; } }
+      if (best !== null && bdist <= tol) { var dl = best - bd; s = f + dl; if (dl > 0) endSh[i + 1] = dl; }   // later line: translate the lead (start and end boundary), duration preserved
+    }
+    sh[i] = s;
+  }
+  for (k in endSh) if (lead[k] === undefined) sh[k] = endSh[k];   // tie rule: a later onset's own start wins; otherwise the earlier lead's end carries its translation
+  return { sh: sh, lead: lead };
+}
+function wfRender() {
+  if (!wfCtx) return;
+  var g = wfCtx, W = wfW, newest = wfN - 1; g.clearRect(0, 0, W, wfH);
+  if (newest < 0) return;
+  var liveV = wfLiveFor(P.wf_src);
+  var ring = wfRing[P.wf_src], ppc = W / (wfSpanSec() * WF_CPS), T = wfT, mid = wfH / 2, A = mid * 0.86, x, idx, lo = wfN - WF_CAP;
+  for (var bk = 0; bk < 3; bk++) wfBandDx[bk] = -Math.round(WF_BAND_DELAY_MS[bk] / 1000 * WF_CPS * ppc);   // filter-latency compensation (px)
+  var lines = wfGridLinesNow(W, T, ppc), snap = wfOnsetShifts(P.wf_src, newest, lo, W, T, ppc, lines);
+  wfDrawGridLines(g, lines);   // grid FIRST: it sits behind the waveform layers
+  window.__wfLastSnap = snap.sh;   // measurement hook
+  if (WFSTYLE === 'rgb') { wfRenderSmooth(g, W, T, ppc, ring, newest, lo, liveV, snap, mid, A); }   // smooth continuous waveform (style id 'rgb', chip FLOW)
+  else if (ppc >= 1) {   // blocks: each device px takes the column under its centre (flat-topped staircase)
+    var rs = 0, ri = -1, real = false;
+    for (x = 0; x <= W; x++) {
+      var cur = -1, isReal = false;
+      if (x < W) { var cpos = wfXToCol(x + 0.5, W, T, ppc); idx = Math.floor(cpos - WF_COL_CENTER); { var d1 = snap.sh[idx + 1]; if (d1 !== undefined && cpos - WF_COL_CENTER >= idx + 1 + d1) idx++; else { var d0 = snap.sh[idx]; if (d0 !== undefined && cpos - WF_COL_CENTER < idx + d0) idx--; } } isReal = idx <= newest; if (idx > newest) idx = newest; cur = (idx < 0 || idx < lo) ? -1 : idx; if (liveV && cpos >= wfN) { cur = -2; isReal = true; } if (wfNowFrac < 1 && cpos > T) cur = -1; }
+      if (x === 0) { ri = cur; real = isReal; rs = 0; continue; }
+      if (cur !== ri || (x < W && isReal !== real)) { if (ri >= 0) wfFlushRun(g, rs, x, ring, ri, mid, A, real, snap.lead[ri] !== undefined); else if (ri === -2) wfDrawBands(g, rs, x - rs, mid, A, liveV.b, liveV.m, liveV.h, liveV.o); rs = x; ri = cur; real = isReal; }
+    }
+  } else {          // decimation (more than one column per device px): peak-hold over the covered columns
+    for (x = 0; x < W; x++) {
+      var i0 = Math.floor(wfXToCol(x, W, T, ppc)), i1 = Math.min(newest, Math.floor(wfXToCol(x + 1, W, T, ppc) - 1e-9)), b = 0, m = 0, h = 0, f = 0, on = 0, i;
+      if (i0 < lo) i0 = lo; if (i0 < 0) i0 = 0;
+      for (i = i0; i <= i1; i++) { var o = (i % WF_CAP) * 4; if (ring[o] > b) b = ring[o]; if (ring[o + 1] > m) m = ring[o + 1]; if (ring[o + 2] > h) h = ring[o + 2]; if (wfOnsetRing[P.wf_src][i % WF_CAP] > on) on = wfOnsetRing[P.wf_src][i % WF_CAP]; if (wfFlagRing[i % WF_CAP] > f && false) f = wfFlagRing[i % WF_CAP]; }   // flag survives peak-hold
+      if (i1 >= i0) { wfDrawBands(g, x, 1, mid, A, b, m, h, on); if (f) { g.fillStyle = f >= 2 ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.22)'; g.fillRect(x, 0, 1, wfH); } }
+    }
+  }
+  wfDrawBarMarks(g, lines, W);
+  if (window.__wfProbe && !window.__wfProbe.drawAt) { var no = (newest % WF_CAP) * 4; if (Math.max(ring[no], ring[no + 1], ring[no + 2]) > 0.05 || (liveV && Math.max(liveV.b, liveV.m, liveV.h) > 0.05)) window.__wfProbe.drawAt = Date.now(); }
+}
+function wfAlloc() { wfOff = document.createElement('canvas'); wfOff.width = wfW; wfOff.height = wfH; wfCtx = wfOff.getContext('2d', { willReadFrequently: true }); }
+function wfRedraw() { wfAccent = null; wfRender(); }   // theme change
+function wfInit() {   // (re)allocate to the canvas size; the column history is kept (also on Ch1/Ch2 switch: both sources are retained)
+  wfW = Math.round(cv.wf_cv.w * DPR); wfH = Math.round(cv.wf_cv.h * DPR); wfAlloc(); wfRender();
+}
+function wfResize() {
+  wfUpdatePps();
+  if (!wfOff) return;
+  var nw = Math.round(cv.wf_cv.w * DPR), nh = Math.round(cv.wf_cv.h * DPR); if (nw === wfW && nh === wfH) return;
+  wfW = nw; wfH = nh; wfAlloc(); wfRender();
+}
+function wfStep(dt) {
+  if (WFTRANS === 0) { wfWasFrozen = true; return; }   // PAUSED: freeze the whole strip (T holds, no synthetic columns, grid and waveform move as one); incoming columns still fill the ring
+  if (wfWasFrozen) { wfWasFrozen = false; wfT = wfN; }   // resume: jump to the newest column (no fast-forward)
+  if (performance.now() - D.lastAt > WF_STALE_MS && WFTRANS !== 0) { wfIdleAcc += dt * WF_CPS; while (wfIdleAcc >= 1) { wfIdleAcc -= 1; wfPushCol(0, 0, 0, 0, 0, 0, 0, 0); wfSynthTail++; } } else wfIdleAcc = 0;   // no data: scroll silence on the same clock
+  wfT = Math.min(wfN + (wfLiveFor(P.wf_src) ? 1.0 : 1.2), Math.max(wfN, wfT + dt * WF_CPS));   // live column present: the right edge shows real data, so never run ahead of the column   // monotonic, never behind the data, never more than 1.2 columns ahead
+  wfRender();
+}
+/* debug/measurement hook (read-only): geometry + the true-duration check used by the Stage 3 timing verification */
+window.__wfStep = function (dt) { wfStep(dt); };
+window.__wfRightEdge = function () { if (!wfCtx || wfW < 8) return 0; var d = wfCtx.getImageData(wfW - 8, Math.floor(wfH / 2), 8, 1).data, a = 0; for (var i = 3; i < d.length; i += 4) a = Math.max(a, d[i]); return a; };   // measurement hook: max alpha of the 8 right-most px on the centre row
+window.__wfRowSat = function (y) { if (!wfCtx) return []; var d = wfCtx.getImageData(0, y, wfW, 1).data, out = [], x, st = -1; for (x = 0; x <= wfW; x++) { var on = x < wfW && d[x * 4 + 3] > 0 && Math.abs(d[x * 4] - d[x * 4 + 2]) > 30; if (on && st < 0) st = x; else if (!on && st >= 0) { out.push([st, x - st]); st = -1; } } return out; };   // measurement hook: saturated (wedge-coloured) runs on row y
+window.__wfPix = function (x0, n, y) { if (!wfCtx) return []; var d = wfCtx.getImageData(x0, y, n, 1).data, o = []; for (var i = 0; i < n; i++) o.push([d[i * 4], d[i * 4 + 1], d[i * 4 + 2], d[i * 4 + 3]]); return o; };   // measurement hook
+window.__wfLiveInfo = function () { return { live: wfLive, offset: wfOffset, N: wfN, T: wfT }; };   // measurement hook
+window.__wfFrac = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfFracRing[src][i % WF_CAP] : null; };   // measurement hook: onset fraction of an ENGINE column
+window.__wfSetStyle = function (st) { wfSetStyle(st, true); };   // measurement hook
+window.__wfSetSpan = function (s) { wfSetSpan(s, false, true); };   // measurement hook
+window.__wfDraw = function () { drawWaveform(); };   // measurement hook: repaint the lane canvas (the capture tool has no rAF)
+window.__wfBandColors = function () { return { low: BAND.low.slice(), mid: BAND.mid.slice(), high: BAND.high.slice() }; };   // measurement hook
+window.__specStep = function (frames) { for (var k = 0; k < (frames || 60); k++) updateSpectra(1 / 60); drawSpectrum(); updateInsp(); };   // measurement hooks (spectrum pane)
+window.__specY = function (s) { var a = []; for (var i = 0; i < N; i++) a.push(+yOf(tdb(specs[s].sm[i], i)).toFixed(1)); return a; };
+window.__specRaw = function (s, i) { return specs[s].sm[i]; };
+window.__specInfo = function () { return { N: N, bottom: SPX.T + SPX.ph, top: SPX.T, freqs: Array.prototype.slice.call(freqs) }; };
+window.__wfOnset = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfOnsetRing[src][i % WF_CAP] : null; };   // measurement hook
+window.__wfPeek = function (src, engCol) { var i = engCol - wfOffset; return (i >= 0 && i < wfN) ? wfRing[src][(i % WF_CAP) * 4] : null; };   // measurement hook: bass value of a source at an ENGINE column   // measurement hook: advance the strip clock without rAF
+window.__wfGrid = function (lo, hi) {   // measurement hook: anchors + lattice lines (col in PAGE column space) over [lo, hi] (default: visible window)
+  var W = wfW, ppc = W / (wfSpanSec() * WF_CPS), L = [], l0 = lo === undefined ? wfXToCol(0, W, wfT, ppc) : lo, h0 = hi === undefined ? wfT : hi;
+  wfGridEach(l0, h0, ppc, function (col, lvl) { L.push([col, lvl]); });
+  return { segs: wfSegs[P.wf_src].map(function (a) { return [a.col - wfOffset, a.cpb, a.num, a.b0]; }), offset: wfOffset, T: wfT, N: wfN, ppc: ppc, W: W, lines: L };
+};
+window.__wfDebug = function (rowY) {
+  var out = { W: wfW, H: wfH, span: WFSPAN, spanSec: wfSpanSec(), ppc: wfW / (wfSpanSec() * WF_CPS), N: wfN, T: wfT, cps: WF_CPS, dpr: DPR, runs: [], px: [] };
+  var ring = wfRing[0], i, cur = 0;
+  for (i = Math.max(0, wfN - WF_CAP); i <= wfN; i++) {
+    var on = false; if (i < wfN) { var o = (i % WF_CAP) * 4; on = Math.max(ring[o], ring[o + 1], ring[o + 2]) >= 0.05; }
+    if (on) cur++; else if (cur) { out.runs.push({ cols: cur, ageOfNewestCol: wfN - i }); cur = 0; }
+  }
+  if (wfCtx && wfW > 0) {
+    var row = wfCtx.getImageData(0, rowY === undefined ? Math.floor(wfH / 2) : rowY, wfW, 1).data, run = 0, start = -1, best = null, x;
+    for (x = 0; x <= wfW; x++) { var a = x < wfW ? row[x * 4 + 3] : 0; if (a > 0) { if (!run) start = x; run++; } else if (run) { out.px.push({ start: start, width: run, endFromRight: wfW - (start + run) }); run = 0; } }
+  }
+  return out;
+};
+function drawWaveform() {
+  var o = cv.wf_cv, g = o.g; g.clearRect(0, 0, o.w, o.h);
+  g.drawImage(wfOff, 0, 0, o.w, o.h);
+  var cy = Math.round(o.h / 2), nowX = Math.round(o.w * wfNowFrac);   // hairline centreline: 1 device px, 35% white, no glow
+  if (WFSTYLE === 'layers') { g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, cy, o.w, 1 / DPR); }   // the RGB style has no centreline (bars on black)
+  if (wfNowFrac < 1) { g.fillStyle = 'rgba(0,0,0,0.30)'; g.fillRect(nowX, 0, o.w - nowX, o.h); }   // centre playhead: the right half is 'ahead' (grid only), subtly dimmed
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(nowX - 1, 0, 1, o.h);
+  g.font = '9px ' + MONO; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(190,205,215,0.5)';
+  g.textAlign = 'left'; g.fillText('-' + (WFI.known ? '' : '~') + wfSpanText(), 4, o.h - 4); g.textAlign = 'right'; g.fillText('now', nowX - 6, o.h - 4);
+  if (wfPick) { g.textAlign = 'center'; g.textBaseline = 'top'; g.fillStyle = 'rgba(255,235,200,0.85)'; g.fillText((wfPick === 'first' ? 'SET FIRST BEAT' : 'ADD WARP MARKER') + ': click the lane (esc cancels)', o.w / 2, 3); }
+}
+
+/* ================= v8: TILED PANE LAYOUT (drag-to-resize on shared borders) + FULLSCREEN ================= */
+var LAYOUT_DEF = { rows: [226, 70, 302], cols: [296, 266, 272] };      // ui_state defaults: canvas heights / widths in base units
+var MINS = { spec: 120, wf: 40, low: 100, pane: 180, sg: 224 }, ROW_TOTAL = 598, COL_TOTAL = 834, HDR = 22;
+var GEO_N = { X0: 15, W: 838, Y0: 15, Yb: 683 }, GEO_F = { X0: 15, W: 1070, Y0: 15, Yb: 695 };
+var geo = { X0: 15, W: 838, Y0: 15, Yb: 683 }, LS = { rs: 1, cs: 1 };
+var UI = { rows: LAYOUT_DEF.rows.slice(), cols: LAYOUT_DEF.cols.slice(), fullscreen: false, sgo: 'v' };
+function setTop(id, t) { $(id).style.top = t + 'px'; }
+function setLeft(id, l) { $(id).style.left = l + 'px'; }
+function applyLayout() {
+  var X0 = Math.round(geo.X0), MW = Math.round(geo.W), Y0 = Math.round(geo.Y0), Yb = Math.round(geo.Yb);
+  var rowTotal = (Yb - Y0) - 3 * HDR - 4, colTotal = MW - 4; LS.rs = rowTotal / ROW_TOTAL; LS.cs = colTotal / COL_TOTAL;
+  var Hs = Math.round(UI.rows[0] * LS.rs), Hw = Math.round(UI.rows[1] * LS.rs), Hl = rowTotal - Hs - Hw;
+  var W1 = Math.round(UI.cols[0] * LS.cs), W2 = Math.round(UI.cols[1] * LS.cs), W3 = colTotal - W1 - W2;
+  // panes tile flush: shared 1px borders (pane i+1 starts on the last border line of pane i)
+  var bS = HDR + Hs + 2, bW = HDR + Hw + 2, bL = HDR + Hl + 2, yW = Y0, yS = yW + bW - 1, yL = yS + bS - 1;   // v8.1: waveform ABOVE spectrum (row_splits stay [spectrum, waveform, lower] positionally)
+  var cS = yS + 1 + HDR, cW = yW + 1 + HDR, cL = yL + 1 + HDR, cwFull = MW - 2;
+  var xP1 = X0, xP2 = xP1 + W1 + 1, xP3 = xP2 + W2 + 1, g;
+  // ---- spectrum pane (header: legend + inspector)
+  SPX.pw = cwFull - 32; SPX.ph = Hs - 20;
+  setCv('spec_ghost', cwFull, Hs, X0 + 1, cS); setCv('spec_cv', cwFull, Hs, X0 + 1, cS); drawSpecGrid();
+  setLeft('leg0', X0 + 5); setTop('leg0', yS + 2); setLeft('leg1', X0 + 77); setTop('leg1', yS + 2);
+  setLeft('insp', X0 + 154); setTop('insp', yS + 5); $('insp').style.width = Math.max(120, MW - 170) + 'px';
+  // ---- waveform pane
+  setLeft('cap_wf', X0 + 9); setTop('cap_wf', yW + 6); setLeft('wfs0', X0 + 80); setTop('wfs0', yW + 2); setLeft('wfs1', X0 + 120); setTop('wfs1', yW + 2);
+  setLeft('cap_wfleg', X0 + MW - 9 - 200); setTop('cap_wfleg', yW + 6);
+  setCv('wf_cv', cwFull, Hw, X0 + 1, cW); wfResize();
+  // ---- lower row panes
+  setLeft('cap_sg', xP1 + 9); setTop('cap_sg', yL + 6); setLeft('sgs0', xP1 + 88); setTop('sgs0', yL + 2); setLeft('sgs1', xP1 + 128); setTop('sgs1', yL + 2); setLeft('sgo0', xP1 + W1 - 50); setTop('sgo0', yL + 2); setLeft('sgo1', xP1 + W1 - 25); setTop('sgo1', yL + 2);
+  setLeft('cap_gn', xP2 + 9); setTop('cap_gn', yL + 6); setLeft('cap_sc', xP3 + 9); setTop('cap_sc', yL + 6);
+  setLeft('gns0', xP2 + 88); setTop('gns0', yL + 2); setLeft('gns1', xP2 + 128); setTop('gns1', yL + 2); setLeft('scs0', xP3 + 52); setTop('scs0', yL + 2); setLeft('scs1', xP3 + 92); setTop('scs1', yL + 2);
+  SGW = W1; SGH = Hl; setCv('sg_cv', W1, Hl, xP1 + 1, cL); setCv('sg_lbl', W1, Hl, xP1 + 1, cL); sgResize(); drawSgLabels();
+  setCv('gn_cv', W2, Hl, xP2 + 1, cL); setCv('gn_grid', W2, Hl, xP2 + 1, cL);
+  GN.cx = W2 / 2; GN.cy = Hl / 2; GN.R = Math.max(30, Math.floor(Math.min(W2, Hl) / 2) - 2);
+  g = cv.gn_cv.g; g.globalCompositeOperation = 'source-over'; g.fillStyle = GLASS; g.fillRect(0, 0, W2, Hl); drawGnGrid();
+  setCv('sc_cv', W3, Hl, xP3 + 1, cL); setCv('sc_grid', W3, Hl, xP3 + 1, cL);
+  SCP.pw = W3 - 38; SCP.ph = Hl - 34; g = cv.sc_cv.g; g.globalCompositeOperation = 'source-over'; g.fillStyle = GLASS; g.fillRect(0, 0, W3, Hl); drawScGrid();
+  // ---- pane frames + corner annotations
+  function pane(id, l, t, w, hh) { var e = $(id); e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.height = hh + 'px'; }
+  function an(id, l, t, w, al) { var e = $(id); e.style.left = l + 'px'; e.style.top = t + 'px'; e.style.width = w + 'px'; e.style.textAlign = al; }
+  pane('pn_spec', X0, yS, MW, bS); pane('pn_wf', X0, yW, MW, bW); pane('pn_sg', xP1, yL, W1 + 2, bL); pane('pn_gn', xP2, yL, W2 + 2, bL); pane('pn_sc', xP3, yL, W3 + 2, bL);
+  an('an_spec_l', X0 + 10, cS + 6, 320, 'left'); an('an_spec_r', X0 + 1 + SPX.pw - 9 - 300, cS + 6, 300, 'right');
+  an('an_wf_l', X0 + 172, yW + 6, 66, 'left'); setLeft('wfspan', X0 + 244); setTop('wfspan', yW + 2); setLeft('wfstyle', X0 + 344); setTop('wfstyle', yW + 2); setLeft('wfgrid', X0 + 398); setTop('wfgrid', yW + 2); an('an_sg_l', xP1 + 9, cL + 5, 140, 'left');
+  an('an_gn_l', xP2 + 10, cL + 6, 140, 'left'); an('an_gn_r', xP2 + W2 - 8 - 140, cL + 6, 140, 'right'); an('an_sc_r', xP3 + W3 - 8 - 220, cL + 5, 220, 'right');
+  // ---- dividers sit on the shared borders
+  ['dh1', 'dh2'].forEach(function (i) { setLeft(i, X0); $(i).style.width = MW + 'px'; });
+  setTop('dh1', yS - 5); setTop('dh2', yL - 5);   // dh1 = waveform|spectrum, dh2 = spectrum|lower
+  setLeft('dv1', xP2 - 5); setLeft('dv2', xP3 - 5);
+  ['dv1', 'dv2'].forEach(function (i) { setTop(i, yL); $(i).style.height = bL + 'px'; });
+  needRedraw = true;
+  if (!booting) { if (sgOff) drawSpectrogram(); if (wfOff) drawWaveform(); drawSpectrum(); }
+}
+function postUi() {
+  if (booting) return; var st = { row_splits: UI.rows.slice(), lower_col_splits: UI.cols.slice(), fullscreen: !!UI.fullscreen, spectrogram_orientation: sgOrient, waveform_style: WFSTYLE, gonio_source: P.gn_src, scope_source: P.sc_src, readout_source: P.rd_src, waveform_span: WFSPAN, playhead_pos: WFPLAY, grid_edits: wfEditSerialize() };
+  if (!emit('spectrUiState', st)) console.log('[SPECTR -> host unavailable] ui_state ' + JSON.stringify(st));
+}
+/* TRUE fullscreen: the page keeps its presentation state (UI.fullscreen, persisted as before) and additionally asks C++ for OS fullscreen
+   (spectrFullscreen {on}); C++ reparents the SAME WebView into a kiosk window and confirms with spectrKiosk {on}. The kiosk always starts OFF: loading a
+   project with ui_fullscreen = true restores the in-window presentation only. Toggle (corner button / F): presentation on -> exit everything, else enter both;
+   Esc exits. If C++ leaves kiosk by itself (Esc backup, display change), the page leaves presentation too. */
+var KIOSK = false;
+function userFullscreen(on) {
+  if (on) { if (!UI.fullscreen) setFullscreen(true); emit('spectrFullscreen', { on: true }); }
+  else { emit('spectrFullscreen', { on: false }); if (UI.fullscreen) setFullscreen(false); }
+}
+var fsTween = 0;
+function setFullscreen(on, instant, quiet) {
+  UI.fullscreen = !!on; $('stage').classList.toggle('fs', UI.fullscreen); document.body.classList.toggle('fsmode', UI.fullscreen);
+  document.dispatchEvent(new Event('click'));   // close any open popover
+  var to = UI.fullscreen ? GEO_F : GEO_N, from = { X0: geo.X0, W: geo.W, Y0: geo.Y0, Yb: geo.Yb };
+  if (fsTween) cancelAnimationFrame(fsTween);
+  if (instant || booting || P.reduced_motion) { geo.X0 = to.X0; geo.W = to.W; geo.Y0 = to.Y0; geo.Yb = to.Yb; applyLayout(); if (!quiet) postUi(); return; }
+  var t0 = performance.now();
+  (function step(now) {
+    var u = Math.min(1, (now - t0) / 190), e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    geo.X0 = from.X0 + (to.X0 - from.X0) * e; geo.W = from.W + (to.W - from.W) * e; geo.Y0 = from.Y0 + (to.Y0 - from.Y0) * e; geo.Yb = from.Yb + (to.Yb - from.Yb) * e;
+    applyLayout();
+    if (u < 1) fsTween = requestAnimationFrame(step); else { fsTween = 0; postUi(); }
+  })(t0);
+}
+$('fsbtn').addEventListener('click', function (e) { e.stopPropagation(); userFullscreen(!UI.fullscreen); });
+$('wfstyle').addEventListener('click', function (e) { e.stopPropagation(); wfSetStyle(WFSTYLE === 'rgb' ? 'layers' : 'rgb'); });
+/* Readout column CH1/CH2: MASTER source switch - readout cells + needle meter AND every pane (waveform, spectrogram,
+   vectorscope, scope) follow it together; the per-pane chips still override one pane afterwards. (UI state, persisted) */
+function setReadoutSrc(i, fromHost) {
+  i = i === 1 ? 1 : 0; var changed = i !== P.rd_src; P.rd_src = i;
+  if (changed) {
+    if (P.sg_src !== i) { P.sg_src = i; sgClear(); }
+    if (P.wf_src !== i) { P.wf_src = i; wfInit(); }
+    if (P.gn_src !== i) { P.gn_src = i; var G = cv.gn_cv.g; G.globalCompositeOperation = 'source-over'; G.fillStyle = GLASS; G.fillRect(0, 0, cv.gn_cv.w, cv.gn_cv.h); }
+    if (P.sc_src !== i) { P.sc_src = i; var S = cv.sc_cv.g; S.globalCompositeOperation = 'source-over'; S.fillStyle = GLASS; S.fillRect(0, 0, cv.sc_cv.w, cv.sc_cv.h); }
+  }
+  applySources(); paintReadouts(); drawMeter(0.016);
+  if (changed && !fromHost && typeof postUi === 'function') postUi();
+}
+$('rd0').addEventListener('click', function (e) { e.stopPropagation(); setReadoutSrc(0); });
+$('rd1').addEventListener('click', function (e) { e.stopPropagation(); setReadoutSrc(1); });
+$('wfspan').addEventListener('click', function (e) { e.stopPropagation(); wfSetSpan((function () { for (var q = 0; q < WF_SPANS.length; q++) if (WF_SPANS[q] > WFSPAN + 1e-6) return WF_SPANS[q]; return WF_SPANS[0]; })()); });   // next preset above the current value (continuous zoom values land on the next preset)
+/* Zoom on the lane itself: mouse wheel (and trackpad pinch = ctrl+wheel) over the waveform pane changes the span continuously, exponential steps
+   (1.12x per wheel notch), clamped to 0.5..32 bars. The right edge ('now') is the anchor by construction, so it stays put. UI state only (no host
+   gesture): the new value is posted once, ~300 ms after the last notch. The SPAN chip still cycles the presets. */
+var wfZoomTimer = 0;
+document.addEventListener('wheel', function (e) {
+  var r = $('wf_cv').getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  e.preventDefault();
+  var steps = e.ctrlKey ? e.deltaY / 10 : (e.deltaMode === 1 ? e.deltaY / 3 : e.deltaY / 100);
+  wfSetSpan(WFSPAN * Math.pow(1.12, steps), false, true);
+  clearTimeout(wfZoomTimer); wfZoomTimer = setTimeout(function () { if (typeof postUi === 'function') postUi(); }, 300);
+}, { passive: false, capture: true });
+document.addEventListener('dblclick', function (e) {   // double-click on the waveform lane resets the zoom to the default 8 bars
+  var c = $('wf_cv'); if (!c || wfPick) return; var r = c.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  e.preventDefault(); wfSetSpan(8);
+}, true);
+
+/* ---- GRID popover (display-only manual beat-grid edits; see wfEdit) + playhead position ---- */
+var WFPLAY = 'right', wfPick = null;
+function wfPpc() { return wfW / (wfSpanSec() * WF_CPS); }
+function wfSetPlayhead(v, fromHost) {
+  v = v === 'center' ? 'center' : 'right'; var changed = v !== WFPLAY; WFPLAY = v; wfNowFrac = v === 'center' ? 0.5 : 1; wfGridPaint();
+  if (changed && wfOff) { wfRender(); if (!booting) drawWaveform(); }
+  if (changed && !fromHost && typeof postUi === 'function') postUi();
+}
+function wfPickSet(m) { wfPick = m; var c = $('wf_cv'); if (c) c.style.cursor = m ? 'crosshair' : ''; if (m) { $('pop_grid').classList.remove('open'); $('wfgrid').classList.remove('active'); } if (wfOff && !booting) drawWaveform(); wfGridPaint(); }
+function wfApplyPick(clientX) {
+  var r = $('wf_cv').getBoundingClientRect(), x = (clientX - r.left) / r.width * wfW, col = wfXToCol(x, wfW, wfT, wfPpc()), sn = wfSnapTransient(col), e = wfEdit[P.wf_src];
+  if (wfPick === 'first') { e.first = sn.col; e.warps = []; }
+  else if (wfPick === 'warp') { if (e.warps.length >= 64) e.warps.shift(); e.warps.push(sn.col); }
+  wfPickSet(null); wfEditChanged(); return sn;
+}
+document.addEventListener('click', function (ev) {
+  if (!wfPick) return; var r = $('wf_cv').getBoundingClientRect();
+  if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) { wfPickSet(null); return; }
+  ev.preventDefault(); ev.stopPropagation(); wfApplyPick(ev.clientX);
+}, true);
+function wfGridPaint() {
+  var p = $('pop_grid'); if (!p || !p.firstChild) return;
+  var e = wfEdit[P.wf_src], host = D.bpm || WFI.bpm || 0, eff = (e.ov > 0 ? e.ov : host) * (1 + e.sc);
+  $('gd_sh').textContent = (e.sh > 0 ? '+' : '') + e.sh.toFixed(1) + ' ms';
+  $('gd_bpm').textContent = eff > 0 ? eff.toFixed(2) + (e.ov > 0 ? ' *' : '') : '---';
+  $('gd_sc').textContent = (e.sc > 0 ? '+' : '') + (e.sc * 100).toFixed(1) + ' %';
+  $('gd_info').textContent = (e.first !== null ? 'first beat set' : 'first beat auto') + ' / ' + e.warps.length + ' warp' + (e.warps.length === 1 ? '' : 's');
+  var pk = $('gd_first'), pw = $('gd_warp'); pk.classList.toggle('on', wfPick === 'first'); pw.classList.toggle('on', wfPick === 'warp');
+  $('gd_pr').classList.toggle('on', WFPLAY === 'right'); $('gd_pc').classList.toggle('on', WFPLAY === 'center');
+  $('wfgrid').classList.toggle('on', !wfEditIsDefault(e) || WFPLAY === 'center'); $('wfgrid').style.setProperty('--c', SRC[0].color);
+}
+(function () {
+  var p = $('pop_grid');
+  function B(id, txt, cls) { return '<button class="' + (cls || 'tg') + '" id="' + id + '">' + txt + '</button>'; }
+  p.innerHTML = '<h4>Beat grid <span id="gd_info" style="float:right;letter-spacing:0;text-transform:none"></span></h4>' +
+    '<div class="prow"><div class="ctl seg">' + B('gd_first', 'Set first beat') + B('gd_warp', 'Add warp marker') + '</div></div>' +
+    '<div class="prow"><label>Shift</label><div class="ctl seg">' + B('gd_m10', '-10') + B('gd_m1', '-1') + B('gd_p1', '+1') + B('gd_p10', '+10') + '<span id="gd_sh" style="margin-left:8px;color:var(--value)"></span></div></div>' +
+    '<div class="prow"><label>BPM</label><div class="ctl seg">' + B('gd_bm', '-.01') + B('gd_bp', '+.01') + B('gd_br', 'Host') + '<span id="gd_bpm" style="margin-left:8px;color:var(--value)"></span></div></div>' +
+    '<div class="prow"><label>Stretch</label><div class="ctl seg">' + B('gd_sm', '-0.1%') + B('gd_sp', '+0.1%') + '<span id="gd_sc" style="margin-left:8px;color:var(--value)"></span></div></div>' +
+    '<div class="prow"><label>Playhead</label><div class="ctl seg">' + B('gd_pr', 'Right') + B('gd_pc', 'Center') + '</div></div>' +
+    '<div class="acts" style="margin-top:6px;padding-top:8px"><button class="act" id="gd_clear">Clear edits</button></div>';
+  function ed() { return wfEdit[P.wf_src]; }
+  function on(id, fn) { $(id).addEventListener('click', function (ev) { ev.stopPropagation(); fn(); }); }
+  function shift(ms) { var e = ed(); e.sh = clamp(Math.round((e.sh + ms) * 1000) / 1000, -2000, 2000); wfEditChanged(); }
+  function bpm(d) { var e = ed(), base = e.ov > 0 ? e.ov : (D.bpm || WFI.bpm || 0); if (!(base > 0)) return; e.ov = clamp(Math.round((base + d) * 100) / 100, 20, 999); wfEditChanged(); }
+  function scale(d) { var e = ed(); e.sc = clamp(Math.round((e.sc + d) * 100000) / 100000, -0.2, 0.2); wfEditChanged(); }
+  on('gd_first', function () { wfPickSet(wfPick === 'first' ? null : 'first'); }); on('gd_warp', function () { wfPickSet(wfPick === 'warp' ? null : 'warp'); });
+  on('gd_m10', function () { shift(-10); }); on('gd_m1', function () { shift(-1); }); on('gd_p1', function () { shift(1); }); on('gd_p10', function () { shift(10); });
+  on('gd_bm', function () { bpm(-0.01); }); on('gd_bp', function () { bpm(0.01); }); on('gd_br', function () { ed().ov = 0; wfEditChanged(); });
+  on('gd_sm', function () { scale(-0.001); }); on('gd_sp', function () { scale(0.001); });
+  on('gd_pr', function () { wfSetPlayhead('right'); }); on('gd_pc', function () { wfSetPlayhead('center'); });
+  on('gd_clear', function () { wfEdit[P.wf_src] = { sh: 0, ov: 0, sc: 0, first: null, warps: [] }; wfEditChanged(); });
+  $('wfgrid').addEventListener('click', function () { var c = $('wfgrid'); p.style.left = c.style.left; p.style.top = (parseFloat(c.style.top) + 26) + 'px'; wfGridPaint(); });   // anchored under the chip wherever the layout puts it
+  wfGridPaint();
+})();
+// measurement hooks
+window.__wfEditApi = { edit: function (s) { return wfEdit[s === undefined ? P.wf_src : s]; }, serialize: wfEditSerialize, parse: wfEditParse, pick: function (m) { wfPickSet(m); }, click: function (pageCol) { var sn = wfSnapTransient(pageCol), e = wfEdit[P.wf_src]; if (wfPick === 'first') { e.first = sn.col; e.warps = []; } else if (wfPick === 'warp') e.warps.push(sn.col); wfPickSet(null); wfEditChanged(); return sn; }, playhead: wfSetPlayhead, effSegs: function () { return wfEffSegs(P.wf_src).map(function (a) { return [a.col - wfOffset, a.cpb, a.num, a.b0, a.mark ? 1 : 0]; }); }, lines: function () { var W = wfW, ppc = wfPpc(); return wfGridLinesNow(W, wfT, ppc).map(function (l) { return { x: l[0], lvl: l[1], col: l[2], label: l[3], anchor: !!l[4] }; }); } };
+
+var DRAG = null;
+function dragStart(id) { DRAG = { id: id, rows: UI.rows.slice(), cols: UI.cols.slice() }; $(id).classList.add('drag'); }
+function dragMove(dPx) {
+  if (!DRAG) return; var r = DRAG.rows, c = DRAG.cols, id = DRAG.id, v, d = id.charAt(1) === 'h' ? dPx / LS.rs : dPx / LS.cs;   // px -> base-layout units (works in fullscreen too)
+  if (id === 'dh1') {          // waveform | spectrum (top divider): lower row absorbs; spectrum shrinks only when needed
+    var Hw = clamp(r[1] + d, MINS.wf, ROW_TOTAL - MINS.spec - MINS.low), rem = ROW_TOTAL - Hw, Hs = Math.max(MINS.spec, Math.min(r[0], rem - MINS.low));
+    UI.rows = [Hs, Hw, rem - Hs];
+  } else if (id === 'dh2') {   // spectrum | lower row
+    var Hs2 = clamp(r[0] + d, MINS.spec, ROW_TOTAL - r[1] - MINS.low); UI.rows = [Hs2, r[1], ROW_TOTAL - r[1] - Hs2];
+  } else if (id === 'dv1') {   // spectrogram | vectorscope (scope fixed)
+    v = clamp(c[0] + d, MINS.sg, c[0] + c[1] - MINS.pane); UI.cols = [v, c[0] + c[1] - v, c[2]];
+  } else if (id === 'dv2') {   // vectorscope | scope (spectrogram fixed)
+    v = clamp(c[1] + d, MINS.pane, c[1] + c[2] - MINS.pane); UI.cols = [c[0], v, c[1] + c[2] - v];
+  }
+  applyLayout();
+}
+function dragEnd() { if (!DRAG) return; $(DRAG.id).classList.remove('drag'); DRAG = null; postUi(); }
+['dh1', 'dh2', 'dv1', 'dv2'].forEach(function (id) {
+  var el = $(id), vert = el.classList.contains('dh'), p0 = 0;
+  el.addEventListener('pointerdown', function (e) { el.setPointerCapture(e.pointerId); p0 = vert ? e.clientY : e.clientX; dragStart(id); e.preventDefault(); });
+  el.addEventListener('pointermove', function (e) { if (DRAG && DRAG.id === id) dragMove(((vert ? e.clientY : e.clientX) - p0) / stageScale); });
+  el.addEventListener('pointerup', dragEnd); el.addEventListener('pointercancel', dragEnd);
+  el.addEventListener('dblclick', function () {   // reset that axis to the default split
+    if (vert) UI.rows = LAYOUT_DEF.rows.slice(); else UI.cols = LAYOUT_DEF.cols.slice();
+    applyLayout(); postUi();
+  });
+});
+/* ================= HOST -> UI: parameter seeding + sync ================= */
+function applyRemoteParam(id, val) {
+  var m = /^src([12])_(visible|solo|name)$/.exec(id);
+  syncing = true;
+  try {
+    if (m) {
+      var i = +m[1] - 1;
+      if (m[2] === 'visible') SRC[i].visible = !!val;
+      else if (m[2] === 'solo') SRC[i].solo = !!val;
+      else { SRC[i].name = String(val); var inp = $('sn' + i); if (inp && document.activeElement !== inp) inp.value = SRC[i].name; }
+      applySources();
+    } else if (P.hasOwnProperty(id) && id !== 'sg_src' && id !== 'wf_src') {
+      setParam(id, val, true);
+    }
+  } finally { syncing = false; }
+}
+function applyInitPayload(p) {   // p = { id: value, ... } from window.__SPECTR_INIT_PARAMS or the 'spectrInit' event
+  if (!p) return;
+  var order = ['color_theme', 'reduced_motion'], k;   // theme first so tints are right
+  order.forEach(function (id) { if (p[id] !== undefined) applyRemoteParam(id, p[id]); });
+  for (k in p) if (p.hasOwnProperty(k) && order.indexOf(k) < 0) applyRemoteParam(k, p[k]);
+}
+function numOr(v, d) { v = +v; return isFinite(v) ? v : d; }
+function sanitizeRows(a) {   // clamp to documented minimums + fixed total (ROW_TOTAL); corrupt state falls back to defaults
+  var x = clamp(numOr(a[0], LAYOUT_DEF.rows[0]), MINS.spec, ROW_TOTAL - MINS.wf - MINS.low);
+  var y = clamp(numOr(a[1], LAYOUT_DEF.rows[1]), MINS.wf, ROW_TOTAL - x - MINS.low);
+  return [x, y, ROW_TOTAL - x - y];
+}
+function sanitizeCols(a) {   // spectrogram min 224, others 180, fixed total (COL_TOTAL)
+  var x = clamp(numOr(a[0], LAYOUT_DEF.cols[0]), MINS.sg, COL_TOTAL - 2 * MINS.pane);
+  var y = clamp(numOr(a[1], LAYOUT_DEF.cols[1]), MINS.pane, COL_TOTAL - x - MINS.pane);
+  return [x, y, COL_TOTAL - x - y];
+}
+function applyInitUi(iu) {
+  if (!iu) return;
+  if (iu.row_splits && iu.row_splits.length === 3) UI.rows = sanitizeRows(iu.row_splits);
+  if (iu.lower_col_splits && iu.lower_col_splits.length === 3) UI.cols = sanitizeCols(iu.lower_col_splits);
+  if (iu.fullscreen !== undefined && !!iu.fullscreen !== !!UI.fullscreen) setFullscreen(!!iu.fullscreen, true, true);   // real path, both directions, never echoed back
+  if (iu.waveform_span) wfSetSpan(iu.waveform_span, true);
+  if (iu.waveform_style) wfSetStyle(iu.waveform_style, true);
+  if (iu.playhead_pos) wfSetPlayhead(iu.playhead_pos, true);
+  if (iu.grid_edits !== undefined) { wfEditParse(iu.grid_edits); wfGridPaint(); if (wfOff) wfRender(); }
+  if (iu.gonio_source === 0 || iu.gonio_source === 1) P.gn_src = iu.gonio_source;
+  if (iu.scope_source === 0 || iu.scope_source === 1) P.sc_src = iu.scope_source;
+  if (iu.readout_source === 0 || iu.readout_source === 1) P.rd_src = iu.readout_source;
+  applySources();
+  if (iu.spectrogram_orientation) sgSetOrient(iu.spectrogram_orientation, true);   // UI state, not a parameter
+}
+window.receiveParameterUpdate = applyRemoteParam;
+
+/* ================= v2: param hooks ================= */
+on('fft_size', function () { needRedraw = true; paintReadouts(); paintStats(); });
+on('window', function () { needRedraw = true; paintReadouts(); });
+on('display_range', function () { drawSpecGrid(); needRedraw = true; });
+on('spectrum_tilt', function () { updateTilt(); needRedraw = true; });
+on('spectrogram_speed', function () { drawSgLabels(); });
+on('glow_intensity', function () { needRedraw = true; });
+
+/* ================= v8: SIDEBAR KNOBS + NEEDLE METER ================= */
+var KNOBS = [
+  { id: 'smoothing', cv: 'kb0', val: 'kv0', min: 0, max: 100, def: 35, step: 1, fmt: function (v) { return Math.round(v) + '%'; } },
+  { id: 'glow_intensity', cv: 'kb2', val: 'kv2', min: 0, max: 100, def: 55, step: 1, fmt: function (v) { return Math.round(v) + '%'; } },
+  { id: 'spectrogram_speed', cv: 'kb3', val: 'kv3', min: 0.25, max: 4, def: 1, log: true, step: 0.01, fmt: function (v) { return v.toFixed(2) + 'x'; } }
+];
+KNOBS.forEach(function (k) {
+  var o = cv[k.cv], g = o.g, el = o.el, drag = false, y0 = 0, n0 = 0;
+  var gs = gestureOf(k.id);
+  function norm() { return normOf(k, P[k.id]); }
+  function fromNorm(n) { return valueOf(k, n); }
+  function draw() {
+    var n = norm(), a0 = 135 * Math.PI / 180, a1 = (135 + 270 * n) * Math.PI / 180, cx = 20, cy = 20, col = SRC[0].color;
+    g.clearRect(0, 0, 40, 40); g.lineCap = 'round';
+    g.lineWidth = 2.5; g.strokeStyle = 'rgba(255,255,255,0.14)'; g.beginPath(); g.arc(cx, cy, 16, a0, 405 * Math.PI / 180); g.stroke();
+    if (n > 0.001) { g.strokeStyle = col; g.shadowColor = col; g.shadowBlur = 5; g.beginPath(); g.arc(cx, cy, 16, a0, a1); g.stroke(); g.shadowBlur = 0; }
+    g.beginPath(); g.arc(cx, cy, 11.5, 0, TAU); g.fillStyle = '#12161a'; g.fill(); g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.18)'; g.stroke();
+    g.lineWidth = 1.8; g.strokeStyle = 'rgba(235,242,246,0.92)'; g.beginPath(); g.moveTo(cx + Math.cos(a1) * 3.5, cy + Math.sin(a1) * 3.5); g.lineTo(cx + Math.cos(a1) * 10, cy + Math.sin(a1) * 10); g.stroke();
+    $(k.val).textContent = k.fmt(P[k.id]);
+  }
+  k.draw = draw; k.nudge = function (dyPx) { setParam(k.id, fromNorm(norm() + dyPx / 170)); }; on(k.id, draw);
+  el.addEventListener('pointerdown', function (e) { drag = true; el.setPointerCapture(e.pointerId); y0 = e.clientY; n0 = norm(); gs.begin(); e.preventDefault(); });
+  el.addEventListener('pointermove', function (e) { if (drag) setParam(k.id, fromNorm(n0 + (y0 - e.clientY) / (170 * stageScale))); });
+  el.addEventListener('pointerup', function () { drag = false; gs.end(); });
+  el.addEventListener('pointercancel', function () { drag = false; gs.end(); });
+  el.addEventListener('dblclick', function () { gs.begin(); setParam(k.id, k.def); gs.end(); });
+  el.addEventListener('wheel', function (e) { e.preventDefault(); gs.begin(); setParam(k.id, fromNorm(norm() - Math.sign(e.deltaY) * 0.03)); gs.end(); }, { passive: false });
+  draw();
+});
+var meterVal = -40;
+function meterLoud() { return D.louds[P.rd_src] || null; }   // the needle meter follows the readout CH1/CH2 selector
+function meterTarget() { var l = meterLoud(); return (isLive() && l && isNum(l.M)) ? l.M : -40; }
+function drawMeter(dt) {   // analog-style needle meter: momentary LUFS from the host, theme-tinted, rests at -40 when no data
+  var o = cv.meter_cv, g = o.g, cx = o.w / 2, cy = o.h - 14, R = 98, accent = SRC[P.rd_src].color, PI = Math.PI, ml = meterLoud(), have = isLive() && ml && isNum(ml.M);
+  meterVal += (meterTarget() - meterVal) * (1 - Math.exp(-dt / 0.16));
+  function ang(v) { return -PI / 2 + (-55 + (clamp(v, -40, 0) + 40) / 40 * 110) * PI / 180; }
+  g.clearRect(0, 0, o.w, o.h); g.lineCap = 'butt';
+  g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.20)'; g.beginPath(); g.arc(cx, cy, R, ang(-40), ang(0)); g.stroke();
+  g.lineWidth = 3; g.strokeStyle = accent; g.globalAlpha = 0.85; g.beginPath(); g.arc(cx, cy, R - 6, ang(-14), ang(0)); g.stroke(); g.globalAlpha = 1;
+  g.font = '9px ' + MONO; g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (var v = -40; v <= 0; v += 2) {
+    var a = ang(v), major = v % 10 === 0, r1 = R, r2 = R - (major ? 9 : (v % 5 === 0 ? 6 : 3.5));
+    g.strokeStyle = major ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.24)'; g.lineWidth = major ? 1.2 : 1;
+    g.beginPath(); g.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); g.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2); g.stroke();
+    if (major) { g.fillStyle = 'rgba(150,165,176,0.75)'; g.fillText(String(v), cx + Math.cos(a) * (R + 11), cy + Math.sin(a) * (R + 11)); }
+  }
+  var na = ang(meterVal);
+  g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(na) * (R - 3), cy + Math.sin(na) * (R - 3)); g.stroke();
+  g.strokeStyle = accent; g.shadowColor = accent; g.shadowBlur = 6; g.lineWidth = 1.6; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(na) * (R - 3), cy + Math.sin(na) * (R - 3)); g.stroke(); g.shadowBlur = 0;
+  g.beginPath(); g.arc(cx, cy, 4, 0, TAU); g.fillStyle = '#12161a'; g.fill(); g.lineWidth = 1.2; g.strokeStyle = accent; g.stroke();
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillStyle = 'rgba(150,165,176,0.7)'; g.fillText('LUFS-M', 8, 14);
+  g.textAlign = 'right'; g.fillStyle = 'rgba(210,225,235,0.9)'; g.fillText(have ? (ml.M >= 0 ? '' : '-') + Math.abs(ml.M).toFixed(2) : '---.--', o.w - 8, 14);
+}
+
+/* ================= HOVER INFO (custom tooltips: styled, delegated, stage-scaled; native title attributes are migrated to data-tip) ================= */
+var TIPS = {
+  leg0: 'Show / hide this source', leg1: 'Show / hide this source',
+  chip0: 'Show / hide this source', chip1: 'Show / hide this source',
+  solo0: 'Solo this source (display only)', solo1: 'Solo this source (display only)',
+  wfs0: 'Show this source in this pane', wfs1: 'Show this source in this pane',
+  sgs0: 'Show this source in this pane', sgs1: 'Show this source in this pane',
+  gns0: 'Show this source in this pane', gns1: 'Show this source in this pane',
+  scs0: 'Show this source in this pane', scs1: 'Show this source in this pane',
+  rd0: 'All meters + panes follow this source',
+  rd1: 'All meters + panes follow this source',
+  wfspan: 'Waveform span (bars)',
+  wfgrid: 'Beat-grid corrections',
+  wfstyle: 'Waveform style: FLOW / LYR',
+  sgo0: 'Vertical waterfall', sgo1: 'Horizontal scroll',
+  wf_cv: 'Zoom: wheel - reset: double-click',
+  rc0: 'EBU R128 loudness: I integrated, M momentary, S short-term, LRA range, vs -14 streaming target',
+  rc1: 'TP true peak (intersample), SP sample peak - max since reset',
+  rc2: 'corr: +1 mono-safe, -1 out of phase. WIDTH: side vs mid. BAL: left / right',
+  meter_cv: 'Momentary loudness (LUFS-M)',
+  kb0: 'Spectrum smoothing',
+  kb2: 'Glow intensity',
+  kb3: 'Spectrogram speed',
+  btn_freeze: 'Freeze displays (metering continues)',
+  btn_reset: 'Reset peaks + integrated loudness',
+  btn_reset_i: 'Reset integrated loudness only',
+  btn_src: 'Source names, visibility, solo',
+  btn_set: 'Analysis + display settings',
+  btn_theme: 'Color theme',
+  fsbtn: 'True fullscreen (F / Esc)',
+  f_stats: 'Frame rate / sample rate / FFT',
+  flag: 'Signal status'
+};
+(function () {
+  var tip = $('tip'), tTimer = 0, tEl = null, tX = 0, tY = 0, sX = 0, sY = 0;
+  var all = document.querySelectorAll('[title]'), i;
+  for (i = 0; i < all.length; i++) { if (!all[i].getAttribute('data-tip')) all[i].setAttribute('data-tip', all[i].getAttribute('title')); all[i].removeAttribute('title'); }
+  for (var id in TIPS) { var el = $(id); if (el) el.setAttribute('data-tip', TIPS[id]); }
+  function hideTip() { if (tTimer) clearTimeout(tTimer); tTimer = 0; tEl = null; tip.classList.remove('show'); }
+  function fire() {
+    tTimer = 0; if (!tEl) return;
+    tip.textContent = tEl.getAttribute('data-tip');
+    tip.style.left = '0px'; tip.style.top = '0px'; tip.classList.add('show');
+    var w = tip.offsetWidth, h = tip.offsetHeight, x = tX / stageScale, y = tY / stageScale;
+    var L = Math.min(1100 - w - 6, x + 14), T = y + 20; if (T + h > 714) T = y - h - 12;
+    tip.style.left = Math.max(6, L) + 'px'; tip.style.top = Math.max(6, T) + 'px';
+    sX = tX; sY = tY;
+  }
+  document.addEventListener('pointerover', function (e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (el === tEl) return;
+    hideTip(); if (!el) return;
+    tEl = el; tX = e.clientX; tY = e.clientY; tTimer = setTimeout(fire, 450);
+  });
+  document.addEventListener('pointermove', function (e) {
+    if (!tEl) return; tX = e.clientX; tY = e.clientY;
+    if (tTimer) { clearTimeout(tTimer); tTimer = setTimeout(fire, 450); }   // show once the cursor rests
+    else if (tip.classList.contains('show') && (Math.abs(tX - sX) + Math.abs(tY - sY)) > 28) { tip.classList.remove('show'); tTimer = setTimeout(fire, 450); }   // moved away: hide, re-show on the next rest
+  });
+  document.addEventListener('pointerout', function (e) {
+    if (!tEl) return;
+    var to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('[data-tip]') : null;
+    if (to !== tEl) hideTip();
+  });
+  document.addEventListener('pointerdown', hideTip, true);
+  document.addEventListener('wheel', hideTip, true);
+})();
+
+/* ================= Main loop ================= */
+var last = performance.now(), frame = 0;
+var loopErrAt = 0;
+function loopGuard(name, fn, arg) { try { fn(arg); } catch (err) { var n = performance.now(); if (n - loopErrAt > 2000) { loopErrAt = n; console.log('[SPECTR] ' + name + ' error (frame skipped): ' + err); } } }
+function loop(now) {   // an exception in any one painter must never stop the loop (that would freeze every pane and chip)
+  try {
+    var dt = Math.min(0.05, (now - last) / 1000); last = now; frame++;
+    fpsCount++; fpsT += dt; if (fpsT >= 0.5) { fpsShown = Math.min(60, Math.round(fpsCount / fpsT)); fpsCount = 0; fpsT = 0; paintStats(); }
+    updateFlag();
+    if (!P.freeze) {
+      if (!(P.reduced_motion && (frame & 1))) {
+        loopGuard('spectra', updateSpectra, dt); loopGuard('spectrogram', sgStep, dt); loopGuard('waveform step', wfStep, dt); loopGuard('spectrogram draw', drawSpectrogram); loopGuard('waveform draw', drawWaveform);
+        loopGuard('spectrum', drawSpectrum); loopGuard('gonio', drawGonio); loopGuard('scope', drawScope); loopGuard('meters', updateMeters, dt); loopGuard('meter', drawMeter, dt);
+        if ((frame % 4) === 0) { loopGuard('readouts', paintReadouts); loopGuard('inspector', updateInsp); }
+      }
+    } else if (needRedraw) { drawSpectrum(); updateInsp(); }
+    needRedraw = false;
+  } catch (err) { console.log('[SPECTR] loop error: ' + err); }
+  requestAnimationFrame(loop);
+}
+
+/* ================= Boot ================= */
+updateTilt(); drawSpecGrid(); drawGnGrid(); drawScGrid(); drawSgLabels(); sgInit();
+applyInitUi(window.__SPECTR_INIT_UI);          // layout splits + fullscreen, serialized by the host (spectr-init.js)
+applyInitPayload(window.__SPECTR_INIT_PARAMS); // parameter values + source names, seeded before first paint (never posted back)
+applyLayout(); if (UI.fullscreen) setFullscreen(true, true);
+KNOBS.forEach(function (k) { k.draw(); }); drawMeter(0.016);
+wfInit(); drawWaveform(); paintStats(); paintReadouts(); updateInsp(); updateFlag();
+/* ---- devicePixelRatio tracking: dragging the window between 1x / 2x displays (or changing zoom) re-derives DPR, re-sizes every canvas'
+   backing store and re-renders through the normal layout path (the waveform re-projects from its kept history) ---- */
+function onDprChange() {
+  var nd = Math.min(2, window.devicePixelRatio || 1);
+  if (nd === DPR) return;
+  DPR = nd;
+  Object.keys(cv).forEach(function (k) { var o = cv[k]; o.el.width = Math.round(o.w * DPR); o.el.height = Math.round(o.h * DPR); o.g.setTransform(DPR, 0, 0, DPR, 0, 0); });
+  if (typeof applyLayout === 'function') applyLayout();
+  if (typeof wfResize === 'function') wfResize();
+  if (typeof KNOBS !== 'undefined') KNOBS.forEach(function (k) { k.draw(); });
+  needRedraw = true;
+  if (typeof drawWaveform === 'function' && !booting) drawWaveform();
+}
+window.__onDprChange = function () { onDprChange(); };   // measurement hook
+function watchDpr() {   // matchMedia fires once when the resolution changes; re-arm after each change
+  try { var mq = window.matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)'); if (mq.addEventListener) mq.addEventListener('change', function () { onDprChange(); watchDpr(); }, { once: true }); } catch (e) { }
+}
+window.addEventListener('resize', onDprChange); watchDpr();
+window.addEventListener('resize', fitStage); fitStage();
+if (backend && backend.addEventListener) {
+  backend.addEventListener('spectrFrame', receiveAnalysisFrame);
+  backend.addEventListener('spectrKiosk', function (e) { KIOSK = !!(e && e.on); if (!KIOSK && UI.fullscreen) setFullscreen(false); });   // C++ confirms / reports OS fullscreen
+  backend.addEventListener('spectrParamSync', function (e) { if (e) applyRemoteParam(e.id, e.value); });
+  backend.addEventListener('spectrInit', function (e) { if (!e) return; applyInitPayload(e.params); if (e.ui) { applyInitUi(e.ui); applyLayout(); } });
+}
+booting = false;
+emit('spectrReady', {});   // host answers with 'spectrInit' (full resync) - covers any listener/ordering race
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

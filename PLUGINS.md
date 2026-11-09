@@ -44,7 +44,7 @@
 | KICKR | 📦 Installed | 1.0.0 | Synth (Kick Instrument + Sampler) | 2026-09-07 |
 | CORRUPTR | 📦 Installed | 1.0.2 | Audio Effect (Multi-Distortion/Glitch) | 2026-10-08 |
 | DROP | 📦 Installed | 1.0.0 | Audio Effect (Transition Engine) | 2026-09-24 |
-| PRISM | 📦 Installed | 1.0.0 | Audio Effect (Multi-Source Analyzer/Visualizer) | 2026-10-18 |
+| SPECTR (formerly PRISM) | 📦 Installed | 1.0.0 | Audio Effect (Multi-Source Analyzer/Visualizer) | 2026-11-03 |
 | CHOPLINE | 🚧 Phase 5 | - | Synth (Vocal Chop/Warp/Glitch Instrument) | 2026-10-29 |
 | TENSION | 📦 Installed | 1.0.0 | Audio Effect (One-Knob Cinematic Riser) | 2026-11-03 |
 
