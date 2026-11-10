@@ -2,11 +2,13 @@
 
 ## Status
 - **Current Status:** 📦 Installed
-- **Version:** 3.0.1
+- **Version:** 3.0.2
 - **Type:** Audio Effect (Multi-Distortion/Glitch)
 - **Complexity:** 5.0 (capped) / 19.0 (uncapped raw score) — see `.ideas/plan.md`
 
 ## Lifecycle Timeline
+
+- **2026-11-10:** v3.0.2 installed — UI always opens on Main (last-page memory removed); zoom lock re-fits against Main's measured height on resize; dead-code sweep removed the hidden A/B toggle (never-implemented `abCompareState` param), hidden Save/Random/preset-search top-bar stubs + log-only listeners, unused `.perf-grid`/`.module-title` CSS, the unused `numSamples` param on resolveModMatrixContributions(), and stale comments. Full cross-reference audit: all data-param/JS-state/preset/C++ parameter uses resolve to live APVTS params; all getElementById targets exist. QA ALL PASS; pluginval strictness 10 SUCCESS.
 
 - **2026-11-10:** v3.0.1 installed — zoom locked to the Main page's fit; the taller Modulation page no longer shrinks the whole UI, it renders at Main's scale and scrolls internally (scroll resets per page switch).
 - **2026-11-10:** v3.0.0 installed to system folders (VST3 + AU) — Macros / XY page fully removed (8 `macro*` + 5 `xyPad*` params deleted, MacroEngine.h deleted, XY glide/MIDI CC 2/3/Cmd+L latch gone, identity stereo-width stage removed; state version 2→3 strips legacy PARAMs; Mod Matrix "Macro" source kept as dead choice to preserve automation indexing; 4 macro-using factory presets re-voiced). UI is now two pages: Main + Modulation (renamed from Sequencer).

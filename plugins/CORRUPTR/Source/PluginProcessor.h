@@ -545,7 +545,7 @@ private:
     std::atomic<float> modMatrixPitchObservation { 0.0f };
     std::atomic<float> modMatrixWidthObservation { 0.0f };
 
-    void resolveModMatrixContributions(double blockDurationSeconds, int numSamples); // called once per block from processBlock(), BEFORE updateSequencerStepAndContributions() -- see "CALL ORDER" doc comment above.
+    void resolveModMatrixContributions(double blockDurationSeconds); // called once per block from processBlock(), BEFORE updateSequencerStepAndContributions() -- see "CALL ORDER" doc comment above.
 
     //=========================================================================
     // Stage 2 Phase 3.9 (FINAL DSP phase): XY Pad, Performance Mode Triggers,

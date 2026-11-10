@@ -7,7 +7,7 @@ if(APPLE)
     list(APPEND CORRUPTR_FORMATS AU)
 endif()
 juce_add_plugin(CORRUPTR
-    VERSION 3.0.1
+    VERSION 3.0.2
     COMPANY_NAME "VST Factory"
     PLUGIN_MANUFACTURER_CODE Vstf
     PLUGIN_CODE Corr

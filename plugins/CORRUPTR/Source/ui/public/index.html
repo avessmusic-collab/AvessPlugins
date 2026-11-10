@@ -108,12 +108,6 @@
     cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,0.06); flex: 0 0 auto;
   }
   .btn:active{ transform: translateY(1px); box-shadow: none; }
-  .ab-toggle{
-    height: 32px; width: 60px; border-radius: 8px; border: 1px solid var(--divider);
-    background: #fff; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: 1px;
-    cursor: pointer; display:flex; align-items:center; justify-content:center;
-  }
-  .ab-toggle.on{ background: var(--text-primary); color: #fff; }
   select.combo, select.combo-sm{
     height: 32px; border-radius: 8px; border: 1px solid var(--divider); background: #fff;
     color: var(--text-primary); font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
@@ -159,9 +153,9 @@
   .icon-btn.power-btn{ cursor: pointer; color: var(--text-primary); }
   .icon-btn.power-btn.on{ color: var(--text-primary); }
   .icon-btn.power-btn:not(.on){ color: var(--text-tertiary); }
-  /* Power-glyph spans with no bound bypass parameter (Center Master, Feedback,
-     Macros, Performance cards) are hidden: the locked spec defines no bypass
-     for those modules, and a dead-looking power button reads as broken. */
+  /* Power-glyph spans with no bound bypass parameter (Center Master,
+     Feedback cards) are hidden: the locked spec defines no bypass for those
+     modules, and a dead-looking power button reads as broken. */
   .icon-btn.decorative-power{ display:none; }
   .icon-btn svg{ width: 16px; height: 16px; }
 
@@ -275,7 +269,6 @@
   .action-btn:active{ transform: translateY(1px); }
 
   /* perf buttons */
-  .perf-grid{ display:flex; flex-wrap: wrap; gap: 10px; justify-content:center; margin-top: 16px; width: 100%; padding: 0 6px; }
   .perf-btn{
     width: 90px; height: 44px; border-radius: 10px; border: 1px solid var(--divider);
     background: var(--perf-off); color: var(--perf-text-off);
@@ -322,10 +315,8 @@
              border:1px dashed var(--divider); border-radius:10px; cursor:pointer; color:var(--text-tertiary);
              font-size:11px; font-weight:800; letter-spacing:1.2px; user-select:none; }
   .slot-add:hover{ color:var(--text-primary); border-color:var(--text-tertiary); }
-  [hidden]{ display:none !important; } /* audit fix: .ab-toggle/input display rules were overriding the hidden attribute */
+  [hidden]{ display:none !important; } /* audit fix: input display rules were overriding the hidden attribute */
 
-  /* module titles for macros / performance / xy (below tile) */
-  .module-title{ margin-top: 10px; font-size: 9px; font-weight: 800; letter-spacing: 1.4px; color: var(--text-tertiary); text-transform: uppercase; }
   .knob-grid{ display:flex; gap: 12px; margin-top: 14px; }
 
   /* ===== SEQUENCER / MOD MATRIX cards ===== */
@@ -459,13 +450,9 @@
     <header class="top-bar">
       <div class="search-field">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1c1c1e" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-        <input hidden type="text" id="preset_search" placeholder="Search presets…" />
       </div>
       <div class="wordmark">CORRUPTR</div>
       <div class="spacer"></div>
-      <button class="btn action-btn" hidden id="save_button" data-action="save_preset">Save</button>
-      <button class="btn action-btn" hidden id="random_button" data-action="randomize_all">Random</button>
-      <div class="ab-toggle" hidden id="ab_toggle" data-param="abCompareState" data-default="false">A/B</div>
       <select class="combo" id="quality_mode" data-param="qualityMode">
         <option>ECO</option><option selected>NORMAL</option><option>HIGH</option><option>EXTREME</option><option>AUTO</option>
       </select>
@@ -1204,7 +1191,7 @@
   }
 
   // ===================================================================
-  // Generic TOGGLE (small pill switches: lfo sync, A/B, fold bypass)
+  // Generic TOGGLE (small pill switches: lfo sync, fold bypass)
   // ===================================================================
   function bindToggles(scope){
     scope.querySelectorAll('.toggle-sw[data-param]:not([data-bound])').forEach(t => {
@@ -1218,14 +1205,8 @@
       // valueChangedEvent fires with NO callback arguments (Pattern #15).
       state.valueChangedEvent.addListener(() => { on = !!state.getValue(); render(); });
     });
-
-    document.getElementById('ab_toggle').addEventListener('click', function(){
-      const state = Juce.getToggleState('abCompareState');
-      const on = !this.classList.contains('on');
-      this.classList.toggle('on', on);
-      state.setValue(on);
-      updateDebugMonitor('abCompareState', on, on?1:0);
-    });
+    // v3.0.2 dead-code sweep: the hidden A/B toggle wired to the
+    // never-implemented 'abCompareState' parameter was removed.
   }
 
   // ===================================================================
@@ -1434,19 +1415,6 @@
     });
   }
 
-  // ===================================================================
-  // Action buttons + preset search
-  // ===================================================================
-  document.querySelectorAll('[data-action]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      console.log(`Action triggered: ${btn.dataset.action}`);
-      updateDebugMonitor(btn.dataset.action, 'triggered', '—');
-    });
-  });
-  document.getElementById('preset_search').addEventListener('input', (e) => {
-    console.log(`Action triggered: search_presets ("${e.target.value}")`);
-    updateDebugMonitor('search_presets', e.target.value || '(empty)', '—');
-  });
 
 
   // ===================================================================
@@ -2261,7 +2229,8 @@
   // ===================================================================
   // Page layout (v3.0.0: two pages only — the Macros / XY page was removed
   // with the Macro System and XY Pad): 1 Main (chain + CORRUPT bar),
-  // 2 Modulation (Sequencer + Mod Matrix). Last page remembered per-browser.
+  // 2 Modulation (Sequencer + Mod Matrix). v3.0.2 (user request): the UI
+  // ALWAYS opens on Main — the last-page memory was removed.
   // ===================================================================
   (function(){
     const unit1Section  = document.getElementById('node_algorithm_select').closest('section');
@@ -2276,7 +2245,6 @@
         PAGES[k].forEach(sec => sec.classList.toggle('page-hidden', k !== String(n)));
       tabs.forEach(t => t.classList.toggle('active', t.dataset.page === String(n)));
       document.body.dataset.page = String(n);
-      try { localStorage.setItem('corruptr-page', String(n)); } catch(e){}
       // v3.0.1: the zoom is LOCKED to the Main page's fit (see the zoom
       // IIFE) — switching pages re-applies that same scale; the taller
       // Modulation page scrolls internally instead of shrinking the UI.
@@ -2286,10 +2254,7 @@
       window.__corruptrZoomRefit && window.__corruptrZoomRefit();
     }
     tabs.forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
-    let start = '1';
-    try { start = localStorage.getItem('corruptr-page') || '1'; } catch(e){}
-    if (!(start in PAGES)) start = '1'; // e.g. a remembered, since-removed page
-    showPage(start);
+    showPage('1');
   })();
 
 
@@ -2449,11 +2414,13 @@
     // Now the Modulation page renders at the exact same scale as Main and
     // scrolls internally instead (.plugin-frame is overflow-y:auto with a
     // hidden scrollbar — mouse wheel / trackpad scrolls it).
-    let lockedZoom = null; // Main-page fit at lockedSig's window size
+    let lockedZoom = null;   // Main-page fit at lockedSig's window size
     let lockedSig = '';
+    let mainDesignH = 900;   // Main page's measured design-px height (refined below; the UI always initializes on Main, so this is measured before page 2 can show)
     function applyZoom(widthPx, heightPx){
       const sig = widthPx + 'x' + heightPx;
       const onMain = document.body.dataset.page !== '2';
+      const usableH = heightPx > 0 ? heightPx : widthPx / 1.5;
       const set = z => { try { document.body.style.zoom = z; }
         catch(e){ if (container){ container.style.transformOrigin = 'top left'; container.style.transform = 'scale(' + z + ')'; } } };
 
@@ -2466,10 +2433,9 @@
       // vertically and the page scrolls, hiding the bottom of the UI.
       // min() shrinks the whole page proportionally instead; .container
       // centers in any horizontal letterbox (page-bg fills it).
-      // The ~900 fallback approximates the Main page's true rendered height
-      // (used only if the UI loads directly onto the Modulation page; the
-      // lock is re-measured precisely the next time Main is shown).
-      let k = Math.min(widthPx / 1200, (heightPx > 0 ? heightPx : widthPx / 1.5) / (onMain ? 800 : 900));
+      // On page 2 (reached only via resize while Modulation is open) the
+      // fit uses Main's MEASURED height, keeping both pages' scales equal.
+      let k = Math.min(widthPx / 1200, usableH / (onMain ? 800 : mainDesignH));
       if (!(k > 0)) return;
       set(k);
 
@@ -2487,6 +2453,7 @@
           k *= frame.clientHeight / frame.scrollHeight;
           set(k);
         }
+        mainDesignH = usableH / k; // design px of viewport that exactly fits Main
       }
       lockedZoom = k;
       lockedSig = sig;

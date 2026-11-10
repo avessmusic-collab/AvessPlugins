@@ -1,5 +1,33 @@
 # CORRUPTR Changelog
 
+## v3.0.2 — 2026-11-10 (always open on Main + dead-code sweep)
+
+### Changed
+- The UI now ALWAYS opens on the Main page. The per-browser "remember the
+  last page" localStorage behavior was removed (a stale remembered page is
+  ignored).
+- The zoom lock now records the Main page's measured height, so a window
+  resize while the Modulation page is open re-fits against Main's real
+  height instead of a hard-coded approximation.
+
+### Removed (dead code found in sweep)
+- Hidden A/B toggle wired to the never-implemented `abCompareState`
+  parameter (markup, CSS, click handler).
+- Hidden `Save` / `Random` top-bar stub buttons and the hidden
+  preset-search input, plus their log-only event listeners.
+- Unused CSS rules: `.perf-grid` (its buttons left in v2.0.0),
+  `.module-title` (never referenced by markup).
+- Unused `numSamples` parameter on `resolveModMatrixContributions()`
+  (leftover from the removed XY-glide smoothing).
+- Stale comments referencing removed features (Macros/Performance cards,
+  A/B toggle, performance triggers in the QA-suite header).
+
+### Verified
+- Full cross-reference audit: every `data-param`, JS parameter-state
+  lookup, preset-registry entry, and C++ parameter access resolves to a
+  parameter that exists in the APVTS layout; every `getElementById` target
+  exists in the markup. QA suite ALL PASS; pluginval strictness 10 SUCCESS.
+
 ## v3.0.1 — 2026-11-10 (Modulation page no longer rescales the UI)
 
 ### Fixed

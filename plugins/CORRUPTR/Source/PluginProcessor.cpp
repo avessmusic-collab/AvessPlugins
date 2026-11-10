@@ -857,7 +857,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // down. See this method's own definition (below processBlock()) for the
     // full design rationale.
     //=========================================================================
-    resolveModMatrixContributions(blockDurationSeconds, numSamples);
+    resolveModMatrixContributions(blockDurationSeconds);
 
     //=========================================================================
     // Stage 2 Phase 3.7: Rhythmic Sequencer — resolves this block's step
@@ -2001,9 +2001,8 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
 // rationale (call order, all 10 source values, destination wiring,
 // cached-pointer convention, dedicated RNG, XY Pad glide mechanism).
 //==============================================================================
-void CORRUPTRAudioProcessor::resolveModMatrixContributions(double blockDurationSeconds, int numSamples)
+void CORRUPTRAudioProcessor::resolveModMatrixContributions(double blockDurationSeconds)
 {
-    juce::ignoreUnused(numSamples);
     const bool modMatrixEnabledFlag = modMatrixEnabledParam->load() > 0.5f;
 
     // Host BPM for tempo-synced LFOs — a THIRD independent, cheap,

@@ -4,9 +4,9 @@
     Run:    ./build/plugins/CORRUPTR/CORRUPTR_Tests
 
     Renders real audio through every distortion algorithm, bitcrush mode,
-    glitch mode, filter type, the feedback loop, quality modes, performance
-    triggers, sequencer and mod matrix, checking output sanity (finite,
-    bounded, non-silent, actually-does-something) per section.
+    glitch mode, filter type, the feedback loop, quality modes, sequencer
+    and mod matrix, checking output sanity (finite, bounded, non-silent,
+    actually-does-something) per section.
 */
 #include "PluginProcessor.h"
 #include <juce_audio_formats/juce_audio_formats.h>
