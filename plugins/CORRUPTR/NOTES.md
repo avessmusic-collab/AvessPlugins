@@ -2,12 +2,13 @@
 
 ## Status
 - **Current Status:** 📦 Installed
-- **Version:** 3.0.0
+- **Version:** 3.0.1
 - **Type:** Audio Effect (Multi-Distortion/Glitch)
 - **Complexity:** 5.0 (capped) / 19.0 (uncapped raw score) — see `.ideas/plan.md`
 
 ## Lifecycle Timeline
 
+- **2026-11-10:** v3.0.1 installed — zoom locked to the Main page's fit; the taller Modulation page no longer shrinks the whole UI, it renders at Main's scale and scrolls internally (scroll resets per page switch).
 - **2026-11-10:** v3.0.0 installed to system folders (VST3 + AU) — Macros / XY page fully removed (8 `macro*` + 5 `xyPad*` params deleted, MacroEngine.h deleted, XY glide/MIDI CC 2/3/Cmd+L latch gone, identity stereo-width stage removed; state version 2→3 strips legacy PARAMs; Mod Matrix "Macro" source kept as dead choice to preserve automation indexing; 4 macro-using factory presets re-voiced). UI is now two pages: Main + Modulation (renamed from Sequencer).
 - **2026-11-10:** v2.0.0 installed to system folders (VST3 + AU) — Performance section removed (14 `performance*` params deleted, MIDI note 36-42 triggers gone, state version 1→2 with legacy-PARAM stripping migration; old "Performance" page renamed "Macros / XY", XY Glide relocated into the XY Pad module). New CORRUPT randomizer bar on the main page (below glitch + low-pass modules) with one-level UNDO: randomizes distortion/bitcrush/glitch/feedback/sequencer/LFOs/mod-matrix/macros via message-thread setValueNotifyingHost; feedbackAmount capped at 10%, filters + levels + quality/bypass/enable switches never touched. QA suite section [10] now covers param removal + v1-state migration (all pass); pluginval strictness 10 SUCCESS; CORRUPT/UNDO verified live in Standalone (roll + exact restore confirmed, filter and levels bit-identical).
 - **2026-10-08:** v1.0.2 installed to system folders (VST3 + AU) — full-effect QA audit: limiter hidden-compressor fix, Ring-Mod carrier phase fix, CORRUPTR_Tests QA suite added

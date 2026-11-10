@@ -292,8 +292,11 @@
            max-width:240px; line-height:1.45; box-shadow:0 6px 18px rgba(0,0,0,0.30);
            pointer-events:none; opacity:0; transition:opacity .12s ease; }
   .ui-tip.show{ opacity:1; }
-  /* Page tabs: MAIN / SEQUENCER / MATRIX / PERFORM */
-  .page-tabs{ display:flex; gap:8px; padding:4px 28px 0; }
+  /* Page tabs: MAIN / MODULATION. v3.0.1: sticky right below the (also
+     sticky, 64px + 1px border) top bar so the tabs stay reachable while the
+     taller Modulation page scrolls at the Main page's locked zoom. */
+  .page-tabs{ display:flex; gap:8px; padding:4px 28px 6px;
+              position: sticky; top: 65px; z-index: 400; background: var(--page-bg); }
   .page-tab{ border:none; border-radius:9px; padding:8px 18px; font-size:10px; font-weight:800;
              letter-spacing:1.4px; text-transform:uppercase; cursor:pointer;
              background:#e2e2e5; color:var(--text-tertiary); }
@@ -2274,9 +2277,12 @@
       tabs.forEach(t => t.classList.toggle('active', t.dataset.page === String(n)));
       document.body.dataset.page = String(n);
       try { localStorage.setItem('corruptr-page', String(n)); } catch(e){}
-      // Pages differ in height and switching fires no resize event — re-run
-      // the self-correcting fit so no page ever scrolls (guarded: the zoom
-      // IIFE below defines this after the initial showPage call).
+      // v3.0.1: the zoom is LOCKED to the Main page's fit (see the zoom
+      // IIFE) — switching pages re-applies that same scale; the taller
+      // Modulation page scrolls internally instead of shrinking the UI.
+      // Reset the scroll so each page opens from its top.
+      const frame = document.querySelector('.plugin-frame');
+      if (frame) frame.scrollTop = 0;
       window.__corruptrZoomRefit && window.__corruptrZoomRefit();
     }
     tabs.forEach(t => t.addEventListener('click', () => showPage(t.dataset.page)));
@@ -2437,7 +2443,22 @@
   // ===================================================================
   (function(){
     const container = document.querySelector('.container');
+    // v3.0.1 (user request): the zoom is locked to the MAIN page's fit.
+    // Previously every page switch re-fit the zoom to that page's own
+    // height, so opening the taller Modulation page shrank the entire UI.
+    // Now the Modulation page renders at the exact same scale as Main and
+    // scrolls internally instead (.plugin-frame is overflow-y:auto with a
+    // hidden scrollbar — mouse wheel / trackpad scrolls it).
+    let lockedZoom = null; // Main-page fit at lockedSig's window size
+    let lockedSig = '';
     function applyZoom(widthPx, heightPx){
+      const sig = widthPx + 'x' + heightPx;
+      const onMain = document.body.dataset.page !== '2';
+      const set = z => { try { document.body.style.zoom = z; }
+        catch(e){ if (container){ container.style.transformOrigin = 'top left'; container.style.transform = 'scale(' + z + ')'; } } };
+
+      if (!onMain && lockedZoom && lockedSig === sig){ set(lockedZoom); return; }
+
       // Fit INSIDE the window on both axes (design viewport 1200x800): the
       // window is aspect-locked 3:2, but any host/runtime chrome that eats
       // height (the standalone's muted-audio banner, for one) makes the
@@ -2445,24 +2466,30 @@
       // vertically and the page scrolls, hiding the bottom of the UI.
       // min() shrinks the whole page proportionally instead; .container
       // centers in any horizontal letterbox (page-bg fills it).
-      let k = Math.min(widthPx / 1200, (heightPx > 0 ? heightPx : widthPx / 1.5) / 800);
+      // The ~900 fallback approximates the Main page's true rendered height
+      // (used only if the UI loads directly onto the Modulation page; the
+      // lock is re-measured precisely the next time Main is shown).
+      let k = Math.min(widthPx / 1200, (heightPx > 0 ? heightPx : widthPx / 1.5) / (onMain ? 800 : 900));
       if (!(k > 0)) return;
-      const set = z => { try { document.body.style.zoom = z; }
-        catch(e){ if (container){ container.style.transformOrigin = 'top left'; container.style.transform = 'scale(' + z + ')'; } } };
       set(k);
-      // Self-correcting pass: the page's true rendered height can exceed the
-      // nominal 800 design px (runtime-only content/metrics — measured 819px
-      // live vs 800 in an offscreen harness), which leaves a scroll that
-      // hides the bottom of the UI. Content height in design px is
-      // zoom-invariant, so one measured shrink makes it fit exactly.
-      const frame = document.querySelector('.plugin-frame');
-      // Iterated: zoomed-px metrics are integers, so one pass can undershoot
-      // by a few px at fractional zooms; converges in 2-3 passes.
-      for (let i = 0; frame && i < 4 && frame.scrollHeight > frame.clientHeight; i++)
+
+      if (onMain)
       {
-        k *= frame.clientHeight / frame.scrollHeight;
-        set(k);
+        // Self-correcting pass: the page's true rendered height can exceed
+        // the nominal 800 design px (runtime-only content/metrics), which
+        // leaves a scroll that hides the bottom of the UI. Content height in
+        // design px is zoom-invariant, so one measured shrink makes it fit
+        // exactly. Iterated: zoomed-px metrics are integers, so one pass can
+        // undershoot by a few px at fractional zooms; converges in 2-3 passes.
+        const frame = document.querySelector('.plugin-frame');
+        for (let i = 0; frame && i < 4 && frame.scrollHeight > frame.clientHeight; i++)
+        {
+          k *= frame.clientHeight / frame.scrollHeight;
+          set(k);
+        }
       }
+      lockedZoom = k;
+      lockedSig = sig;
     }
     function zoomToFit(){ applyZoom(window.innerWidth, window.innerHeight); }
     // Pushed by PluginEditor::resized() with the editor's actual width —

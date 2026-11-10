@@ -1,5 +1,18 @@
 # CORRUPTR Changelog
 
+## v3.0.1 — 2026-11-10 (Modulation page no longer rescales the UI)
+
+### Fixed
+- Switching to the Modulation page shrank the entire UI: the zoom-to-fit
+  logic re-fit the zoom to each page's own content height, and the
+  Modulation page (sequencer + mod matrix, ~1097 design px) is taller than
+  Main (~899 design px). The zoom is now locked to the Main page's fit on
+  every page; the Modulation page renders at the exact same scale and
+  scrolls internally instead (hidden scrollbar, mouse-wheel/trackpad).
+  Scroll position resets to the top on every page switch, and the
+  MAIN / MODULATION tab bar is now sticky (pinned under the top bar) so
+  page switching stays reachable while scrolled.
+
 ## v3.0.0 — 2026-11-10 (Macros / XY page removed — two-page UI)
 
 ### Breaking Changes
