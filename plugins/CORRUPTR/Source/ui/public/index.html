@@ -285,24 +285,6 @@
   .perf-btn.on{ background: var(--perf-on); color: var(--perf-text-on); box-shadow: inset 0 2px 4px rgba(0,0,0,.3); }
   .perf-btn:disabled{ opacity:.35; cursor:default; }
 
-  /* XY pad */
-  .xy-card{
-    width: 340px; height: 340px; border-radius: 16px; background: #fbfbfc; border: 1px solid var(--divider);
-    position: relative; margin: 20px auto 0; overflow: hidden; cursor: crosshair; touch-action: none;
-    background-image:
-      repeating-linear-gradient(0deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px),
-      repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0 1px, transparent 1px 34px);
-  }
-  .xy-dot{ position:absolute; width: 16px; height: 16px; border-radius:50%; background: var(--text-primary);
-    transform: translate(-50%,50%); }
-  .xy-label{ position:absolute; top:10px; left:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-tertiary); text-transform:uppercase; }
-  /* Cmd+1 latch mode: badge + subtle outline while the pad follows hover */
-  .xy-latch{ position:absolute; top:10px; right:14px; font-size: 9px; font-weight:800; letter-spacing:1.4px; color: var(--text-primary); text-transform:uppercase; }
-  .xy-card.latched{ outline: 2px solid var(--text-primary); outline-offset: -2px; }
-  /* Latch = full performance mode: the WHOLE window is the XY surface, so
-     the OS cursor is hidden everywhere (the XY dot is the pointer) and all
-     other controls are inert until Cmd+1 unlatches. */
-  body.xy-latch-live, body.xy-latch-live *{ cursor: none !important; }
   /* Hover tooltips: one shared element, shown after a short delay over any
      [data-tip] control. Monochrome, matches the tile-menu language. */
   .ui-tip{ position:fixed; z-index:1200; background:#1c1c1e; color:rgba(255,255,255,0.92);
@@ -491,8 +473,7 @@
     <main>
       <nav class="page-tabs" id="page_tabs">
         <button class="page-tab active" data-page="1">Main</button>
-        <button class="page-tab" data-page="2">Sequencer</button>
-        <button class="page-tab" data-page="4">Macros / XY</button>
+        <button class="page-tab" data-page="2">Modulation</button>
       </nav>
       <div class="preset-strip">
         <button class="preset-arrow" id="preset_prev" title="Previous preset">&#8249;</button>
@@ -868,120 +849,6 @@
         <div class="unit" style="justify-content:center; align-items:center; gap:18px; padding:14px 24px;">
           <button class="perf-btn" id="corrupt_btn" style="width:220px; height:46px; font-size:13px; letter-spacing:3px;">CORRUPT</button>
           <button class="perf-btn" id="corrupt_undo_btn" style="width:110px; height:46px;" disabled>UNDO</button>
-        </div>
-      </section>
-
-      <!-- ===================== SECOND UNIT: MACROS / XY ===================== -->
-      <section class="strip-wrap">
-        <div class="unit">
-
-          <!-- MACROS -->
-          <div class="module" style="width:300px;">
-            <div class="icon-row">
-              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
-              
-              
-            </div>
-            <div class="mode-tile-wrap">
-              <div class="mode-tile static" style="width:270px;height:100px;">
-                <div class="tile-glow"></div>
-                <svg class="tile-icon" viewBox="0 0 40 40" fill="#fff" style="margin-top:8px;"><path d="M20 4 L23 17 L36 20 L23 23 L20 36 L17 23 L4 20 L17 17 Z"/></svg>
-                <div class="tile-label">Macros</div>
-              </div>
-            </div>
-
-            <div class="knob-grid">
-              <div class="knob-wrap" style="margin-top:14px;">
-                <div class="knob" id="macro_damage" data-param="macroDamage" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="macroDamage">0%</div>
-                <div class="knob-label">Damage</div>
-              </div>
-              <div class="knob-wrap" style="margin-top:14px;">
-                <div class="knob" id="macro_crush" data-param="macroCrush" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="macroCrush">0%</div>
-                <div class="knob-label">Crush</div>
-              </div>
-              <div class="knob-wrap" style="margin-top:14px;">
-                <div class="knob" id="macro_glitch" data-param="macroGlitch" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="macroGlitch">0%</div>
-                <div class="knob-label">Glitch</div>
-              </div>
-              <div class="knob-wrap" style="margin-top:14px;">
-                <div class="knob" id="macro_chaos" data-param="macroChaos" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="macroChaos">0%</div>
-                <div class="knob-label">Chaos</div>
-              </div>
-            </div>
-
-            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" data-target="adv-macros"></div></div>
-            <div class="adv-content" id="adv-macros">
-              <div class="knob-grid">
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="macro_rhythm" data-param="macroRhythm" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="macroRhythm">0%</div>
-                  <div class="knob-label">Rhythm</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="macro_movement" data-param="macroMovement" data-min="0" data-max="100" data-default="0" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="macroMovement">0%</div>
-                  <div class="knob-label">Movement</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="macro_width" data-param="macroWidth" data-min="0" data-max="100" data-default="50" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="macroWidth">50%</div>
-                  <div class="knob-label">Width</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="macro_mix" data-param="macroMix" data-min="0" data-max="200" data-default="100" data-unit="%" data-decimals="0" style="width:56px;height:56px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="macroMix">100%</div>
-                  <div class="knob-label">Mix</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- XY PAD -->
-          <div class="module" style="flex:1 1 auto; min-width:384px;">
-            <div class="xy-card" id="xy_pad">
-              <span class="xy-label">Performance XY</span>
-              <span class="xy-latch" id="xy_latch" hidden>&#8984;L LATCH</span>
-              <div class="xy-dot" id="xy_dot" style="left:20%;bottom:20%;"></div>
-            </div>
-            <div class="xy-dest-row" style="display:flex; gap:10px; align-items:center; justify-content:center; margin-top:10px;">
-              <span class="knob-label" style="margin:0;">X &#8594;</span>
-              <select class="combo-sm" id="xy_x_dest" data-param="xyPadXDestination" style="width:130px;height:26px;"><option selected>Damage Macro</option><option>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
-              <span class="knob-label" style="margin:0 0 0 8px;">Y &#8594;</span>
-              <select class="combo-sm" id="xy_y_dest" data-param="xyPadYDestination" style="width:130px;height:26px;"><option>Damage Macro</option><option selected>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
-            </div>
-            <!-- v2.0.0: XY Glide relocated here from the retired Performance
-                 module's ADV drawer (xyPadSmoothing belongs to the XY pad). -->
-            <div style="display:flex; justify-content:center; margin-top:10px;">
-              <div class="knob-wrap" style="margin-top:0;">
-                <div class="knob" id="node_xy_glide" data-param="xyPadSmoothing" data-min="0" data-max="500" data-default="80" data-unit="ms" data-decimals="0" style="width:44px;height:44px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="xyPadSmoothing">80 ms</div>
-                <div class="knob-label">XY Glide</div>
-              </div>
-            </div>
-          </div>
-
         </div>
       </section>
 
@@ -1578,128 +1445,6 @@
     updateDebugMonitor('search_presets', e.target.value || '(empty)', '—');
   });
 
-  // ===================================================================
-  // XY PAD (Phase 5.4: continuous streaming during drag, hard requirement
-  // per plan.md - xyPadX/xyPadY must update on every pointermove, not just
-  // on release. Switched from mousedown/mousemove/mouseup to pointer events
-  // with setPointerCapture (so drag tracking survives the pointer leaving
-  // the pad's bounds mid-drag - clamp01 below still bounds the resulting
-  // normalised value to the pad's edges), and gesture-bracketed with
-  // sliderDragStarted()/sliderDragEnded() (Pattern from
-  // juce8-critical-patterns.md #"WebView Slider Gesture Bracketing" - so
-  // hosts' touch/latch automation-record modes and undo grouping work
-  // correctly, matching every other slider/knob/fader binding in this file).
-  // Deliberately does NOT add any UI-side smoothing of its own - the glide
-  // feel (matching xyPadSmoothing) is entirely DSP-side (SmoothedValue
-  // chasing this raw streamed position); the dot tracks the pointer exactly.
-  // ===================================================================
-  (function(){
-    const pad = document.getElementById('xy_pad');
-    const dot = document.getElementById('xy_dot');
-    const xState = Juce.getSliderState('xyPadX');
-    const yState = Juce.getSliderState('xyPadY');
-    let dragging = false;
-    let activePointerId = null;
-
-    // ---- Cmd+1 latch = full performance mode (user request 2026-09-05):
-    // while latched, the ENTIRE window maps to the pad's range - every
-    // pointer movement anywhere drives xyPadX/Y (full trackpad travel =
-    // full XY travel), the OS cursor is hidden, and every other control is
-    // click-proofed (capture-phase blockers) so live play can't misfire a
-    // knob or button. ONLY Cmd+1 unlatches. The automation gesture stays
-    // open for the whole latch so hosts record the full performance.
-    // Session-local, never persisted.
-    let latched = false;
-    const latchBadge = document.getElementById('xy_latch');
-    function setLatch(on){
-      if (latched === on) return;
-      latched = on;
-      pad.classList.toggle('latched', on);
-      document.body.classList.toggle('xy-latch-live', on);
-      if (latchBadge) latchBadge.hidden = !on;
-      if (on){ xState.sliderDragStarted(); yState.sliderDragStarted(); }
-      else if (!dragging){ xState.sliderDragEnded(); yState.sliderDragEnded(); }
-    }
-    document.addEventListener('keydown', e => {
-      // Cmd+L toggles latch (user-chosen final binding; Ctrl+L kept as a
-      // fallback for hosts that swallow Cmd chords).
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'l' || e.key === 'L')){
-        e.preventDefault();
-        setLatch(!latched);
-      }
-      // Esc is an unlatch-only panic exit - it never latches.
-      if (e.key === 'Escape' && latched){
-        e.preventDefault();
-        setLatch(false);
-      }
-    });
-    // Whole-window -> pad mapping while latched.
-    function setFromViewport(clientX, clientY){
-      const xN = clamp01(clientX / window.innerWidth);
-      const yN = clamp01(1 - clientY / window.innerHeight);
-      renderDot(xN, yN);
-      xState.setNormalisedValue(xN); yState.setNormalisedValue(yN);
-      updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
-    }
-    document.addEventListener('pointermove', e => {
-      if (latched) setFromViewport(e.clientX, e.clientY);
-    });
-    // While latched, swallow every click-like event before it reaches any
-    // control - the only exit is Cmd+1.
-    for (const type of ['pointerdown','pointerup','click','dblclick','contextmenu'])
-      document.addEventListener(type, e => {
-        if (latched){ e.preventDefault(); e.stopPropagation(); }
-      }, true);
-
-    function renderDot(xN, yN){
-      dot.style.left = (xN*100)+'%'; dot.style.bottom = (yN*100)+'%';
-    }
-
-    function setFromClient(clientX, clientY){
-      const rect = pad.getBoundingClientRect();
-      const xN = clamp01((clientX - rect.left)/rect.width);
-      const yN = clamp01(1 - (clientY - rect.top)/rect.height);
-      renderDot(xN, yN);
-      xState.setNormalisedValue(xN); yState.setNormalisedValue(yN);
-      updateDebugMonitor('xyPadX / xyPadY', `${(xN*100).toFixed(0)}%, ${(yN*100).toFixed(0)}%`, xN);
-    }
-
-    pad.addEventListener('pointerdown', e => {
-      dragging = true;
-      activePointerId = e.pointerId;
-      try{ pad.setPointerCapture(e.pointerId); }catch(err){}
-      if (!latched){ xState.sliderDragStarted(); yState.sliderDragStarted(); } // latch already holds the gesture open
-      setFromClient(e.clientX, e.clientY);
-      e.preventDefault();
-    });
-    pad.addEventListener('pointermove', e => {
-      if (latched) return; // whole-window document listener drives while latched
-      if(!dragging || e.pointerId !== activePointerId) return;
-      setFromClient(e.clientX, e.clientY);
-    });
-    function endDrag(e){
-      if(!dragging) return;
-      if(e && e.pointerId !== activePointerId) return;
-      dragging = false;
-      if (!latched){ xState.sliderDragEnded(); yState.sliderDragEnded(); } // latch keeps the gesture open
-      try{ pad.releasePointerCapture(activePointerId); }catch(err){}
-      activePointerId = null;
-    }
-    pad.addEventListener('pointerup', endDrag);
-    pad.addEventListener('pointercancel', endDrag);
-
-    // Reflect host automation / preset recall / DSP-side changes (e.g. a
-    // Performance Mode trigger or Mod Matrix slot driving xyPadX/Y) back
-    // into the dot's position when NOT actively being dragged by the user.
-    // valueChangedEvent fires with NO callback arguments (Pattern #15) -
-    // read the current values from the states themselves.
-    function reflectFromState(){
-      if(dragging) return;
-      renderDot(xState.getNormalisedValue(), yState.getNormalisedValue());
-    }
-    xState.valueChangedEvent.addListener(reflectFromState);
-    yState.valueChangedEvent.addListener(reflectFromState);
-  })();
 
   // ===================================================================
   // Phase 5.2: RHYTHMIC SEQUENCER — real editable step grid.
@@ -2439,17 +2184,6 @@
       sequencerSteps: 'Pattern length (16 or 32 steps)',
       sequencerDepth: 'Sequencer mix — how strongly all lanes modulate the sound (0% = off)',
       modMatrixEnabled: 'Modulation matrix + LFOs on/off',
-      macroDamage: 'Macro: cranks drive + crush together for instant destruction',
-      macroGlitch: 'Macro: raises glitch probability and intensity',
-      macroCrush: 'Macro: deepens bit/sample-rate crushing',
-      macroChaos: 'Macro: adds randomness across the engine',
-      macroMovement: 'Macro: increases modulation depth and motion',
-      macroRhythm: 'Macro: intensifies sequencer-driven rhythm',
-      macroWidth: 'Macro: stereo width treatment',
-      macroMix: 'Macro: overall wet balance',
-      xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)',
-      xyPadXDestination: 'What the X axis (left-right) controls',
-      xyPadYDestination: 'What the Y axis (up-down) controls' 
     };
     const ACTION_TIPS = {
       randomize_pattern: 'Randomize every step of the current lane’s pattern',
@@ -2460,7 +2194,6 @@
       clear_pattern: 'Reset the current lane to defaults'
     };
     const ID_TIPS = {
-      xy_pad: 'Drag to morph Damage (X) + Glitch (Y). Cmd+L latches: the whole window becomes the pad, no click needed. Cmd+L or Esc unlatches.',
       input_meter_topbar: 'Input level — red = clipping at the input',
       output_meter_topbar: 'Output level — red = clipping (limiter beaten)',
       step_grid: 'Click/drag bars to edit the selected lane’s steps',
@@ -2502,7 +2235,6 @@
       const t = e.target.closest ? e.target.closest('[data-tip]') : null;
       if (!t || t === tipTarget) return;
       // No tooltips at all in latch performance mode (cursor is hidden).
-      if (document.body.classList.contains('xy-latch-live')) { hideTip(); return; }
       hideTip();
       tipTarget = t;
       tipTimer = setTimeout(() => {
@@ -2524,35 +2256,17 @@
   })();
 
   // ===================================================================
-  // Page layout: 1 Main (chain + CORRUPT bar), 2 Sequencer + Mod Matrix,
-  // 4 Macros / XY (v2.0.0: the Performance trigger module is gone; its old
-  // page keeps the Macros + XY pad modules, moved out of the second unit at
-  // load - listeners travel with the DOM nodes). Last page remembered
-  // per-browser.
+  // Page layout (v3.0.0: two pages only — the Macros / XY page was removed
+  // with the Macro System and XY Pad): 1 Main (chain + CORRUPT bar),
+  // 2 Modulation (Sequencer + Mod Matrix). Last page remembered per-browser.
   // ===================================================================
   (function(){
     const unit1Section  = document.getElementById('node_algorithm_select').closest('section');
     const corruptSection = document.getElementById('corrupt_bar_section');
-    const unit2Section  = document.getElementById('xy_pad').closest('section');
     const seqSection    = document.getElementById('sequencer_body').closest('section');
     const matrixSection = document.getElementById('mod_matrix_body').closest('section');
-    const xyModule      = document.getElementById('xy_pad').closest('.module');
 
-    // Build the Macros / XY page as a clone of the unit-strip structure
-    const perfSection = document.createElement('section');
-    perfSection.className = 'strip-wrap';
-    const perfUnit = document.createElement('div');
-    perfUnit.className = 'unit';
-    perfSection.appendChild(perfUnit);
-    const macrosModule = document.querySelector('[data-param="macroDamage"]').closest('.module');
-    perfUnit.appendChild(macrosModule);
-    perfUnit.appendChild(xyModule);
-    matrixSection.after(perfSection);
-    unit2Section.remove(); // both of its modules now live on the Macros / XY page
-
-    // Modulation lives WITH the sequencer (user request 2026-09-06): the
-    // LFO row + compact 8-slot editor share page 2 as one "motion" page.
-    const PAGES = { 1: [unit1Section, corruptSection], 2: [seqSection, matrixSection], 4: [perfSection] };
+    const PAGES = { 1: [unit1Section, corruptSection], 2: [seqSection, matrixSection] };
     const tabs = document.querySelectorAll('#page_tabs .page-tab');
     function showPage(n){
       for (const k of Object.keys(PAGES))
@@ -2587,16 +2301,13 @@
       bitDepth:16, sampleRateReduction:1, glitchProbability:0, chaos:0,
       filterCutoff:20000, filterResonance:0, feedbackAmount:0, feedbackDamping:50,
       microDelayTime:10, mix:100, outputGain:0, limiterCeiling:-0.3, limiterRelease:300,
-      sequencerDepth:100, xyPadX:0, xyPadY:0, xyPadSmoothing:80,
-      macroDamage:0, macroCrush:0, macroGlitch:0, macroChaos:0,
-      macroRhythm:0, macroMovement:0, macroWidth:50, macroMix:100
+      sequencerDepth:100
     };
     for (let i=1;i<=4;i++) SLIDERS['lfo'+i+'Rate'] = 1;
     for (let i=1;i<=8;i++) SLIDERS['modSlot'+i+'Amount'] = 0;
     const COMBOS = {
       qualityMode:1, distortionAlgorithm:0, bitcrushMode:0, glitchMode:0, glitchBufferLength:4,
-      filterType:0, filterSlope:0, outputLimiterStyle:0, sequencerRate:2, sequencerSteps:0,
-      xyPadXDestination:0, xyPadYDestination:1
+      filterType:0, filterSlope:0, outputLimiterStyle:0, sequencerRate:2, sequencerSteps:0
     };
     for (let i=1;i<=4;i++) COMBOS['lfo'+i+'Shape'] = 0;
     for (let i=1;i<=8;i++){ COMBOS['modSlot'+i+'Source'] = 0; COMBOS['modSlot'+i+'Destination'] = 0; }
@@ -2614,16 +2325,16 @@
       // — saturation & warmth —
       { name:'Warm Tape',      p:{ drive:8, tone:-25, distortionAlgorithm:0, mix:85 } },
       { name:'Tube Glow',      p:{ drive:10, bias:35, distortionAlgorithm:3, tone:-10 } },
-      { name:'Console Crunch', p:{ drive:6, distortionAlgorithm:1, distortionMix:70, macroWidth:65 } },
+      { name:'Console Crunch', p:{ drive:6, distortionAlgorithm:1, distortionMix:70 } },
       { name:'Diode Grit',     p:{ drive:14, distortionAlgorithm:4, tone:15, filterType:0, filterCutoff:9000 } },
       // — aggressive —
       { name:'Big Fuzz Wall',  p:{ drive:20, distortionAlgorithm:5, tone:-15, filterCutoff:7500 } },
       { name:'Foldback Snarl', p:{ drive:16, fold:55, distortionAlgorithm:11, mix:90 } },
       { name:'Ring Modulator', p:{ drive:18, fold:62, distortionAlgorithm:10, mix:75 } },
-      { name:'Total Damage',   p:{ macroDamage:30, macroCrush:15, drive:8, distortionAlgorithm:5, tone:-10, mix:85 } },
+      { name:'Total Damage',   p:{ drive:14, bitDepth:9, sampleRateReduction:3, distortionAlgorithm:5, tone:-10, mix:85 } },
       // — lo-fi —
       { name:'8-Bit Arcade',   p:{ bitDepth:5, sampleRateReduction:8, bitcrushMode:0, distortionAlgorithm:6, drive:6 } },
-      { name:'VHS Memories',   p:{ bitDepth:10, sampleRateReduction:4, bitcrushMode:1, tone:-35, filterCutoff:8000, macroWidth:60 } },
+      { name:'VHS Memories',   p:{ bitDepth:10, sampleRateReduction:4, bitcrushMode:1, tone:-35, filterCutoff:8000 } },
       { name:'Telephone Call', p:{ filterType:2, filterCutoff:1800, filterResonance:35, bitDepth:8, drive:9 } },
       { name:'Broken Speaker', p:{ bitcrushMode:5, bitDepth:6, drive:12, distortionAlgorithm:2, filterCutoff:5000 } },
       { name:'Bit Mangler',    p:{ bitcrushMode:4, bitDepth:7, sampleRateReduction:6, drive:8 } },
@@ -2631,7 +2342,7 @@
       { name:'Stutter Step',   p:{ glitchMode:1, glitchProbability:65, glitchBufferLength:3 } },
       { name:'Buffer Overflow',p:{ glitchMode:17, glitchProbability:80, chaos:45, glitchBufferLength:2 } },
       { name:'Tape Eater',     p:{ glitchMode:10, glitchProbability:45, glitchBufferLength:5, tone:-20 } },
-      { name:'Granular Cloud', p:{ glitchMode:9, glitchProbability:75, glitchBufferLength:4, mix:80, macroWidth:70 } },
+      { name:'Granular Cloud', p:{ glitchMode:9, glitchProbability:75, glitchBufferLength:4, mix:80 } },
       { name:'Pitch Gremlin',  p:{ glitchMode:16, glitchProbability:55, glitchBufferLength:3, chaos:30 } },
       // — feedback —
       { name:'Metal Tank',     p:{ feedbackAmount:48, microDelayTime:2, feedbackDamping:45, drive:8 } },

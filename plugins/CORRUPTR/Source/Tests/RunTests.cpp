@@ -501,9 +501,10 @@ int main()
     }
 
     //=========================================================================
-    std::printf ("\n[10] v2.0.0: Performance section removed + v1 state migration\n");
+    std::printf ("\n[10] v2/v3 removals (performance, macros, XY pad) + legacy state migration\n");
     {
-        // All 14 performance* parameters must be gone from the APVTS layout.
+        // All removed parameters must be gone from the APVTS layout:
+        // v2.0.0's 14 performance* + v3.0.0's 8 macro* and 5 xyPad*.
         Harness h;
         static const char* const removedIds[] = {
             "performanceKill", "performanceGlitch", "performanceDestroy",
@@ -512,11 +513,14 @@ int main()
             "performanceKillAmount", "performanceGlitchAmount", "performanceDestroyAmount",
             "performanceFreezeAmount", "performanceReverseAmount", "performanceStutterAmount",
             "performanceChaosAmount",
+            "macroDamage", "macroCrush", "macroGlitch", "macroChaos",
+            "macroRhythm", "macroMovement", "macroWidth", "macroMix",
+            "xyPadX", "xyPadY", "xyPadSmoothing", "xyPadXDestination", "xyPadYDestination",
         };
         bool anyLeft = false;
         for (auto* id : removedIds)
             anyLeft = anyLeft || (h.proc->getAPVTS().getParameter (id) != nullptr);
-        check (! anyLeft, "all 14 performance* parameters removed from the layout");
+        check (! anyLeft, "all 27 removed parameters absent from the layout");
     }
     {
         // A corruptrStateVersion<=1 state carrying stale performance* PARAM
@@ -539,7 +543,7 @@ int main()
         // Legacy-entry tolerance: inject performance* PARAMs directly into the
         // APVTS state tree (what a v1 state's replaceState sees post-strip).
         juce::ValueTree legacy = target.proc->getAPVTS().copyState();
-        for (auto* id : { "performanceKill", "performanceDestroyAmount" })
+        for (auto* id : { "performanceKill", "performanceDestroyAmount", "macroDamage", "xyPadX" })
         {
             juce::ValueTree param ("PARAM");
             param.setProperty ("id", id, nullptr);
@@ -552,7 +556,7 @@ int main()
         Harness renderCheck;
         renderCheck.prepare();
         auto out = renderCheck.render (sine);
-        check (allFinite (out), "legacy performance PARAM entries tolerated (no crash, finite render)");
+        check (allFinite (out), "legacy performance/macro/xyPad PARAM entries tolerated (no crash, finite render)");
     }
 
     //=========================================================================
@@ -622,7 +626,7 @@ int main()
         setParam (*h.proc, "drive", 17.5f);
         setParam (*h.proc, "distortionAlgorithm", 9.0f);
         setParam (*h.proc, "filterCutoff", 1234.0f);
-        setParam (*h.proc, "macroDamage", 66.0f);
+        setParam (*h.proc, "feedbackDamping", 66.0f);
         auto& seq = h.proc->getRhythmicSequencer();
         seq.setStep (RhythmicSequencer::laneDrive, 3, 0.75f);
         seq.publishSnapshot();
@@ -638,7 +642,7 @@ int main()
         const bool paramsOk = std::abs (rawOf (h2, "drive") - 17.5f) < 0.01f
                            && (int) rawOf (h2, "distortionAlgorithm") == 9
                            && std::abs (rawOf (h2, "filterCutoff") - 1234.0f) < 1.0f
-                           && std::abs (rawOf (h2, "macroDamage") - 66.0f) < 0.01f;
+                           && std::abs (rawOf (h2, "feedbackDamping") - 66.0f) < 0.01f;
         check (paramsOk, "APVTS parameters survive round-trip");
         const float step = h2.proc->getRhythmicSequencer().getStep (RhythmicSequencer::laneDrive, 3);
         check (std::abs (step - 0.75f) < 1e-4f, "sequencer pattern survives round-trip");

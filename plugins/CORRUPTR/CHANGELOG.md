@@ -1,5 +1,40 @@
 # CORRUPTR Changelog
 
+## v3.0.0 — 2026-11-10 (Macros / XY page removed — two-page UI)
+
+### Breaking Changes
+- **Removed the Macros / XY page and everything behind it**: the 8 macro
+  parameters (`macroDamage`..`macroMix`), the MacroEngine fixed routing table
+  and all of its DSP contributions (drive/fold/feedback/bit-depth/SRR/glitch-
+  probability/chaos/gate/mix offsets, LFO + Random mod-depth multipliers),
+  the macroWidth-driven M/S stereo-width stage (it had become an identity
+  transform), and the XY Pad (`xyPadX/Y/Smoothing/XDestination/YDestination`,
+  glide smoothing, MIDI CC 2/3 control, Cmd+L whole-window latch mode).
+  27 parameters total are now gone since v1.x. Host automation lanes on any
+  `macro*`/`xyPad*` parameter no longer resolve.
+- Factory presets that used macros (Console Crunch, Total Damage,
+  VHS Memories, Granular Cloud) re-voiced onto direct parameters.
+
+### Migration Notes
+- `corruptrStateVersion` bumped 2 → 3. Older sessions/presets still load:
+  `setStateInformation()` strips stale `performance*`/`macro*`/`xyPad*`
+  PARAM entries before `replaceState()`; every surviving parameter restores
+  exactly.
+- The Mod Matrix's "Macro" source choice is kept in the modSlotNSource list
+  (removing it would re-index saved Source automation) but now always reads
+  0 — a dead source.
+
+### Changed
+- UI is now two pages: **Main** (chain + CORRUPT bar) and **Modulation**
+  (Sequencer + Mod Matrix; tab renamed from "Sequencer").
+- CORRUPT randomizer scope shrank accordingly (the 8 macros left the list);
+  all guardrails unchanged (feedback ≤10%, filters/levels frozen).
+
+### Removed (code)
+- `Source/dsp/MacroEngine.h` deleted; XY glide SmoothedValues, MIDI CC 2/3
+  cached pointers, stereo-width smoothing, 13 WebView relays + attachments,
+  the XY pad / latch JS and CSS, and the page-4 DOM-rebuild logic.
+
 ## v2.0.0 — 2026-11-10 (CORRUPT randomizer + Performance section removal)
 
 ### Breaking Changes

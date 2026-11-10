@@ -206,89 +206,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         10.0f,
         "ms"));
 
-    //=========================================================================
-    // Module: Macros
-    //=========================================================================
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroDamage", 1 },
-        "Macro Damage",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroCrush", 1 },
-        "Macro Crush",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroGlitch", 1 },
-        "Macro Glitch",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroChaos", 1 },
-        "Macro Chaos",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroRhythm", 1 },
-        "Macro Rhythm",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroMovement", 1 },
-        "Macro Movement",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroWidth", 1 },
-        "Macro Width",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        50.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "macroMix", 1 },
-        "Macro Mix",
-        juce::NormalisableRange<float>(0.0f, 200.0f, 0.01f, 1.0f),
-        100.0f,
-        "%"));
-
-    //=========================================================================
-    // Module: XY Performance Pad
-    //=========================================================================
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "xyPadX", 1 },
-        "XY Pad X",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "xyPadY", 1 },
-        "XY Pad Y",
-        juce::NormalisableRange<float>(0.0f, 100.0f, 0.01f, 1.0f),
-        0.0f,
-        "%"));
-
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "xyPadSmoothing", 1 },
-        "XY Pad Smoothing",
-        juce::NormalisableRange<float>(0.0f, 500.0f, 0.01f, 1.0f),
-        80.0f,
-        "ms"));
-
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "chaos", 1 },
         "Chaos",
@@ -457,21 +374,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         "Sequencer Depth",
         juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
 
-    // v5 spec addition (user request 2026-09-05): assignable XY pad axes.
-    // Choices 0/1 reproduce the Phase 3.9 fixed mapping (X->Damage macro,
-    // Y->Glitch macro); the rest route the axis directly into the Mod
-    // Matrix's normalized per-destination totals (half-range depth, same
-    // kXyPadModDepthFraction convention).
-    {
-        const juce::StringArray xyDests { "Damage Macro", "Glitch Macro", "Drive", "Mix",
-                                          "Filter Cutoff", "Bit Depth", "Sample Rate", "Fold",
-                                          "Feedback", "Glitch Probability" };
-        layout.add(std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID { "xyPadXDestination", 1 }, "XY Pad X Destination", xyDests, 0));
-        layout.add(std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID { "xyPadYDestination", 1 }, "XY Pad Y Destination", xyDests, 1));
-    }
-
     // v6 spec addition (user request 2026-09-05): filter slope. 24 dB
     // cascades a second identical stage (SVF pair / second notch biquad);
     // Comb ignores slope (not slope-defined).
@@ -566,25 +468,6 @@ CORRUPTRAudioProcessor::CORRUPTRAudioProcessor()
         modSlotAmountParam[(size_t) i] = parameters.getRawParameterValue("modSlot" + n + "Amount");
         modSlotEnableParam[(size_t) i] = parameters.getRawParameterValue("modSlot" + n + "Enable");
     }
-    macroDamageParamCached = parameters.getRawParameterValue("macroDamage");
-    macroCrushParamCached = parameters.getRawParameterValue("macroCrush");
-    macroGlitchParamCached = parameters.getRawParameterValue("macroGlitch");
-    macroChaosParamCached = parameters.getRawParameterValue("macroChaos");
-    macroRhythmParamCached = parameters.getRawParameterValue("macroRhythm");
-    macroMovementParamCached = parameters.getRawParameterValue("macroMovement");
-    macroWidthParamCached = parameters.getRawParameterValue("macroWidth");
-    macroMixParamCached = parameters.getRawParameterValue("macroMix");
-
-    //=========================================================================
-    // Stage 2 Phase 3.9: cache write-capable RangedAudioParameter* pointers
-    // needed for MIDI-driven setValueNotifyingHost() calls (XY Pad's two
-    // optional MIDI CC axes) — see PluginProcessor.h's Phase 3.9 doc comment
-    // for the caching rationale (same "repeated string-keyed lookups inside a
-    // per-block MIDI-message loop would be needless hashing" justification
-    // Phase 3.8 already established for its own 53 cached pointers).
-    //=========================================================================
-    xyPadXParamForMidi = parameters.getParameter("xyPadX");
-    xyPadYParamForMidi = parameters.getParameter("xyPadY");
 }
 
 CORRUPTRAudioProcessor::~CORRUPTRAudioProcessor()
@@ -720,7 +603,6 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     lfoLastValue.fill(0.0);
 
     modMatrixDestinationTotals.fill(0.0f);
-    macroContributions = MacroEngine::Contributions {};
     modMatrixGlitchSizeObservation.store(0.0f, std::memory_order_relaxed);
     modMatrixPanObservation.store(0.0f, std::memory_order_relaxed);
     modMatrixPitchObservation.store(0.0f, std::memory_order_relaxed);
@@ -814,8 +696,6 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     autoGainDryEnv = 0.0f; autoGainWetEnv = 0.0f;
     autoGainSmoothed.reset(sampleRate, 0.05);
     autoGainSmoothed.setCurrentAndTargetValue(1.0f);
-    stereoWidthSmoothed.reset(sampleRate, 0.02);
-    stereoWidthSmoothed.setCurrentAndTargetValue(1.0f);
     bitcrushLevelsSmoothed.reset(sampleRate, 0.015);
     bitcrushLevelsSmoothed.setCurrentAndTargetValue(65535.0f);
     bitcrushLevelsCurrent = 65535.0f;
@@ -848,19 +728,6 @@ void CORRUPTRAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBloc
     outputLimiter.setAttack(0.001f);
     outputLimiter.setThreshold(-0.3f);
     outputLimiter.setRelease(50.0f);
-
-    //=========================================================================
-    // Stage 2 Phase 3.9: XY Pad glide + Oversampling / Quality Engine. See
-    // PluginProcessor.h's Phase 3.9 doc comment for full design rationale.
-    //=========================================================================
-    {
-        const double xyRampSeconds = 0.08; // matches xyPadSmoothing's own 80ms default
-        xyPadXSmoothed.reset(sampleRate, xyRampSeconds);
-        xyPadXSmoothed.setCurrentAndTargetValue(0.0f); // matches xyPadX's default (0%)
-        xyPadYSmoothed.reset(sampleRate, xyRampSeconds);
-        xyPadYSmoothed.setCurrentAndTargetValue(0.0f); // matches xyPadY's default (0%)
-        lastXyPadSmoothingMs = -1.0f; // force a clean re-detect on the first processBlock() call (harmless — target/current already correctly seeded above)
-    }
 
     // Oversampling: three preallocated instances (2x/4x/8x — see "MEMORY
     // TRADEOFF" doc comment). initProcessing(1) — NOT samplesPerBlock — since
@@ -970,10 +837,6 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
             if (ccNumber == kModMatrixMidiCcNumber)
                 midiCcSourceValue = ccNorm; // Phase 3.8, unchanged
-            else if (ccNumber == kXyPadMidiCcX && xyPadXParamForMidi != nullptr)
-                xyPadXParamForMidi->setValueNotifyingHost(ccNorm); // xyPadX/xyPadY are normalized 0-1 == their own 0-100% linear range
-            else if (ccNumber == kXyPadMidiCcY && xyPadYParamForMidi != nullptr)
-                xyPadYParamForMidi->setValueNotifyingHost(ccNorm);
         }
     }
 
@@ -994,7 +857,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // down. See this method's own definition (below processBlock()) for the
     // full design rationale.
     //=========================================================================
-    resolveModMatrixAndMacroContributions(blockDurationSeconds, numSamples);
+    resolveModMatrixContributions(blockDurationSeconds, numSamples);
 
     //=========================================================================
     // Stage 2 Phase 3.7: Rhythmic Sequencer — resolves this block's step
@@ -1004,7 +867,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // `sequencerDriveContributionDb`) and before Phase 3.3/3.5's per-block
     // sections further down (which consume the other lanes' contributions).
     // As of Phase 3.8, this method's own Gate-lane accumulate() call also
-    // consumes `macroContributions.gateGainOffset` (resolved just above).
+    // consumes `0.0f` (resolved just above).
     // See PluginProcessor.h's Phase 3.7 doc comment and this method's own
     // definition (below processBlock()) for the full design rationale.
     //=========================================================================
@@ -1026,7 +889,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     //                  computed above by resolveModMatrixAndMacroContributions())
     //                  — replaces Phase 3.2's synthetic-sine stand-in
     //   - Macro:       AS OF PHASE 3.8, MacroEngine's REAL `macroDamage`
-    //                  routing (`macroContributions.driveDb`) — replaces
+    //                  routing (`0.0f`) — replaces
     //                  Phase 3.2's placeholder 0-100% -> 0..+8dB inline curve
     //
     // AS OF PHASE 3.7: the result is no longer diagnostic-only — it is
@@ -1049,7 +912,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             driveBase,
             sequencerDriveContributionDb,  // REAL Sequencer `drive`-lane contribution (Phase 3.7)
             modMatrixDriveContribution,    // REAL Mod Matrix `drive`-destination total (Phase 3.8)
-            macroContributions.driveDb,    // REAL macroDamage routing (Phase 3.8)
+            0.0f,    // v3.0.0: Macro System removed
             false, 0.0f, driveRangeMin, driveRangeMax);
 
         phase32DriveModulationObservation.store(modulatedDrive, std::memory_order_relaxed);
@@ -1107,7 +970,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     const float modMatrixFeedbackContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFeedback]
                                                      * 100.0f * kModMatrixDepthFraction;
     const float feedbackAmountPct = ModulationAccumulator::accumulate(
-        feedbackAmountParam->load(), 0.0f, modMatrixFeedbackContribution, macroContributions.feedbackAmountPct,
+        feedbackAmountParam->load(), 0.0f, modMatrixFeedbackContribution, 0.0f,
         false, 0.0f, 0.0f, 100.0f);
     // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
     // Feedback Amount %, for the knob's mod-range indicator.
@@ -1185,7 +1048,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float modMatrixFoldContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFold]
                                                      * 100.0f * kModMatrixDepthFraction;
         distortionFoldPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
-            foldParam->load(), 0.0f, modMatrixFoldContribution, macroContributions.foldPct,
+            foldParam->load(), 0.0f, modMatrixFoldContribution, 0.0f,
             false, 0.0f, 0.0f, 100.0f));
         // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
         // Fold %, for the knob's mod-range indicator.
@@ -1211,7 +1074,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
                                                           * (16.0f - 1.0f) * kModMatrixDepthFraction;
         const float bitDepth = juce::jlimit(1.0f, 16.0f, ModulationAccumulator::accumulate(
             bitDepthParam->load(), sequencerBitDepthContributionBits, modMatrixBitDepthContribution,
-            macroContributions.bitDepthBits, false, 0.0f, 1.0f, 16.0f));
+            0.0f, false, 0.0f, 1.0f, 16.0f));
         bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
         // Audit fix 2026-09-05: ramp the quantizer's level count (~15ms)
         // instead of snapping it - an instant 16-bit -> 1-bit jump (e.g.
@@ -1229,7 +1092,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
                                                      * (48.0f - 1.0f) * kModMatrixDepthFraction;
         const float srr = juce::jlimit(1.0f, 48.0f, ModulationAccumulator::accumulate(
             srrParam->load(), sequencerSampleRateContributionFactor, modMatrixSrrContribution,
-            macroContributions.sampleRateFactor, false, 0.0f, 1.0f, 48.0f));
+            0.0f, false, 0.0f, 1.0f, 48.0f));
         bitcrushHoldSamples = juce::jmax(1, static_cast<int>(std::round(srr)));
     }
 
@@ -1255,7 +1118,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
                                                         * 100.0f * kModMatrixDepthFraction;
     glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
         glitchProbabilityParam->load(), sequencerGlitchProbabilityContributionPct, modMatrixGlitchProbContribution,
-        macroContributions.glitchProbabilityPct, false, 0.0f, 0.0f, 100.0f));
+        0.0f, false, 0.0f, 0.0f, 100.0f));
     // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
     // Glitch Probability %, for the knob's mod-range indicator.
     visModGlitchProbabilityPct.store(glitchProbabilityPct, std::memory_order_relaxed);
@@ -1265,10 +1128,10 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // "Chaos" exists (mm stays a literal 0.0f); macroChaos's OTHER
     // documented target ("Mod Matrix Random source depth") is consumed
     // directly by ModMatrix::resolve() via
-    // `macroContributions.randomSourceDepthMultiplier`, not through this
+    // `0.0f`, not through this
     // accumulate() call.
     glitchChaosPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
-        chaosParam->load(), 0.0f, 0.0f, macroContributions.chaosPct,
+        chaosParam->load(), 0.0f, 0.0f, 0.0f,
         false, 0.0f, 0.0f, 100.0f));
 
     // Mode-change detection (plan.md Phase 3.5 Test Criteria: "Mode
@@ -1388,7 +1251,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         const float modMatrixMixContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destMix]
                                                      * (200.0f - 0.0f) * kModMatrixDepthFraction;
         const float modulatedMix = ModulationAccumulator::accumulate(
-            mixParam->load(), sequencerMixContributionPct, modMatrixMixContribution, macroContributions.mixPct,
+            mixParam->load(), sequencerMixContributionPct, modMatrixMixContribution, 0.0f,
             false, 0.0f, 0.0f, 200.0f);
         const float mixPct = juce::jlimit(0.0f, 200.0f, modulatedMix);
         // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
@@ -1826,26 +1689,8 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         if (coloredLimiterMode)
             coloredLimiterSaturation.process(context);
 
-        // Audit fix 2026-09-05: stereo width (macroWidth's real DSP) - M/S
-        // scale applied to the final stereo pair, pre-limiter. Skipped for
-        // mono. Allocation-free; smoothed per sample.
-        if (buffer.getNumChannels() >= 2)
-        {
-            float* l = buffer.getWritePointer(0);
-            float* r = buffer.getWritePointer(1);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                const float w = stereoWidthSmoothed.getNextValue();
-                const float mid  = (l[i] + r[i]) * 0.5f;
-                const float side = (l[i] - r[i]) * 0.5f * w;
-                l[i] = mid + side;
-                r[i] = mid - side;
-            }
-        }
-        else
-        {
-            stereoWidthSmoothed.skip(numSamples);
-        }
+        // v3.0.0: the macroWidth-driven M/S stereo-width stage was removed
+        // with the Macro System (it had become a fixed identity transform).
 
         // v7 (Ableton-style limiter controls): ceiling + release applied
         // per block. Auto release derives a program-dependent release from
@@ -2114,7 +1959,7 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
     // requirement.
     //
     // AS OF PHASE 3.8: Gate's `macroContribution` stub is filled with
-    // `macroContributions.gateGainOffset` (macroRhythm's documented
+    // `0.0f` (macroRhythm's documented
     // "Sequencer/Glitch gate intensity" routing, see dsp/MacroEngine.h) —
     // `macroContributions` is guaranteed already-resolved-for-this-block
     // here since resolveModMatrixAndMacroContributions() runs BEFORE this
@@ -2128,7 +1973,7 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
         0.0f, volumeRaw * kSequencerVolumeRangeDb, 0.0f, 0.0f, false, 0.0f, -kSequencerVolumeRangeDb, kSequencerVolumeRangeDb);
 
     const float modulatedGate = ModulationAccumulator::accumulate(
-        1.0f, gateRaw - 1.0f, 0.0f, macroContributions.gateGainOffset, false, 0.0f, 0.0f, 1.0f);
+        1.0f, gateRaw - 1.0f, 0.0f, 0.0f, false, 0.0f, 0.0f, 1.0f);
 
     sequencerVolumeGateGainTarget = juce::Decibels::decibelsToGain(modulatedVolumeDb) * modulatedGate;
     sequencerVolumeGateGainSmoothed.setTargetValue(sequencerVolumeGateGainTarget);
@@ -2156,53 +2001,10 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
 // rationale (call order, all 10 source values, destination wiring,
 // cached-pointer convention, dedicated RNG, XY Pad glide mechanism).
 //==============================================================================
-void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockDurationSeconds, int numSamples)
+void CORRUPTRAudioProcessor::resolveModMatrixContributions(double blockDurationSeconds, int numSamples)
 {
+    juce::ignoreUnused(numSamples);
     const bool modMatrixEnabledFlag = modMatrixEnabledParam->load() > 0.5f;
-
-    //=========================================================================
-    // Stage 2 Phase 3.9: XY Pad glide (component #10) — see
-    // PluginProcessor.h's Phase 3.9 doc comment ("XY PAD") for the full
-    // ramp-length-change-handling and default-mapping rationale. Ticked via
-    // skip(numSamples) since this method (and its Macro-blend consumer just
-    // below) resolves at CONTROL RATE, once per block.
-    //=========================================================================
-    float xyPadXCurrentPct = 0.0f;
-    float xyPadYCurrentPct = 0.0f;
-    {
-        auto* xyPadXParam = parameters.getRawParameterValue("xyPadX");
-        auto* xyPadYParam = parameters.getRawParameterValue("xyPadY");
-        auto* xyPadSmoothingParam = parameters.getRawParameterValue("xyPadSmoothing");
-
-        const float smoothingMs = xyPadSmoothingParam->load();
-        if (std::abs(smoothingMs - lastXyPadSmoothingMs) > 1.0e-3f)
-        {
-            // Ramp-length change: preserve the CURRENT (mid-glide) value
-            // across the reset() call instead of letting it snap to
-            // whatever target was last set — see PluginProcessor.h's
-            // "RAMP-LENGTH CHANGE HANDLING" doc comment for the full
-            // rationale.
-            const double sr = getSampleRate() > 0.0 ? getSampleRate() : 44100.0;
-            const double newRampSeconds = juce::jmax(0.0f, smoothingMs) / 1000.0;
-
-            const float preservedX = xyPadXSmoothed.getCurrentValue();
-            xyPadXSmoothed.reset(sr, newRampSeconds);
-            xyPadXSmoothed.setCurrentAndTargetValue(preservedX);
-
-            const float preservedY = xyPadYSmoothed.getCurrentValue();
-            xyPadYSmoothed.reset(sr, newRampSeconds);
-            xyPadYSmoothed.setCurrentAndTargetValue(preservedY);
-
-            lastXyPadSmoothingMs = smoothingMs;
-        }
-
-        xyPadXSmoothed.setTargetValue(juce::jlimit(0.0f, 100.0f, xyPadXParam->load()));
-        xyPadYSmoothed.setTargetValue(juce::jlimit(0.0f, 100.0f, xyPadYParam->load()));
-        xyPadXSmoothed.skip(juce::jmax(0, numSamples));
-        xyPadYSmoothed.skip(juce::jmax(0, numSamples));
-        xyPadXCurrentPct = xyPadXSmoothed.getCurrentValue();
-        xyPadYCurrentPct = xyPadYSmoothed.getCurrentValue();
-    }
 
     // Host BPM for tempo-synced LFOs — a THIRD independent, cheap,
     // allocation-free AudioPlayHead::getPosition() call this block. Phase
@@ -2264,55 +2066,12 @@ void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockD
     // earlier this same block (see kModMatrixMidiCcNumber's doc comment).
     sources.value[(size_t) ModMatrix::sourceMidiCc] = midiCcSourceValue;
 
-    //=========================================================================
-    // Macro System (architecture.md component #9) — fixed routing table,
-    // see dsp/MacroEngine.h.
-    //=========================================================================
-    const float macroDamagePctBase   = macroDamageParamCached->load();
-    const float macroCrushPct        = macroCrushParamCached->load();
-    const float macroGlitchPctBase   = macroGlitchParamCached->load();
-    const float macroChaosPct        = macroChaosParamCached->load();
-    const float macroRhythmPct       = macroRhythmParamCached->load();
-    const float macroMovementPct     = macroMovementParamCached->load();
-    const float macroWidthPct        = macroWidthParamCached->load();
-    const float macroMixPct          = macroMixParamCached->load();
+    // v3.0.0: the Macro System and XY Pad were removed. The "Macro" Mod
+    // Matrix source choice is kept in the modSlotNSource list (removing it
+    // would re-index every slot's saved Source automation) but now always
+    // reads 0 — a dead source.
+    sources.value[(size_t) ModMatrix::sourceMacro] = 0.0f;
 
-    // Stage 2 Phase 3.9: XY Pad's default mapping (X -> macroDamage, Y ->
-    // macroGlitch) — additive, half-of-full-range depth
-    // (kXyPadModDepthFraction), clamped back into each macro's own valid
-    // 0-100% range before MacroEngine::resolve() ever sees it (never fully
-    // overrides the macro's own knob — see PluginProcessor.h's "CONTRIBUTION
-    // DEPTH" doc comment).
-    // v5 (assignable XY axes): each axis blends into a macro ONLY when that
-    // macro is its selected destination; direct-parameter destinations are
-    // injected into modMatrixDestinationTotals after resolve() below.
-    auto* xyXDestParam = parameters.getRawParameterValue("xyPadXDestination");
-    auto* xyYDestParam = parameters.getRawParameterValue("xyPadYDestination");
-    const int xyXDest = juce::jlimit(0, 9, (int) xyXDestParam->load());
-    const int xyYDest = juce::jlimit(0, 9, (int) xyYDestParam->load());
-    const float xyDamageAdd = (xyXDest == 0 ? xyPadXCurrentPct : 0.0f) + (xyYDest == 0 ? xyPadYCurrentPct : 0.0f);
-    const float xyGlitchAdd = (xyXDest == 1 ? xyPadXCurrentPct : 0.0f) + (xyYDest == 1 ? xyPadYCurrentPct : 0.0f);
-    const float macroDamagePct = juce::jlimit(0.0f, 100.0f,
-        macroDamagePctBase + xyDamageAdd * kXyPadModDepthFraction);
-    const float macroGlitchPct = juce::jlimit(0.0f, 100.0f,
-        macroGlitchPctBase + xyGlitchAdd * kXyPadModDepthFraction);
-
-    macroContributions = MacroEngine::resolve(macroDamagePct, macroCrushPct, macroGlitchPct, macroChaosPct,
-                                               macroRhythmPct, macroMovementPct, macroWidthPct, macroMixPct);
-
-    // Audit fix 2026-09-05: macroWidth now drives REAL stereo width (M/S)
-    // instead of the deferred diagnostic-only observation. widthObservation
-    // is -50..+50 around the knob's 50% neutral -> width factor 0..2
-    // (0 = mono, 1 = unchanged, 2 = extra wide), smoothed 20ms.
-    stereoWidthSmoothed.setTargetValue(juce::jlimit(0.0f, 2.0f, 1.0f + macroContributions.widthObservation / 50.0f));
-
-    // Macro — FLAGGED: no per-slot "which of the 8 macros" parameter exists
-    // (same "no sub-selector parameter exists" gap as MIDI CC above) — the
-    // average of all 8 macros' 0-100% values, normalized to 0-1, is used as
-    // the generic "Macro" Mod Matrix source.
-    const float macroAveragePct = (macroDamagePct + macroCrushPct + macroGlitchPct + macroChaosPct
-                                    + macroRhythmPct + macroMovementPct + macroWidthPct + macroMixPct) / 8.0f;
-    sources.value[(size_t) ModMatrix::sourceMacro] = juce::jlimit(0.0f, 1.0f, macroAveragePct / 100.0f);
 
     //=========================================================================
     // 8-slot Mod Matrix resolution (architecture.md component #8).
@@ -2330,40 +2089,11 @@ void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockD
             slots[(size_t) i].amountPct        = modSlotAmountParam[(size_t) i]->load();
             slots[(size_t) i].enabled          = modSlotEnableParam[(size_t) i]->load() > 0.5f;
         }
-        modMatrixDestinationTotals = ModMatrix::resolve(slots, sources,
-                                                          macroContributions.lfoModMatrixDepthMultiplier,
-                                                          macroContributions.randomSourceDepthMultiplier);
+        modMatrixDestinationTotals = ModMatrix::resolve(slots, sources, 1.0f, 1.0f);
     }
     else
     {
         modMatrixDestinationTotals.fill(0.0f);
-    }
-
-    // v5 (assignable XY axes): direct-parameter destinations add the axis
-    // (0..1) into the normalized per-destination totals — the existing call
-    // sites scale by range * kModMatrixDepthFraction (half-range), matching
-    // the macro-blend depth convention. Independent of modMatrixEnabled
-    // (the XY pad is its own control, not a matrix slot).
-    {
-        auto xyChoiceToDest = [](int choice) -> int
-        {
-            switch (choice)
-            {
-                case 2: return ModMatrix::destDrive;
-                case 3: return ModMatrix::destMix;
-                case 4: return ModMatrix::destFilterCutoff;
-                case 5: return ModMatrix::destBitDepth;
-                case 6: return ModMatrix::destSampleRate;
-                case 7: return ModMatrix::destFold;
-                case 8: return ModMatrix::destFeedback;
-                case 9: return ModMatrix::destGlitchProbability;
-                default: return -1; // 0/1 = macro destinations, handled above
-            }
-        };
-        const int xd = xyChoiceToDest(xyXDest);
-        const int yd = xyChoiceToDest(xyYDest);
-        if (xd >= 0) modMatrixDestinationTotals[(size_t) xd] += xyPadXCurrentPct / 100.0f;
-        if (yd >= 0) modMatrixDestinationTotals[(size_t) yd] += xyPadYCurrentPct / 100.0f;
     }
 
     //=========================================================================
@@ -2383,7 +2113,7 @@ void CORRUPTRAudioProcessor::resolveModMatrixAndMacroContributions(double blockD
         false, 0.0f, -24.0f, 24.0f);
     const float modMatrixWidth = ModulationAccumulator::accumulate(
         0.0f, 0.0f, modMatrixDestinationTotals[(size_t) ModMatrix::destWidth] * 100.0f,
-        macroContributions.widthObservation, false, 0.0f, -100.0f, 100.0f);
+        0.0f, false, 0.0f, -100.0f, 100.0f);
 
     modMatrixGlitchSizeObservation.store(modMatrixGlitchSize, std::memory_order_relaxed);
     modMatrixPanObservation.store(modMatrixPan, std::memory_order_relaxed);
@@ -3228,8 +2958,10 @@ void CORRUPTRAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     // attribute in the root ValueTree from day one" advice.
     //=========================================================================
     // v2: the 14 performance* parameters were removed (Performance section
-    // retired in 2.0.0); loaders must tolerate their PARAM entries in v1 states.
-    xml->setAttribute("corruptrStateVersion", 2);
+    // retired in 2.0.0). v3: the 8 macro* + 5 xyPad* parameters were removed
+    // (Macros / XY page retired in 3.0.0). Loaders must tolerate all of their
+    // PARAM entries in older states.
+    xml->setAttribute("corruptrStateVersion", 3);
     xml->setAttribute("glitchRandomSeed", juce::String(glitchRandomSeedAtomic.load(std::memory_order_relaxed)));
 
     //=========================================================================
@@ -3265,17 +2997,19 @@ void CORRUPTRAudioProcessor::setStateInformation(const void* data, int sizeInByt
     if (xmlState != nullptr && xmlState->hasTagName(parameters.state.getType()))
     {
         //=====================================================================
-        // v2.0.0 migration: states saved by corruptrStateVersion <= 1 carry
-        // PARAM entries for the 14 removed performance* parameters. APVTS
-        // ignores unknown PARAM ids on replaceState, but stripping them here
-        // keeps re-saved state clean and makes the migration explicit.
+        // Migration: older states carry PARAM entries for removed parameters
+        // (v2.0.0 removed the 14 performance* params; v3.0.0 removed the 8
+        // macro* and 5 xyPad* params). APVTS ignores unknown PARAM ids on
+        // replaceState, but stripping them here keeps re-saved state clean
+        // and makes the migration explicit.
         //=====================================================================
         juce::ValueTree restoredState = juce::ValueTree::fromXml(*xmlState);
         for (int i = restoredState.getNumChildren(); --i >= 0;)
         {
             const juce::ValueTree child = restoredState.getChild(i);
+            const juce::String id = child.getProperty("id").toString();
             if (child.hasType("PARAM")
-                && child.getProperty("id").toString().startsWith("performance"))
+                && (id.startsWith("performance") || id.startsWith("macro") || id.startsWith("xyPad")))
                 restoredState.removeChild(i, nullptr);
         }
         parameters.replaceState(restoredState);

@@ -8,7 +8,6 @@
 #include "dsp/RhythmicSequencer.h"
 #include "dsp/Lfo.h"
 #include "dsp/ModMatrix.h"
-#include "dsp/MacroEngine.h"
 
 class CORRUPTRAudioProcessor : public juce::AudioProcessor
 {
@@ -532,29 +531,21 @@ private:
     std::array<std::atomic<float>*, 8> modSlotDestinationParam {};
     std::array<std::atomic<float>*, 8> modSlotAmountParam {};
     std::array<std::atomic<float>*, 8> modSlotEnableParam {};
-    std::atomic<float>* macroDamageParamCached = nullptr;
-    std::atomic<float>* macroCrushParamCached = nullptr;
-    std::atomic<float>* macroGlitchParamCached = nullptr;
-    std::atomic<float>* macroChaosParamCached = nullptr;
-    std::atomic<float>* macroRhythmParamCached = nullptr;
-    std::atomic<float>* macroMovementParamCached = nullptr;
-    std::atomic<float>* macroWidthParamCached = nullptr;
-    std::atomic<float>* macroMixParamCached = nullptr;
 
     // Per-block resolved outputs, consumed at each destination's own
     // per-block accumulate() call site -- see "DESTINATION WIRING" doc
-    // comment above.
+    // comment above. (v3.0.0: the Macro System and its MacroEngine
+    // contributions were removed with the Macros / XY page.)
     std::array<float, ModMatrix::kNumDestinations> modMatrixDestinationTotals {}; // raw units, NOT yet scaled to any destination's physical range -- see dsp/ModMatrix.h
-    MacroEngine::Contributions macroContributions;                               // physical-units-ready -- see dsp/MacroEngine.h
 
     // Destinations with no live DSP yet -- see "DESTINATION WIRING" doc
     // comment above (Glitch Size / Pitch / Pan / Width).
     std::atomic<float> modMatrixGlitchSizeObservation { 0.0f };
     std::atomic<float> modMatrixPanObservation { 0.0f };
     std::atomic<float> modMatrixPitchObservation { 0.0f };
-    std::atomic<float> modMatrixWidthObservation { 0.0f }; // combines the Mod Matrix's own "Width" destination total + macroWidth's contribution (both target the same not-yet-existing Stereo-width parameter)
+    std::atomic<float> modMatrixWidthObservation { 0.0f };
 
-    void resolveModMatrixAndMacroContributions(double blockDurationSeconds, int numSamples); // called once per block from processBlock(), BEFORE updateSequencerStepAndContributions() -- see "CALL ORDER" doc comment above. `numSamples` added in Phase 3.9 so this method can tick the XY Pad SmoothedValues via skip() at the correct base-rate pace before folding their contribution into macroDamage/macroGlitch -- see "Phase 3.9" doc comment below.
+    void resolveModMatrixContributions(double blockDurationSeconds, int numSamples); // called once per block from processBlock(), BEFORE updateSequencerStepAndContributions() -- see "CALL ORDER" doc comment above.
 
     //=========================================================================
     // Stage 2 Phase 3.9 (FINAL DSP phase): XY Pad, Performance Mode Triggers,
@@ -836,13 +827,8 @@ private:
     // change (see "LATENCY REPORTING" above) -- explicitly flagged, not an
     // oversight.
     //=========================================================================
-    juce::SmoothedValue<float> xyPadXSmoothed, xyPadYSmoothed; // 0-100 range, matching xyPadX/xyPadY's own %-range
-    float lastXyPadSmoothingMs = -1.0f; // change-detection sentinel (see "RAMP-LENGTH CHANGE HANDLING" above); -1 forces a clean first-block init
-    juce::RangedAudioParameter* xyPadXParamForMidi = nullptr; // cached write-capable pointer (MIDI CC -> setValueNotifyingHost()), separate from the plain getRawParameterValue() read used for the glide target each block
-    juce::RangedAudioParameter* xyPadYParamForMidi = nullptr;
-    static constexpr int kXyPadMidiCcX = 2; // FLAGGED fixed CC (CC1 already claimed by Mod Matrix's MIDI CC source, Phase 3.8's kModMatrixMidiCcNumber)
-    static constexpr int kXyPadMidiCcY = 3;
-    static constexpr float kXyPadModDepthFraction = 0.5f; // reuses kSequencerModDepthFraction/kModMatrixDepthFraction's established half-range-swing convention (see "CONTRIBUTION DEPTH" doc comment above)
+    // v3.0.0: XY Pad glide state, MIDI CC 2/3 pointers and depth constant
+    // removed with the Macros / XY page.
 
     std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 3> oversamplers; // index 0=2x(NORMAL), 1=4x(HIGH), 2=8x(EXTREME); ECO(1x)/AUTO-resolved-to-1x use no instance at all
     int activeOversamplingFactor = 1;        // 1/2/4/8, resolved once per block (see "AUTO HEURISTIC" above)
@@ -1494,7 +1480,6 @@ private:
     // limiterCeilingPostGain compensation stage).
     juce::dsp::Compressor<float> outputLimiter;
     float limiterAutoReleaseSmoothedMs = 300.0f; // v7: auto-release smoothing state
-    juce::SmoothedValue<float> stereoWidthSmoothed; // audit fix: macroWidth's real M/S width (1.0 = neutral)
     // v9: auto gain balancer state (see processBlock's balancer stage)
     float autoGainDryEnv = 0.0f, autoGainWetEnv = 0.0f;
     juce::SmoothedValue<float> autoGainSmoothed;

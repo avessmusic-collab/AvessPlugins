@@ -26,8 +26,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     graphBypassFilterRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassFilter");
     filterTypeRelay = std::make_unique<juce::WebComboBoxRelay>("filterType");
     bitcrushModeRelay = std::make_unique<juce::WebComboBoxRelay>("bitcrushMode");
-    xyPadXDestinationRelay = std::make_unique<juce::WebComboBoxRelay>("xyPadXDestination");
-    xyPadYDestinationRelay = std::make_unique<juce::WebComboBoxRelay>("xyPadYDestination");
     filterSlopeRelay = std::make_unique<juce::WebComboBoxRelay>("filterSlope");
     filterCutoffRelay = std::make_unique<juce::WebSliderRelay>("filterCutoff");
     filterMorphRelay = std::make_unique<juce::WebSliderRelay>("filterMorph");
@@ -44,7 +42,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     graphBypassBitcrushRelay = std::make_unique<juce::WebToggleButtonRelay>("graphBypassBitcrush");
     bitDepthRelay = std::make_unique<juce::WebSliderRelay>("bitDepth");
     sampleRateReductionRelay = std::make_unique<juce::WebSliderRelay>("sampleRateReduction");
-    xyPadSmoothingRelay = std::make_unique<juce::WebSliderRelay>("xyPadSmoothing");
     sequencerDepthRelay = std::make_unique<juce::WebSliderRelay>("sequencerDepth");
     // Audit fix 2026-09-05: the Feedback module's three controls were never
     // given relays in any GUI phase - the card rendered but was inert.
@@ -72,14 +69,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     sequencerStepsRelay = std::make_unique<juce::WebComboBoxRelay>("sequencerSteps");
 
     // --- Phase 5.3: Macros (8) ---
-    macroDamageRelay = std::make_unique<juce::WebSliderRelay>("macroDamage");
-    macroCrushRelay = std::make_unique<juce::WebSliderRelay>("macroCrush");
-    macroGlitchRelay = std::make_unique<juce::WebSliderRelay>("macroGlitch");
-    macroChaosRelay = std::make_unique<juce::WebSliderRelay>("macroChaos");
-    macroRhythmRelay = std::make_unique<juce::WebSliderRelay>("macroRhythm");
-    macroMovementRelay = std::make_unique<juce::WebSliderRelay>("macroMovement");
-    macroWidthRelay = std::make_unique<juce::WebSliderRelay>("macroWidth");
-    macroMixRelay = std::make_unique<juce::WebSliderRelay>("macroMix");
 
     // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs ---
     modMatrixEnabledRelay = std::make_unique<juce::WebToggleButtonRelay>("modMatrixEnabled");
@@ -131,8 +120,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     modSlot8EnableRelay = std::make_unique<juce::WebToggleButtonRelay>("modSlot8Enable");
 
     // --- Phase 5.4: XY Performance Pad (2) ---
-    xyPadXRelay = std::make_unique<juce::WebSliderRelay>("xyPadX");
-    xyPadYRelay = std::make_unique<juce::WebSliderRelay>("xyPadY");
 
     // ------------------------------------------------------------------------
     // STEP 2: CREATE WEBVIEW (with relay options + Phase 5.2's sequencer
@@ -174,8 +161,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*graphBypassFilterRelay)
             .withOptionsFrom(*filterTypeRelay)
             .withOptionsFrom(*bitcrushModeRelay)
-            .withOptionsFrom(*xyPadXDestinationRelay)
-            .withOptionsFrom(*xyPadYDestinationRelay)
             .withOptionsFrom(*filterSlopeRelay)
             .withOptionsFrom(*filterCutoffRelay)
             .withOptionsFrom(*filterMorphRelay)
@@ -188,7 +173,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*graphBypassBitcrushRelay)
             .withOptionsFrom(*bitDepthRelay)
             .withOptionsFrom(*sampleRateReductionRelay)
-            .withOptionsFrom(*xyPadSmoothingRelay)
             .withOptionsFrom(*sequencerDepthRelay)
             .withOptionsFrom(*toneRelay)
             .withOptionsFrom(*biasRelay)
@@ -209,14 +193,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*sequencerRateRelay)
             .withOptionsFrom(*sequencerStepsRelay)
 
-            .withOptionsFrom(*macroDamageRelay)
-            .withOptionsFrom(*macroCrushRelay)
-            .withOptionsFrom(*macroGlitchRelay)
-            .withOptionsFrom(*macroChaosRelay)
-            .withOptionsFrom(*macroRhythmRelay)
-            .withOptionsFrom(*macroMovementRelay)
-            .withOptionsFrom(*macroWidthRelay)
-            .withOptionsFrom(*macroMixRelay)
 
             .withOptionsFrom(*modMatrixEnabledRelay)
             .withOptionsFrom(*lfo1RateRelay)
@@ -265,8 +241,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*modSlot8AmountRelay)
             .withOptionsFrom(*modSlot8EnableRelay)
 
-            .withOptionsFrom(*xyPadXRelay)
-            .withOptionsFrom(*xyPadYRelay)
 
             // --- Phase 5.2: Rhythmic Sequencer pattern-data bridge (custom
             // state, NOT an APVTS parameter - cannot use a Relay/Attachment
@@ -384,10 +358,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("filterType"), *filterTypeRelay, nullptr);
     bitcrushModeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
         *processorRef.getAPVTS().getParameter("bitcrushMode"), *bitcrushModeRelay, nullptr);
-    xyPadXDestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("xyPadXDestination"), *xyPadXDestinationRelay, nullptr);
-    xyPadYDestinationAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("xyPadYDestination"), *xyPadYDestinationRelay, nullptr);
     filterSlopeAttachment = std::make_unique<juce::WebComboBoxParameterAttachment>(
         *processorRef.getAPVTS().getParameter("filterSlope"), *filterSlopeRelay, nullptr);
     filterCutoffAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
@@ -416,8 +386,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("bitDepth"), *bitDepthRelay, nullptr);
     sampleRateReductionAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("sampleRateReduction"), *sampleRateReductionRelay, nullptr);
-    xyPadSmoothingAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("xyPadSmoothing"), *xyPadSmoothingRelay, nullptr);
     sequencerDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("sequencerDepth"), *sequencerDepthRelay, nullptr);
     toneAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
@@ -462,22 +430,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("sequencerSteps"), *sequencerStepsRelay, nullptr);
 
     // --- Phase 5.3: Macros (8) ---
-    macroDamageAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroDamage"), *macroDamageRelay, nullptr);
-    macroCrushAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroCrush"), *macroCrushRelay, nullptr);
-    macroGlitchAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroGlitch"), *macroGlitchRelay, nullptr);
-    macroChaosAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroChaos"), *macroChaosRelay, nullptr);
-    macroRhythmAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroRhythm"), *macroRhythmRelay, nullptr);
-    macroMovementAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroMovement"), *macroMovementRelay, nullptr);
-    macroWidthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroWidth"), *macroWidthRelay, nullptr);
-    macroMixAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("macroMix"), *macroMixRelay, nullptr);
 
     // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs ---
     modMatrixEnabledAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
@@ -581,10 +533,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("modSlot8Enable"), *modSlot8EnableRelay, nullptr);
 
     // --- Phase 5.4: XY Performance Pad (2) ---
-    xyPadXAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("xyPadX"), *xyPadXRelay, nullptr);
-    xyPadYAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("xyPadY"), *xyPadYRelay, nullptr);
 
     // ------------------------------------------------------------------------
     // WEBVIEW SETUP
@@ -774,8 +722,9 @@ int CORRUPTRAudioProcessorEditor::getCurrentSequencerNumSteps() const
 //     graphBypassFilter)
 //   - every level/safety parameter (inputGain, outputGain, mix, limiter*,
 //     outputLimiterStyle, autoGain, qualityMode)
-//   - section bypasses, XY Pad routing, sequencerEnabled, modMatrixEnabled —
-//     structural switches the user set deliberately.
+//   - section bypasses, sequencerEnabled, modMatrixEnabled — structural
+//     switches the user set deliberately.
+// (v3.0.0: the 8 macros left this list when the Macro System was removed.)
 // feedbackAmount IS listed but is range-capped to 0-10% inside
 // doCorruptRandomize() itself.
 static const char* const kCorruptRandomizeParamIds[] = {
@@ -800,9 +749,6 @@ static const char* const kCorruptRandomizeParamIds[] = {
     "modSlot6Source", "modSlot6Destination", "modSlot6Amount", "modSlot6Enable",
     "modSlot7Source", "modSlot7Destination", "modSlot7Amount", "modSlot7Enable",
     "modSlot8Source", "modSlot8Destination", "modSlot8Amount", "modSlot8Enable",
-    // Macros
-    "macroDamage", "macroCrush", "macroGlitch", "macroChaos",
-    "macroRhythm", "macroMovement", "macroWidth", "macroMix",
 };
 
 void CORRUPTRAudioProcessorEditor::doCorruptRandomize()

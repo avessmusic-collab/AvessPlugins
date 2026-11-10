@@ -456,8 +456,6 @@ private:
     std::unique_ptr<juce::WebToggleButtonRelay> graphBypassFilterRelay;
     std::unique_ptr<juce::WebComboBoxRelay> filterTypeRelay;
     std::unique_ptr<juce::WebComboBoxRelay> bitcrushModeRelay; // v3 addition
-    std::unique_ptr<juce::WebComboBoxRelay> xyPadXDestinationRelay; // v5 addition
-    std::unique_ptr<juce::WebComboBoxRelay> xyPadYDestinationRelay; // v5 addition
     std::unique_ptr<juce::WebComboBoxRelay> filterSlopeRelay; // v6 addition
     std::unique_ptr<juce::WebSliderRelay> filterCutoffRelay;
     std::unique_ptr<juce::WebSliderRelay> filterMorphRelay;
@@ -474,7 +472,6 @@ private:
     std::unique_ptr<juce::WebToggleButtonRelay> graphBypassBitcrushRelay;
     std::unique_ptr<juce::WebSliderRelay> bitDepthRelay;
     std::unique_ptr<juce::WebSliderRelay> sampleRateReductionRelay; // Amount knob (post-5.6 user request)
-    std::unique_ptr<juce::WebSliderRelay> xyPadSmoothingRelay; // ADV XY Glide knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> sequencerDepthRelay; // Seq Mix knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> toneRelay;            // final-4: previously automation-only
     std::unique_ptr<juce::WebSliderRelay> biasRelay;
@@ -500,14 +497,6 @@ private:
     std::unique_ptr<juce::WebComboBoxRelay> sequencerStepsRelay;
 
     // --- Phase 5.3: Macros (8) ---
-    std::unique_ptr<juce::WebSliderRelay> macroDamageRelay;
-    std::unique_ptr<juce::WebSliderRelay> macroCrushRelay;
-    std::unique_ptr<juce::WebSliderRelay> macroGlitchRelay;
-    std::unique_ptr<juce::WebSliderRelay> macroChaosRelay;
-    std::unique_ptr<juce::WebSliderRelay> macroRhythmRelay;
-    std::unique_ptr<juce::WebSliderRelay> macroMovementRelay;
-    std::unique_ptr<juce::WebSliderRelay> macroWidthRelay;
-    std::unique_ptr<juce::WebSliderRelay> macroMixRelay;
 
     // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs (rate/shape/sync) ---
     std::unique_ptr<juce::WebToggleButtonRelay> modMatrixEnabledRelay;
@@ -559,8 +548,6 @@ private:
     std::unique_ptr<juce::WebToggleButtonRelay> modSlot8EnableRelay;
 
     // --- Phase 5.4: XY Performance Pad (2) ---
-    std::unique_ptr<juce::WebSliderRelay> xyPadXRelay;
-    std::unique_ptr<juce::WebSliderRelay> xyPadYRelay;
 
     // ------------------------------------------------------------------------
     // 2️⃣ WEBVIEW SECOND
@@ -585,8 +572,6 @@ private:
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> graphBypassFilterAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> filterTypeAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> bitcrushModeAttachment;
-    std::unique_ptr<juce::WebComboBoxParameterAttachment> xyPadXDestinationAttachment;
-    std::unique_ptr<juce::WebComboBoxParameterAttachment> xyPadYDestinationAttachment;
     std::unique_ptr<juce::WebComboBoxParameterAttachment> filterSlopeAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> filterCutoffAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> filterMorphAttachment;
@@ -603,7 +588,6 @@ private:
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> graphBypassBitcrushAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> bitDepthAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> sampleRateReductionAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> xyPadSmoothingAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> sequencerDepthAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> toneAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> biasAttachment;
@@ -629,14 +613,6 @@ private:
     std::unique_ptr<juce::WebComboBoxParameterAttachment> sequencerStepsAttachment;
 
     // --- Phase 5.3: Macros (8) ---
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroDamageAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroCrushAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroGlitchAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroChaosAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroRhythmAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroMovementAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroWidthAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> macroMixAttachment;
 
     // --- Phase 5.3: Modulation Matrix module enable + 4 LFOs (rate/shape/sync) ---
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> modMatrixEnabledAttachment;
@@ -688,8 +664,6 @@ private:
     std::unique_ptr<juce::WebToggleButtonParameterAttachment> modSlot8EnableAttachment;
 
     // --- Phase 5.4: XY Performance Pad (2) ---
-    std::unique_ptr<juce::WebSliderParameterAttachment> xyPadXAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> xyPadYAttachment;
 
     // ------------------------------------------------------------------------
     // v2.0.0: CORRUPT randomizer state (not part of the Relay/WebView/
