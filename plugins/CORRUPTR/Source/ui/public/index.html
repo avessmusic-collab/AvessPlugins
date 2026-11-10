@@ -283,6 +283,7 @@
     box-shadow: 0 1px 2px rgba(0,0,0,0.05); touch-action: none; user-select: none;
   }
   .perf-btn.on{ background: var(--perf-on); color: var(--perf-text-on); box-shadow: inset 0 2px 4px rgba(0,0,0,.3); }
+  .perf-btn:disabled{ opacity:.35; cursor:default; }
 
   /* XY pad */
   .xy-card{
@@ -491,7 +492,7 @@
       <nav class="page-tabs" id="page_tabs">
         <button class="page-tab active" data-page="1">Main</button>
         <button class="page-tab" data-page="2">Sequencer</button>
-        <button class="page-tab" data-page="4">Performance</button>
+        <button class="page-tab" data-page="4">Macros / XY</button>
       </nav>
       <div class="preset-strip">
         <button class="preset-arrow" id="preset_prev" title="Previous preset">&#8249;</button>
@@ -858,7 +859,19 @@
         </div>
       </section>
 
-      <!-- ===================== SECOND UNIT: MACROS / PERFORMANCE / XY ===================== -->
+      <!-- ===================== CORRUPT BAR (v2.0.0, main page, below the
+           glitch + low-pass filter modules): one-click randomizer with
+           one-level undo. Scope + guardrails live in C++
+           (PluginEditor::doCorruptRandomize): filters and levels are never
+           touched, feedback is capped at 10%. ===================== -->
+      <section class="strip-wrap" id="corrupt_bar_section">
+        <div class="unit" style="justify-content:center; align-items:center; gap:18px; padding:14px 24px;">
+          <button class="perf-btn" id="corrupt_btn" style="width:220px; height:46px; font-size:13px; letter-spacing:3px;">CORRUPT</button>
+          <button class="perf-btn" id="corrupt_undo_btn" style="width:110px; height:46px;" disabled>UNDO</button>
+        </div>
+      </section>
+
+      <!-- ===================== SECOND UNIT: MACROS / XY ===================== -->
       <section class="strip-wrap">
         <div class="unit">
 
@@ -943,95 +956,6 @@
             </div>
           </div>
 
-          <!-- PERFORMANCE -->
-          <div class="module" style="width:430px;">
-            <div class="icon-row">
-              <span class="icon-btn decorative-power"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v8"/><path d="M7 5.5a8 8 0 1 0 10 0"/></svg></span>
-              
-              
-            </div>
-            <div class="mode-tile-wrap">
-              <div class="mode-tile static" style="width:400px;height:100px;">
-                <div class="tile-glow"></div>
-                <svg class="tile-icon" viewBox="0 0 40 40" fill="#fff" style="margin-top:8px;"><path d="M22 4 L10 22 h8 l-2 14 L30 18 h-8 Z"/></svg>
-                <div class="tile-label">Performance</div>
-              </div>
-            </div>
-
-            <div class="perf-grid">
-              <button class="perf-btn" id="perf_kill" data-param="performanceKill" data-default="false">Kill</button>
-              <button class="perf-btn" id="perf_glitch" data-param="performanceGlitch" data-default="false">Glitch</button>
-              <button class="perf-btn" id="perf_destroy" data-param="performanceDestroy" data-default="false">Destroy</button>
-              <button class="perf-btn" id="perf_freeze" data-param="performanceFreeze" data-default="false">Freeze</button>
-              <button class="perf-btn" id="perf_reverse" data-param="performanceReverse" data-default="false">Reverse</button>
-              <button class="perf-btn" id="perf_stutter" data-param="performanceStutter" data-default="false">Stutter</button>
-              <button class="perf-btn" id="perf_chaos" data-param="performanceChaos" data-default="false">Chaos</button>
-            </div>
-
-            <div class="adv-row"><span class="adv-label">ADV</span><div class="adv-pill" id="adv_pill_performance" data-target="adv-performance"></div></div>
-            <div class="section-label" style="margin-top:14px; font-size:9px;">Trigger Amount</div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:8px;">
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="node_performancekillamount" data-param="performanceKillAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="performanceKillAmount">100 %</div>
-                  <div class="knob-label">Kill</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="node_performanceglitchamount" data-param="performanceGlitchAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="performanceGlitchAmount">100 %</div>
-                  <div class="knob-label">Gltch</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="node_performancedestroyamount" data-param="performanceDestroyAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="performanceDestroyAmount">100 %</div>
-                  <div class="knob-label">Dstry</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="node_performancefreezeamount" data-param="performanceFreezeAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="performanceFreezeAmount">100 %</div>
-                  <div class="knob-label">Frz</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="node_performancereverseamount" data-param="performanceReverseAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="performanceReverseAmount">100 %</div>
-                  <div class="knob-label">Rev</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="node_performancestutteramount" data-param="performanceStutterAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="performanceStutterAmount">100 %</div>
-                  <div class="knob-label">Stut</div>
-                </div>
-                <div class="knob-wrap" style="margin-top:0;">
-                  <div class="knob" id="node_performancechaosamount" data-param="performanceChaosAmount" data-min="0" data-max="100" data-default="100" data-unit="%" data-decimals="0" style="width:34px;height:34px;">
-                    <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                  </div>
-                  <div class="knob-value" data-value-for="performanceChaosAmount">100 %</div>
-                  <div class="knob-label">Chaos</div>
-                </div>
-            </div>
-            <div class="adv-content" id="adv-performance">
-              <div class="knob-wrap">
-                <div class="knob" id="node_xy_glide" data-param="xyPadSmoothing" data-min="0" data-max="500" data-default="80" data-unit="ms" data-decimals="0" style="width:60px;height:60px;">
-                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
-                </div>
-                <div class="knob-value" data-value-for="xyPadSmoothing">80 ms</div>
-                <div class="knob-label">XY Glide</div>
-              </div>
-            </div>
-          </div>
-
           <!-- XY PAD -->
           <div class="module" style="flex:1 1 auto; min-width:384px;">
             <div class="xy-card" id="xy_pad">
@@ -1044,6 +968,17 @@
               <select class="combo-sm" id="xy_x_dest" data-param="xyPadXDestination" style="width:130px;height:26px;"><option selected>Damage Macro</option><option>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
               <span class="knob-label" style="margin:0 0 0 8px;">Y &#8594;</span>
               <select class="combo-sm" id="xy_y_dest" data-param="xyPadYDestination" style="width:130px;height:26px;"><option>Damage Macro</option><option selected>Glitch Macro</option><option>Drive</option><option>Mix</option><option>Filter Cutoff</option><option>Bit Depth</option><option>Sample Rate</option><option>Fold</option><option>Feedback</option><option>Glitch Probability</option></select>
+            </div>
+            <!-- v2.0.0: XY Glide relocated here from the retired Performance
+                 module's ADV drawer (xyPadSmoothing belongs to the XY pad). -->
+            <div style="display:flex; justify-content:center; margin-top:10px;">
+              <div class="knob-wrap" style="margin-top:0;">
+                <div class="knob" id="node_xy_glide" data-param="xyPadSmoothing" data-min="0" data-max="500" data-default="80" data-unit="ms" data-decimals="0" style="width:44px;height:44px;">
+                  <div class="knob-track"></div><div class="knob-body"><span class="knob-dot"></span></div>
+                </div>
+                <div class="knob-value" data-value-for="xyPadSmoothing">80 ms</div>
+                <div class="knob-label">XY Glide</div>
+              </div>
             </div>
           </div>
 
@@ -1467,43 +1402,29 @@
   }
 
   // ===================================================================
-  // Perf trigger buttons (Phase 5.4: MOMENTARY press-and-hold, matching the
-  // DSP's momentary accumulator-override design for performanceKill/Glitch/
-  // Destroy/Freeze/Reverse/Stutter/Chaos - true while held, false on
-  // release/cancel. Previously toggled (latched) on mousedown; fixed here.
+  // v2.0.0: CORRUPT bar - one-click randomizer + one-level undo, wired to
+  // the C++ native functions (scope/guardrails live entirely on the C++
+  // side; this is just the trigger).
   // ===================================================================
-  function bindPerfButtons(scope){
-    scope.querySelectorAll('.perf-btn[data-param]:not([data-bound])').forEach(btn => {
-      btn.setAttribute('data-bound','1');
-      const param = btn.dataset.param;
-      const state = Juce.getToggleState(param);
-      function render(){ btn.classList.toggle('on', !!state.getValue()); }
-      render();
-
-      function press(e){
-        state.setValue(true);
-        render();
-        updateDebugMonitor(param, true, 1);
-        try{ btn.setPointerCapture(e.pointerId); }catch(err){}
-      }
-      function release(e){
-        if(!btn.classList.contains('on')) return; // already released (e.g. pointercancel after pointerup)
-        state.setValue(false);
-        render();
-        updateDebugMonitor(param, false, 0);
-        try{ btn.releasePointerCapture(e.pointerId); }catch(err){}
-      }
-      btn.addEventListener('pointerdown', press);
-      btn.addEventListener('pointerup', release);
-      btn.addEventListener('pointercancel', release);
-
-      // Reflect MIDI-triggered (notes 36-42) or host-automated changes into
-      // the button's visual state even when no pointer touched it.
-      // valueChangedEvent fires with NO callback arguments (Pattern #15) -
-      // read the current value from `state` itself.
-      state.valueChangedEvent.addListener(render);
+  (function(){
+    const corruptBtn = document.getElementById('corrupt_btn');
+    const undoBtn = document.getElementById('corrupt_undo_btn');
+    if (!corruptBtn || !undoBtn) return;
+    const nativeCorrupt = Juce.getNativeFunction('corruptRandomize');
+    const nativeUndo = Juce.getNativeFunction('corruptUndo');
+    // pointerup, not click: the v1 Performance buttons established that
+    // pointer events are the reliable path in the embedded WKWebView
+    // (.perf-btn carries touch-action:none).
+    corruptBtn.addEventListener('pointerup', () => {
+      nativeCorrupt();
+      undoBtn.disabled = false; // a fresh snapshot now exists
     });
-  }
+    undoBtn.addEventListener('pointerup', () => {
+      if (undoBtn.disabled) return;
+      nativeUndo();
+      undoBtn.disabled = true; // one level only - consumed
+    });
+  })();
 
   // ===================================================================
   // Mode tiles (icon-tile + chevron-cycle combo, e.g. distortionAlgorithm)
@@ -2526,20 +2447,6 @@
       macroRhythm: 'Macro: intensifies sequencer-driven rhythm',
       macroWidth: 'Macro: stereo width treatment',
       macroMix: 'Macro: overall wet balance',
-      performanceKill: 'Hold to hard-mute the output (key 1 on Perform page, MIDI note 36)',
-      performanceGlitch: 'Hold to force glitching (key 2, MIDI note 37)',
-      performanceDestroy: 'Hold to slam drive to maximum (key 3, MIDI note 38)',
-      performanceFreeze: 'Hold to freeze the audio buffer (key 4, MIDI note 39)',
-      performanceReverse: 'Hold for reverse playback (key 5, MIDI note 40)',
-      performanceStutter: 'Hold for stutter repeats (key 6, MIDI note 41)',
-      performanceChaos: 'Hold to spike randomness (key 7, MIDI note 42)',
-      performanceKillAmount: 'Kill depth — 100% full mute, lower = partial duck',
-      performanceGlitchAmount: 'Glitch trigger intensity (forced probability level)',
-      performanceDestroyAmount: 'Destroy intensity — how far drive/crush/feedback slam toward max',
-      performanceFreezeAmount: 'Freeze trigger intensity (forced probability level)',
-      performanceReverseAmount: 'Reverse trigger intensity (forced probability level)',
-      performanceStutterAmount: 'Stutter trigger intensity (forced probability level)',
-      performanceChaosAmount: 'Chaos trigger intensity (chaos level while held)',
       xyPadSmoothing: 'XY pad glide time — how slowly the sound chases the dot (0 = instant)',
       xyPadXDestination: 'What the X axis (left-right) controls',
       xyPadYDestination: 'What the Y axis (up-down) controls' 
@@ -2617,20 +2524,21 @@
   })();
 
   // ===================================================================
-  // 4-page layout (user request 2026-09-05): 1 Main (chain + macros),
-  // 2 Rhythmic Sequencer, 3 Modulation Matrix, 4 Live Performance
-  // (performance triggers + XY pad, moved out of the second unit at load -
-  // listeners travel with the DOM nodes). Last page remembered per-browser.
+  // Page layout: 1 Main (chain + CORRUPT bar), 2 Sequencer + Mod Matrix,
+  // 4 Macros / XY (v2.0.0: the Performance trigger module is gone; its old
+  // page keeps the Macros + XY pad modules, moved out of the second unit at
+  // load - listeners travel with the DOM nodes). Last page remembered
+  // per-browser.
   // ===================================================================
   (function(){
     const unit1Section  = document.getElementById('node_algorithm_select').closest('section');
+    const corruptSection = document.getElementById('corrupt_bar_section');
     const unit2Section  = document.getElementById('xy_pad').closest('section');
     const seqSection    = document.getElementById('sequencer_body').closest('section');
     const matrixSection = document.getElementById('mod_matrix_body').closest('section');
-    const perfModule    = document.getElementById('perf_kill').closest('.module');
     const xyModule      = document.getElementById('xy_pad').closest('.module');
 
-    // Build the Live Performance page as a clone of the unit-strip structure
+    // Build the Macros / XY page as a clone of the unit-strip structure
     const perfSection = document.createElement('section');
     perfSection.className = 'strip-wrap';
     const perfUnit = document.createElement('div');
@@ -2638,14 +2546,13 @@
     perfSection.appendChild(perfUnit);
     const macrosModule = document.querySelector('[data-param="macroDamage"]').closest('.module');
     perfUnit.appendChild(macrosModule);
-    perfUnit.appendChild(perfModule);
     perfUnit.appendChild(xyModule);
     matrixSection.after(perfSection);
-    unit2Section.remove(); // all three of its modules now live on the Performance page
+    unit2Section.remove(); // both of its modules now live on the Macros / XY page
 
     // Modulation lives WITH the sequencer (user request 2026-09-06): the
     // LFO row + compact 8-slot editor share page 2 as one "motion" page.
-    const PAGES = { 1: [unit1Section], 2: [seqSection, matrixSection], 4: [perfSection] };
+    const PAGES = { 1: [unit1Section, corruptSection], 2: [seqSection, matrixSection], 4: [perfSection] };
     const tabs = document.querySelectorAll('#page_tabs .page-tab');
     function showPage(n){
       for (const k of Object.keys(PAGES))
@@ -2665,78 +2572,6 @@
     showPage(start);
   })();
 
-  // ===================================================================
-  // Live-performance number keys (user request 2026-09-05): while the
-  // Perform page is active, digits 1-7 hold their performance trigger for
-  // as long as the key is held (auto-repeat ignored; release always
-  // clears, even if the page changed mid-hold). Modifier chords are left
-  // alone so Cmd+Z latch etc. still work.
-  // ===================================================================
-  (function(){
-    // Keyed by e.code (PHYSICAL key, modifier-independent) - e.key changes
-    // to '!' etc. if Shift is touched mid-hold, which made keyup miss the
-    // lookup and left the trigger stuck on (user-reported bug, 2026-09-05).
-    const CODE_TO_PARAM = {
-      Digit1: 'performanceKill',   Digit2: 'performanceGlitch',  Digit3: 'performanceDestroy',
-      Digit4: 'performanceFreeze', Digit5: 'performanceReverse', Digit6: 'performanceStutter',
-      Digit7: 'performanceChaos',
-      Numpad1: 'performanceKill',   Numpad2: 'performanceGlitch',  Numpad3: 'performanceDestroy',
-      Numpad4: 'performanceFreeze', Numpad5: 'performanceReverse', Numpad6: 'performanceStutter',
-      Numpad7: 'performanceChaos'
-    };
-    const states = {};
-    for (const c of Object.keys(CODE_TO_PARAM))
-      states[c] = Juce.getToggleState(CODE_TO_PARAM[c]);
-    function clearAll(){ for (const c of Object.keys(states)) states[c].setValue(false); }
-    // Held-key ledger + auto-repeat heartbeat watchdog (fix for
-    // occasionally-lost keyup events leaving a trigger stuck on): while a
-    // key is physically held, macOS delivers repeated keydowns - each one
-    // re-asserts the trigger AND stamps a heartbeat. If a key that HAS
-    // been heartbeating goes silent for >1.2s without a keyup, the keyup
-    // was lost - force-release it. Keys that never repeat (key-repeat
-    // disabled in System Settings) are exempt from the watchdog.
-    const held = new Map(); // code -> { sawRepeat, last }
-    let watchdog = null;
-    function stopWatchdogIfIdle(){ if (held.size === 0 && watchdog){ clearInterval(watchdog); watchdog = null; } }
-    function releaseCode(code){
-      const st = states[code];
-      if (st) st.setValue(false);
-      held.delete(code);
-      stopWatchdogIfIdle();
-    }
-    document.addEventListener('keydown', e => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const st = states[e.code];
-      if (!st) return;
-      if (e.repeat){
-        const rec = held.get(e.code);
-        if (rec){ rec.sawRepeat = true; rec.last = performance.now(); }
-        st.setValue(true); // self-healing re-assert while held
-        e.preventDefault();
-        return;
-      }
-      if (document.body.dataset.page !== '4') return;
-      e.preventDefault();
-      held.set(e.code, { sawRepeat: false, last: performance.now() });
-      st.setValue(true);
-      if (!watchdog)
-        watchdog = setInterval(() => {
-          const now = performance.now();
-          for (const [code, rec] of held)
-            if (rec.sawRepeat && now - rec.last > 1200) releaseCode(code); // lost keyup
-        }, 300);
-    });
-    window.addEventListener('keyup', e => {
-      if (states[e.code]) releaseCode(e.code); // capture phase: nothing can swallow it
-    }, true);
-    // Esc = performance panic: clears every trigger (and the XY latch handler
-    // already unlatches on Esc independently).
-    document.addEventListener('keydown', e => { if (e.key === 'Escape'){ clearAll(); held.clear(); stopWatchdogIfIdle(); } });
-    // Focus lost mid-hold (window switch, latch toggle, host stealing keys):
-    // keyup may never arrive - clear every trigger rather than leave one stuck.
-    window.addEventListener('blur', () => { clearAll(); held.clear(); stopWatchdogIfIdle(); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden){ clearAll(); held.clear(); stopWatchdogIfIdle(); } });
-  })();
 
   // ===================================================================
   // PRESET SYSTEM v1 (user request 2026-09-06): factory presets applied
@@ -2754,10 +2589,7 @@
       microDelayTime:10, mix:100, outputGain:0, limiterCeiling:-0.3, limiterRelease:300,
       sequencerDepth:100, xyPadX:0, xyPadY:0, xyPadSmoothing:80,
       macroDamage:0, macroCrush:0, macroGlitch:0, macroChaos:0,
-      macroRhythm:0, macroMovement:0, macroWidth:50, macroMix:100,
-      performanceKillAmount:100, performanceGlitchAmount:100, performanceDestroyAmount:100,
-      performanceFreezeAmount:100, performanceReverseAmount:100, performanceStutterAmount:100,
-      performanceChaosAmount:100
+      macroRhythm:0, macroMovement:0, macroWidth:50, macroMix:100
     };
     for (let i=1;i<=4;i++) SLIDERS['lfo'+i+'Rate'] = 1;
     for (let i=1;i<=8;i++) SLIDERS['modSlot'+i+'Amount'] = 0;
@@ -2771,9 +2603,7 @@
     const TOGGLES = {
       graphBypassSaturation:false, graphBypassWaveshaper:false, graphBypassBitcrush:false,
       graphBypassGlitch:false, graphBypassFilter:false, sequencerEnabled:false, modMatrixEnabled:false,
-      limiterAutoRelease:true, autoGain:true,
-      performanceKill:false, performanceGlitch:false, performanceDestroy:false, performanceFreeze:false,
-      performanceReverse:false, performanceStutter:false, performanceChaos:false
+      limiterAutoRelease:true, autoGain:true
     };
     for (let i=1;i<=4;i++) TOGGLES['lfo'+i+'Sync'] = false;
     for (let i=1;i<=8;i++) TOGGLES['modSlot'+i+'Enable'] = false;
@@ -2877,7 +2707,6 @@
   bindToggles(document);
   bindPowerButtons(document);
   bindEnableButtons(document);
-  bindPerfButtons(document);
   bindModeTiles(document);
   bindCombos(document);
 

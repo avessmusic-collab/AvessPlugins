@@ -421,6 +421,15 @@ private:
     void timerCallback() override;
     juce::var buildVisUpdateVar() const;
 
+    // ------------------------------------------------------------------------
+    // v2.0.0: CORRUPT randomizer (replaces the retired Performance section).
+    // doCorruptRandomize() snapshots then randomizes the allowed parameter
+    // set (feedbackAmount capped at 10%; filters and levels never touched)
+    // plus the sequencer pattern; doCorruptUndo() restores the snapshot once.
+    // ------------------------------------------------------------------------
+    void doCorruptRandomize();
+    bool doCorruptUndo();
+
     CORRUPTRAudioProcessor& processorRef;
 
     // ========================================================================
@@ -467,13 +476,6 @@ private:
     std::unique_ptr<juce::WebSliderRelay> sampleRateReductionRelay; // Amount knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> xyPadSmoothingRelay; // ADV XY Glide knob (post-5.6 user request)
     std::unique_ptr<juce::WebSliderRelay> sequencerDepthRelay; // Seq Mix knob (post-5.6 user request)
-    std::unique_ptr<juce::WebSliderRelay> performanceKillAmountRelay; // v8
-    std::unique_ptr<juce::WebSliderRelay> performanceGlitchAmountRelay; // v8
-    std::unique_ptr<juce::WebSliderRelay> performanceDestroyAmountRelay; // v8
-    std::unique_ptr<juce::WebSliderRelay> performanceFreezeAmountRelay; // v8
-    std::unique_ptr<juce::WebSliderRelay> performanceReverseAmountRelay; // v8
-    std::unique_ptr<juce::WebSliderRelay> performanceStutterAmountRelay; // v8
-    std::unique_ptr<juce::WebSliderRelay> performanceChaosAmountRelay; // v8
     std::unique_ptr<juce::WebSliderRelay> toneRelay;            // final-4: previously automation-only
     std::unique_ptr<juce::WebSliderRelay> biasRelay;
     std::unique_ptr<juce::WebSliderRelay> distortionMixRelay;
@@ -560,15 +562,6 @@ private:
     std::unique_ptr<juce::WebSliderRelay> xyPadXRelay;
     std::unique_ptr<juce::WebSliderRelay> xyPadYRelay;
 
-    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
-    std::unique_ptr<juce::WebToggleButtonRelay> performanceKillRelay;
-    std::unique_ptr<juce::WebToggleButtonRelay> performanceGlitchRelay;
-    std::unique_ptr<juce::WebToggleButtonRelay> performanceDestroyRelay;
-    std::unique_ptr<juce::WebToggleButtonRelay> performanceFreezeRelay;
-    std::unique_ptr<juce::WebToggleButtonRelay> performanceReverseRelay;
-    std::unique_ptr<juce::WebToggleButtonRelay> performanceStutterRelay;
-    std::unique_ptr<juce::WebToggleButtonRelay> performanceChaosRelay;
-
     // ------------------------------------------------------------------------
     // 2️⃣ WEBVIEW SECOND
     // ------------------------------------------------------------------------
@@ -612,13 +605,6 @@ private:
     std::unique_ptr<juce::WebSliderParameterAttachment> sampleRateReductionAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> xyPadSmoothingAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> sequencerDepthAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> performanceKillAmountAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> performanceGlitchAmountAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> performanceDestroyAmountAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> performanceFreezeAmountAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> performanceReverseAmountAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> performanceStutterAmountAttachment;
-    std::unique_ptr<juce::WebSliderParameterAttachment> performanceChaosAmountAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> toneAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> biasAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> distortionMixAttachment;
@@ -705,14 +691,15 @@ private:
     std::unique_ptr<juce::WebSliderParameterAttachment> xyPadXAttachment;
     std::unique_ptr<juce::WebSliderParameterAttachment> xyPadYAttachment;
 
-    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
-    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceKillAttachment;
-    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceGlitchAttachment;
-    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceDestroyAttachment;
-    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceFreezeAttachment;
-    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceReverseAttachment;
-    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceStutterAttachment;
-    std::unique_ptr<juce::WebToggleButtonParameterAttachment> performanceChaosAttachment;
+    // ------------------------------------------------------------------------
+    // v2.0.0: CORRUPT randomizer state (not part of the Relay/WebView/
+    // Attachment destruction-order contract above — plain data members).
+    // One-level undo: the exact pre-roll normalized parameter values plus
+    // the sequencer pattern snapshot. Message-thread only.
+    // ------------------------------------------------------------------------
+    std::vector<std::pair<juce::String, float>> corruptUndoSnapshot;
+    juce::ValueTree corruptUndoPattern;
+    bool corruptUndoAvailable = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CORRUPTRAudioProcessorEditor)
 };

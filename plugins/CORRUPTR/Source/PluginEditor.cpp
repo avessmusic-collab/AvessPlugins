@@ -48,13 +48,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     sequencerDepthRelay = std::make_unique<juce::WebSliderRelay>("sequencerDepth");
     // Audit fix 2026-09-05: the Feedback module's three controls were never
     // given relays in any GUI phase - the card rendered but was inert.
-    performanceKillAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceKillAmount");
-    performanceGlitchAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceGlitchAmount");
-    performanceDestroyAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceDestroyAmount");
-    performanceFreezeAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceFreezeAmount");
-    performanceReverseAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceReverseAmount");
-    performanceStutterAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceStutterAmount");
-    performanceChaosAmountRelay = std::make_unique<juce::WebSliderRelay>("performanceChaosAmount");
     toneRelay = std::make_unique<juce::WebSliderRelay>("tone");
     biasRelay = std::make_unique<juce::WebSliderRelay>("bias");
     distortionMixRelay = std::make_unique<juce::WebSliderRelay>("distortionMix");
@@ -141,15 +134,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
     xyPadXRelay = std::make_unique<juce::WebSliderRelay>("xyPadX");
     xyPadYRelay = std::make_unique<juce::WebSliderRelay>("xyPadY");
 
-    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
-    performanceKillRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceKill");
-    performanceGlitchRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceGlitch");
-    performanceDestroyRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceDestroy");
-    performanceFreezeRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceFreeze");
-    performanceReverseRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceReverse");
-    performanceStutterRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceStutter");
-    performanceChaosRelay = std::make_unique<juce::WebToggleButtonRelay>("performanceChaos");
-
     // ------------------------------------------------------------------------
     // STEP 2: CREATE WEBVIEW (with relay options + Phase 5.2's sequencer
     // pattern-data native-function bridge - see PluginEditor.h's "PHASE 5.2
@@ -206,13 +190,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*sampleRateReductionRelay)
             .withOptionsFrom(*xyPadSmoothingRelay)
             .withOptionsFrom(*sequencerDepthRelay)
-            .withOptionsFrom(*performanceKillAmountRelay)
-            .withOptionsFrom(*performanceGlitchAmountRelay)
-            .withOptionsFrom(*performanceDestroyAmountRelay)
-            .withOptionsFrom(*performanceFreezeAmountRelay)
-            .withOptionsFrom(*performanceReverseAmountRelay)
-            .withOptionsFrom(*performanceStutterAmountRelay)
-            .withOptionsFrom(*performanceChaosAmountRelay)
             .withOptionsFrom(*toneRelay)
             .withOptionsFrom(*biasRelay)
             .withOptionsFrom(*distortionMixRelay)
@@ -291,14 +268,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
             .withOptionsFrom(*xyPadXRelay)
             .withOptionsFrom(*xyPadYRelay)
 
-            .withOptionsFrom(*performanceKillRelay)
-            .withOptionsFrom(*performanceGlitchRelay)
-            .withOptionsFrom(*performanceDestroyRelay)
-            .withOptionsFrom(*performanceFreezeRelay)
-            .withOptionsFrom(*performanceReverseRelay)
-            .withOptionsFrom(*performanceStutterRelay)
-            .withOptionsFrom(*performanceChaosRelay)
-
             // --- Phase 5.2: Rhythmic Sequencer pattern-data bridge (custom
             // state, NOT an APVTS parameter - cannot use a Relay/Attachment
             // pair, see PluginEditor.h's top doc comment for the full design) ---
@@ -368,6 +337,23 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
                     emitSequencerPatternChanged();
                     completion(true);
                 })
+
+            // --- v2.0.0: CORRUPT randomizer (replaces the retired Performance
+            // section). Guardrails live in doCorruptRandomize(): feedbackAmount
+            // rolls within 0-10% only; filter, level/limiter and quality
+            // parameters are never touched. One-level undo restores the exact
+            // pre-click snapshot (including the sequencer pattern). ---
+            .withNativeFunction("corruptRandomize",
+                [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+                {
+                    doCorruptRandomize();
+                    completion(true);
+                })
+            .withNativeFunction("corruptUndo",
+                [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion completion)
+                {
+                    completion(doCorruptUndo());
+                })
     );
 
     // ------------------------------------------------------------------------
@@ -434,20 +420,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("xyPadSmoothing"), *xyPadSmoothingRelay, nullptr);
     sequencerDepthAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("sequencerDepth"), *sequencerDepthRelay, nullptr);
-    performanceKillAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceKillAmount"), *performanceKillAmountRelay, nullptr);
-    performanceGlitchAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceGlitchAmount"), *performanceGlitchAmountRelay, nullptr);
-    performanceDestroyAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceDestroyAmount"), *performanceDestroyAmountRelay, nullptr);
-    performanceFreezeAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceFreezeAmount"), *performanceFreezeAmountRelay, nullptr);
-    performanceReverseAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceReverseAmount"), *performanceReverseAmountRelay, nullptr);
-    performanceStutterAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceStutterAmount"), *performanceStutterAmountRelay, nullptr);
-    performanceChaosAmountAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceChaosAmount"), *performanceChaosAmountRelay, nullptr);
     toneAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("tone"), *toneRelay, nullptr);
     biasAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
@@ -613,22 +585,6 @@ CORRUPTRAudioProcessorEditor::CORRUPTRAudioProcessorEditor(CORRUPTRAudioProcesso
         *processorRef.getAPVTS().getParameter("xyPadX"), *xyPadXRelay, nullptr);
     xyPadYAttachment = std::make_unique<juce::WebSliderParameterAttachment>(
         *processorRef.getAPVTS().getParameter("xyPadY"), *xyPadYRelay, nullptr);
-
-    // --- Phase 5.4: Performance Mode triggers (7, momentary) ---
-    performanceKillAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceKill"), *performanceKillRelay, nullptr);
-    performanceGlitchAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceGlitch"), *performanceGlitchRelay, nullptr);
-    performanceDestroyAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceDestroy"), *performanceDestroyRelay, nullptr);
-    performanceFreezeAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceFreeze"), *performanceFreezeRelay, nullptr);
-    performanceReverseAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceReverse"), *performanceReverseRelay, nullptr);
-    performanceStutterAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceStutter"), *performanceStutterRelay, nullptr);
-    performanceChaosAttachment = std::make_unique<juce::WebToggleButtonParameterAttachment>(
-        *processorRef.getAPVTS().getParameter("performanceChaos"), *performanceChaosRelay, nullptr);
 
     // ------------------------------------------------------------------------
     // WEBVIEW SETUP
@@ -804,6 +760,110 @@ int CORRUPTRAudioProcessorEditor::getCurrentSequencerNumSteps() const
     if (auto* p = processorRef.getAPVTS().getRawParameterValue("sequencerSteps"))
         return (static_cast<int>(p->load()) == 1) ? 32 : 16;
     return 16;
+}
+
+//==============================================================================
+// v2.0.0: CORRUPT randomizer + one-level undo (replaces the retired
+// Performance section). Message-thread only (reached exclusively from the
+// WebView's native-function callbacks).
+//==============================================================================
+
+// Everything the CORRUPT button is allowed to roll. Deliberately absent, per
+// the improvement brief's guardrails:
+//   - every filter parameter (filterType/Cutoff/Resonance/Morph/Drive/Slope,
+//     graphBypassFilter)
+//   - every level/safety parameter (inputGain, outputGain, mix, limiter*,
+//     outputLimiterStyle, autoGain, qualityMode)
+//   - section bypasses, XY Pad routing, sequencerEnabled, modMatrixEnabled —
+//     structural switches the user set deliberately.
+// feedbackAmount IS listed but is range-capped to 0-10% inside
+// doCorruptRandomize() itself.
+static const char* const kCorruptRandomizeParamIds[] = {
+    // Distortion + bitcrush
+    "distortionAlgorithm", "drive", "tone", "bias", "fold", "distortionMix",
+    "bitcrushMode", "bitDepth", "sampleRateReduction", "chaos",
+    // Glitch engine
+    "glitchMode", "glitchBufferLength", "glitchProbability", "microDelayTime",
+    // Feedback (amount capped at 10%, damping free)
+    "feedbackAmount", "feedbackDamping",
+    // Sequencer (pattern itself is rolled separately via opRandom())
+    "sequencerRate", "sequencerSteps", "sequencerDepth",
+    // LFOs
+    "lfo1Rate", "lfo1Shape", "lfo1Sync", "lfo2Rate", "lfo2Shape", "lfo2Sync",
+    "lfo3Rate", "lfo3Shape", "lfo3Sync", "lfo4Rate", "lfo4Shape", "lfo4Sync",
+    // Mod Matrix slots
+    "modSlot1Source", "modSlot1Destination", "modSlot1Amount", "modSlot1Enable",
+    "modSlot2Source", "modSlot2Destination", "modSlot2Amount", "modSlot2Enable",
+    "modSlot3Source", "modSlot3Destination", "modSlot3Amount", "modSlot3Enable",
+    "modSlot4Source", "modSlot4Destination", "modSlot4Amount", "modSlot4Enable",
+    "modSlot5Source", "modSlot5Destination", "modSlot5Amount", "modSlot5Enable",
+    "modSlot6Source", "modSlot6Destination", "modSlot6Amount", "modSlot6Enable",
+    "modSlot7Source", "modSlot7Destination", "modSlot7Amount", "modSlot7Enable",
+    "modSlot8Source", "modSlot8Destination", "modSlot8Amount", "modSlot8Enable",
+    // Macros
+    "macroDamage", "macroCrush", "macroGlitch", "macroChaos",
+    "macroRhythm", "macroMovement", "macroWidth", "macroMix",
+};
+
+void CORRUPTRAudioProcessorEditor::doCorruptRandomize()
+{
+    auto& apvts = processorRef.getAPVTS();
+    auto& rng = juce::Random::getSystemRandom();
+
+    // Snapshot the exact pre-roll state first (params + sequencer pattern)
+    // so one click of UNDO restores it bit-for-bit.
+    corruptUndoSnapshot.clear();
+    for (const char* id : kCorruptRandomizeParamIds)
+        if (auto* param = apvts.getParameter(id))
+            corruptUndoSnapshot.push_back({ juce::String(id), param->getValue() });
+    corruptUndoPattern = processorRef.getRhythmicSequencer().toValueTree();
+    corruptUndoAvailable = true;
+
+    for (const char* id : kCorruptRandomizeParamIds)
+    {
+        auto* param = apvts.getParameter(id);
+        if (param == nullptr)
+            continue;
+
+        float norm = rng.nextFloat();
+
+        // Hard guardrail: feedback never randomized above 10% of its
+        // real-world 0-100% range.
+        if (juce::String(id) == "feedbackAmount")
+            norm *= param->convertTo0to1(10.0f);
+
+        param->beginChangeGesture();
+        param->setValueNotifyingHost(norm);
+        param->endChangeGesture();
+    }
+
+    // Roll the sequencer lanes too (opRandom publishes internally), then
+    // tell the JS grid to re-fetch.
+    processorRef.getRhythmicSequencer().opRandom(getCurrentSequencerNumSteps());
+    emitSequencerPatternChanged();
+}
+
+bool CORRUPTRAudioProcessorEditor::doCorruptUndo()
+{
+    if (!corruptUndoAvailable)
+        return false;
+
+    auto& apvts = processorRef.getAPVTS();
+    for (const auto& [id, value] : corruptUndoSnapshot)
+    {
+        if (auto* param = apvts.getParameter(id))
+        {
+            param->beginChangeGesture();
+            param->setValueNotifyingHost(value);
+            param->endChangeGesture();
+        }
+    }
+
+    processorRef.getRhythmicSequencer().fromValueTree(corruptUndoPattern);
+    emitSequencerPatternChanged();
+
+    corruptUndoAvailable = false; // one level only
+    return true;
 }
 
 //==============================================================================

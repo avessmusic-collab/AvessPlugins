@@ -634,106 +634,11 @@ private:
     // non-destructive-blend philosophy as every other additive modulation
     // source in this file.
     //
-    // ---- PERFORMANCE MODE TRIGGERS (component #11, 7 triggers) ----
-    // All 7 `performanceKill`..`performanceChaos` `AudioParameterBool`s are
-    // ALREADY declared (Stage 1). Each trigger's boolean state is resolved
-    // fresh every block (matching this file's default per-block
-    // `getRawParameterValue()` convention -- not cached, since there are
-    // only 7 and they are not read in a hot per-sample loop) into LOCAL
-    // `bool` variables near the top of `processBlock()`, then threaded
-    // through to every accumulate() call site each trigger affects (drive
-    // was already wired in Phase 3.2 as the pattern's first exercise; this
-    // phase extends the SAME override-wins/releases-cleanly pattern to the
-    // other 6). "Preset diff" VALUES below are this implementation's own
-    // resolution (architecture.md names the CONCEPT -- "engages a
-    // predefined preset diff... for instant dramatic change" -- without
-    // pinning down concrete per-trigger numeric deltas), documented in full
-    // at each call site in `processBlock()`:
-    //   - performanceKill: hard-overrides the Gate lane's EXISTING
-    //     `ModulationAccumulator::accumulate()` call (Phase 3.7's
-    //     `updateSequencerStepAndContributions()`) to 0.0 (fully closed,
-    //     the Gate lane's own native 0-1 range) -- a genuine, guaranteed
-    //     full mute applied as the LAST multiplicative gain stage before
-    //     Master Mix's post-mix `isfinite()` guard, independent of
-    //     `outputGain`'s narrower -24..+24dB range (which could not reach
-    //     genuine silence).
-    //   - performanceGlitch: overrides `glitchProbability`'s existing
-    //     accumulate() call to 100% (guarantees a glitch event fires) and
-    //     shares `chaos`'s override (60%, see performanceChaos below).
-    //   - performanceDestroy: `drive`'s override (already wired, Phase
-    //     3.2/3.7/3.8, 40dB/max) is joined by NEW overrides on `fold`
-    //     (100%), `bitDepth` (1 bit, minimum), `sampleRateReduction` (48x,
-    //     maximum), and `feedbackAmount` (90%) -- all via their EXISTING
-    //     accumulate() call sites. SAFETY NOTE: `feedbackAmount`'s override
-    //     still passes through the tanh soft-clamp (`kFeedbackMaxSafeGain`)
-    //     downstream exactly as any other value would -- Performance
-    //     Triggers are a HIGH-PRIORITY override within the modulation
-    //     accumulator layer, not a bypass of Phase 3.1's independent safety
-    //     layer beneath it.
-    //   - performanceFreeze / performanceReverse / performanceStutter: these
-    //     three target the DISCRETE `glitchMode`/`glitchBufferLength`
-    //     Choice parameters, which `ModulationAccumulator` cannot express
-    //     (it only combines CONTINUOUS float ranges) -- FLAGGED DEVIATION:
-    //     implemented as a direct, highest-priority override of the
-    //     already-block-resolved `glitchModeIndex`/`glitchBufferLengthIndex`
-    //     LOCAL variables (see the glitch per-block section in
-    //     processBlock()), the natural discrete-parameter equivalent of the
-    //     accumulator's override-wins-then-releases-instantly semantic
-    //     (re-evaluated fresh from the boolean flag every block, never
-    //     latched). Name-to-mode pairing is intuitive by design
-    //     (performanceFreeze forces glitchMode=Freeze, performanceReverse
-    //     forces glitchMode=Reverse, performanceStutter forces
-    //     glitchMode=Stutter) -- matching architecture.md's OWN explicit
-    //     worked example ("performanceFreeze forces glitchMode=Freeze +
-    //     near-zero glitch buffer length"). performanceFreeze ALSO forces
-    //     `glitchBufferLengthIndex=0` ("near-zero," per that same worked
-    //     example). All three ALSO force `glitchProbability` to 100%
-    //     (joining performanceGlitch/performanceChaos in that shared OR'd
-    //     override condition below) -- otherwise a user with
-    //     `glitchProbability=0%` (the parameter's own default) would see
-    //     NO audible effect from forcing just the mode/buffer-length, which
-    //     would contradict "instant dramatic change." MULTI-TRIGGER
-    //     PRECEDENCE (FLAGGED, architecture.md does not specify): if more
-    //     than one of these three is simultaneously active (e.g. two MIDI
-    //     notes held at once), first-match-wins in the fixed order
-    //     Freeze > Reverse > Stutter.
-    //   - performanceChaos: overrides `chaos`'s existing accumulate() call
-    //     to 100% (maximum unpredictability) and shares `glitchProbability`'s
-    //     100% override (joining the OR'd condition above). If
-    //     performanceGlitch is ALSO active simultaneously, performanceChaos's
-    //     100% chaos value takes precedence over performanceGlitch's own
-    //     60% (higher-intensity trigger wins on a shared destination,
-    //     FLAGGED, architecture.md does not specify multi-trigger
-    //     precedence for a shared continuous destination either).
-    //
-    // MIDI mapping (architecture.md MIDI Routing section: "fixed or
-    // user-assignable MIDI CC/Note -> AudioParameterBool::setValueNotifyingHost()
-    // (custom mapping table, no built-in JUCE MIDI-learn)"): NO per-trigger
-    // MIDI-mapping parameter exists in the locked parameter-spec.md (same
-    // "no sub-selector parameter exists" gap Phase 3.8 already documented
-    // for the Mod Matrix's MIDI CC source and Macro source) -- a FIXED
-    // Note-On/Note-Off mapping table (`kPerformanceTriggerMidiNotes`, notes
-    // 36-42, the General-MIDI low-percussion/"finger-drum-pad" range, a
-    // common convention for physical performance-trigger controllers) is
-    // used instead, MOMENTARY semantics (Note-On -> true, Note-Off ->
-    // false, matching "Momentary or toggle... recommend a simple internal
-    // flag per trigger" per architecture.md component #11 -- Momentary
-    // chosen as the simpler, more obviously "instant/dramatic,
-    // hold-to-engage" live-performance feel; toggle behavior remains
-    // available via the WebView UI / host automation regardless of this
-    // MIDI mapping's own semantics, once Stage 3 adds the UI). Cached
-    // `juce::RangedAudioParameter*` pointers (NOT `getRawParameterValue()`'s
-    // read-only atomic<float>*) are required here since MIDI-driven writes
-    // need the full parameter object's `setValueNotifyingHost()` API --
-    // fetched once in the constructor (same caching justification/pattern
-    // as Phase 3.8's 53 cached pointers: repeated string-keyed
-    // `getParameter()` lookups inside a MIDI-message loop would be needless
-    // repeated hashing). Extends Phase 3.8's EXISTING single MIDI scan loop
-    // in `processBlock()` (one scan, not two) -- Note-On/Note-Off messages
-    // are dispatched inside the SAME loop that already handles CC messages
-    // (Mod Matrix's MIDI CC source + this phase's own XY-Pad MIDI CC
-    // handling below), just a different `juce::MidiMessage` predicate
-    // branch.
+    // ---- PERFORMANCE MODE TRIGGERS: REMOVED in v2.0.0 ----
+    // The 7 performanceKill..performanceChaos triggers (+ their 7 Amount
+    // knobs) and their fixed MIDI Note-On/Off mapping were retired with the
+    // Performance section. setStateInformation() strips their stale PARAM
+    // entries from corruptrStateVersion<=1 states.
     //
     // ---- OVERSAMPLING / QUALITY ENGINE (component #12) ----
     // `qualityMode` (ECO/NORMAL/HIGH/EXTREME/AUTO) is ALREADY declared
@@ -938,14 +843,6 @@ private:
     static constexpr int kXyPadMidiCcX = 2; // FLAGGED fixed CC (CC1 already claimed by Mod Matrix's MIDI CC source, Phase 3.8's kModMatrixMidiCcNumber)
     static constexpr int kXyPadMidiCcY = 3;
     static constexpr float kXyPadModDepthFraction = 0.5f; // reuses kSequencerModDepthFraction/kModMatrixDepthFraction's established half-range-swing convention (see "CONTRIBUTION DEPTH" doc comment above)
-
-    static constexpr int kNumPerformanceTriggers = 7;
-    std::array<juce::RangedAudioParameter*, kNumPerformanceTriggers> performanceTriggerParams {}; // cached write-capable pointers, order matches kPerformanceTriggerIds/kPerformanceTriggerMidiNotes below
-    static constexpr std::array<const char*, kNumPerformanceTriggers> kPerformanceTriggerIds {
-        "performanceKill", "performanceGlitch", "performanceDestroy", "performanceFreeze",
-        "performanceReverse", "performanceStutter", "performanceChaos"
-    };
-    static constexpr std::array<int, kNumPerformanceTriggers> kPerformanceTriggerMidiNotes { 36, 37, 38, 39, 40, 41, 42 }; // FLAGGED fixed table -- see "MIDI mapping" doc comment above
 
     std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 3> oversamplers; // index 0=2x(NORMAL), 1=4x(HIGH), 2=8x(EXTREME); ECO(1x)/AUTO-resolved-to-1x use no instance at all
     int activeOversamplingFactor = 1;        // 1/2/4/8, resolved once per block (see "AUTO HEURISTIC" above)

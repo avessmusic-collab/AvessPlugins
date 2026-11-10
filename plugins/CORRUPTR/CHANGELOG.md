@@ -1,5 +1,46 @@
 # CORRUPTR Changelog
 
+## v2.0.0 — 2026-11-10 (CORRUPT randomizer + Performance section removal)
+
+### Breaking Changes
+- **Removed the entire Performance Mode section**: the 7 momentary triggers
+  (Kill/Glitch/Destroy/Freeze/Reverse/Stutter/Chaos), their 7 Amount knobs
+  (14 APVTS parameters total), the fixed MIDI note 36-42 trigger mapping, the
+  digits-1-7 keyboard triggers, and every Phase 3.9 DSP override they drove
+  (drive/fold/bitDepth/SRR/feedback Destroy slams, glitch mode/probability
+  forcing, Gate-lane Kill mute). Host automation lanes targeting any
+  `performance*` parameter no longer resolve.
+
+### Migration Notes
+- `corruptrStateVersion` bumped 1 → 2. Old sessions/presets still load:
+  `setStateInformation()` strips stale `performance*` PARAM entries from v1
+  states before `replaceState()`, so every surviving parameter restores
+  exactly; only the removed trigger values are dropped (silently).
+- The old "Performance" page keeps its Macros + XY Pad modules, renamed
+  "Macros / XY". The XY Glide knob (`xyPadSmoothing`) moved from the retired
+  module's ADV drawer into the XY Pad module itself.
+
+### Added
+- **CORRUPT button** (main page, in a new bar below the glitch + low-pass
+  filter modules): one click deals a fresh random patch across distortion +
+  bitcrush, the glitch engine, feedback, the sequencer (rate/steps/depth +
+  an `opRandom` pattern roll), all 4 LFOs, all 8 Mod Matrix slots, and all
+  8 macros. Hard guardrails: `feedbackAmount` only ever randomizes within
+  0-10%; filter parameters, input/output gain, mix, limiter settings,
+  quality mode, section bypasses, XY routing, and the sequencer/mod-matrix
+  enable switches are never touched.
+- **UNDO button** beside it: one-level undo restoring the exact pre-click
+  state (every randomized parameter + the sequencer pattern).
+- Implementation: WebView native functions `corruptRandomize`/`corruptUndo` →
+  message-thread `setValueNotifyingHost()` with begin/end change gestures, so
+  hosts see the changes as ordinary automation writes.
+
+### Testing
+- QA suite section [10] replaced (its two trigger checks tested removed
+  features): now verifies all 14 `performance*` parameters are gone from the
+  layout, state round-trips preserve surviving values, and legacy
+  `performance*` PARAM entries are tolerated without a crash.
+
 ## v1.0.2 — 2026-10-08 (full-effect QA audit)
 
 ### Fixed

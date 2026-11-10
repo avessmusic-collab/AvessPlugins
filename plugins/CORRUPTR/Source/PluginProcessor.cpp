@@ -266,44 +266,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
         "%"));
 
     //=========================================================================
-    // Module: Performance Triggers
-    //=========================================================================
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { "performanceKill", 1 },
-        "Performance Kill",
-        false));
-
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { "performanceGlitch", 1 },
-        "Performance Glitch",
-        false));
-
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { "performanceDestroy", 1 },
-        "Performance Destroy",
-        false));
-
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { "performanceFreeze", 1 },
-        "Performance Freeze",
-        false));
-
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { "performanceReverse", 1 },
-        "Performance Reverse",
-        false));
-
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { "performanceStutter", 1 },
-        "Performance Stutter",
-        false));
-
-    layout.add(std::make_unique<juce::AudioParameterBool>(
-        juce::ParameterID { "performanceChaos", 1 },
-        "Performance Chaos",
-        false));
-
-    //=========================================================================
     // Module: XY Performance Pad
     //=========================================================================
     layout.add(std::make_unique<juce::AudioParameterFloat>(
@@ -536,30 +498,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout CORRUPTRAudioProcessor::crea
     layout.add(std::make_unique<juce::AudioParameterBool>(
         juce::ParameterID { "limiterAutoRelease", 1 }, "Limiter Auto Release", true));
 
-    // v8 spec addition (user request 2026-09-06): per-trigger intensity.
-    // 100% = the original hard-override behavior, bit-exact.
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "performanceKillAmount", 1 }, "Kill Amount",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "performanceGlitchAmount", 1 }, "Glitch Amount",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "performanceDestroyAmount", 1 }, "Destroy Amount",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "performanceFreezeAmount", 1 }, "Freeze Amount",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "performanceReverseAmount", 1 }, "Reverse Amount",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "performanceStutterAmount", 1 }, "Stutter Amount",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID { "performanceChaosAmount", 1 }, "Chaos Amount",
-        juce::NormalisableRange<float> (0.0f, 100.0f, 0.1f), 100.0f));
-
     // v9 spec addition (user request 2026-09-06): auto gain balancer -
     // continuously matches processed loudness to the clean input's, so
     // drive/distortion changes character, not volume. Default ON.
@@ -640,16 +578,13 @@ CORRUPTRAudioProcessor::CORRUPTRAudioProcessor()
     //=========================================================================
     // Stage 2 Phase 3.9: cache write-capable RangedAudioParameter* pointers
     // needed for MIDI-driven setValueNotifyingHost() calls (XY Pad's two
-    // optional MIDI CC axes + the 7 Performance Mode triggers' Note-On/Off
-    // mapping) — see PluginProcessor.h's Phase 3.9 doc comment for the
-    // caching rationale (same "repeated string-keyed lookups inside a
+    // optional MIDI CC axes) — see PluginProcessor.h's Phase 3.9 doc comment
+    // for the caching rationale (same "repeated string-keyed lookups inside a
     // per-block MIDI-message loop would be needless hashing" justification
     // Phase 3.8 already established for its own 53 cached pointers).
     //=========================================================================
     xyPadXParamForMidi = parameters.getParameter("xyPadX");
     xyPadYParamForMidi = parameters.getParameter("xyPadY");
-    for (int i = 0; i < kNumPerformanceTriggers; ++i)
-        performanceTriggerParams[(size_t) i] = parameters.getParameter(kPerformanceTriggerIds[(size_t) i]);
 }
 
 CORRUPTRAudioProcessor::~CORRUPTRAudioProcessor()
@@ -1020,16 +955,9 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     //=========================================================================
     // Stage 2 Phase 3.8/3.9: single MIDI scan loop — architecture.md
     // component #8's Mod Matrix MIDI CC source (Phase 3.8, unchanged) PLUS
-    // Phase 3.9's XY Pad optional MIDI CC control (component #10) and the 7
-    // Performance Mode triggers' fixed Note-On/Off mapping (component #11).
-    // Per this phase's explicit task requirement ("one scan, not two"),
-    // Phase 3.8's original single loop is EXTENDED in place, not duplicated
-    // — see PluginProcessor.h's Phase 3.9 doc comment ("MIDI mapping" / XY
-    // Pad's own doc section) for the fixed-CC-number/fixed-note-table
-    // flagged resolutions. `message.isController()`'s Mod-Matrix-CC branch
-    // is byte-for-byte unchanged from Phase 3.8; two new `else if` CC
-    // branches (XY Pad X/Y) and one new Note-On/Off branch (Performance
-    // Triggers) are added alongside it.
+    // Phase 3.9's XY Pad optional MIDI CC control (component #10).
+    // v2.0.0: the 7 Performance Mode triggers' Note-On/Off branch removed
+    // with the Performance section.
     //=========================================================================
     for (const auto metadata : midiMessages)
     {
@@ -1047,73 +975,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
             else if (ccNumber == kXyPadMidiCcY && xyPadYParamForMidi != nullptr)
                 xyPadYParamForMidi->setValueNotifyingHost(ccNorm);
         }
-        else if (message.isNoteOn() || message.isNoteOff())
-        {
-            const int note = message.getNoteNumber();
-            for (int i = 0; i < kNumPerformanceTriggers; ++i)
-            {
-                if (note == kPerformanceTriggerMidiNotes[(size_t) i] && performanceTriggerParams[(size_t) i] != nullptr)
-                {
-                    // Momentary semantics — see PluginProcessor.h's "MIDI mapping" doc comment.
-                    performanceTriggerParams[(size_t) i]->setValueNotifyingHost(message.isNoteOn() ? 1.0f : 0.0f);
-                    break;
-                }
-            }
-        }
     }
 
     const double blockDurationSeconds = getSampleRate() > 0.0
                                              ? static_cast<double>(numSamples) / getSampleRate()
                                              : 0.0;
-
-    //=========================================================================
-    // Stage 2 Phase 3.9: Performance Mode Trigger resolution (component #11)
-    // — resolved into LOCAL bools ONCE here, near the top of processBlock(),
-    // so every downstream accumulate() call site this phase extends (drive,
-    // fold, bitDepth, sampleRateReduction, feedbackAmount, glitchProbability,
-    // chaos, the Gate lane inside updateSequencerStepAndContributions(), and
-    // the discrete glitchMode/glitchBufferLength overrides in the Glitch
-    // per-block section further down) can read the SAME resolved flags for
-    // this block. See PluginProcessor.h's Phase 3.9 doc comment for the full
-    // per-trigger "preset diff" rationale and multi-trigger precedence
-    // rules. `performanceKillActive` is read separately inside
-    // updateSequencerStepAndContributions() itself (that method already
-    // reads its own parameters fresh each block; passing it as a function
-    // parameter would be a needless signature change for a single bool).
-    //=========================================================================
-    const bool performanceKillActive     = parameters.getRawParameterValue("performanceKill")->load() > 0.5f;
-    const bool performanceGlitchActive   = parameters.getRawParameterValue("performanceGlitch")->load() > 0.5f;
-    const bool performanceDestroyActive  = parameters.getRawParameterValue("performanceDestroy")->load() > 0.5f;
-    const bool performanceFreezeActive   = parameters.getRawParameterValue("performanceFreeze")->load() > 0.5f;
-    const bool performanceReverseActive  = parameters.getRawParameterValue("performanceReverse")->load() > 0.5f;
-    const bool performanceStutterActive  = parameters.getRawParameterValue("performanceStutter")->load() > 0.5f;
-    const bool performanceChaosActive    = parameters.getRawParameterValue("performanceChaos")->load() > 0.5f;
-    juce::ignoreUnused(performanceKillActive); // consumed inside updateSequencerStepAndContributions(), not here
-
-    // Shared OR'd conditions reused at multiple accumulate() call sites below
-    // (see PluginProcessor.h's "performanceFreeze / performanceReverse /
-    // performanceStutter" and "performanceChaos" doc comment sections).
-    const bool anyTriggerWantsFullGlitchProbability =
-        performanceGlitchActive || performanceFreezeActive || performanceReverseActive
-        || performanceStutterActive || performanceChaosActive;
-    const bool anyTriggerWantsChaosOverride = performanceChaosActive || performanceGlitchActive;
-
-    // v8 (per-trigger amounts): each trigger's intensity knob, 0..1.
-    auto perfAmt = [this](const char* id){ return juce::jlimit(0.0f, 1.0f, parameters.getRawParameterValue(id)->load() / 100.0f); };
-    const float destroyAmt = perfAmt("performanceDestroyAmount");
-    const float glitchAmt  = perfAmt("performanceGlitchAmount");
-    const float freezeAmt  = perfAmt("performanceFreezeAmount");
-    const float reverseAmt = perfAmt("performanceReverseAmount");
-    const float stutterAmt = perfAmt("performanceStutterAmount");
-    const float chaosAmt   = perfAmt("performanceChaosAmount");
-    // Forced glitch probability scales with the STRONGEST active trigger's amount.
-    float triggerForcedProbNorm = 0.0f;
-    if (performanceGlitchActive)  triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, glitchAmt);
-    if (performanceFreezeActive)  triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, freezeAmt);
-    if (performanceReverseActive) triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, reverseAmt);
-    if (performanceStutterActive) triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, stutterAmt);
-    if (performanceChaosActive)   triggerForcedProbNorm = juce::jmax(triggerForcedProbNorm, chaosAmt);
-    const float chaosOverrideValue = (performanceChaosActive ? 100.0f * chaosAmt : 60.0f * glitchAmt); // Chaos wins over Glitch if both active
 
     //=========================================================================
     // Stage 2 Phase 3.8: Modulation Matrix (8 slots) + 4 LFOs + Macro System
@@ -1162,14 +1028,6 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     //   - Macro:       AS OF PHASE 3.8, MacroEngine's REAL `macroDamage`
     //                  routing (`macroContributions.driveDb`) — replaces
     //                  Phase 3.2's placeholder 0-100% -> 0..+8dB inline curve
-    //   - Performance Trigger: REAL `performanceDestroy` bool APVTS
-    //                  parameter gates the override value (driveRangeMax,
-    //                  40dB) — AS OF PHASE 3.9, this IS the real, final
-    //                  "Destroy" preset-diff for `drive` (joined this phase
-    //                  by NEW fold/bitDepth/sampleRateReduction/
-    //                  feedbackAmount overrides at their own call sites
-    //                  below, all gated by the same `performanceDestroyActive`
-    //                  flag — see PluginProcessor.h's Phase 3.9 doc comment)
     //
     // AS OF PHASE 3.7: the result is no longer diagnostic-only — it is
     // stored in `phase32DriveModulationObservation` and CONSUMED by
@@ -1183,27 +1041,16 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
 
         auto* driveParam = parameters.getRawParameterValue("drive");
         const float driveBase = driveParam->load();
-        // performanceDestroyActive resolved once, earlier this block (Phase
-        // 3.9 Performance Trigger resolution section) — reused here, not
-        // re-fetched.
 
         const float modMatrixDriveContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destDrive]
                                                        * (driveRangeMax - driveRangeMin) * kModMatrixDepthFraction;
 
-        const float performanceDestroyOverrideValue = driveRangeMax; // "Destroy" -> max drive (AS OF PHASE 3.9: the real, final diff, not a placeholder)
-
-        // v8: Destroy blends toward its extreme by its amount knob (100% =
-        // original hard override) - same pattern at every Destroy site below.
-        const float driveNoOverride = ModulationAccumulator::accumulate(
+        const float modulatedDrive = ModulationAccumulator::accumulate(
             driveBase,
             sequencerDriveContributionDb,  // REAL Sequencer `drive`-lane contribution (Phase 3.7)
             modMatrixDriveContribution,    // REAL Mod Matrix `drive`-destination total (Phase 3.8)
             macroContributions.driveDb,    // REAL macroDamage routing (Phase 3.8)
             false, 0.0f, driveRangeMin, driveRangeMax);
-        const float modulatedDrive = performanceDestroyActive
-            ? juce::jlimit(driveRangeMin, driveRangeMax,
-                            driveNoOverride + (performanceDestroyOverrideValue - driveNoOverride) * destroyAmt)
-            : driveNoOverride;
 
         phase32DriveModulationObservation.store(modulatedDrive, std::memory_order_relaxed);
     }
@@ -1257,20 +1104,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // just below, so that formula still only ever sees a valid 0-100% input,
     // exactly as before; this adds an EXTRA clamp layer upstream of the
     // existing one, it does not remove or bypass it.
-    // Stage 2 Phase 3.9: performanceDestroy's "Feedback Amount" override
-    // (90% — aggressive but still passes through the SAME unconditional
-    // tanh soft-clamp below regardless of how it was reached; Performance
-    // Triggers are a high-priority override layer WITHIN the modulation
-    // accumulator, not a bypass of Phase 3.1's independent safety layer
-    // beneath it — see PluginProcessor.h's Phase 3.9 doc comment).
     const float modMatrixFeedbackContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFeedback]
                                                      * 100.0f * kModMatrixDepthFraction;
-    const float feedbackNoOverride = ModulationAccumulator::accumulate(
+    const float feedbackAmountPct = ModulationAccumulator::accumulate(
         feedbackAmountParam->load(), 0.0f, modMatrixFeedbackContribution, macroContributions.feedbackAmountPct,
         false, 0.0f, 0.0f, 100.0f);
-    const float feedbackAmountPct = performanceDestroyActive
-        ? juce::jlimit(0.0f, 100.0f, feedbackNoOverride + (90.0f - feedbackNoOverride) * destroyAmt)
-        : feedbackNoOverride;
     // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
     // Feedback Amount %, for the knob's mod-range indicator.
     visModFeedbackAmountPct.store(feedbackAmountPct, std::memory_order_relaxed);
@@ -1344,16 +1182,11 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
         // ("Fold-bias-toward-clip" target) contributions — a NEWLY added
         // accumulate() call site (fold had no accumulate() call before this
         // phase; Phase 3.3 read it as a raw APVTS value directly).
-        // Stage 2 Phase 3.9: performanceDestroy's "Fold" override (100%,
-        // maximum destruction).
         const float modMatrixFoldContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destFold]
                                                      * 100.0f * kModMatrixDepthFraction;
-        const float foldNoOverride = ModulationAccumulator::accumulate(
+        distortionFoldPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
             foldParam->load(), 0.0f, modMatrixFoldContribution, macroContributions.foldPct,
-            false, 0.0f, 0.0f, 100.0f);
-        distortionFoldPct = juce::jlimit(0.0f, 100.0f, performanceDestroyActive
-            ? foldNoOverride + (100.0f - foldNoOverride) * destroyAmt
-            : foldNoOverride);
+            false, 0.0f, 0.0f, 100.0f));
         // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
         // Fold %, for the knob's mod-range indicator.
         visModFoldPct.store(distortionFoldPct, std::memory_order_relaxed);
@@ -1362,7 +1195,7 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // Stage 2 Phase 3.7/3.8: consumes the modulated `drive` value computed
     // above (Phase 3.2/3.7/3.8 merged accumulator block: base APVTS `drive`
     // + REAL Sequencer Drive-lane contribution + REAL Mod Matrix `drive`
-    // total + REAL macroDamage routing + real performanceDestroy override),
+    // total + REAL macroDamage routing),
     // replacing the raw `driveParam->load()` read Phase 3.2 used before
     // this destination was wired live.
     driveGainSmoothed.setTargetValue(juce::Decibels::decibelsToGain(phase32DriveModulationObservation.load(std::memory_order_relaxed)));
@@ -1373,18 +1206,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     {
         // Stage 2 Phase 3.7/3.8: bitDepth's Sequencer + Mod Matrix +
         // macroCrush ("Bit Depth" target, negative weight) contributions
-        // combine through ModulationAccumulator. Stage 2 Phase 3.9:
-        // performanceDestroy's "Bit Depth" override (1 bit, minimum —
-        // maximum destruction).
+        // combine through ModulationAccumulator.
         const float modMatrixBitDepthContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destBitDepth]
                                                           * (16.0f - 1.0f) * kModMatrixDepthFraction;
-        const float bitDepthNoOverride = ModulationAccumulator::accumulate(
+        const float bitDepth = juce::jlimit(1.0f, 16.0f, ModulationAccumulator::accumulate(
             bitDepthParam->load(), sequencerBitDepthContributionBits, modMatrixBitDepthContribution,
-            macroContributions.bitDepthBits, false, 0.0f, 1.0f, 16.0f);
-        const float modulatedBitDepth = performanceDestroyActive
-            ? juce::jlimit(1.0f, 16.0f, bitDepthNoOverride + (1.0f - bitDepthNoOverride) * destroyAmt)
-            : bitDepthNoOverride;
-        const float bitDepth = juce::jlimit(1.0f, 16.0f, modulatedBitDepth);
+            macroContributions.bitDepthBits, false, 0.0f, 1.0f, 16.0f));
         bitcrushLevels = juce::jmax(1.0f, std::pow(2.0f, bitDepth) - 1.0f);
         // Audit fix 2026-09-05: ramp the quantizer's level count (~15ms)
         // instead of snapping it - an instant 16-bit -> 1-bit jump (e.g.
@@ -1397,18 +1224,12 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     {
         // Stage 2 Phase 3.7/3.8: sampleRateReduction's Sequencer + Mod
         // Matrix + macroCrush/macroGlitch (shared per architecture.md's
-        // routing table) contributions, same pattern. Stage 2 Phase 3.9:
-        // performanceDestroy's "Sample Rate Reduction" override (48x,
-        // maximum — maximum destruction).
+        // routing table) contributions, same pattern.
         const float modMatrixSrrContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destSampleRate]
                                                      * (48.0f - 1.0f) * kModMatrixDepthFraction;
-        const float srrNoOverride = ModulationAccumulator::accumulate(
+        const float srr = juce::jlimit(1.0f, 48.0f, ModulationAccumulator::accumulate(
             srrParam->load(), sequencerSampleRateContributionFactor, modMatrixSrrContribution,
-            macroContributions.sampleRateFactor, false, 0.0f, 1.0f, 48.0f);
-        const float modulatedSrr = performanceDestroyActive
-            ? juce::jlimit(1.0f, 48.0f, srrNoOverride + (48.0f - srrNoOverride) * destroyAmt)
-            : srrNoOverride;
-        const float srr = juce::jlimit(1.0f, 48.0f, modulatedSrr);
+            macroContributions.sampleRateFactor, false, 0.0f, 1.0f, 48.0f));
         bitcrushHoldSamples = juce::jmax(1, static_cast<int>(std::round(srr)));
     }
 
@@ -1426,63 +1247,15 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     glitchModeIndex         = static_cast<int>(glitchModeParam->load());
     glitchBufferLengthIndex = static_cast<int>(glitchBufferLenParam->load());
 
-    // Stage 2 Phase 3.9: performanceFreeze/performanceReverse/performanceStutter
-    // discrete glitchMode/glitchBufferLength overrides — see
-    // PluginProcessor.h's Phase 3.9 doc comment ("performanceFreeze /
-    // performanceReverse / performanceStutter") for the full flagged
-    // rationale (ModulationAccumulator only expresses continuous ranges,
-    // not discrete Choice parameters) and multi-trigger precedence
-    // (Freeze > Reverse > Stutter, first-match-wins). Applied BEFORE the
-    // mode-change detection below so an override engaging/disengaging is
-    // itself treated as a real mode change (correctly triggers the
-    // click-free crossfade-to-dry/restart behavior that logic already
-    // provides for ordinary user-driven glitchMode changes).
-    if (performanceFreezeActive)
-    {
-        glitchModeIndex = 5;         // Freeze
-        glitchBufferLengthIndex = 0; // "near-zero" buffer length, per architecture.md's own worked example for this exact trigger
-    }
-    else if (performanceReverseActive)
-    {
-        glitchModeIndex = 3;         // Reverse
-    }
-    else if (performanceStutterActive)
-    {
-        glitchModeIndex = 1;         // Stutter
-    }
-    // v8.1 (user feedback: Glitch/Chaos triggers too subtle): these two
-    // previously forced only PROBABILITY, which is inaudible with
-    // glitchMode=Off and merely densifies the chosen mode otherwise.
-    // Chaos now forces the most chaotic mode outright; Glitch supplies a
-    // default mode whenever none is selected (a user-chosen mode is kept,
-    // the trigger just makes it fire every cycle).
-    else if (performanceChaosActive)
-    {
-        glitchModeIndex = 7;         // Random Slice: randomized slice order, maximum chaos
-        glitchBufferLengthIndex = 1; // short cycles: dense, rapid-fire slicing
-    }
-    else if (performanceGlitchActive && glitchModeIndex == 0)
-    {
-        glitchModeIndex = 1;         // mode was Off: force Stutter so the trigger always bites
-    }
-
     // Stage 2 Phase 3.7/3.8: glitchProbability's Sequencer + Mod Matrix +
     // macroGlitch/macroRhythm (both target Glitch Probability per
     // architecture.md's routing table) contributions combine through
     // ModulationAccumulator, same pattern as drive/bitDepth/srr above.
-    // Stage 2 Phase 3.9: performanceGlitch/Freeze/Reverse/Stutter/Chaos all
-    // share ONE override condition (100%, guarantees an event fires this
-    // cycle — otherwise a user's own glitchProbability=0% default would
-    // silently defeat every one of these triggers' "instant dramatic
-    // change" intent).
     const float modMatrixGlitchProbContribution = modMatrixDestinationTotals[(size_t) ModMatrix::destGlitchProbability]
                                                         * 100.0f * kModMatrixDepthFraction;
-    const float probNoOverride = ModulationAccumulator::accumulate(
+    glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
         glitchProbabilityParam->load(), sequencerGlitchProbabilityContributionPct, modMatrixGlitchProbContribution,
-        macroContributions.glitchProbabilityPct, false, 0.0f, 0.0f, 100.0f);
-    glitchProbabilityPct = juce::jlimit(0.0f, 100.0f, anyTriggerWantsFullGlitchProbability
-        ? probNoOverride + (100.0f - probNoOverride) * triggerForcedProbNorm
-        : probNoOverride);
+        macroContributions.glitchProbabilityPct, false, 0.0f, 0.0f, 100.0f));
     // Stage 3 Phase 5.6: GUI visualization tap — live (post-modulation)
     // Glitch Probability %, for the knob's mod-range indicator.
     visModGlitchProbabilityPct.store(glitchProbabilityPct, std::memory_order_relaxed);
@@ -1493,12 +1266,10 @@ void CORRUPTRAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce
     // documented target ("Mod Matrix Random source depth") is consumed
     // directly by ModMatrix::resolve() via
     // `macroContributions.randomSourceDepthMultiplier`, not through this
-    // accumulate() call. Stage 2 Phase 3.9: performanceChaos/performanceGlitch
-    // share ONE override condition (100%/60% respectively, Chaos wins if
-    // both active — see PluginProcessor.h's Phase 3.9 doc comment).
+    // accumulate() call.
     glitchChaosPct = juce::jlimit(0.0f, 100.0f, ModulationAccumulator::accumulate(
         chaosParam->load(), 0.0f, 0.0f, macroContributions.chaosPct,
-        anyTriggerWantsChaosOverride, chaosOverrideValue, 0.0f, 100.0f));
+        false, 0.0f, 0.0f, 100.0f));
 
     // Mode-change detection (plan.md Phase 3.5 Test Criteria: "Mode
     // switching mid-playback doesn't produce discontinuities"): forces the
@@ -2356,23 +2127,8 @@ void CORRUPTRAudioProcessor::updateSequencerStepAndContributions()
     const float modulatedVolumeDb = ModulationAccumulator::accumulate(
         0.0f, volumeRaw * kSequencerVolumeRangeDb, 0.0f, 0.0f, false, 0.0f, -kSequencerVolumeRangeDb, kSequencerVolumeRangeDb);
 
-    // Stage 2 Phase 3.9: performanceKill's override — hard-mutes the Gate
-    // lane's own native 0-1 linear-gain range to 0.0 (fully closed). See
-    // PluginProcessor.h's Phase 3.9 doc comment ("performanceKill") for why
-    // this specific destination (the Gate lane, applied as the LAST
-    // multiplicative gain stage before Master Mix's post-mix isfinite()
-    // guard) was chosen over overriding `outputGain` directly (outputGain's
-    // own -24..+24dB range cannot reach genuine silence). Read fresh here
-    // (this method already reads its own parameters fresh each block; a
-    // dedicated function-parameter would be a needless signature change for
-    // a single bool already resolved once in processBlock() but not passed
-    // down to this helper).
-    const bool performanceKillActive = parameters.getRawParameterValue("performanceKill")->load() > 0.5f;
-    const float killAmt = juce::jlimit(0.0f, 1.0f, parameters.getRawParameterValue("performanceKillAmount")->load() / 100.0f);
-    const float gateNoOverride = ModulationAccumulator::accumulate(
+    const float modulatedGate = ModulationAccumulator::accumulate(
         1.0f, gateRaw - 1.0f, 0.0f, macroContributions.gateGainOffset, false, 0.0f, 0.0f, 1.0f);
-    // v8: Kill's amount = mute depth (100% = full mute, 50% = half duck).
-    const float modulatedGate = performanceKillActive ? gateNoOverride * (1.0f - killAmt) : gateNoOverride;
 
     sequencerVolumeGateGainTarget = juce::Decibels::decibelsToGain(modulatedVolumeDb) * modulatedGate;
     sequencerVolumeGateGainSmoothed.setTargetValue(sequencerVolumeGateGainTarget);
@@ -3471,7 +3227,9 @@ void CORRUPTRAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
     // added alongside it per architecture.md's own "recommend a version
     // attribute in the root ValueTree from day one" advice.
     //=========================================================================
-    xml->setAttribute("corruptrStateVersion", 1);
+    // v2: the 14 performance* parameters were removed (Performance section
+    // retired in 2.0.0); loaders must tolerate their PARAM entries in v1 states.
+    xml->setAttribute("corruptrStateVersion", 2);
     xml->setAttribute("glitchRandomSeed", juce::String(glitchRandomSeedAtomic.load(std::memory_order_relaxed)));
 
     //=========================================================================
@@ -3506,7 +3264,21 @@ void CORRUPTRAudioProcessor::setStateInformation(const void* data, int sizeInByt
 
     if (xmlState != nullptr && xmlState->hasTagName(parameters.state.getType()))
     {
-        parameters.replaceState(juce::ValueTree::fromXml(*xmlState));
+        //=====================================================================
+        // v2.0.0 migration: states saved by corruptrStateVersion <= 1 carry
+        // PARAM entries for the 14 removed performance* parameters. APVTS
+        // ignores unknown PARAM ids on replaceState, but stripping them here
+        // keeps re-saved state clean and makes the migration explicit.
+        //=====================================================================
+        juce::ValueTree restoredState = juce::ValueTree::fromXml(*xmlState);
+        for (int i = restoredState.getNumChildren(); --i >= 0;)
+        {
+            const juce::ValueTree child = restoredState.getChild(i);
+            if (child.hasType("PARAM")
+                && child.getProperty("id").toString().startsWith("performance"))
+                restoredState.removeChild(i, nullptr);
+        }
+        parameters.replaceState(restoredState);
 
         //=====================================================================
         // Stage 2 Phase 3.5: Glitch Engine RNG seed restore.

@@ -42,7 +42,7 @@
 | PadForge | 💡 Ideated | - | Synth (Instrument) | 2025-11-14 |
 | AngelGrain | 📦 Installed | 1.0.0 | Audio Effect (Granular Delay) | 2025-11-19 |
 | KICKR | 📦 Installed | 1.0.0 | Synth (Kick Instrument + Sampler) | 2026-09-07 |
-| CORRUPTR | 📦 Installed | 1.0.2 | Audio Effect (Multi-Distortion/Glitch) | 2026-10-08 |
+| CORRUPTR | 📦 Installed | 2.0.0 | Audio Effect (Multi-Distortion/Glitch) | 2026-11-10 |
 | DROP | 📦 Installed | 1.0.0 | Audio Effect (Transition Engine) | 2026-09-24 |
 | SPECTR (formerly PRISM) | 📦 Installed | 1.0.0 | Audio Effect (Multi-Source Analyzer/Visualizer) | 2026-11-03 |
 | CHOPLINE | 🚧 Phase 5 | - | Synth (Vocal Chop/Warp/Glitch Instrument) | 2026-10-29 |
