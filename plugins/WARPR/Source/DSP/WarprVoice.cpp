@@ -263,6 +263,7 @@ namespace warpr
         warpSpan.Lc = cycleFrames (sd.fileSampleRate, (double) rootCur);
         warpSpan.fadeLen = std::max (1, (int) std::lround (0.010 * sampleRate * (double) os));
         warpSpan.os = os;
+        warpSpan.osRate = sampleRate * (double) os;
 
         const double p1 = pitchCur + (double) bendCur + (double) offsetCur;
 

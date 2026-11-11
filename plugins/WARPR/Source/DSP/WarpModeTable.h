@@ -8,15 +8,20 @@
       family     the shared-infrastructure family (architecture "Family map")
       kind       Phase  : adds a read-position offset  P' = P + dir * Lc * Delta(theta)  (before the read)
                  Amp    : shapes the value read from the sample
-      implemented  true  : real DSP exists (D2: indices 0-14)
+      implemented  true  : real DSP exists (D2: indices 0-14, D3: 15-43)
                    false : NOT YET IMPLEMENTED.  STATIC MAPPING: the mode is the IDENTITY (wet = dry,
                            bit-exact) until its phase fills it in:
-                             15-43  folds / distortions / rectifiers / quantisers ... D3
                              44-59  phase & time, sync, modulation ........................ D6
                            Selecting such a mode is safe and testable; no fake DSP stands in for it.
-      minOS      oversampling hint (UI/governor only; never forces the factor)
+      minOS      oversampling hint (UI/governor only; never forces the factor).  For the D3 static shapers
+                 it is the smallest factor at which the measured alias level meets gate A2 (see
+                 PhaseD3Tests); Hard Clip, Tanh and Linear Fold are raised to 4 per risk R1(b).  minOS IS
+                 ENFORCED by WarprSynth::setBlockParams: the per-note latched OS factor is
+                 max(user oversampling, minOS) while the warp stage is active (enable on, amount > 0, mix > 0).
       stepFlag   the mode produces an INTENDED value discontinuity (T1 discontinuity test uses the
-                 mode's own bound): Flip (polarity edges), Wave Skew (sawtooth wrap)
+                 mode's own bound): Flip (polarity edges), Wave Skew (sawtooth wrap), and the quantisers
+                 41-43 (staircase steps)
+      aliasByDesign  aliasing is part of the effect (Bitcrush, SR Reduction): exempt from the alias gates
       seamJump   g(1) != g(0)+1 for a > 0 (read position jumps at the cycle wrap): the SeamBridge
                  splits the resulting output step over a few samples (Mirror)
       aRole/bRole  what the A / B knobs do ("-" = no effect), shared with the GUI later (WarpModeInfo)
@@ -52,14 +57,22 @@ namespace warpr
         bool        seamJump;
         const char* aRole;
         const char* bRole;
+        bool        aliasByDesign = false;
     };
 
     namespace detail
     {
         constexpr WarpModeInfo row (const char* name, WarpFamily f, WarpKind k, bool impl, int minOs,
-                                    bool step, bool seam, const char* a, const char* b)
+                                    bool step, bool seam, const char* a, const char* b, bool aliasDesign = false)
         {
-            return WarpModeInfo { name, f, k, impl, minOs, step, seam, a, b };
+            return WarpModeInfo { name, f, k, impl, minOs, step, seam, a, b, aliasDesign };
+        }
+
+        /** D3 static shaper row (amplitude domain, implemented). */
+        constexpr WarpModeInfo shape (const char* name, WarpFamily f, int minOs, const char* a, const char* b,
+                                      bool step = false, bool aliasDesign = false)
+        {
+            return row (name, f, WarpKind::Amp, true, minOs, step, false, a, b, aliasDesign);
         }
 
         constexpr WarpModeInfo todo (const char* name, WarpFamily f, WarpKind k, int minOs)
@@ -72,7 +85,7 @@ namespace warpr
     }
 
     inline constexpr int kNumWarpModes = 60;
-    inline constexpr int kNumImplementedWarpModes = 15;      // D2: indices 0-14
+    inline constexpr int kNumImplementedWarpModes = 44;      // D2: indices 0-14, D3: indices 15-43
 
     inline constexpr std::array<WarpModeInfo, 60> kWarpModes {{
         // ---- WAVE BENDING (0-14): IMPLEMENTED in D2 ---------------------------------------------------
@@ -92,38 +105,38 @@ namespace warpr
         detail::row ("Wave Expand",        detail::F::V,  detail::K::Amp,   true, 2, false, false, "threshold blend",       "-"),
         detail::row ("Variable Duty Cycle", detail::F::H, detail::K::Phase, true, 1, false, false, "corner rounding",       "duty centre offset"),
 
-        // ---- WAVEFOLDING (15-24): D3 -----------------------------------------------------------------
-        detail::todo ("Linear Fold",       detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Multi Fold",        detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Sine Fold",         detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Triangle Fold",     detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Soft Fold",         detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Hard Fold",         detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Symmetric Fold",    detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Asymmetric Fold",   detail::F::Fold, detail::K::Amp, 2),
-        detail::todo ("Dynamic Fold",      detail::F::Dyn,  detail::K::Amp, 2),
-        detail::todo ("Chebyshev Fold",    detail::F::Fold, detail::K::Amp, 4),
+        // ---- WAVEFOLDING (15-24): IMPLEMENTED in D3 (ShapeWarp.h; A also sets the drive range D = 1 + a (1 + 15 A))
+        detail::shape ("Linear Fold",      detail::F::Fold, 4, "drive range",            "pre-offset"),
+        detail::shape ("Multi Fold",       detail::F::Fold, 2, "drive range",            "stage count"),
+        detail::shape ("Sine Fold",        detail::F::Fold, 2, "drive range",            "2nd-harmonic bias"),
+        detail::shape ("Triangle Fold",    detail::F::Fold, 2, "asymmetry + drive",      "fold phase"),
+        detail::shape ("Soft Fold",        detail::F::Fold, 2, "roundness + drive",      "outer-fold damping"),
+        detail::shape ("Hard Fold",        detail::F::Fold, 2, "reflection limit + drive", "wall softness"),
+        detail::shape ("Symmetric Fold",   detail::F::Fold, 2, "drive range",            "odd/even blend"),
+        detail::shape ("Asymmetric Fold",  detail::F::Fold, 2, "drive range",            "negative threshold"),
+        detail::shape ("Dynamic Fold",     detail::F::Dyn,  2, "envelope depth + drive", "envelope release"),
+        detail::shape ("Chebyshev Fold",   detail::F::Fold, 4, "input scale",            "order offset"),
 
-        // ---- DISTORTION (25-43): D3 ------------------------------------------------------------------
-        detail::todo ("Hard Clip",         detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Soft Clip",         detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Tanh",              detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Arctangent",        detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Tube Saturation",   detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Diode 1",           detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Diode 2",           detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Cubic",             detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Sinusoidal",        detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Exponential",       detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Asymmetric",        detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Polynomial",        detail::F::Clip, detail::K::Amp, 2),
-        detail::todo ("Chebyshev Harmonic", detail::F::Clip, detail::K::Amp, 4),
-        detail::todo ("Full Wave Rect",    detail::F::Rect, detail::K::Amp, 2),
-        detail::todo ("Half Wave Rect",    detail::F::Rect, detail::K::Amp, 2),
-        detail::todo ("Soft Rect",         detail::F::Rect, detail::K::Amp, 2),
-        detail::todo ("Bitcrush",          detail::F::Qnt,  detail::K::Amp, 1),
-        detail::todo ("SR Reduction",      detail::F::Qnt,  detail::K::Amp, 1),
-        detail::todo ("Quantization",      detail::F::Qnt,  detail::K::Amp, 2),
+        // ---- DISTORTION (25-43): IMPLEMENTED in D3 ---------------------------------------------------
+        detail::shape ("Hard Clip",        detail::F::Clip, 4, "drive range",            "knee width"),
+        detail::shape ("Soft Clip",        detail::F::Clip, 2, "drive range",            "-"),
+        detail::shape ("Tanh",             detail::F::Clip, 4, "drive range",            "bias"),
+        detail::shape ("Arctangent",       detail::F::Clip, 2, "drive range",            "-"),
+        detail::shape ("Tube Saturation",  detail::F::Clip, 2, "drive range + bias",     "sag"),
+        detail::shape ("Diode 1",          detail::F::Clip, 2, "drive range",            "-"),
+        detail::shape ("Diode 2",          detail::F::Clip, 2, "drive range",            "asymmetry"),
+        detail::shape ("Cubic",            detail::F::Clip, 2, "drive range",            "-"),
+        detail::shape ("Sinusoidal",       detail::F::Clip, 2, "drive range",            "-"),
+        detail::shape ("Exponential",      detail::F::Clip, 2, "drive range",            "curve offset"),
+        detail::shape ("Asymmetric",       detail::F::Clip, 2, "drive range + asymmetry", "bias"),
+        detail::shape ("Polynomial",       detail::F::Clip, 2, "drive range + cubic",    "even term"),
+        detail::shape ("Chebyshev Harmonic", detail::F::Clip, 4, "odd/even balance",     "high-order tilt"),
+        detail::shape ("Full Wave Rect",   detail::F::Rect, 2, "pre-gain",               "bias"),
+        detail::shape ("Half Wave Rect",   detail::F::Rect, 2, "pre-gain",               "negative leak"),
+        detail::shape ("Soft Rect",        detail::F::Rect, 2, "smoothness",             "bias"),
+        detail::shape ("Bitcrush",         detail::F::Qnt,  1, "dither",                 "bit smoothing",  true, true),
+        detail::shape ("SR Reduction",     detail::F::Qnt,  1, "interpolation",          "clock jitter",   true, true),
+        detail::shape ("Quantization",     detail::F::Qnt,  2, "step softness",          "offset (mid-rise)", true),
 
         // ---- PHASE & TIME (44-53): D6 ----------------------------------------------------------------
         detail::todo ("Phase Distortion",  detail::F::Phm, detail::K::Phase, 2),

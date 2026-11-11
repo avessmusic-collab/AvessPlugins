@@ -26,6 +26,7 @@
 #include "DSP/DiscreteSwitchFade.h"
 #include "DSP/PhaseWarp.h"
 #include "DSP/RegionFold.h"
+#include "DSP/ShapeWarp.h"
 #include "DSP/WarpModeTable.h"
 
 #include <algorithm>
@@ -46,6 +47,7 @@ namespace warpr
         double Lc = 1.0;             // source frames per root-note cycle (fileSampleRate / midiToHz(rootNote))
         int    fadeLen = 480;        // mode-switch crossfade length in OS samples (~10 ms)
         int    os = 1;               // oversampling factor of the voice
+        double osRate = 96000.0;     // oscillator-rate in Hz (os * host rate): envelope / hold times of D3 modes
     };
 
     class WarpOscState
@@ -69,6 +71,10 @@ namespace warpr
             ampCur[1].reset();
             ampOld[0].reset();
             ampOld[1].reset();
+            shapeCur[0].reset();
+            shapeCur[1].reset();
+            shapeOld[0].reset();
+            shapeOld[1].reset();
             bridgeLeft = 0;
             lastPwValid = false;
         }
@@ -109,6 +115,10 @@ namespace warpr
                 ampOld[1] = ampCur[1];
                 ampCur[0].reset();
                 ampCur[1].reset();
+                shapeOld[0] = shapeCur[0];
+                shapeOld[1] = shapeCur[1];
+                shapeCur[0].reset();
+                shapeCur[1].reset();
                 bridgeLeft = 0;
             }
 
@@ -123,13 +133,13 @@ namespace warpr
                 readAt (pos, dryL, dryR);
 
             float wetL = 0.0f, wetR = 0.0f;
-            evalKernel (switcher.current(), a, A, B, ampCur, true, sp, pos, dir, step, rg, stereo, dTheta,
+            evalKernel (switcher.current(), a, A, B, ampCur, shapeCur, true, sp, pos, dir, step, rg, stereo, dTheta,
                         readAt, needDry, dryL, dryR, wetL, wetR);
 
             if (fading)
             {
                 float oldL = 0.0f, oldR = 0.0f;
-                evalKernel (switcher.outgoing(), oldA, oldAA, oldB, ampOld, false, sp, pos, dir, step, rg, stereo, dTheta,
+                evalKernel (switcher.outgoing(), oldA, oldAA, oldB, ampOld, shapeOld, false, sp, pos, dir, step, rg, stereo, dTheta,
                             readAt, true, dryL, dryR, oldL, oldR);
 
                 const float t = switcher.advance();
@@ -155,7 +165,7 @@ namespace warpr
 
     private:
         template <class Read>
-        void evalKernel (int mode, double a, double A, double B, adaa::State* st, bool isCurrent,
+        void evalKernel (int mode, double a, double A, double B, adaa::State* st, shapewarp::ChannelState* shape, bool isCurrent,
                          const WarpSpan& sp, double pos, int dir, double step, const RegionFold& rg, bool stereo,
                          double dTheta, Read& readAt, bool dryValid, float dryL, float dryR,
                          float& wetL, float& wetR) noexcept
@@ -258,9 +268,29 @@ namespace warpr
 
                 default:
                 {
-                    const auto coeffs = ampwarp::makeCoeffs (mode, a, A, B);
-                    wetL = static_cast<float> (ampwarp::run (coeffs, st[0], xl));
-                    wetR = stereo ? static_cast<float> (ampwarp::run (coeffs, st[1], xr)) : wetL;
+                    if (mode >= shapewarp::firstMode && mode <= shapewarp::lastMode)
+                    {
+                        // D3: folds / dynamics / distortions / rectifiers / quantisers (ShapeWarp.h).
+                        // a <= 0 is the exact identity (shapewarp::run returns x too): skip the kernel build.
+                        if (a <= 0.0)
+                        {
+                            wetL = dryL;
+                            wetR = dryR;
+                            break;
+                        }
+
+                        const auto kern = shapewarp::makeKernel (mode, a, A, B);
+                        const shapewarp::RunInfo ri { sp.os, sp.osRate };
+                        wetL = static_cast<float> (shapewarp::run (kern, shape[0], ri, xl));
+                        wetR = stereo ? static_cast<float> (shapewarp::run (kern, shape[1], ri, xr)) : wetL;
+                    }
+                    else
+                    {
+                        const auto coeffs = ampwarp::makeCoeffs (mode, a, A, B);
+                        wetL = static_cast<float> (ampwarp::run (coeffs, st[0], xl));
+                        wetR = stereo ? static_cast<float> (ampwarp::run (coeffs, st[1], xr)) : wetL;
+                    }
+
                     break;
                 }
             }
@@ -268,6 +298,7 @@ namespace warpr
 
         DiscreteSwitchFade switcher;
         adaa::State ampCur[2], ampOld[2];
+        shapewarp::ChannelState shapeCur[2], shapeOld[2];      // D3 kernels (modes 15-43)
 
         double theta = 0.0;
         bool   justWrapped = false;

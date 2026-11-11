@@ -55,8 +55,11 @@ namespace warpr::tests
         10*log10(inharmonic power / harmonic power) in dB, where "harmonic" means within
         +-guardBins of k*f0 (k >= 1).  Use an f0 that is an exact FFT bin centre
         (f0 = sampleRate * m / 2^order) so a clean tone measures below about -90 dB.
-        Returns +200 if the input is too short or silent. */
-    inline double aliasDb (const float* x, int n, double sampleRate, double f0, int order = 15, int guardBins = 4)
+        Returns +200 if the input is too short or silent.
+        maxHz > 0 restricts BOTH powers to bins below maxHz: the content a perfect decimator would keep when the
+        signal runs at an oversampled rate (D3 alias gates: maxHz = base Nyquist). */
+    inline double aliasDb (const float* x, int n, double sampleRate, double f0, int order = 15, int guardBins = 4,
+                           double maxHz = 0.0)
     {
         const int size = 1 << order;
         if (n < size || f0 <= 0.0)
@@ -85,8 +88,10 @@ namespace warpr::tests
                     harmonic[(size_t) b] = true;
         }
 
+        const int lastBin = maxHz > 0.0 ? std::min (size / 2, (int) (maxHz / binHz)) : size / 2;
+
         double powHarmonic = 0.0, powOther = 0.0;
-        for (int b = 1; b <= size / 2; ++b)                         // skip DC
+        for (int b = 1; b <= lastBin; ++b)                          // skip DC
         {
             const double p = (double) data[(size_t) b] * (double) data[(size_t) b];
             (harmonic[(size_t) b] ? powHarmonic : powOther) += p;

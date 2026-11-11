@@ -15,6 +15,7 @@
   Domain guards are the caller's job where noted (hot-path functions do not branch on NaN).
 */
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -93,5 +94,42 @@ namespace warpr::fastmath
 
         return x * (1.0 + x2 * (-1.0 / 6.0 + x2 * (1.0 / 120.0 + x2 * (-1.0 / 5040.0 + x2 * (1.0 / 362880.0
                   + x2 * (-1.0 / 39916800.0 + x2 * (1.0 / 6227020800.0)))))));
+    }
+
+    //==========================================================================
+    // D3 additions
+    //==========================================================================
+
+    /** floor(x) for |x| < 1e6 without libm (shift into the positive range so truncation == floor). */
+    inline double floorFast (double x) noexcept
+    {
+        return static_cast<double> (static_cast<std::int64_t> (x + 1.0e6)) - 1.0e6;
+    }
+
+    /** cos(2 * pi * c), c in cycles, any magnitude below ~1e6. */
+    inline double cos2pi (double c) noexcept
+    {
+        return sin2pi (c + 0.25);
+    }
+
+    /** atan(x), all real x.  Reduction: |x| > 1 -> pi/2 - atan(1/|x|), then atan(t) = 2 atan(t / (1 + sqrt(1 + t^2)))
+        which maps [0, 1] to [0, tan(pi/8)]; odd Taylor series to y^21 there (abs error < 1e-9). */
+    inline double atan (double x) noexcept
+    {
+        const double ax = x < 0.0 ? -x : x;
+        const bool inverted = ax > 1.0;
+        const double t = inverted ? 1.0 / ax : ax;
+        const double y = t / (1.0 + std::sqrt (1.0 + t * t));
+        const double y2 = y * y;
+
+        const double series = y * (1.0 + y2 * (-1.0 / 3.0 + y2 * (1.0 / 5.0 + y2 * (-1.0 / 7.0 + y2 * (1.0 / 9.0
+                            + y2 * (-1.0 / 11.0 + y2 * (1.0 / 13.0 + y2 * (-1.0 / 15.0 + y2 * (1.0 / 17.0
+                            + y2 * (-1.0 / 19.0 + y2 * (1.0 / 21.0)))))))))));
+
+        double r = 2.0 * series;
+        if (inverted)
+            r = 1.5707963267948966 - r;
+
+        return x < 0.0 ? -r : r;
     }
 }

@@ -27,6 +27,7 @@
 #include "Tests/AllocHook.h"
 #include "Tests/OfflineRender.h"
 #include "Tests/Scanners.h"
+#include "Tests/WarpTestKit.h"
 
 #include <algorithm>
 #include <cmath>
@@ -55,11 +56,8 @@ namespace
     /** Prints a failure detail line (bounded, so a systematic failure does not flood the log). */
    #define DETAIL(...) do { if (printedDetails++ < 40) std::printf (__VA_ARGS__); } while (false)
 
-    constexpr double kPi = 3.14159265358979323846;
-
-    double rootHz() { return juce::MidiMessage::getMidiNoteInHertz (60); }
-
-    size_t ix (int v) { return static_cast<size_t> (v); }
+    // fixtures, the one-oscillator renderer and the signal measures are shared with the later phases
+    using namespace warpr::tests::kit;
 
     void setParam (PluginProcessor& p, const char* id, float value)
     {
@@ -72,153 +70,6 @@ namespace
             std::printf ("  FAIL  unknown parameter '%s'\n", id);
             ++failures;
         }
-    }
-
-    //==========================================================================
-    // fixtures
-    //==========================================================================
-    /** One cycle per root period: fileSampleRate = frames * midiToHz(60) -> Lc == frames. */
-    warpr::SampleData::Ptr makeCycle (int frames, float amp, bool saw = false)
-    {
-        juce::AudioBuffer<float> b (1, frames);
-        for (int i = 0; i < frames; ++i)
-        {
-            const double ph = (double) i / (double) frames;
-            b.setSample (0, i, saw ? amp * (float) (2.0 * ph - 1.0) : amp * (float) std::sin (2.0 * kPi * ph));
-        }
-        return warpr::SampleData::create (b, (double) frames * rootHz(), saw ? "saw cycle" : "sine cycle", true, false);
-    }
-
-    /** Stereo cycle with identical (or different) channels. */
-    warpr::SampleData::Ptr makeStereoCycle (int frames, bool identical)
-    {
-        juce::AudioBuffer<float> b (2, frames);
-        for (int i = 0; i < frames; ++i)
-        {
-            const double ph = (double) i / (double) frames;
-            const float l = 0.4f * (float) std::sin (2.0 * kPi * ph);
-            b.setSample (0, i, l);
-            b.setSample (1, i, identical ? l : 0.3f * (float) std::sin (4.0 * kPi * ph + 0.5));
-        }
-        return warpr::SampleData::create (b, (double) frames * rootHz(), "stereo cycle", true, false);
-    }
-
-    warpr::SampleData::Ptr makeNoise()
-    {
-        juce::Random rng (7);
-        juce::AudioBuffer<float> b (1, 48000);
-        for (int i = 0; i < 48000; ++i)
-            b.setSample (0, i, 0.3f * (rng.nextFloat() * 2.0f - 1.0f));
-        return warpr::SampleData::create (b, 48000.0, "noise", false, false);
-    }
-
-    //==========================================================================
-    // class-level oscillator renderer
-    //==========================================================================
-    struct OscRun
-    {
-        std::vector<float> L, R;
-    };
-
-    /** Renders `totalBase` host samples (multiple of 32) of one oscillator at `hz`.  `spanFn (chunkIndex, span)`
-        fills the span and returns whether the span is passed at all (false = nullptr = the D1 path). */
-    template <class SpanFn>
-    OscRun renderOsc (const warpr::SampleData& sd, double hz, double fs, int os, int totalBase, SpanFn&& spanFn)
-    {
-        warpr::RegionFold rg;
-        rg.configure (sd, 0.0f, 1.0f, warpr::RegionFold::Mode::Forward);
-
-        const double lc = sd.fileSampleRate / rootHz();
-        warpr::UnisonOsc osc;
-        osc.start (rg, false, 0, lc);
-
-        const double rho = hz / rootHz() * sd.fileSampleRate / fs;
-        constexpr int chunk = 32;
-        const int total = (totalBase / chunk) * chunk;
-
-        OscRun out;
-        out.L.assign (ix (total) * ix (os), 0.0f);
-        out.R.assign (ix (total) * ix (os), 0.0f);
-
-        int ci = 0;
-        for (int i = 0; i < total; i += chunk, ++ci)
-        {
-            warpr::WarpSpan sp;
-            sp.Lc = lc;
-            sp.os = os;
-            sp.fadeLen = (int) std::lround (0.010 * fs * (double) os);
-            const bool use = spanFn (ci, sp);
-
-            osc.render (sd, rg, 0, rho, rho, os, 1.0f, 1.0f, 1.0f, 1.0f,
-                        out.L.data() + ix (i) * ix (os), out.R.data() + ix (i) * ix (os), chunk * os,
-                        use ? &sp : nullptr);
-        }
-
-        return out;
-    }
-
-    /** Constant warp span for every chunk. */
-    auto constSpan (int mode, float a, float A, float B, float mix)
-    {
-        return [=] (int, warpr::WarpSpan& sp)
-        {
-            sp.active = true;
-            sp.mode = mode;
-            sp.a0 = sp.a1 = a;
-            sp.A0 = sp.A1 = A;
-            sp.B0 = sp.B1 = B;
-            sp.mix0 = sp.mix1 = mix;
-            return true;
-        };
-    }
-
-    auto noWarp()
-    {
-        return [] (int, warpr::WarpSpan&) { return false; };
-    }
-
-    double maxStepOf (const std::vector<float>& x, size_t from = 0)
-    {
-        double m = 0.0;
-        for (size_t i = from + 1; i < x.size(); ++i)
-            m = std::max (m, (double) std::abs (x[i] - x[i - 1]));
-        return m;
-    }
-
-    double peakOf (const std::vector<float>& x)
-    {
-        double m = 0.0;
-        for (float v : x)
-            m = std::max (m, (double) std::abs (v));
-        return m;
-    }
-
-    bool allFinite (const std::vector<float>& x)
-    {
-        for (float v : x)
-            if (! std::isfinite (v))
-                return false;
-        return true;
-    }
-
-    bool bitEqual (const std::vector<float>& a, const std::vector<float>& b)
-    {
-        return a.size() == b.size() && std::memcmp (a.data(), b.data(), a.size() * sizeof (float)) == 0;
-    }
-
-    /** 10 log10 of the power of (a - b) relative to a; -300 when they are identical. */
-    double nullDb (const std::vector<float>& a, const std::vector<float>& b, size_t from = 0)
-    {
-        double num = 0.0, den = 0.0;
-        for (size_t i = from; i < a.size() && i < b.size(); ++i)
-        {
-            const double d = (double) a[i] - (double) b[i];
-            num += d * d;
-            den += (double) a[i] * (double) a[i];
-        }
-        if (num <= 0.0)
-            return -300.0;
-        return 10.0 * std::log10 (num / std::max (den, 1.0e-30));
     }
 
     /** Maximum |g'(theta)| of a phase mode (numerical, over the whole cycle). */
@@ -240,7 +91,7 @@ namespace
     //==========================================================================
     void testModeTable()
     {
-        std::printf ("\n[D2] WarpModeTable: 60 rows, names == spec, 15 implemented, rest explicit identity\n");
+        std::printf ("\n[D2] WarpModeTable: 60 rows, names == spec, 44 implemented (D2 + D3), rest explicit identity\n");
 
         int nameMismatch = 0, implementedWrong = 0, familyWrong = 0;
 
@@ -253,7 +104,7 @@ namespace
                 DETAIL ("        name mismatch at %d: '%s' vs spec '%s'\n", i, m.name, warpr::choices::warpMode[i]);
             }
 
-            if (m.implemented != (i < 15))
+            if (m.implemented != (i < warpr::kNumImplementedWarpModes))
                 ++implementedWrong;
         }
 
@@ -264,7 +115,7 @@ namespace
 
         check (warpr::kWarpModes.size() == 60 && warpr::kNumWarpModes == 60, "table has exactly 60 rows");
         check (nameMismatch == 0, "every row name equals choices::warpMode[i] (parameter-spec order and spelling)");
-        check (implementedWrong == 0, "exactly indices 0-14 are implemented; 15-59 carry the not-yet-implemented flag");
+        check (implementedWrong == 0, "exactly indices 0-43 are implemented (D2 + D3); 44-59 carry the not-yet-implemented flag");
         check (familyWrong == 0, "family / kind: H {0,1,2,3,7,9,14}, V {4,5,6,11,12,13}, VT {8,10}");
         check (warpr::warpModeInfo (-5).name == warpr::kWarpModes[0].name && warpr::warpModeInfo (99).name == warpr::kWarpModes[59].name,
                "warpModeInfo clamps out-of-range indices");
@@ -606,7 +457,7 @@ namespace
             const auto base = renderOsc (*sd, 220.0, fs, 2, 6400, noWarp());
 
             int notIdentity = 0;
-            for (int mode = 15; mode < 60; ++mode)
+            for (int mode = warpr::kNumImplementedWarpModes; mode < 60; ++mode)
             {
                 const auto run = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (mode, 1.0f, 0.5f, 0.5f, 1.0f));
                 if (! bitEqual (base.L, run.L) || ! bitEqual (base.R, run.R))
@@ -615,9 +466,9 @@ namespace
                     DETAIL ("        mode %d is not the exact identity\n", mode);
                 }
             }
-            check (notIdentity == 0, "all 45 not-yet-implemented modes (15-59) are the exact identity at a = 1");
+            check (notIdentity == 0, "all 16 not-yet-implemented modes (44-59) are the exact identity at a = 1");
 
-            const auto mixHalf = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (40, 1.0f, 0.5f, 0.5f, 0.4f));
+            const auto mixHalf = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (47, 1.0f, 0.5f, 0.5f, 0.4f));
             check (bitEqual (base.L, mixHalf.L), "unimplemented mode with warpMix 0.4 is still the exact identity");
 
             const auto inactive = renderOsc (*sd, 220.0, fs, 2, 6400, [] (int, warpr::WarpSpan& sp) { sp.active = false; sp.mode = 3; sp.a0 = sp.a1 = 1.0f; return true; });
@@ -773,7 +624,7 @@ namespace
             {
                 warpr::WarpSpan sp;
                 sp.active = true;
-                sp.mode = (ci / 7) % 20;                   // walks through all 15 modes and 5 unimplemented ones
+                sp.mode = (ci / 7) % 50;                   // walks through all 44 implemented modes and 6 unimplemented ones
                 sp.a0 = (float) (ci % 13) / 13.0f;  sp.a1 = (float) ((ci + 1) % 13) / 13.0f;
                 sp.A0 = sp.A1 = 0.5f;
                 sp.B0 = sp.B1 = 0.3f;
@@ -842,7 +693,7 @@ namespace
         setParam (proc, "warpEnable", 1.0f);
         setParam (proc, "warpAmount", 0.0f);
         const auto zero = warpr::tests::render (proc, midi, fs, 256, 0.4);
-        setParam (proc, "warpMode", 40.0f);                          // unimplemented -> identity
+        setParam (proc, "warpMode", 47.0f);                          // unimplemented -> identity
         setParam (proc, "warpAmount", 1.0f);
         const auto ident = warpr::tests::render (proc, midi, fs, 256, 0.4);
 
@@ -850,7 +701,7 @@ namespace
         check (nullDb (toVec (off, 0), toVec (zero, 0)) <= -100.0 && nullDb (toVec (off, 1), toVec (zero, 1)) <= -100.0,
                "warpEnable off and (enable on, warpAmount 0) render the same sound (-100 dB null)");
         check (bitEqual (toVec (off, 0), toVec (ident, 0)) && bitEqual (toVec (off, 1), toVec (ident, 1)),
-               "an unimplemented mode (Half Wave Rect, index 40) is bit-exact dry through the whole voice path");
+               "an unimplemented mode (Phase Mirror, index 47) is bit-exact dry through the whole voice path");
 
         // enabling the warp mid-note ramps in (no click)
         PluginProcessor p2;

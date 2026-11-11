@@ -1,4 +1,5 @@
 #include "DSP/WarprSynth.h"
+#include "DSP/WarpModeTable.h"
 
 #include <algorithm>
 #include <cmath>
@@ -88,6 +89,11 @@ namespace warpr
         polyLimit = juce::jlimit (1, maxVoices, pb.getInt (ParamId::polyphony));
         unisonLatched = juce::jlimit (1, WarprVoice::maxUnison, pb.getInt (ParamId::unisonVoices));
         osLatched = 1 << juce::jlimit (0, 3, pb.getInt (ParamId::oversampling));
+
+        // minOS is ENFORCED (risk R1(b)): while the warp stage is audibly active, the factor latched at note-on is
+        // max(user oversampling, the selected mode's minOS).  A mid-note mode change keeps the latched factor.
+        if (vp.warpEnable && vp.warpAmount > 0.0f && vp.warpMix > 0.0f)
+            osLatched = std::max (osLatched, std::min (8, warpModeInfo (vp.warpMode).minOS));
     }
 
     //==========================================================================
