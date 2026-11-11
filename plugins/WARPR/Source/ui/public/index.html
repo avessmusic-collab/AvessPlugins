@@ -1,0 +1,1278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WARPR</title>
+<!--
+  WARPR v9 - PRODUCTION WebView UI  (copy to Source/ui/public/index.html)
+  Source of truth for look/behaviour: v9-ui-test.html.  Binding contract: parameter-spec.md.
+
+  Rules honoured here (juce8-critical-patterns.md):
+   - html,body use height:100% (NO viewport units anywhere)
+   - user-select:none, context menu disabled
+   - <script type="module"> + `import * as Juce` (pattern 21)
+   - bools -> getToggleState, choices -> getComboBoxState, floats/ints -> getSliderState (19)
+   - valueChangedEvent listeners take NO args, read state inside (15)
+   - relative-drag knobs with sliderDragStarted/Ended bracketing (16, 23)
+   - buttons bound on pointerup, not click (WKWebView lesson)
+
+  DATA-DRIVEN VISUALS (no fabricated fallbacks - they stay empty until C++ feeds them):
+   event "warprViz"            ~30 Hz   organism + playheads + meters + lfo phases   (see onViz)
+   event "warprSample"         on load  waveform peaks + sample info                  (see onSample)
+   event "warprFilterResponse" on edit  real filter magnitude response in dB          (see onFilterResponse)
+   event "warprUiState"        on load  non-parameter state (LFO shapes, mod matrix, shaper curves)
+   event "warprShaperCurve"    on change shaper curve changed by preset/reset/normalize
+   event "warprPreset"         on change preset name
+-->
+<style>
+  :root{ --tx:#FFF; --tx2:#8C8C8C; --tx3:#5A5A5A; --arc:#2E2E2E; --rp:14px; --rs:10px; --rc:8px; }
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;transition:none!important;
+    font-family:Inter,"Helvetica Neue",Helvetica,Arial,sans-serif;
+    user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;width:100%;overflow:hidden;background:#000;cursor:default}
+  /* Fixed 1200x820 design surface, uniformly scaled to the window by script (min window 1000x700). */
+  #plugin{width:1200px;height:820px;position:absolute;left:0;top:0;transform-origin:0 0;color:var(--tx);
+    display:flex;flex-direction:column;overflow:hidden;
+    background:radial-gradient(130% 100% at 50% 0%, #161616 0%, #0A0A0A 55%, #050505 100%);}
+  #hdr{height:88px;display:flex;align-items:center;gap:12px;padding:0 18px;flex:none;
+    background:linear-gradient(180deg,#232323,#121212);
+    border-bottom:1px solid #000;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 4px 14px rgba(0,0,0,.5)}
+  #hdr .title{font-size:21px;font-weight:700;letter-spacing:.22em;
+    background:linear-gradient(180deg,#FFF,#9A9A9A);-webkit-background-clip:text;background-clip:text;color:transparent}
+  #hdr .wt{font-size:8px;color:var(--tx3);letter-spacing:.18em;margin-top:8px}
+  .btn{background:linear-gradient(180deg,#2C2C2C,#161616);border:1px solid #000;color:#CFCFCF;border-radius:var(--rc);
+    font-size:9px;font-weight:600;letter-spacing:.12em;padding:6px 12px;cursor:pointer;
+    box-shadow:0 2px 5px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12)}
+  .btn:active,.btn.solid{background:linear-gradient(180deg,#F5F5F5,#C9C9C9);color:#000;box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}
+  #presetName{border:1px solid #000;border-radius:var(--rc);background:linear-gradient(180deg,#070707,#0E0E0E);
+    box-shadow:inset 0 2px 8px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.06);
+    padding:6px 22px;font-size:10px;font-weight:500;letter-spacing:.1em;min-width:150px;max-width:260px;text-align:center;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .spacer{flex:1}
+  .sec{border:1px solid #000;border-radius:var(--rp);display:flex;flex-direction:column;min-height:0;overflow:hidden;
+    background:linear-gradient(180deg,#1B1B1B,#0D0D0D);
+    box-shadow:0 10px 26px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.07)}
+  .sec-h{display:flex;align-items:center;gap:9px;padding:6px 12px;flex:none;
+    border-bottom:1px solid #000;background:linear-gradient(180deg,#202020,#151515);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+  .sec-h .name{font-size:10px;font-weight:600;letter-spacing:.22em;color:#D8D8D8;text-shadow:0 1px 2px #000}
+  .sec-b{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 12px;gap:7px}
+  .sub{display:flex;align-items:center;gap:8px;padding-top:7px;margin-top:2px;
+    border-top:1px solid rgba(255,255,255,.07)}
+  .sub .name{font-size:9px;font-weight:600;letter-spacing:.2em;color:#9A9A9A}
+  .onbox{width:13px;height:13px;border:1px solid #000;border-radius:4px;cursor:pointer;flex:none;
+    background:linear-gradient(180deg,#FFF,#BDBDBD);box-shadow:0 1px 3px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.6)}
+  .onbox.off{background:linear-gradient(180deg,#222,#111);box-shadow:inset 0 2px 4px rgba(0,0,0,.8)}
+  select{background:linear-gradient(180deg,#242424,#141414);color:#DDD;border:1px solid #000;border-radius:var(--rc);
+    font-size:9px;font-weight:500;letter-spacing:.06em;padding:5px 7px;cursor:pointer;max-width:215px;min-width:0;
+    box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.1)}
+  .row{display:flex;align-items:flex-end;gap:11px;flex-wrap:nowrap}
+  .lbl{font-size:8px;font-weight:600;letter-spacing:.14em;color:var(--tx2)}
+  .micro{font-size:8px;color:var(--tx3);letter-spacing:.08em;font-variant-numeric:tabular-nums}
+  .screen{position:relative;border:1px solid #000;border-radius:var(--rs);overflow:hidden;
+    background:linear-gradient(180deg,#050505,#0C0C0C);
+    box-shadow:inset 0 4px 14px rgba(0,0,0,.95),inset 0 0 0 1px rgba(255,255,255,.04),0 1px 0 rgba(255,255,255,.06)}
+  .screen::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:var(--rs);
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.02) 0 1px,transparent 1px 3px)}
+  canvas{display:block;width:100%;height:100%}
+  svg.disp{background:linear-gradient(180deg,#050505,#0C0C0C);border:1px solid #000;border-radius:var(--rs);
+    box-shadow:inset 0 4px 14px rgba(0,0,0,.95);display:block;touch-action:none}
+  .k{display:inline-flex;flex-direction:column;align-items:center;gap:3px;cursor:ns-resize;touch-action:none}
+  .k .wrap{position:relative;width:54px;height:54px}
+  .k.md .wrap{width:64px;height:64px}
+  .k.sm .wrap{width:42px;height:42px}
+  .k .well{position:absolute;inset:0;border-radius:50%;z-index:2;
+    background:radial-gradient(circle at 50% 42%,#0A0A0A,#111 58%,#1C1C1C 72%,#0A0A0A);
+    box-shadow:inset 0 3px 9px rgba(0,0,0,.95),inset 0 -1px 0 rgba(255,255,255,.07),0 1px 0 rgba(255,255,255,.05)}
+  .k .tick{position:absolute;left:50%;top:50%;width:1.5px;height:50%;transform-origin:50% 0%;pointer-events:none}
+  .k .tick::after{content:"";position:absolute;bottom:0;left:0;width:1.5px;height:12%;background:rgba(255,255,255,.5)}
+  .k .mring{z-index:1}
+  .k .cap{position:absolute;inset:16%;border-radius:50%;border:1px solid #000;
+    background:radial-gradient(circle at 38% 26%,#4A4A4A,#1C1C1C 58%,#0C0C0C);
+    box-shadow:0 4px 9px rgba(0,0,0,.85),inset 0 1.5px 1.5px rgba(255,255,255,.3),inset 0 -3px 5px rgba(0,0,0,.75)}
+  .k .ind{position:absolute;left:50%;top:50%;width:2.5px;height:34%;background:#FFF;border-radius:2px;transform-origin:50% 0%}
+  .k .kl{font-size:8px;font-weight:600;letter-spacing:.12em;color:var(--tx2)}
+  .k .kv{font-size:9px;font-weight:500;font-variant-numeric:tabular-nums;color:#EFEFEF;border-radius:6px;
+    background:linear-gradient(180deg,#060606,#0D0D0D);border:1px solid #000;padding:1px 7px;
+    box-shadow:inset 0 2px 5px rgba(0,0,0,.9);white-space:nowrap}
+  .k.disabled{opacity:.35;pointer-events:none}
+  .mring{position:absolute;inset:-4px;border-radius:50%;pointer-events:auto;cursor:ns-resize;
+    -webkit-mask:radial-gradient(closest-side,transparent 90%,#000 91%);
+    mask:radial-gradient(closest-side,transparent 90%,#000 91%)}
+  .mbadge{position:absolute;top:-9px;right:-9px;width:15px;height:15px;border-radius:5px;z-index:3;
+    background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;border:1px solid #000;
+    font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:ns-resize;
+    box-shadow:0 2px 5px rgba(0,0,0,.6)}
+  #dragGhost{position:fixed;z-index:99;width:22px;height:22px;border-radius:6px;pointer-events:none;
+    background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;border:1px solid #000;
+    font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;
+    box-shadow:0 4px 12px rgba(0,0,0,.7)}
+  .k.droptarget .well{box-shadow:0 0 0 2px #FFF,inset 0 3px 9px rgba(0,0,0,.95)}
+  .tgv{display:flex;flex-direction:column;border:1px solid #000;border-radius:var(--rc);overflow:hidden;
+    box-shadow:0 2px 4px rgba(0,0,0,.5);align-self:center}
+  .tgv span{padding:6px 8px;font-size:7px;font-weight:700;letter-spacing:.08em;cursor:pointer;text-align:center;
+    background:linear-gradient(180deg,#232323,#141414);color:#9A9A9A;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+  .tgv span.on{background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;box-shadow:inset 0 2px 4px rgba(0,0,0,.3)}
+  .tg{display:inline-flex;border:1px solid #000;border-radius:var(--rc);overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,.5)}
+  .tg span{padding:5px 10px;font-size:8px;font-weight:700;letter-spacing:.1em;cursor:pointer;
+    background:linear-gradient(180deg,#232323,#141414);color:#9A9A9A;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+  .tg span.on{background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;box-shadow:inset 0 2px 4px rgba(0,0,0,.3)}
+  .stepper{display:inline-flex;align-items:center;border:1px solid #000;border-radius:var(--rc);overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,.5)}
+  .stepper b{padding:4px 10px;font-size:10px;font-weight:600;font-variant-numeric:tabular-nums;min-width:34px;text-align:center;
+    background:linear-gradient(180deg,#060606,#0E0E0E);color:#FFF;box-shadow:inset 0 2px 6px rgba(0,0,0,.9)}
+  .stepper span{padding:4px 8px;cursor:pointer;font-size:9px;color:#BBB;background:linear-gradient(180deg,#242424,#141414)}
+  #main{display:flex;gap:10px;padding:10px 16px 0;flex:1;min-height:0}
+  #leftcol{width:500px;flex:none;display:flex;min-height:0}
+  #rightcol{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+  .k.sm{gap:2px}.k.sm .kv{font-size:8px;padding:0 5px}.k.sm .kl{font-size:7.5px}
+  .k.xs{gap:2px}.k.xs .wrap{width:32px;height:32px}.k.xs .kl{font-size:7px}.k.xs .kv{font-size:8px;padding:0 4px}
+  #bottombar{height:84px;margin-top:10px;border-top:1px solid #000;display:flex;align-items:center;gap:15px;padding:0 18px;flex:none;
+    background:linear-gradient(180deg,#191919,#0D0D0D);box-shadow:inset 0 1px 0 rgba(255,255,255,.07)}
+  /* meters: height driven by --lvl (0..1) set from the real "warprViz" peak data */
+  .meter{display:flex;gap:3px;height:34px;align-items:flex-end}
+  .meter i{display:block;width:10px;border:1px solid #000;border-radius:4px;position:relative;height:100%;overflow:hidden;
+    background:linear-gradient(180deg,#060606,#0C0C0C);box-shadow:inset 0 2px 6px rgba(0,0,0,.9)}
+  .meter i::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;border-radius:3px;
+    height:calc(var(--lvl,0) * 100%);background:linear-gradient(0deg,#777,#FFF)}
+  .vdiv{width:1px;align-self:stretch;background:#000;box-shadow:1px 0 0 rgba(255,255,255,.06);margin:4px 0}
+  .hint{font-size:8px;letter-spacing:.12em;color:var(--tx3)}
+  .pt{fill:#111;stroke:#E8E8E8;stroke-width:1.3;cursor:grab}
+  .grid line{stroke:#1E1E1E;stroke-width:1}
+  #stage{position:relative;flex:1;min-height:0}
+  #stage .corner{position:absolute;pointer-events:none;z-index:2}
+  .kgrid{display:flex;flex-wrap:wrap;gap:5px 9px;justify-content:space-between}
+  #lfoEd{flex:1;min-width:0;height:100%;cursor:crosshair;touch-action:none}
+  #fxrow .sec-h{gap:6px;padding:6px 8px}
+  #fxrow .tg span{padding:4px 6px}
+  #fxrow select{padding:4px 5px}
+  #lfoTabs.many span{padding:4px 4px}
+  .lfopt{fill:#111;stroke:#FFF;stroke-width:1.6;cursor:grab}
+  .lfoc{fill:#0A0A0A;stroke:rgba(255,255,255,.55);stroke-width:1.2;cursor:ns-resize}
+  #sampleName{max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+</style>
+</head>
+<body>
+<div id="plugin">
+
+  <!-- HEADER -->
+  <div id="hdr">
+    <div class="title">WARPR</div><div class="wt">WORKING TITLE</div>
+    <div class="spacer"></div>
+    <button class="btn" id="btnPrev">&#9664;</button><div id="presetName">Init</div><button class="btn" id="btnNext">&#9654;</button>
+    <button class="btn solid" id="btnSave">SAVE</button><button class="btn" id="btnLoad">LOAD</button>
+    <div class="spacer"></div>
+    <button class="btn" id="btnSettings">&#9881;</button>
+    <span class="k sm" data-p="masterGain" data-l="MASTER" data-f="db"></span>
+    <div class="meter" style="height:46px"><i id="meterL"></i><i id="meterR"></i></div>
+  </div>
+
+  <div id="main">
+
+    <!-- MERGED SOURCE PANEL -->
+    <div id="leftcol">
+      <div class="sec" style="flex:1">
+        <div class="sec-h">
+          <span class="name">SOURCE</span>
+          <button class="btn" id="btnSample" style="padding:4px 9px">LOAD</button>
+          <span class="micro" id="sampleName">NO SAMPLE</span>
+          <div class="spacer"></div>
+          <div class="tg" data-seg="playMode" id="pmode"><span>CLASSIC</span><span>GRANULAR</span></div>
+        </div>
+        <div class="sec-b" style="gap:6px">
+
+          <!-- sample waveform: DATA HOOK onSample() (peaks) + onViz() (voice playheads) -->
+          <div class="screen" style="min-height:96px;flex:1"><canvas id="cvSample"></canvas>
+            <span class="micro" id="adsrLabel" style="position:absolute;top:3px;left:7px;z-index:2"></span>
+          </div>
+          <div id="classicRow" class="row" style="align-items:flex-end;justify-content:space-between">
+            <span class="k sm" data-p="sampleStart" data-l="START" data-f="pct1"></span>
+            <span class="k sm" data-p="sampleEnd" data-l="END" data-f="pct1"></span>
+            <div class="vdiv"></div>
+            <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
+              <span class="lbl">TUNE</span>
+              <div class="stepper" data-step="rootNote" data-f="note"><span>&minus;</span><b></b><span>+</span></div>
+              <div style="display:flex;gap:8px">
+                <span class="k xs" data-p="transpose" data-l="SEMI" data-f="st"></span>
+                <span class="k xs" data-p="fineTune" data-l="FINE" data-f="ct"></span>
+              </div>
+            </div>
+            <div class="vdiv"></div>
+            <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
+              <span class="lbl">LOOP</span>
+              <select style="max-width:92px" data-sel="loopMode"></select>
+              <div class="tg" data-seg="direction"><span>&#9654;</span><span>&#9664;</span></div>
+            </div>
+          </div>
+          <div id="granRow" style="display:none;flex-direction:column;gap:7px">
+            <div class="row" style="align-items:center">
+              <div class="tg" data-seg="grainMode" id="grainMode"><span>CLASSIC</span><span>LOOP</span><span>CLOUD</span></div>
+              <span class="lbl" style="margin-left:6px">SCAN:</span>
+              <div class="tg" data-segbool="grainScanLoop"><span>LOOP</span><span>OFF</span></div>
+              <div class="tg" data-segbool="grainScanKey"><span>KEY</span><span>OFF</span></div>
+              <div class="spacer"></div>
+              <span class="hint">GRAIN ENGINE</span>
+            </div>
+            <div class="kgrid">
+              <span class="k xs" data-p="grainPosition" data-l="POSITION" data-f="pct"></span>
+              <span class="k xs" data-p="grainScan" data-l="SCAN" data-f="pct"></span>
+              <span class="k xs" data-p="grainScanDist" data-l="DIST" data-f="bip"></span>
+              <span class="k xs" data-p="grainSize" data-l="SIZE" data-f="ms"></span>
+              <span class="k xs" id="grainShapeK" data-p="grainShape" data-l="SHAPE" data-f="pct"></span>
+              <span class="k xs" data-p="grainVariation" data-l="VAR" data-f="pct"></span>
+              <span class="k xs" data-p="grainSpread" data-l="SPREAD" data-f="pct"></span>
+              <!-- 8th slot is mode-dependent: disabled (Classic) / grainReverse (Loop) / grainDensity (Cloud) -->
+              <span class="k xs" id="grainModeK" data-l="&mdash;" data-f="pct"></span>
+            </div>
+          </div>
+
+          <!-- envelope (single ADSR) -->
+          <div class="sub">
+            <span class="name">ENVELOPE</span>
+            <div class="spacer"></div>
+            <span class="hint">CURVE ON WAVEFORM &uarr;</span>
+          </div>
+          <div class="row" style="justify-content:space-evenly;align-items:flex-end;padding-bottom:2px">
+            <span class="k md" data-p="ampAttack" data-l="A" data-f="ms"></span>
+            <span class="k md" data-p="ampDecay" data-l="D" data-f="ms"></span>
+            <span class="k md" data-p="ampSustain" data-l="S" data-f="pct"></span>
+            <span class="k md" data-p="ampRelease" data-l="R" data-f="ms"></span>
+          </div>
+
+          <!-- WARP / SHAPER tabbed slot -->
+          <div class="sub">
+            <div class="tg" id="fxTabs"><span class="on">WARP</span><span>SHAPER</span></div>
+            <div class="spacer"></div>
+            <span class="hint" id="fxHint">WAVE WARP ENGINE</span>
+          </div>
+          <div id="pageWarp" style="display:flex;flex-direction:column;gap:8px">
+            <div class="row" style="align-items:center">
+              <div class="onbox" data-tog="warpEnable"></div>
+              <select id="warpMode" data-sel="warpMode" data-grouped="warp" style="flex:1;max-width:none"></select>
+              <span class="lbl">OS</span>
+              <select style="max-width:56px" data-sel="oversampling"></select>
+            </div>
+            <div class="row" style="align-items:flex-end;justify-content:space-between;padding:0 2px">
+              <span class="k md" data-p="warpAmount" data-l="WARP" data-f="pct"></span>
+              <span class="k sm" data-p="warpParamA" data-l="A" data-f="pct"></span>
+              <span class="k sm" data-p="warpParamB" data-l="B" data-f="pct"></span>
+              <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+                <span class="lbl">MOD OSC</span>
+                <select style="max-width:90px" data-sel="modOscSource"></select>
+              </div>
+              <span class="k sm" data-p="modOscRatio" data-l="RATIO" data-f="x"></span>
+              <span class="k sm" data-p="warpMix" data-l="MIX" data-f="pct"></span>
+            </div>
+          </div>
+          <div id="pageShaper" style="display:none;flex-direction:column;gap:8px">
+            <div class="row" style="align-items:center">
+              <div class="onbox" data-tog="shaperEnable"></div>
+              <div class="tg" data-seg="shaperCurveSelect"><span>A</span><span>B</span></div>
+              <select style="flex:1;max-width:none" data-sel="shaperPreset"></select>
+              <button class="btn" id="btnShReset" style="padding:3px 7px">RESET</button>
+              <button class="btn" id="btnShNorm" style="padding:3px 7px">NORM</button>
+            </div>
+            <div class="row" style="align-items:center;justify-content:space-between;padding:0 2px">
+              <!-- transfer curve editor: points live in uiState.shaperCurves (non-parameter state) -->
+              <svg id="shaperSvg" class="disp" viewBox="0 0 200 200" style="height:96px;aspect-ratio:1"></svg>
+              <div class="tgv" data-seg="shaperSymmetry"><span>SYM</span><span>ASYM</span></div>
+              <span class="k md" data-p="shaperMorph" data-l="MORPH" data-f="morphAB"></span>
+              <span class="k sm" data-p="shaperMix" data-l="MIX" data-f="pct"></span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: ORGANISM STAGE + FILTER/LFO ROW -->
+    <div id="rightcol">
+      <div id="stage" class="screen">
+        <!-- DATA HOOK onViz(): audio-reactive organism. Silent signal = relaxed concentric circles. -->
+        <canvas id="cvOrg"></canvas>
+        <span class="micro corner" style="top:6px;left:10px" id="mTheta">&theta; 0.000 &middot; r 0.000</span>
+        <span class="micro corner" style="top:6px;right:10px" id="mFlux">flux 0.00</span>
+        <span class="micro corner" style="bottom:6px;right:10px">POST-WARP</span>
+      </div>
+      <div id="fxrow" style="display:flex;gap:10px;height:218px;flex:none">
+        <div class="sec" style="flex:1.12;min-width:0;order:2">
+          <div class="sec-h">
+            <div class="onbox" data-tog="filterEnable"></div>
+            <span class="name">FILTER</span>
+            <button class="btn" id="btnFltPrev" style="padding:3px 7px">&#9664;</button>
+            <select id="filterType" data-sel="filterType" data-grouped="filter" style="flex:1;max-width:none"></select>
+            <button class="btn" id="btnFltNext" style="padding:3px 7px">&#9654;</button>
+          </div>
+          <div class="sec-b" style="gap:5px;padding:4px 8px">
+            <!-- DATA HOOK onFilterResponse(): magnitude response (dB) from the real filter DSP -->
+            <div class="screen" id="fltScreen" style="flex:1;min-height:0;cursor:crosshair;touch-action:none"><canvas id="cvFilter"></canvas>
+              <span class="micro" id="fltReadout" style="position:absolute;top:3px;left:7px;z-index:2"></span>
+              <span class="micro" style="position:absolute;top:3px;right:7px;z-index:2">DRAG = CUTOFF / RES</span>
+            </div>
+            <div class="row" style="justify-content:space-evenly;align-items:flex-end">
+              <span class="k xs" data-p="filterCutoff" data-l="CUTOFF" data-f="hz"></span>
+              <span class="k xs" data-p="filterResonance" data-l="RES" data-f="pct"></span>
+              <span class="k xs" data-p="filterDrive" data-l="DRIVE" data-f="db"></span>
+              <span class="k xs" data-p="filterMorph" data-l="MORPH" data-f="pct"></span>
+              <span class="k xs" data-p="filterKeyTrack" data-l="KEY" data-f="pct"></span>
+              <span class="k xs" data-p="filterMix" data-l="MIX" data-f="pct"></span>
+            </div>
+          </div>
+        </div>
+        <div class="sec" style="flex:1.23;min-width:0;order:1">
+          <div class="sec-h">
+            <span class="name">LFO</span>
+            <div class="tg" id="lfoTabs"></div>
+            <select id="lfoShapeSel" style="flex:1;max-width:none;min-width:36px">
+              <option>CUSTOM</option><option>SINE</option><option>TRIANGLE</option>
+              <option>SAW UP</option><option>SAW DOWN</option><option>SQUARE</option>
+              <option>PUMP</option><option>STEPS 4</option><option>STEPS 8</option>
+              <option>STEPS 16</option><option>SWING</option><option>S&amp;H NOISE</option>
+              <option>DRIFT</option>
+            </select>
+            <div class="tg" id="lfoDir" data-lfoseg="Dir"><span>&#9654;</span><span>&#9664;</span><span>&#8644;</span></div>
+            <div class="tg" id="lfoSync" data-lfoseg="Sync"><span>HZ</span><span>SYNC</span></div>
+          </div>
+          <div class="sec-b" style="flex-direction:row;gap:7px;padding:4px 8px">
+            <div class="tgv" id="lfoMode" data-lfoseg="Mode">
+              <span>FREE</span><span>RETRIG</span><span>ENV</span><span>MONO</span>
+            </div>
+            <div class="screen" style="flex:1;min-width:0">
+              <svg id="lfoEd" preserveAspectRatio="none"></svg>
+            </div>
+            <div class="tgv" id="lfoTool">
+              <span class="on">PT</span><span>FLAT</span><span>UP</span><span>DN</span>
+            </div>
+          </div>
+          <div class="row" style="align-items:flex-end;gap:7px;padding:0 10px 5px">
+            <span class="lbl" style="padding-bottom:14px">X</span>
+            <select id="lfoGridSel" data-lfosel="GridX" style="max-width:48px;margin-bottom:12px"></select>
+            <span class="lbl" style="padding-bottom:14px">Y</span>
+            <select id="lfoGridYSel" data-lfosel="GridY" style="max-width:48px;margin-bottom:12px"></select>
+            <span class="hint" style="padding-bottom:14px">&#8679;=STEPS</span>
+            <div class="spacer"></div>
+            <span class="k xs" id="kLfoRate" data-l="RATE"></span>
+            <span class="k xs" id="kLfoPhase" data-l="PHASE"></span>
+            <span class="k xs" id="kLfoSmooth" data-l="SMOOTH"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div id="bottombar">
+    <div class="tg" data-seg="voiceMode"><span>POLY</span><span>MONO</span><span>LEGATO</span></div>
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:center"><span class="lbl">VOICES</span>
+      <div class="stepper" data-step="polyphony" data-f="int"><span>&minus;</span><b></b><span>+</span></div></div>
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:center"><span class="lbl">UNISON</span>
+      <div class="stepper" data-step="unisonVoices" data-f="int"><span>&minus;</span><b></b><span>+</span></div></div>
+    <span class="k sm" data-p="unisonDetune" data-l="DETUNE" data-f="ct"></span>
+    <span class="k sm" data-p="unisonSpread" data-l="SPREAD" data-f="pct"></span>
+    <span class="k sm" data-p="glideTime" data-l="GLIDE" data-f="ms"></span>
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:center"><span class="lbl">BEND</span><select data-sel="bendRange" data-pm="1"></select></div>
+    <div class="spacer"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as Juce from "./js/juce/index.js";
+
+/* =====================================================================
+   NATIVE FEEL
+   ===================================================================== */
+document.addEventListener("contextmenu", e => { e.preventDefault(); return false; });
+document.addEventListener("dragstart", e => e.preventDefault());
+window.addEventListener("error", e => console.error("JS error:", e.message, e.filename, e.lineno));
+window.addEventListener("unhandledrejection", e => console.error("Unhandled rejection:", e.reason));
+
+if (!window.__JUCE__) {
+  document.body.innerHTML = '<div style="color:#fff;font:12px sans-serif;padding:20px">WARPR: JUCE backend not connected</div>';
+  throw new Error("JUCE backend not connected");
+}
+
+/* =====================================================================
+   HELPERS
+   ===================================================================== */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const backend = window.__JUCE__.backend;
+let SCALE = 1;
+
+/* pointerup (not click) for every button - WKWebView/WebView2 lesson */
+function tap(el, fn) {
+  let down = false;
+  el.addEventListener("pointerdown", () => { down = true; });
+  el.addEventListener("pointerleave", () => { down = false; });
+  el.addEventListener("pointerup", e => { if (down && e.button === 0) fn(e); down = false; });
+}
+
+/* ---- native functions (C++ side: PluginEditor.cpp withNativeFunction) ---- */
+const nat = name => { const f = Juce.getNativeFunction(name); return (...a) => f(...a); };
+const NF = {
+  getUiState:       nat("warpr_getUiState"),        // () -> JSON string
+  setLfoCount:      nat("warpr_setLfoCount"),       // (n)
+  setLfoShape:      nat("warpr_setLfoShape"),       // (index, JSON)
+  setModMatrix:     nat("warpr_setModMatrix"),      // (JSON)
+  setShaperCurve:   nat("warpr_setShaperCurve"),    // (curveId "A"|"B", JSON)
+  shaperReset:      nat("warpr_shaperReset"),       // (curveId)
+  shaperNormalize:  nat("warpr_shaperNormalize"),   // (curveId)
+  loadSample:       nat("warpr_loadSample"),
+  presetStep:       nat("warpr_presetStep"),        // (+1 | -1)
+  presetSave:       nat("warpr_presetSave"),
+  presetLoad:       nat("warpr_presetLoad"),
+  openSettings:     nat("warpr_openSettings"),
+  requestSample:    nat("warpr_requestSample"),     // () -> re-emit warprSample
+  requestFilterResponse: nat("warpr_requestFilterResponse")
+};
+
+/* =====================================================================
+   PARAMETER LAYER
+   ===================================================================== */
+const sliderOf = id => Juce.getSliderState(id);
+const toggleOf = id => Juce.getToggleState(id);
+const comboOf  = id => Juce.getComboBoxState(id);
+
+/* default (scaled) values for double-click reset - mirrors parameter-spec.md */
+const DEF = {
+  sampleStart:0, sampleEnd:1, rootNote:60, transpose:0, fineTune:0,
+  grainPosition:0, grainScan:0, grainScanDist:0, grainSize:80, grainShape:.5, grainVariation:0, grainSpread:0,
+  grainReverse:0, grainDensity:8,
+  warpAmount:0, warpParamA:.5, warpParamB:0, modOscRatio:1, warpMix:1,
+  shaperMorph:0, shaperMix:1, ampAttack:4, ampDecay:180, ampSustain:.7, ampRelease:240,
+  filterCutoff:20000, filterResonance:0, filterDrive:0, filterMorph:0, filterKeyTrack:0, filterMix:1,
+  polyphony:16, unisonVoices:1, unisonDetune:12, unisonSpread:.5, glideTime:0, masterGain:0
+};
+for (let n = 1; n <= 10; n++) { DEF["lfo"+n+"Rate"] = 6/16; DEF["lfo"+n+"Phase"] = 0; DEF["lfo"+n+"Smooth"] = 0; }
+
+const NOTE = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const LFO_DIV = ["8 bar","4 bar","2 bar","1 bar","1/2","1/4.","1/4","1/4T","1/8.","1/8","1/8T","1/16.","1/16","1/16T","1/32","1/32T","1/64"];
+const F = {
+  pct : v => Math.round(v*100) + "%",
+  pct1: v => (v*100).toFixed(1) + "%",
+  bip : v => (v > 0 ? "+" : "") + Math.round(v*100) + "%",
+  ms  : v => v >= 1000 ? (v/1000).toFixed(2) + " s" : (v >= 100 ? Math.round(v) : v.toFixed(1)) + " ms",
+  ct  : v => (Math.abs(v) < .05 ? "0" : v.toFixed(1)) + " ct",
+  st  : v => (v > 0 ? "+" : "") + Math.round(v),
+  db  : v => v.toFixed(1) + " dB",
+  hz  : v => v >= 1000 ? (v/1000).toFixed(1) + " kHz" : Math.round(v) + " Hz",
+  x   : v => v.toFixed(2) + "x",
+  int : v => String(Math.round(v)),
+  deg : v => Math.round(v) + "°",
+  note: v => { const m = Math.round(v); return NOTE[((m%12)+12)%12] + (Math.floor(m/12) - 2); },   // 60 = C3
+  morphAB: v => v < .005 ? "A" : v > .995 ? "B" : Math.round(v*100) + "%"
+};
+
+/* fan-out watcher: one JUCE listener per state, many UI consumers */
+const watchers = {}, attached = new Set();
+function watch(pid, kind, fn) {
+  const key = kind + pid;
+  if (!attached.has(key)) {
+    attached.add(key);
+    const st = kind === "t" ? toggleOf(pid) : kind === "c" ? comboOf(pid) : sliderOf(pid);
+    const fire = () => { (watchers[pid] || []).forEach(f => f()); };      // listeners get NO args (pattern 15)
+    st.valueChangedEvent.addListener(fire);
+    st.propertiesChangedEvent.addListener(fire);
+  }
+  (watchers[pid] ??= new Set()).add(fn);
+  return fn;
+}
+const unwatch = (pid, fn) => watchers[pid]?.delete(fn);
+
+function toNorm(st, v) {
+  const p = st.properties, r = (v - p.start) / (p.end - p.start);
+  return Math.pow(clamp(r, 0, 1), p.skew);
+}
+function setSliderGesture(pid, n) {           // discrete write bracketed as its own gesture
+  const st = sliderOf(pid); st.sliderDragStarted(); st.setNormalisedValue(clamp(n, 0, 1)); st.sliderDragEnded();
+}
+const nrm = pid => sliderOf(pid).getNormalisedValue();
+const scl = pid => sliderOf(pid).getScaledValue();
+function cidx(st, n) {                        // choice index, safe before properties arrive
+  const L = (st.properties.choices && st.properties.choices.length) || n || 1;
+  return L > 1 ? Math.round(st.value * (L - 1)) : 0;
+}
+function setChoice(st, i) {
+  if (st.properties.choices && st.properties.choices.length) st.setChoiceIndex(i);
+}
+
+/* ---- knobs ---- */
+const KROT = r => `translateX(-50%) rotate(${r + 180}deg)`;       // 0% bottom-left, 100% bottom-right
+let TICKS = ""; for (let i = 0; i <= 10; i++) TICKS += `<span class="tick" style="transform:rotate(${45 + i*27}deg)"></span>`;
+const KNOBS = [];
+let mods = [];                                                    // [{src:1..10, dst:paramId, depth:0..1}]
+
+class Knob {
+  constructor(el) {
+    this.el = el; el._knob = this; this.pid = null; this.fmt = F.pct; this.label = el.dataset.l || ""; this.deps = [];
+    el.innerHTML = `<span class="wrap"><span class="well">${TICKS}<span class="cap"><span class="ind"></span></span></span></span><span class="kl"></span><span class="kv"></span>`;
+    this.wrap = el.querySelector(".wrap"); this.ind = el.querySelector(".ind");
+    this.kl = el.querySelector(".kl"); this.kv = el.querySelector(".kv");
+    this.watchFn = () => this.refresh();
+    this._wire();
+    KNOBS.push(this);
+  }
+  bind(pid, label, fmt, deps = []) {
+    if (this.pid) unwatch(this.pid, this.watchFn);
+    this.deps.forEach(([p, k]) => unwatch(p, this.watchFn));
+    this.pid = pid; this.deps = deps;
+    if (label !== undefined) this.label = label;
+    if (fmt) this.fmt = fmt;
+    this.el.classList.toggle("disabled", !pid);
+    if (pid) { watch(pid, "s", this.watchFn); deps.forEach(([p, k]) => watch(p, k, this.watchFn)); }
+    this.refresh();
+  }
+  refresh() {
+    this.kl.textContent = this.label;
+    if (!this.pid) { this.kv.textContent = "–"; this.ind.style.transform = KROT(-135); this.paintMod(); return; }
+    const st = sliderOf(this.pid), n = clamp(st.getNormalisedValue(), 0, 1);
+    this.ind.style.transform = KROT(-135 + n*270);
+    this.kv.textContent = this.fmt(st.getScaledValue(), st);
+    this.paintMod();
+  }
+  _wire() {
+    const el = this.el; let drag = null;
+    el.addEventListener("pointerdown", e => {
+      if (!this.pid || e.button !== 0) return;
+      if (e.target.closest(".mring,.mbadge")) return;
+      const st = sliderOf(this.pid);
+      drag = { y: e.clientY, n: st.getNormalisedValue(), st };
+      st.sliderDragStarted(); el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener("pointermove", e => {
+      if (!drag) return;
+      const dy = (drag.y - e.clientY) / SCALE;                      // relative frame-delta drag (pattern 16)
+      drag.y = e.clientY;
+      drag.n = clamp(drag.n + dy * (e.shiftKey ? 0.0006 : 0.005), 0, 1);   // local accumulator: survives int snapping
+      drag.st.setNormalisedValue(drag.n);
+    });
+    const end = () => { if (drag) { drag.st.sliderDragEnded(); drag = null; } };
+    el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+    el.addEventListener("dblclick", e => {
+      if (!this.pid || e.target.closest(".mbadge")) return;
+      if (DEF[this.pid] !== undefined) setSliderGesture(this.pid, toNorm(sliderOf(this.pid), DEF[this.pid]));
+    });
+    el.addEventListener("wheel", e => {
+      if (!this.pid) return; e.preventDefault();
+      const st = sliderOf(this.pid), p = st.properties;
+      const minStep = p.interval > 0 ? p.interval / (p.end - p.start) : 0;
+      const step = Math.max(e.shiftKey ? 0.004 : 0.02, minStep) * (e.deltaY < 0 ? 1 : -1);
+      setSliderGesture(this.pid, st.getNormalisedValue() + step);
+    }, { passive: false });
+  }
+  /* modulation rim: thin gray depth arc + numbered badge, hidden until assigned */
+  paintMod() {
+    const m = this.pid && mods.find(q => q.dst === this.pid);
+    let ring = this.wrap.querySelector(".mring"), badge = this.wrap.querySelector(".mbadge");
+    if (!m) { ring && ring.remove(); badge && badge.remove(); return; }
+    if (!ring) {
+      ring = document.createElement("span"); ring.className = "mring"; this.wrap.appendChild(ring);
+      badge = document.createElement("span"); badge.className = "mbadge"; this.wrap.appendChild(badge);
+      const adj = e0 => {
+        e0.stopPropagation(); e0.preventDefault();
+        const mm = mods.find(q => q.dst === this.pid); if (!mm) return;
+        let y = e0.clientY;
+        const mv = e => { mm.depth = clamp(mm.depth + (y - e.clientY) / SCALE * 0.008, 0, 1); y = e.clientY; this.paintMod(); };
+        const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); sendMods(); };
+        window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+      };
+      ring.addEventListener("pointerdown", adj); badge.addEventListener("pointerdown", adj);
+      badge.addEventListener("dblclick", e => { e.stopPropagation(); mods = mods.filter(q => q.dst !== this.pid); repaintMods(); sendMods(); });
+    }
+    badge.textContent = m.src;
+    ring.style.background = `conic-gradient(from 225deg, #8C8C8C 0deg ${m.depth*270}deg, transparent ${m.depth*270}deg 360deg)`;
+  }
+}
+const repaintMods = () => KNOBS.forEach(k => k.paintMod());
+let modTimer = 0;
+function sendMods() { clearTimeout(modTimer); modTimer = setTimeout(() => NF.setModMatrix(JSON.stringify(mods)), 30); }
+function assignMod(dst, src) {
+  mods = mods.filter(q => q.dst !== dst);          // one source per destination in the v9 UI
+  mods.push({ src, dst, depth: 0.4 });
+  repaintMods(); sendMods();
+}
+
+$$(".k").forEach(el => {
+  const k = new Knob(el);
+  if (el.dataset.p) k.bind(el.dataset.p, el.dataset.l, F[el.dataset.f] || F.pct);
+  else k.bind(null, el.dataset.l);
+});
+
+/* ---- toggles / segments / selects / steppers ---- */
+$$("[data-tog]").forEach(el => {
+  const pid = el.dataset.tog, st = toggleOf(pid);
+  const upd = () => el.classList.toggle("off", !st.getValue());
+  watch(pid, "t", upd); tap(el, () => st.setValue(!st.getValue())); upd();
+});
+
+function bindSeg(el, pid, cb) {
+  const spans = [...el.children], st = comboOf(pid);
+  const upd = () => { const i = cidx(st, spans.length); spans.forEach((s, j) => s.classList.toggle("on", j === i)); cb && cb(i); };
+  watch(pid, "c", upd); spans.forEach((s, j) => tap(s, () => setChoice(st, j))); upd();
+}
+function bindSegBool(el, pid) {                 // first span = true, second = false
+  const spans = [...el.children], st = toggleOf(pid);
+  const upd = () => { const v = st.getValue(); spans[0].classList.toggle("on", v); spans[1].classList.toggle("on", !v); };
+  watch(pid, "t", upd); tap(spans[0], () => st.setValue(true)); tap(spans[1], () => st.setValue(false)); upd();
+}
+
+const WARP_MODES = {
+ "WAVE BENDING":["Bend Positive","Bend Negative","Bend Symmetric","Bend Asymmetric","Asym Positive","Asym Negative","Asym Bidirectional","PWM","Flip","Mirror","Wave Skew","Wave Stretch","Wave Compress","Wave Expand","Variable Duty Cycle"],
+ "WAVEFOLDING":["Linear Fold","Multi Fold","Sine Fold","Triangle Fold","Soft Fold","Hard Fold","Symmetric Fold","Asymmetric Fold","Dynamic Fold","Chebyshev Fold"],
+ "DISTORTION":["Hard Clip","Soft Clip","Tanh","Arctangent","Tube Saturation","Diode 1","Diode 2","Cubic","Sinusoidal","Exponential","Asymmetric","Polynomial","Chebyshev Harmonic","Full Wave Rect","Half Wave Rect","Soft Rect","Bitcrush","SR Reduction","Quantization"],
+ "PHASE & TIME":["Phase Distortion","Phase Stretch","Phase Compression","Phase Mirror","Phase Skew","Phase Quantization","Phase Remapping","Windowed Sync","Hard Sync","Soft Sync"],
+ "MODULATION":["FM","PM","AM","RM","Self FM","Cross Mod"]};
+const FILTER_TYPES = {
+ "STANDARD":["LP 6","LP 12","LP 18","LP 24","LP 36","LP 48","HP 6","HP 12","HP 18","HP 24","HP 36","HP 48","BP 6","BP 12","BP 24","Notch","Var Notch","Peak","Low Shelf","High Shelf"],
+ "SPECIAL":["Comb +","Comb −","All Pass","Serial AP","Formant","Vowel","Morph Formant","Phaser","Res LP","Res HP","Dist LP","Scream","S&H","Ring Mod"]};
+const GROUPS = { warp: WARP_MODES, filter: FILTER_TYPES };
+
+function bindSelect(el, pid) {
+  const st = comboOf(pid), grouped = el.dataset.grouped;
+  const fill = () => {
+    if (grouped) {
+      if (!el.dataset.filled) {
+        let idx = 0;
+        for (const g in GROUPS[grouped]) {
+          const og = document.createElement("optgroup"); og.label = g;
+          GROUPS[grouped][g].forEach(m => { const o = document.createElement("option"); o.textContent = m; o.value = String(idx++); og.appendChild(o); });
+          el.appendChild(og);
+        }
+        el.dataset.filled = "1";
+      }
+      const n = st.properties.choices && st.properties.choices.length;
+      if (n && n !== el.options.length) console.error(`${pid}: UI lists ${el.options.length} entries, parameter has ${n}`);
+    } else {
+      const ch = st.properties.choices || [];
+      if (ch.length && el.dataset.filled !== String(ch.length)) {
+        el.innerHTML = "";
+        ch.forEach((c, i) => { const o = document.createElement("option"); o.value = String(i); o.textContent = c.toUpperCase(); el.appendChild(o); });
+        el.dataset.filled = String(ch.length);
+      }
+    }
+    el.value = String(cidx(st, el.options.length));
+  };
+  watch(pid, "c", fill); el.addEventListener("change", () => setChoice(st, parseInt(el.value))); fill();
+}
+$$("[data-sel]").forEach(el => bindSelect(el, el.dataset.sel));
+
+$$("[data-step]").forEach(el => {
+  const pid = el.dataset.step, f = F[el.dataset.f], b = el.querySelector("b"), [dn, up] = el.querySelectorAll("span");
+  const upd = () => { b.textContent = f(scl(pid)); };
+  const bump = d => { const st = sliderOf(pid); setSliderGesture(pid, toNorm(st, st.getScaledValue() + d)); };
+  watch(pid, "s", upd); tap(dn, () => bump(-1)); tap(up, () => bump(1)); upd();
+});
+
+/* page toggles that react to parameters */
+bindSeg($("#pmode"), "playMode", i => {
+  $("#classicRow").style.display = i === 1 ? "none" : "flex";
+  $("#granRow").style.display = i === 1 ? "flex" : "none";
+});
+$$("[data-seg]").forEach(el => { if (el.id !== "pmode" && el.id !== "grainMode") bindSeg(el, el.dataset.seg); });
+bindSeg($("#grainMode"), "grainMode", i => {
+  const k8 = $("#grainModeK")._knob, shp = $("#grainShapeK");
+  if (i === 0) k8.bind(null, "—");
+  if (i === 1) k8.bind("grainReverse", "REV %", F.pct);
+  if (i === 2) k8.bind("grainDensity", "DENSITY", F.int);
+  shp.classList.toggle("disabled", i === 2);           // SHAPE is fixed in Cloud mode (as in G3)
+});
+$$("[data-segbool]").forEach(el => bindSegBool(el, el.dataset.segbool));
+
+/* WARP | SHAPER tab (UI-only page switch) */
+$$("#fxTabs span").forEach((s, i) => tap(s, () => {
+  $$("#fxTabs span").forEach((x, j) => x.classList.toggle("on", i === j));
+  $("#pageWarp").style.display = i ? "none" : "flex";
+  $("#pageShaper").style.display = i ? "flex" : "none";
+  $("#fxHint").textContent = i ? "TRANSFER CURVE EDITOR" : "WAVE WARP ENGINE";
+  if (i) shaperResize();
+}));
+
+/* filter type prev/next */
+function stepFilterType(d) {
+  const st = comboOf("filterType"), n = st.properties.choices.length || 34;
+  setChoice(st, (cidx(st, n) + d + n) % n);
+}
+tap($("#btnFltPrev"), () => stepFilterType(-1)); tap($("#btnFltNext"), () => stepFilterType(1));
+
+/* header buttons */
+tap($("#btnPrev"), () => NF.presetStep(-1)); tap($("#btnNext"), () => NF.presetStep(1));
+tap($("#btnSave"), () => NF.presetSave()); tap($("#btnLoad"), () => NF.presetLoad());
+tap($("#btnSettings"), () => NF.openSettings()); tap($("#btnSample"), () => NF.loadSample());
+tap($("#btnShReset"), () => NF.shaperReset(shaperId())); tap($("#btnShNorm"), () => NF.shaperNormalize(shaperId()));
+
+/* =====================================================================
+   SCALING + CANVAS FIT
+   ===================================================================== */
+const plugin = $("#plugin");
+const CANVASES = $$("canvas");
+function fitCanvas(c) {
+  const r = SCALE * (window.devicePixelRatio || 1);
+  c.width = Math.max(2, Math.round(c.clientWidth * r)); c.height = Math.max(2, Math.round(c.clientHeight * r));
+}
+function applyScale() {
+  const w = window.innerWidth, h = window.innerHeight;
+  SCALE = Math.min(w / 1200, h / 820);
+  plugin.style.transform = `translate(${(w - 1200*SCALE)/2}px,${(h - 820*SCALE)/2}px) scale(${SCALE})`;
+  CANVASES.forEach(fitCanvas); orgClear = true; drawFilter(); lfoResize(); shaperResize();
+}
+window.addEventListener("resize", applyScale);
+
+/* =====================================================================
+   SAMPLE WAVEFORM + ENVELOPE OVERLAY + START/END MARKERS
+   (bound to real params; wave data from onSample(), playheads from onViz())
+   ===================================================================== */
+const cs = $("#cvSample");
+let peaks = null;                       // Float32Array [min0,max0,min1,max1,...] in -1..1  (HOOK: onSample)
+let voices = [];                        // [{pos:0..1 (absolute in sample), level:0..1}]     (HOOK: onViz)
+
+/* Envelope overlay zones (fraction of view width).  Shape is a graphical map of the 4 ADSR params:
+   attack zone 0..0.25, decay zone 0.25..0.50, sustain hold fixed to 0.70, release zone 0.70..1.00. */
+const Z = { aw: 0.25, dx: 0.25, dw: 0.25, hold: 0.70, rx: 0.70, rw: 0.30 };
+function envPts() {
+  const a = nrm("ampAttack"), d = nrm("ampDecay"), s = nrm("ampSustain"), r = nrm("ampRelease");
+  return { xa: Z.aw*a, xd: Z.dx + Z.dw*d, s, se: Z.hold, re: Z.rx + Z.rw*r };
+}
+function envF(t, E) {
+  if (t < E.xa) return t / Math.max(E.xa, 0.001);
+  if (t < E.xd) return 1 - (1 - E.s) * ((t - E.xa) / Math.max(E.xd - E.xa, 0.001));
+  if (t < E.se) return E.s;
+  if (t < E.re) return E.s * (1 - (t - E.se) / Math.max(E.re - E.se, 0.001));
+  return 0;
+}
+function drawSample() {
+  const x = cs.getContext("2d"), w = cs.width, h = cs.height, E = envPts();
+  x.clearRect(0, 0, w, h);
+  const P = { start: nrm("sampleStart"), end: nrm("sampleEnd") };
+  if (peaks) {
+    const N = peaks.length / 2;
+    x.strokeStyle = "rgba(255,255,255,.14)"; x.lineWidth = 1; x.beginPath();
+    for (let i = 0; i < w; i++) {
+      const j = Math.min(N - 1, Math.floor(i / w * N)), mn = peaks[2*j], mx = peaks[2*j+1];
+      x.moveTo(i + .5, h/2 - mx*h*.40); x.lineTo(i + .5, h/2 - mn*h*.40);
+    }
+    x.stroke();
+    x.strokeStyle = "#FFF"; x.lineWidth = 1; x.beginPath();
+    for (let i = 0; i < w; i++) {
+      const j = Math.min(N - 1, Math.floor(i / w * N)), e = envF(i / w, E), mn = peaks[2*j]*e, mx = peaks[2*j+1]*e;
+      x.moveTo(i + .5, h/2 - mx*h*.40); x.lineTo(i + .5, h/2 - mn*h*.40);
+    }
+    x.stroke();
+  }
+  const envY = t => h/2 - envF(t, E)*h*.42;
+  x.fillStyle = "rgba(255,255,255,.05)"; x.beginPath(); x.moveTo(0, h/2);
+  for (let i = 0; i <= 300; i++) x.lineTo(i/300*w, envY(i/300));
+  x.lineTo(w, h/2); x.closePath(); x.fill();
+  x.strokeStyle = "rgba(255,255,255,.85)"; x.lineWidth = 2; x.beginPath();
+  for (let i = 0; i <= 300; i++) { const t = i/300; i ? x.lineTo(t*w, envY(t)) : x.moveTo(t*w, envY(t)); }
+  x.stroke();
+  x.fillStyle = "rgba(0,0,0,.55)"; x.fillRect(0, 0, P.start*w, h); x.fillRect(P.end*w, 0, w - P.end*w, h);
+  [P.start, P.end].forEach(t => {
+    const px = t*w; x.fillStyle = "rgba(255,255,255,.9)"; x.fillRect(px - 1, 0, 2, h);
+    x.fillRect(px - 7, 0, 14, 10); x.fillStyle = "#000"; x.fillRect(px - 5, 2, 10, 6);
+  });
+  voices.forEach(v => {                                   // one playhead per sounding voice (real DSP read positions)
+    x.fillStyle = `rgba(255,255,255,${(0.25 + 0.5*clamp(v.level, 0, 1)).toFixed(2)})`;
+    x.fillRect(v.pos*w - .75, 0, 1.5, h);
+  });
+  envHandles(E).forEach(hd => {
+    const px = Math.min(hd.x*w, w - 7), py = h/2 - hd.y*h*.42;
+    x.beginPath(); x.arc(px, py, 7, 0, 7); x.fillStyle = "#101010"; x.fill(); x.lineWidth = 2; x.strokeStyle = "#FFF"; x.stroke();
+  });
+  $("#adsrLabel").textContent =
+    `A ${F.ms(scl("ampAttack"))} · D ${F.ms(scl("ampDecay"))} · S ${F.pct(scl("ampSustain"))} · R ${F.ms(scl("ampRelease"))}`;
+}
+function envHandles(E) {
+  return [{ id: "a", x: E.xa, y: 1 }, { id: "d", x: E.xd, y: E.s }, { id: "se", x: E.se, y: E.s }, { id: "re", x: E.re, y: 0 }];
+}
+let envDrag = null;
+const csXY = e => { const r = cs.getBoundingClientRect(); return { x: clamp((e.clientX - r.left)/r.width, 0, 1), y: (e.clientY - r.top)/r.height }; };
+const gestureBegin = ids => ids.forEach(i => sliderOf(i).sliderDragStarted());
+const gestureEnd   = ids => ids.forEach(i => sliderOf(i).sliderDragEnded());
+cs.style.cursor = "pointer"; cs.style.touchAction = "none";
+cs.addEventListener("pointerdown", e => {
+  const p = csXY(e), S = nrm("sampleStart"), En = nrm("sampleEnd");
+  let kind = null;
+  if (Math.abs(p.x - S) < 0.02) kind = "ps"; else if (Math.abs(p.x - En) < 0.02) kind = "pe";
+  else {
+    const E = envPts(); let bd = 1e9;
+    envHandles(E).forEach(hd => { const d = Math.hypot(p.x - hd.x, (p.y - (.5 - hd.y*.42))*.6); if (d < bd) { bd = d; kind = hd.id; } });
+    if (bd >= 0.08) kind = null;
+  }
+  if (!kind) return;
+  const ids = { ps: ["sampleStart"], pe: ["sampleEnd"], a: ["ampAttack"], d: ["ampDecay", "ampSustain"], se: ["ampSustain"], re: ["ampRelease"] }[kind];
+  envDrag = { kind, ids }; gestureBegin(ids); cs.setPointerCapture(e.pointerId);
+});
+cs.addEventListener("pointermove", e => {
+  if (!envDrag) return;
+  const p = csXY(e), lvl = clamp((.5 - p.y)/.42, 0, 1), k = envDrag.kind;
+  const set = (id, n) => sliderOf(id).setNormalisedValue(clamp(n, 0, 1));
+  if (k === "ps") set("sampleStart", Math.min(p.x, nrm("sampleEnd") - 0.01));
+  if (k === "pe") set("sampleEnd", Math.max(p.x, nrm("sampleStart") + 0.01));
+  if (k === "a")  set("ampAttack", p.x / Z.aw);
+  if (k === "d")  { set("ampDecay", (p.x - Z.dx) / Z.dw); set("ampSustain", lvl); }
+  if (k === "se") set("ampSustain", lvl);                          // sustain-end x is fixed in production
+  if (k === "re") set("ampRelease", (p.x - Z.rx) / Z.rw);
+});
+const envEnd = () => { if (envDrag) { gestureEnd(envDrag.ids); envDrag = null; } };
+cs.addEventListener("pointerup", envEnd); cs.addEventListener("pointercancel", envEnd);
+
+/* =====================================================================
+   FILTER RESPONSE DISPLAY  (curve = REAL magnitude response from C++)
+   ===================================================================== */
+const cf = $("#cvFilter");
+let fltResp = null;                     // Float32Array of dB, N points, log-spaced 20 Hz..20 kHz   (HOOK: onFilterResponse)
+const DB_MIN = -48, DB_MAX = 24;
+const cutX = () => clamp(Math.log10(scl("filterCutoff") / 20) / 3, 0, 1);       // log axis position of cutoff
+const resY = () => .88 - nrm("filterResonance") * .76;
+function drawFilter() {
+  const x = cf.getContext("2d"), w = cf.width, h = cf.height;
+  x.clearRect(0, 0, w, h);
+  x.fillStyle = "rgba(255,255,255,.1)";
+  for (let i = 1; i < 8; i++) for (let j = 1; j < 4; j++) x.fillRect(i/8*w - 1, j/4*h - 1, 2, 2);
+  const cx = cutX();
+  x.fillStyle = "rgba(255,255,255,.12)"; x.fillRect(cx*w - .5, 0, 1, h);
+  if (fltResp && fltResp.length > 1) {
+    const N = fltResp.length, yOf = db => h * (1 - clamp((db - DB_MIN) / (DB_MAX - DB_MIN), 0, 1));
+    const grad = x.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, "rgba(255,255,255,.16)"); grad.addColorStop(1, "rgba(255,255,255,.02)");
+    x.fillStyle = grad; x.beginPath(); x.moveTo(0, h);
+    for (let i = 0; i < N; i++) x.lineTo(i/(N-1)*w, yOf(fltResp[i]));
+    x.lineTo(w, h); x.closePath(); x.fill();
+    x.strokeStyle = "#FFF"; x.lineWidth = 1.8; x.beginPath();
+    for (let i = 0; i < N; i++) { const px = i/(N-1)*w, py = yOf(fltResp[i]); i ? x.lineTo(px, py) : x.moveTo(px, py); }
+    x.stroke();
+  }
+  x.beginPath(); x.arc(cx*w, resY()*h, 9, 0, 7); x.fillStyle = "#101010"; x.fill(); x.lineWidth = 2.5; x.strokeStyle = "#FFF"; x.stroke();
+  $("#fltReadout").textContent = `${F.hz(scl("filterCutoff"))} · Q ${F.pct(scl("filterResonance"))}`;
+}
+{
+  const scr = $("#fltScreen"); let fd = false;
+  const apply = e => {
+    const r = scr.getBoundingClientRect(), t = clamp((e.clientX - r.left)/r.width, 0, 1), yy = clamp((e.clientY - r.top)/r.height, 0, 1);
+    const hz = 20 * Math.pow(10, 3*t);
+    sliderOf("filterCutoff").setNormalisedValue(toNorm(sliderOf("filterCutoff"), hz));
+    sliderOf("filterResonance").setNormalisedValue(clamp((.88 - yy) / .76, 0, 1));
+  };
+  scr.addEventListener("pointerdown", e => { fd = true; scr.setPointerCapture(e.pointerId); gestureBegin(["filterCutoff", "filterResonance"]); apply(e); });
+  scr.addEventListener("pointermove", e => { if (fd) apply(e); });
+  const up = () => { if (fd) { fd = false; gestureEnd(["filterCutoff", "filterResonance"]); } };
+  scr.addEventListener("pointerup", up); scr.addEventListener("pointercancel", up);
+  ["filterCutoff", "filterResonance"].forEach(p => watch(p, "s", drawFilter));
+}
+
+/* =====================================================================
+   ORGANISM  (audio-reactive; all motion amplitude comes from real DSP data)
+   ===================================================================== */
+const co = $("#cvOrg"), ox = co.getContext("2d");
+let orgClear = true, T = 0, swells = [], lastTSeq = -1;
+const V = { low: 0, high: 0, rms: 0, theta: 0, r: 0 };          // smoothed in the render loop
+const VT = { low: 0, high: 0, rms: 0, theta: 0, r: 0 };         // targets from the latest "warprViz" frame
+function deform(a, t) {
+  // low bands drive slow low-order lobes, high bands drive finer shimmer; silence -> d = 0 (perfect circles)
+  let d = V.low * (0.26*Math.sin(a*2 + t*.42) + 0.17*Math.sin(a*3 - t*.65 + 1.7))
+        + V.high * (0.10*Math.sin(a*5 + t*.95 + 4.0) + 0.05*Math.sin(a*8 - t*1.3));
+  for (const s of swells) {
+    const dd = Math.atan2(Math.sin(a - s.ang), Math.cos(a - s.ang));
+    d += s.amp * s.life * Math.exp(-(dd*dd)/(s.w*s.w));
+  }
+  return d;
+}
+function drawOrg() {
+  const w = co.width, h = co.height, cx = w*.5, cy = h*.5;
+  for (const k of ["low", "high", "rms", "theta", "r"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .25 : .07);
+  if (orgClear) { ox.fillStyle = "#050505"; ox.fillRect(0, 0, w, h); orgClear = false; }
+  const R = Math.min(w, h) * .26 * (1 + .10 * V.low), K = 48, N = 130;
+  ox.fillStyle = "rgba(5,5,5,0.26)"; ox.fillRect(0, 0, w, h);
+  for (let k = 1; k <= K; k++) {
+    const s = k/K, wgt = Math.pow(s, 2.0), twist = s*.6 * Math.min(1, V.rms*4);
+    ox.strokeStyle = `rgba(255,255,255,${(.10 + .42*Math.pow(s, 1.3)).toFixed(3)})`; ox.lineWidth = .65 * (SCALE || 1);
+    ox.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const a = i/N*Math.PI*2, d = deform(a + twist*Math.sin(T*.13 + s*1.6), T), r = R*s*(1 + d*.34*wgt);
+      const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r*.92;
+      i ? ox.lineTo(px, py) : ox.moveTo(px, py);
+    }
+    ox.closePath(); ox.stroke();
+  }
+  T += .004 + .026 * clamp(V.rms * 3, 0, 1);               // time only flows when there is signal
+  swells.forEach(s => s.life *= .965); swells = swells.filter(s => s.life > .02);
+  const flux = swells.reduce((a, s) => a + s.amp*s.life, 0);
+  $("#mFlux").textContent = "flux " + flux.toFixed(2);
+  $("#mTheta").textContent = `θ ${V.theta.toFixed(3)} · r ${V.r.toFixed(3)}`;
+}
+
+/* =====================================================================
+   BACKEND EVENTS  (lock-free queue -> editor timer -> emitEvent)
+   ===================================================================== */
+/* "warprViz" frame, ~30 Hz, produced from the audio thread via SPSC FIFO:
+   { low, high, rms, theta, r : 0..1 / radians,
+     transient: 0..1, tseq: uint (increments per detected transient), tang: radians (spectral-centroid angle),
+     peakL, peakR : linear amplitude 0..1+,
+     voices: [{pos:0..1, level:0..1}],           // per sounding voice: absolute read position in the sample
+     lfo: [phase0..9 in 0..1]  (-1 = LFO idle) } */
+let mL = 0, mR = 0, mtL = 0, mtR = 0, lfoPhases = [];
+const toMeter = a => clamp((20*Math.log10(Math.max(a, 1e-5)) + 60) / 60, 0, 1);
+backend.addEventListener("warprViz", f => {
+  VT.low = f.low || 0; VT.high = f.high || 0; VT.rms = f.rms || 0; VT.theta = f.theta || 0; VT.r = f.r || 0;
+  if (f.tseq !== undefined && f.tseq !== lastTSeq) {
+    if (lastTSeq >= 0 && f.transient > 0.01) swells.push({ ang: f.tang || 0, amp: .14 + .22*clamp(f.transient, 0, 1), w: .6 + .6*clamp(f.transient, 0, 1), life: 1 });
+    lastTSeq = f.tseq;
+  }
+  mtL = toMeter(f.peakL || 0); mtR = toMeter(f.peakR || 0);
+  voices = f.voices || []; lfoPhases = f.lfo || [];
+});
+/* "warprSample": { name, channels, sampleRate, numSamples, peaks:[min,max,...] (<=2048 pairs) } */
+backend.addEventListener("warprSample", s => {
+  peaks = s.peaks && s.peaks.length ? Float32Array.from(s.peaks) : null;
+  $("#sampleName").textContent = s.name ? s.name.toUpperCase() : "NO SAMPLE";
+  $("#sampleName").title = s.name ? `${s.name} · ${s.channels} ch · ${s.sampleRate} Hz · ${s.numSamples} smp` : "";
+});
+/* "warprFilterResponse": { db:[N dB values, log-spaced 20 Hz..20 kHz] } */
+backend.addEventListener("warprFilterResponse", r => { fltResp = r.db && r.db.length ? Float32Array.from(r.db) : null; drawFilter(); });
+backend.addEventListener("warprPreset", p => { $("#presetName").textContent = p.name || "Init"; });
+backend.addEventListener("warprUiState", s => loadUiState(typeof s === "string" ? s : JSON.stringify(s)));
+backend.addEventListener("warprShaperCurve", c => {
+  if (c && c.id && c.curve) { shaperCurves[c.id] = normaliseCurve(c.curve); shaperRender(); }
+});
+/* re-request filter response whenever a filter-relevant param moves (C++ also pushes on preset load) */
+["filterType","filterCutoff","filterResonance","filterDrive","filterMorph","filterKeyTrack","filterEnable"].forEach(p =>
+  watch(p, p === "filterType" ? "c" : p === "filterEnable" ? "t" : "s", () => NF.requestFilterResponse()));
+
+/* =====================================================================
+   SHAPER TRANSFER-CURVE EDITOR  (points are NON-PARAMETER state)
+   curve = { interp:"smooth"|"linear", points:[{x:-1..1, y:-1..1}] sorted by x }
+   ===================================================================== */
+const shaperSvg = $("#shaperSvg"), SVGNS = "http://www.w3.org/2000/svg";
+const identityCurve = () => ({ interp: "smooth", points: [{ x: -1, y: -1 }, { x: 0, y: 0 }, { x: 1, y: 1 }] });
+let shaperCurves = { A: identityCurve(), B: identityCurve() };
+const shaperId = () => (cidx(comboOf("shaperCurveSelect"), 2) === 1 ? "B" : "A");
+const isSym = () => cidx(comboOf("shaperSymmetry"), 2) === 0;
+function normaliseCurve(c) {
+  const pts = (c.points || []).map(p => ({ x: clamp(+p.x, -1, 1), y: clamp(+p.y, -1, 1) })).sort((a, b) => a.x - b.x);
+  return { interp: c.interp === "linear" ? "linear" : "smooth", points: pts.length >= 2 ? pts : identityCurve().points };
+}
+function halfPoints(c) {                                     // symmetric mode: positive half defines the curve
+  const p = c.points.filter(q => q.x >= 0);
+  if (!p.length || p[0].x > 0) p.unshift({ x: 0, y: 0 });
+  return p;
+}
+function evalPts(pts, x, interp) {                           // piecewise-linear or monotone cubic Hermite
+  const n = pts.length; if (n === 1) return pts[0].y;
+  if (x <= pts[0].x) return pts[0].y; if (x >= pts[n-1].x) return pts[n-1].y;
+  let i = 0; while (i < n - 2 && x > pts[i+1].x) i++;
+  const p0 = pts[i], p1 = pts[i+1], dx = Math.max(p1.x - p0.x, 1e-6), t = (x - p0.x)/dx;
+  if (interp === "linear") return p0.y + (p1.y - p0.y)*t;
+  const sl = j => (pts[j+1].y - pts[j].y) / Math.max(pts[j+1].x - pts[j].x, 1e-6);
+  const m = j => { if (j === 0) return sl(0); if (j === n-1) return sl(n-2); const a = sl(j-1), b = sl(j); return a*b <= 0 ? 0 : 2*a*b/(a+b); };
+  const m0 = m(i)*dx, m1 = m(i+1)*dx, t2 = t*t, t3 = t2*t;
+  return (2*t3 - 3*t2 + 1)*p0.y + (t3 - 2*t2 + t)*m0 + (-2*t3 + 3*t2)*p1.y + (t3 - t2)*m1;
+}
+function evalCurve(c, x) {
+  if (!isSym()) return evalPts(c.points, x, c.interp);
+  const h = halfPoints(c);
+  return x >= 0 ? evalPts(h, x, c.interp) : -evalPts(h, -x, c.interp);
+}
+const sx = x => (x + 1) * 100, sy = y => (1 - y) * 100;
+function curvePath(c) { let d = ""; for (let i = 0; i <= 120; i++) { const x = -1 + i/60; d += (i ? " L " : "M ") + sx(x).toFixed(1) + " " + sy(clamp(evalCurve(c, x), -1, 1)).toFixed(1); } return d; }
+function mk(tag, attrs) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+function shaperRender() {
+  shaperSvg.innerHTML = "";
+  const g = mk("g", { class: "grid" }); g.appendChild(mk("line", { x1: 100, y1: 0, x2: 100, y2: 200 })); g.appendChild(mk("line", { x1: 0, y1: 100, x2: 200, y2: 100 }));
+  shaperSvg.appendChild(g);
+  const id = shaperId(), other = id === "A" ? "B" : "A", cur = shaperCurves[id];
+  shaperSvg.appendChild(mk("path", { d: curvePath(shaperCurves[other]), fill: "none", stroke: "rgba(255,255,255,.18)", "stroke-width": 1.2 }));
+  shaperSvg.appendChild(mk("path", { d: curvePath(cur), fill: "none", stroke: "rgba(255,255,255,.12)", "stroke-width": 7 }));
+  shaperSvg.appendChild(mk("path", { d: curvePath(cur), fill: "none", stroke: "#FFF", "stroke-width": 2 }));
+  const pts = isSym() ? halfPoints(cur) : cur.points;
+  pts.forEach(p => shaperSvg.appendChild(mk("circle", { class: "pt", cx: sx(p.x), cy: sy(p.y), r: 6 })));
+}
+function shaperResize() { shaperRender(); }
+const shaperPush = () => NF.setShaperCurve(shaperId(), JSON.stringify(shaperCurves[shaperId()]));
+{
+  let drag = null, pushT = 0;
+  const xy = e => { const r = shaperSvg.getBoundingClientRect(); return { x: clamp((e.clientX - r.left)/r.width*2 - 1, -1, 1), y: clamp(1 - (e.clientY - r.top)/r.height*2, -1, 1) }; };
+  const near = (c, p) => {
+    const pts = isSym() ? halfPoints(c) : c.points; let best = null, bd = .09;
+    pts.forEach(q => { const d = Math.hypot(q.x - p.x, q.y - p.y); if (d < bd) { bd = d; best = q; } });
+    return best;
+  };
+  shaperSvg.addEventListener("pointerdown", e => {
+    const c = shaperCurves[shaperId()]; let p = xy(e);
+    if (isSym() && p.x < 0) p = { x: -p.x, y: -p.y };
+    let hit = near(c, p);
+    if (!hit) {                                              // add a point
+      hit = { x: p.x, y: p.y }; c.points.push(hit); c.points.sort((a, b) => a.x - b.x);
+    }
+    drag = { c, pt: hit }; shaperSvg.setPointerCapture(e.pointerId); shaperRender();
+  });
+  shaperSvg.addEventListener("pointermove", e => {
+    if (!drag) return;
+    let p = xy(e); if (isSym() && p.x < 0) p = { x: -p.x, y: -p.y };
+    const pts = drag.c.points, i = pts.indexOf(drag.pt), end = (drag.pt.x <= -1 || drag.pt.x >= 1) && !(i > 0 && i < pts.length - 1);
+    if (!end && i > 0 && i < pts.length - 1) drag.pt.x = clamp(p.x, pts[i-1].x + .01, pts[i+1].x - .01);
+    drag.pt.y = p.y;
+    shaperRender(); clearTimeout(pushT); pushT = setTimeout(shaperPush, 40);
+  });
+  const up = () => { if (drag) { drag = null; shaperPush(); } };
+  shaperSvg.addEventListener("pointerup", up); shaperSvg.addEventListener("pointercancel", up);
+  shaperSvg.addEventListener("dblclick", e => {
+    const c = shaperCurves[shaperId()], p = xy(e), hit = near(c, isSym() && p.x < 0 ? { x: -p.x, y: -p.y } : p);
+    if (hit && hit.x > -1 && hit.x < 1 && c.points.length > 2) { c.points = c.points.filter(q => q !== hit); shaperRender(); shaperPush(); }
+  });
+  ["shaperCurveSelect", "shaperSymmetry"].forEach(pid => watch(pid, "c", shaperRender));
+}
+
+/* =====================================================================
+   LFO SYSTEM  (up to 10; shape/mode data in uiState, rate/phase/etc. are parameters)
+   shape (UI coords, y: 0 = top/max):  { preset, points:[{x,y,c}], bends:[{x,y}], table:[...]|null, drift:{a,b}|null }
+   wire  (to C++, v = 1 - y):          { preset, points:[{x,v,c}], bends:[{x,v}], table:[...], drift:{a,b} }
+   ===================================================================== */
+const TAU = Math.PI * 2, MAX_LFO = 10;
+const newShape = () => ({ preset: "CUSTOM", points: [{ x:0, y:.9, c:0 }, { x:.25, y:.1, c:0 }, { x:.5, y:.65, c:0 }, { x:.75, y:.25, c:0 }, { x:1, y:.9, c:0 }], bends: [], table: null, drift: null });
+let lfoShapes = [newShape(), newShape(), newShape()], activeLfo = 0, lfoTool = "POINT";
+const curShape = () => lfoShapes[activeLfo];
+const lp = key => "lfo" + (activeLfo + 1) + key;
+const toWire = s => ({ preset: s.preset, points: s.points.map(p => ({ x: p.x, v: 1 - p.y, c: p.c || 0 })), bends: s.bends.map(p => ({ x: p.x, v: 1 - p.y })), table: s.table, drift: s.drift });
+const fromWire = w => ({ preset: w.preset || "CUSTOM", points: (w.points || []).map(p => ({ x: p.x, y: 1 - p.v, c: p.c || 0 })), bends: (w.bends || []).map(p => ({ x: p.x, y: 1 - p.v })), table: w.table || null, drift: w.drift || null });
+let lfoPushT = 0;
+function pushLfo(now) { clearTimeout(lfoPushT); const idx = activeLfo, f = () => NF.setLfoShape(idx, JSON.stringify(toWire(lfoShapes[idx]))); now ? f() : (lfoPushT = setTimeout(f, 80)); }
+
+function stepsFn(n) { return t => .1 + .8*(Math.min(n-1, Math.floor(t*n)) / (n-1)); }
+function presetFn(s) {
+  switch (s.preset) {
+    case "SINE": return t => .5 - .4*Math.sin(TAU*t);
+    case "TRIANGLE": return t => .1 + .8*Math.abs(2*t - 1);
+    case "SAW UP": return t => .9 - .8*(t % 1);
+    case "SAW DOWN": return t => .1 + .8*(t % 1);
+    case "SQUARE": return t => (t < .5 ? .1 : .9);
+    case "PUMP": return t => .9 - .8*Math.exp(-4.5*t);
+    case "STEPS 4": return stepsFn(4); case "STEPS 8": return stepsFn(8); case "STEPS 16": return stepsFn(16);
+    case "SWING": return t => { const u = t < .62 ? Math.pow(t/.62, 1.5) : 1 - .75*((t - .62)/.38); return .9 - .8*u; };
+    case "S&H NOISE": { const L = s.table || [.5]; return t => L[Math.min(L.length-1, Math.floor(t*L.length))]; }
+    case "DRIFT": { const d = s.drift || { a: 0, b: 0 }; return t => .5 + .26*Math.sin(TAU*t + d.a) + .14*Math.sin(2*TAU*t + d.b); }
+  } return null;
+}
+const led = $("#lfoEd"), NS = "http://www.w3.org/2000/svg";
+let LW = 100, LH = 100;
+function lfoResize() {
+  const p = led.parentElement; LW = Math.max(60, p.clientWidth - 2); LH = Math.max(40, p.clientHeight - 2);
+  led.setAttribute("viewBox", `0 0 ${LW} ${LH}`); led.style.width = "100%"; led.style.height = "100%"; lfoRender();
+}
+const snap = (v, n) => n ? Math.round(v*n)/n : v;
+function gridVal(key) { const st = comboOf(lp(key)), c = st.properties.choices || []; const s = c[cidx(st, c.length)] || (key === "GridX" ? "8" : "8"); return s === "OFF" ? "OFF" : parseInt(s); }
+const gridN = () => gridVal("GridX"), gridY = () => gridVal("GridY");
+const xSnapN = () => gridN() === "OFF" ? 0 : gridN(), ySnapN = () => gridY() === "OFF" ? 0 : gridY();
+function lfoRender() {
+  led.innerHTML = "";
+  const sh = curShape(); if (!sh) return;
+  const gn = gridN() === "OFF" ? 8 : gridN(), gy = gridY() === "OFF" ? 8 : gridY();
+  const g = mk("g", {});
+  g.appendChild(mk("line", { x1: 0, y1: LH/2, x2: LW, y2: LH/2, stroke: "rgba(255,255,255,.09)", "stroke-width": 1 }));
+  for (let i = 0; i <= gn; i++) for (let j = 0; j <= gy; j++)
+    g.appendChild(mk("circle", { cx: i/gn*LW, cy: j/gy*LH, r: (i === 0 || i === gn || j === 0 || j === gy) ? 1.4 : 1, fill: (j === gy/2) ? "rgba(255,255,255,.3)" : "rgba(255,255,255,.14)" }));
+  led.appendChild(g);
+  const fn = presetFn(sh);
+  const addCurve = d => {
+    led.appendChild(mk("path", { d, fill: "none", stroke: "rgba(255,255,255,.12)", "stroke-width": 6 }));
+    led.appendChild(mk("path", { d: d + ` L ${LW} ${LH} L 0 ${LH} Z`, fill: "rgba(255,255,255,.09)", stroke: "none" }));
+    led.appendChild(mk("path", { d, fill: "none", stroke: "#FFF", "stroke-width": 1.7 }));
+  };
+  if (fn) {
+    const fp = [...sh.bends].sort((a, b) => a.x - b.x);
+    const anchors = [{ x: 0, dy: 0 }, ...fp.map(p => ({ x: p.x, dy: p.y - fn(p.x) })), { x: 1, dy: 0 }];
+    const ys = t => {
+      let i = 0; while (i < anchors.length - 2 && t > anchors[i+1].x) i++;
+      const a0 = anchors[i], a1 = anchors[i+1], u = (t - a0.x)/Math.max(a1.x - a0.x, .001), uu = u*u*(3 - 2*u);
+      return fn(t) + a0.dy*(1 - uu) + a1.dy*uu;
+    };
+    let d = ""; for (let i = 0; i <= 220; i++) { const t = i/220; d += (i ? " L " : "M ") + (t*LW) + " " + (ys(t)*LH); }
+    addCurve(d);
+    fp.forEach(p => {
+      const c = mk("circle", { class: "lfopt", r: 5.5, cx: p.x*LW, cy: p.y*LH });
+      c.addEventListener("pointerdown", e => { e.stopPropagation(); dragPt = p; led.setPointerCapture(e.pointerId); });
+      c.addEventListener("dblclick", e => { e.stopPropagation(); sh.bends = sh.bends.filter(q => q !== p); lfoRender(); pushLfo(true); });
+      led.appendChild(c);
+    });
+  } else {
+    const pts = [...sh.points].sort((a, b) => a.x - b.x);
+    const seg = (p0, p1, t) => { const e = Math.pow(2, (p0.c || 0)*3); return p0.y + (p1.y - p0.y)*Math.pow(t, e); };
+    let d = `M ${pts[0].x*LW} ${pts[0].y*LH}`;
+    for (let i = 1; i < pts.length; i++) { const p0 = pts[i-1], p1 = pts[i]; for (let s = 1; s <= 24; s++) { const t = s/24; d += ` L ${(p0.x + (p1.x - p0.x)*t)*LW} ${seg(p0, p1, t)*LH}`; } }
+    addCurve(d);
+    for (let i = 1; i < pts.length; i++) {
+      const p0 = pts[i-1], p1 = pts[i]; if (Math.abs(p1.x - p0.x) < .015) continue;
+      const h = mk("circle", { class: "lfoc", r: 3.5, cx: (p0.x + p1.x)/2*LW, cy: seg(p0, p1, .5)*LH });
+      h.addEventListener("pointerdown", e => { e.stopPropagation(); dragBend = { p0, p1, c0: p0.c || 0, y0: lfoXY(e).y }; led.setPointerCapture(e.pointerId); });
+      h.addEventListener("dblclick", e => { e.stopPropagation(); p0.c = 0; lfoRender(); pushLfo(true); });
+      led.appendChild(h);
+    }
+    pts.forEach(p => {
+      const c = mk("circle", { class: "lfopt", r: 5.5, cx: p.x*LW, cy: p.y*LH });
+      c.addEventListener("pointerdown", e => { e.stopPropagation(); dragPt = p; led.setPointerCapture(e.pointerId); });
+      c.addEventListener("dblclick", e => { e.stopPropagation(); if (sh.points.length > 2) { sh.points = sh.points.filter(q => q !== p); lfoRender(); pushLfo(true); } });
+      led.appendChild(c);
+    });
+  }
+  // live phase marker for the active LFO (HOOK: onViz -> lfo[])
+  phaseEl = mk("line", { x1: 0, y1: 0, x2: 0, y2: LH, stroke: "rgba(255,255,255,.4)", "stroke-width": 1.2, "pointer-events": "none", visibility: "hidden" });
+  led.appendChild(phaseEl); updatePhaseMarker();
+}
+let phaseEl = null;
+function updatePhaseMarker() {
+  if (!phaseEl) return;
+  const ph = lfoPhases[activeLfo];
+  if (ph === undefined || ph < 0) { phaseEl.setAttribute("visibility", "hidden"); return; }
+  phaseEl.setAttribute("visibility", "visible"); phaseEl.setAttribute("x1", ph*LW); phaseEl.setAttribute("x2", ph*LW);
+}
+let dragPt = null, dragBend = null, stepDraw = false;
+function lfoXY(e) { const r = led.getBoundingClientRect(); return { x: clamp((e.clientX - r.left)/r.width, 0, 1), y: clamp((e.clientY - r.top)/r.height, 0, 1) }; }
+function cellOf(px) { const gn = gridN() === "OFF" ? 8 : gridN(); const i = clamp(Math.floor(px*gn), 0, gn - 1); return { x0: i/gn, x1: (i+1)/gn }; }
+function stampCell(c, y, kind) {
+  const sh = curShape();
+  sh.points = sh.points.filter(q => q.x < c.x0 - .001 || q.x > c.x1 - .002);
+  if (kind === "FLAT") sh.points.push({ x: c.x0, y, c: 0 }, { x: c.x1 - .004, y, c: 0 });
+  if (kind === "RISE") sh.points.push({ x: c.x0, y: .92, c: 0 }, { x: c.x1 - .004, y, c: 0 });
+  if (kind === "FALL") sh.points.push({ x: c.x0, y, c: 0 }, { x: c.x1 - .004, y: .92, c: 0 });
+  lfoRender(); pushLfo(false);
+}
+led.addEventListener("pointermove", e => {
+  const sh = curShape(); if (!sh) return;
+  if (stepDraw) { const p = lfoXY(e); stampCell(cellOf(p.x), snap(p.y, ySnapN()), "FLAT"); return; }
+  if (dragBend) {
+    const p = lfoXY(e), dir = Math.sign((dragBend.p1.y - dragBend.p0.y) || 1);
+    dragBend.p0.c = clamp(dragBend.c0 + (p.y - dragBend.y0)*4*dir, -1, 1); lfoRender(); pushLfo(false); return;
+  }
+  if (!dragPt) return;
+  const p = lfoXY(e), n = xSnapN();
+  if (presetFn(sh)) { dragPt.x = clamp(snap(p.x, n), .01, .99); dragPt.y = snap(p.y, ySnapN()); lfoRender(); pushLfo(false); return; }
+  const first = dragPt === sh.points.reduce((a, b) => a.x < b.x ? a : b), last = dragPt === sh.points.reduce((a, b) => a.x > b.x ? a : b);
+  if (!first && !last) dragPt.x = snap(p.x, n);
+  dragPt.y = snap(p.y, ySnapN()); lfoRender(); pushLfo(false);
+});
+led.addEventListener("pointerup", () => { if (dragPt || dragBend || stepDraw) pushLfo(true); dragPt = null; dragBend = null; stepDraw = false; });
+led.addEventListener("pointerdown", e => {
+  const sh = curShape(); if (!sh) return;
+  if (presetFn(sh)) {
+    if (e.target.tagName === "circle") return;
+    const p = lfoXY(e);
+    if (lfoTool === "POINT" && !e.shiftKey) {                  // one bend point, curve stays analytic
+      const np = { x: snap(p.x, xSnapN()), y: snap(p.y, ySnapN()) }; sh.bends.push(np); dragPt = np; led.setPointerCapture(e.pointerId); lfoRender(); return;
+    }
+    const fn = presetFn(sh);                                   // step tools need the point editor: convert, then stamp
+    sh.preset = "CUSTOM"; sh.bends = []; sh.table = null; sh.drift = null;
+    sh.points = []; for (let i = 0; i <= 8; i++) sh.points.push({ x: i/8, y: fn(i/8), c: 0 });
+    $("#lfoShapeSel").value = "CUSTOM";
+  }
+  const p = lfoXY(e);
+  if (e.shiftKey) { stepDraw = true; led.setPointerCapture(e.pointerId); stampCell(cellOf(p.x), snap(p.y, ySnapN()), "FLAT"); return; }
+  if (e.target.tagName === "circle") return;
+  if (lfoTool !== "POINT") { stampCell(cellOf(p.x), snap(p.y, ySnapN()), lfoTool === "FLAT" ? "FLAT" : lfoTool === "UP" ? "RISE" : "FALL"); return; }
+  sh.points.push({ x: snap(p.x, xSnapN()), y: snap(p.y, ySnapN()), c: 0 }); lfoRender(); pushLfo(false);
+});
+$("#lfoShapeSel").addEventListener("change", e => {
+  const sh = curShape(); sh.preset = e.target.value; sh.bends = []; sh.table = null; sh.drift = null;
+  if (sh.preset === "S&H NOISE") sh.table = Array.from({ length: 8 }, () => +(.1 + Math.random()*.8).toFixed(4));   // stored, so DSP sees the same table
+  if (sh.preset === "DRIFT") sh.drift = { a: +(Math.random()*TAU).toFixed(4), b: +(Math.random()*TAU).toFixed(4) };
+  lfoRender(); pushLfo(true);
+});
+$$("#lfoTool span").forEach(s => tap(s, () => {
+  $$("#lfoTool span").forEach(x => x.classList.remove("on")); s.classList.add("on"); lfoTool = s.textContent;
+}));
+
+/* per-LFO parameter widgets: always re-read the ACTIVE lfo's params */
+const lfoSegs = $$("[data-lfoseg]");
+function lfoRefreshWidgets() {
+  lfoSegs.forEach(el => { const st = comboOf(lp(el.dataset.lfoseg)), i = cidx(st, el.children.length); [...el.children].forEach((s, j) => s.classList.toggle("on", i === j)); });
+  $$("[data-lfosel]").forEach(el => {
+    const st = comboOf(lp(el.dataset.lfosel)), ch = st.properties.choices || [];
+    if (ch.length && el.dataset.filled !== String(ch.length)) { el.innerHTML = ""; ch.forEach((c, i) => { const o = document.createElement("option"); o.value = i; o.textContent = c; el.appendChild(o); }); el.dataset.filled = String(ch.length); }
+    el.value = String(cidx(st, ch.length));
+  });
+  $("#lfoShapeSel").value = curShape().preset;
+  const fmtRate = (v) => cidx(comboOf(lp("Sync")), 2) === 1
+    ? (LFO_DIV[Math.round(v*16)] || "") : (0.01*Math.pow(5000, v)).toFixed(v > .75 ? 1 : 2) + " Hz";
+  $("#kLfoRate")._knob.bind(lp("Rate"), "RATE", fmtRate, [[lp("Sync"), "c"]]);
+  $("#kLfoPhase")._knob.bind(lp("Phase"), "PHASE", F.deg);
+  $("#kLfoSmooth")._knob.bind(lp("Smooth"), "SMOOTH", F.pct);
+  lfoRender();
+}
+for (let n = 1; n <= MAX_LFO; n++) {
+  ["Mode", "Dir", "Sync", "GridX", "GridY"].forEach(k => watch("lfo" + n + k, "c", () => { if (n === activeLfo + 1) lfoRefreshWidgets(); }));
+}
+lfoSegs.forEach(el => [...el.children].forEach((s, j) => tap(s, () => setChoice(comboOf(lp(el.dataset.lfoseg)), j))));
+$$("[data-lfosel]").forEach(el => el.addEventListener("change", () => setChoice(comboOf(lp(el.dataset.lfosel)), parseInt(el.value))));
+
+/* tabs (also the mod-source chips) */
+function buildTabs() {
+  const tabs = $("#lfoTabs"); tabs.innerHTML = ""; tabs.classList.toggle("many", lfoShapes.length > 4);
+  lfoShapes.forEach((_, i) => {
+    const s = document.createElement("span"); s.textContent = String(i + 1); s.classList.toggle("on", i === activeLfo);
+    tap(s, () => { activeLfo = i; buildTabs(); lfoRefreshWidgets(); });
+    s.addEventListener("pointerdown", e => { chipDrag = { num: i + 1, sx: e.clientX, sy: e.clientY, started: false }; });
+    tabs.appendChild(s);
+  });
+  if (lfoShapes.length < MAX_LFO) {
+    const a = document.createElement("span"); a.textContent = "+"; a.title = "add LFO (max 10)";
+    tap(a, () => { lfoShapes.push(newShape()); activeLfo = lfoShapes.length - 1; NF.setLfoCount(lfoShapes.length); pushLfo(true); buildTabs(); lfoRefreshWidgets(); });
+    tabs.appendChild(a);
+  }
+}
+
+/* drag an LFO chip onto a knob -> mod assignment */
+const ghost = document.createElement("div"); ghost.id = "dragGhost"; document.body.appendChild(ghost);
+let chipDrag = null;
+window.addEventListener("pointermove", e => {
+  if (!chipDrag) return;
+  if (!chipDrag.started && Math.hypot(e.clientX - chipDrag.sx, e.clientY - chipDrag.sy) < 6) return;
+  chipDrag.started = true; ghost.style.display = "flex"; ghost.textContent = chipDrag.num;
+  ghost.style.left = (e.clientX - 11) + "px"; ghost.style.top = (e.clientY - 11) + "px";
+  $$(".k.droptarget").forEach(k => k.classList.remove("droptarget"));
+  const el = document.elementFromPoint(e.clientX, e.clientY), k = el && el.closest ? el.closest(".k") : null;
+  if (k && k._knob && k._knob.pid) k.classList.add("droptarget");
+});
+window.addEventListener("pointerup", e => {
+  if (!chipDrag) return;
+  if (chipDrag.started) {
+    ghost.style.display = "none";
+    const el = document.elementFromPoint(e.clientX, e.clientY), k = el && el.closest ? el.closest(".k") : null;
+    if (k && k._knob && k._knob.pid) assignMod(k._knob.pid, chipDrag.num);
+    $$(".k.droptarget").forEach(x => x.classList.remove("droptarget"));
+  }
+  chipDrag = null;
+});
+
+/* non-parameter state from C++ (initial open, preset load, host state restore) */
+function loadUiState(json) {
+  let s; try { s = JSON.parse(json); } catch (e) { console.error("bad uiState", e); return; }
+  const n = clamp(s.lfoCount || 3, 1, MAX_LFO);
+  lfoShapes = Array.from({ length: n }, (_, i) => (s.lfoShapes && s.lfoShapes[i]) ? fromWire(s.lfoShapes[i]) : newShape());
+  lfoShapes.forEach(sh => { if (sh.points.length < 2) sh.points = newShape().points; });
+  activeLfo = Math.min(activeLfo, n - 1);
+  mods = Array.isArray(s.modMatrix) ? s.modMatrix.map(m => ({ src: m.src | 0, dst: String(m.dst), depth: clamp(+m.depth, 0, 1) })) : [];
+  if (s.shaperCurves) { shaperCurves.A = normaliseCurve(s.shaperCurves.A || identityCurve()); shaperCurves.B = normaliseCurve(s.shaperCurves.B || identityCurve()); }
+  buildTabs(); lfoRefreshWidgets(); repaintMods(); shaperRender();
+}
+
+/* =====================================================================
+   RENDER LOOP (rAF - pattern 20) : meters, sample, organism
+   ===================================================================== */
+function frame() {
+  mL = Math.max(mtL, mL - .02); mR = Math.max(mtR, mR - .02);          // fast attack, steady fall
+  $("#meterL").style.setProperty("--lvl", mL.toFixed(3)); $("#meterR").style.setProperty("--lvl", mR.toFixed(3));
+  drawSample(); drawOrg();
+  updatePhaseMarker();
+  requestAnimationFrame(frame);
+}
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
+buildTabs(); lfoRefreshWidgets(); shaperRender();
+applyScale();
+NF.getUiState().then(loadUiState).catch(e => console.error("getUiState failed", e));
+NF.requestSample(); NF.requestFilterResponse();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
