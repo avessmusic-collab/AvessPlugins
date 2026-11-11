@@ -1,5 +1,8 @@
 #include "Backend/UiBackendImpl.h"
 
+#include <juce_events/juce_events.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+
 using warpr::UiModel;
 
 namespace
@@ -115,15 +118,49 @@ void UiBackendImpl::shaperNormalize (const juce::String&)
 //==============================================================================
 // Sample
 //==============================================================================
-void UiBackendImpl::loadSampleFile (const juce::File&)
+void UiBackendImpl::loadSampleFile (const juce::File& file)
 {
-    // NOT IMPLEMENTED until D1 (SampleLoader on a ThreadPool + SampleStore publication).
-    // Does nothing and does not bump Revision::sample.
+    if (sampleStore == nullptr)
+        return;
+
+    // Decode + mip build on the SampleStore loader thread, publish through the lock-free swap.
+    // The callback runs on the loader thread: it only bumps an atomic or queues a message-thread alert.
+    sampleStore->loadFileAsync (file, [this] (bool ok, const juce::String& error)
+    {
+        if (ok)
+        {
+            bumpRevision (Revision::sample);
+            return;
+        }
+
+        // Architecture "Error handling": the previous sample is kept and the user is told why.
+        const juce::String message = "The sample could not be loaded:\n" + error;
+
+        juce::MessageManager::callAsync ([message]
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "WARPR", message);
+        });
+    });
 }
 
 WarprSampleDisplay UiBackendImpl::getSampleDisplay()
 {
-    return {};      // nothing loaded -> editor shows NO SAMPLE (real until D1)
+    WarprSampleDisplay display;
+
+    if (sampleStore == nullptr)
+        return display;
+
+    const auto sample = sampleStore->latest();
+
+    if (sample == nullptr)
+        return display;
+
+    display.name = sample->name;
+    display.numChannels = sample->numChannels;
+    display.sampleRate = sample->fileSampleRate;
+    display.numSamples = sample->numFrames;
+    display.peaksMinMax = sample->peaksMinMax;
+    return display;
 }
 
 //==============================================================================

@@ -9,19 +9,29 @@ PluginProcessor::PluginProcessor()
       apvts (*this, nullptr, juce::Identifier (warpr::identity::apvtsStateId), warpr::createParameterLayout())
 {
     paramSnapshot.bind (apvts);
+    backend.attachSampleStore (&sampleStore);
+    drainTimer.begin();
 }
 
 PluginProcessor::~PluginProcessor()
 {
+    drainTimer.end();
+    sampleStore.shutdown();          // the loader's completion callback refers to `backend`
+    synth.reset();                   // releases every voice's sample reference (audio is stopped)
     retireList.drain();
 }
 
 //==============================================================================
-void PluginProcessor::prepareToPlay (double, int)
+void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     drainRetired();
+
+    synth.prepare (sampleRate, samplesPerBlock);      // designs the half-band, kills all voices
+    synth.setCurrentSample (sampleStore.get());
+    master.prepare (sampleRate);
+    activeVoices.store (0, std::memory_order_relaxed);
+
     backend.bumpRevision (WarprUiBackend::Revision::filterResponse);   // sample-rate dependent display
-    // Voice engine / oversampling / filters are prepared here from D1 onward.
 }
 
 void PluginProcessor::releaseResources()
@@ -38,10 +48,28 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused (midiMessages);
 
-    // Stage 1: no DSP.  Honest silence (the voice engine arrives in phase D1).
+    const int numSamples = buffer.getNumSamples();
     buffer.clear();
+
+    if (buffer.getNumChannels() < 2 || numSamples <= 0)
+        return;
+
+    // Block start: adopt a pending sample publication (single atomic exchange; the previous sample is
+    // handed to the retire list, never freed here), read the parameters once.
+    if (sampleStore.acquire())
+        synth.setCurrentSample (sampleStore.get());
+
+    paramSnapshot.read (paramBlock);
+    synth.setBlockParams (paramBlock);
+
+    float* left = buffer.getWritePointer (0);
+    float* right = buffer.getWritePointer (1);
+
+    synth.renderBlock (left, right, numSamples, midiMessages);
+    master.process (left, right, numSamples, paramBlock.get (warpr::ParamId::masterGain));
+
+    activeVoices.store (synth.getNumActiveVoices(), std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -53,6 +81,8 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor()
 //==============================================================================
 void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
+    // D1: the sample blob stays empty (the default wave is regenerated; embedding a loaded sample is D9).
+    // SampleStore::latest() is the hook D9 will encode here.
     destData = warpr::state::write (apvts, backend.copyModel());
 }
 

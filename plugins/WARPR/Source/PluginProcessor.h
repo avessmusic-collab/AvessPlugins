@@ -2,17 +2,24 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
+
 #include "Backend/UiBackendImpl.h"
+#include "DSP/MasterStage.h"
+#include "DSP/SampleStore.h"
+#include "DSP/WarprSynth.h"
 #include "Parameters/ParamSnapshot.h"
 #include "Parameters/ParameterLayout.h"
 #include "PluginIdentity.h"
 #include "Util/LockFreeSwap.h"
 
 /**
- * WARPR processor (Stage 1: Foundation + Shell).
+ * WARPR processor (Stage 2, phase D1: sample engine + playback + ADSR + voices).
  *
  * Instrument: MIDI in, ONE stereo output bus, no input bus (pattern #4).
- * No DSP yet - processBlock() renders silence (honest stub; the voice engine starts in D1).
+ * Signal path (D1): MIDI -> WarprSynth (32 voices + 2 ghost slots) -> MasterStage
+ * (DC block, masterGain, safety knee soft-clip).  Warp / shaper / filter / granular / LFO
+ * arrive in D2-D8; the warp slot inside the oscillator is an explicit identity today.
  * Parameters: all 135 from parameter-spec.md via warpr::createParameterLayout().
  */
 class PluginProcessor : public juce::AudioProcessor
@@ -62,12 +69,42 @@ public:
     /** MESSAGE THREAD: frees objects retired by the audio thread. */
     void drainRetired() { retireList.drain(); }
 
+    /** The current sample + its loader (message thread: publish / latest / load). */
+    warpr::SampleStore& getSampleStore() noexcept { return sampleStore; }
+
+    /** Voice engine access for diagnostics, settings (oscillator budget, interpolation quality) and tests. */
+    warpr::WarprSynth& getSynth() noexcept { return synth; }
+
+    /** Voices still sounding at the end of the last block (ghost fades included). */
+    int getNumActiveVoices() const noexcept { return activeVoices.load (std::memory_order_relaxed); }
+
 private:
-    // Declaration order is destruction order in reverse: backend and snapshot go first,
-    // the retire list drains after every LockFreeSwap that may use it, then the APVTS.
+    /** Drains the retire list on the message thread even when no editor is open. */
+    struct RetireDrainTimer : private juce::Timer
+    {
+        explicit RetireDrainTimer (PluginProcessor& ownerProcessor) : owner (ownerProcessor) {}
+        ~RetireDrainTimer() override { stopTimer(); }
+
+        void begin() { startTimer (100); }
+        void end()   { stopTimer(); }
+
+    private:
+        void timerCallback() override { owner.drainRetired(); }
+        PluginProcessor& owner;
+    };
+
+    // Declaration order is destruction order in reverse: voices / backend / snapshot go first,
+    // the sample store (which releases its references through the retire list's objects) next,
+    // the retire list drains last, then the APVTS.
     warpr::RetireList    retireList;
+    warpr::SampleStore   sampleStore { retireList };
     warpr::ParamSnapshot paramSnapshot;
     UiBackendImpl        backend;
+    warpr::WarprSynth    synth { retireList };
+    warpr::MasterStage   master;
+    warpr::ParamBlock    paramBlock;
+    std::atomic<int>     activeVoices { 0 };
+    RetireDrainTimer     drainTimer { *this };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginProcessor)
 };

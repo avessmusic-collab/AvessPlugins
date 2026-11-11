@@ -9,9 +9,11 @@
       3. state round trip           (random values + non-parameter model)
       4. state robustness           (truncated / mutated / garbage input)
       5. LockFreeSwap + RetireList  (threaded stress, back-pressure, no free on the audio thread)
-      6. offline render + alloc hook + bus layouts (honest silence)
+      6. offline render + alloc hook + bus layouts (D1: audible default wave)
       7. scanners + FFT alias meter self-test
       8. FLAC writer API round trip (24-bit)
+
+    Phase D1 block lives in PhaseD1Tests.cpp (runPhaseD1Tests).  Flags:  --full  widens the sweeps.
 */
 
 #include "PluginProcessor.h"
@@ -539,15 +541,15 @@ namespace
 
         check (out.getNumChannels() == 2 && out.getNumSamples() == 48000, "offline render: 2 channels x 1 s");
 
-        bool finite = true, silent = true;
+        bool finite = true, audible = true;
         for (int ch = 0; ch < out.getNumChannels(); ++ch)
         {
             const auto s = warpr::tests::scan (out, ch);
             finite = finite && s.allFinite;
-            silent = silent && s.peak == 0.0f;
+            audible = audible && s.peak > 0.05f && s.peak <= 1.0f;
         }
         check (finite, "render is finite (setPlayConfigDetails before prepareToPlay)");
-        check (silent, "Stage 1 processBlock outputs exact silence (no DSP yet)");
+        check (audible, "D1 processBlock plays the default wave (audible, within the safety knee)");
 
         // zero allocations in processBlock
         proc.setPlayConfigDetails (0, 2, fs, 256);
@@ -647,11 +649,19 @@ namespace
 }
 
 //==============================================================================
-int main()
+int runPhaseD1Tests (bool full);              // Tests/PhaseD1Tests.cpp
+
+int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    std::printf ("WARPR tests  (Stage 1: Foundation + Shell)\n");
+    bool full = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string (argv[i]) == "--full")
+            full = true;
+
+    std::printf ("WARPR tests  (Stage 1: Foundation + Shell, Stage 2 / D1: sample engine + voices)%s\n",
+                 full ? "  [--full]" : "  [quick; --full widens the sweeps]");
 
     testParameterTable();
     testEditorTables();
@@ -661,6 +671,8 @@ int main()
     testProcessorShell();
     testScanners();
     testFlacRoundTrip();
+
+    failures += runPhaseD1Tests (full);
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;
