@@ -7,6 +7,7 @@
 #include "Backend/UiBackendImpl.h"
 #include "DSP/MasterStage.h"
 #include "DSP/SampleStore.h"
+#include "DSP/ShaperEngine.h"
 #include "DSP/VizAnalyzer.h"
 #include "DSP/WarprSynth.h"
 #include "Parameters/ParamSnapshot.h"
@@ -15,12 +16,12 @@
 #include "Util/LockFreeSwap.h"
 
 /**
- * WARPR processor (Stage 2, phase D2: warp framework + bending modes + viz feeds).
+ * WARPR processor (Stage 2, phase D4: warp framework + folds/distortions + A/B transfer-curve shaper + viz feeds).
  *
  * Instrument: MIDI in, ONE stereo output bus, no input bus (pattern #4).
- * Signal path (D2): MIDI -> WarprSynth (32 voices + 2 ghost slots, warp modes 0-14 real, 15-59 identity)
- * -> MasterStage (DC block, masterGain, safety knee soft-clip) -> VizAnalyzer (UI feed only).
- * Shaper / filter / granular / LFO arrive in D4-D8.
+ * Signal path (D4): MIDI -> WarprSynth (32 voices + 2 ghost slots; per oscillator: read -> warp modes 0-43 (44-59 identity)
+ * -> shaper (A/B LUT + ADAA)) -> MasterStage (DC block, masterGain, safety knee soft-clip) -> VizAnalyzer (UI feed only).
+ * Filter / granular / LFO arrive in D5-D8.
  * Parameters: all 135 from parameter-spec.md via warpr::createParameterLayout().
  */
 class PluginProcessor : public juce::AudioProcessor
@@ -73,6 +74,9 @@ public:
     /** The current sample + its loader (message thread: publish / latest / load). */
     warpr::SampleStore& getSampleStore() noexcept { return sampleStore; }
 
+    /** The shaper's published LUT sets and crossfade state (diagnostics / tests; the backend publishes). */
+    warpr::ShaperEngine& getShaperEngine() noexcept { return shaperEngine; }
+
     /** Voice engine access for diagnostics, settings (oscillator budget, interpolation quality) and tests. */
     warpr::WarprSynth& getSynth() noexcept { return synth; }
 
@@ -90,7 +94,11 @@ private:
         void end()   { stopTimer(); }
 
     private:
-        void timerCallback() override { owner.drainRetired(); }
+        void timerCallback() override
+        {
+            owner.drainRetired();
+            owner.getBackendImpl().servicePending();         // shaperPreset / shaperSymmetry changes (message thread)
+        }
         PluginProcessor& owner;
     };
 
@@ -99,6 +107,7 @@ private:
     // the retire list drains last, then the APVTS.
     warpr::RetireList    retireList;
     warpr::SampleStore   sampleStore { retireList };
+    warpr::ShaperEngine  shaperEngine { retireList };
     warpr::ParamSnapshot paramSnapshot;
     UiBackendImpl        backend;
     warpr::WarprSynth    synth { retireList };

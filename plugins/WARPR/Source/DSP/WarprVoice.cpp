@@ -98,6 +98,9 @@ namespace warpr
         warpMixCur = vp.warpMix;
         warpEnCur = vp.warpEnable ? 1.0f : 0.0f;
         rootCur = (float) vp.rootNote;
+        shaperMorphCur = vp.shaperMorph;
+        shaperMixCur = vp.shaperMix;
+        shaperEnCur = vp.shaperEnable ? 1.0f : 0.0f;
 
         const bool reverse = vp.direction == 1;
         const float norm = 1.0f / std::sqrt ((float) unison);
@@ -199,12 +202,12 @@ namespace warpr
         while (done < numSamples && active)
         {
             const int n = std::min (chunkSize, numSamples - done);
-            renderChunk (vp, outL + done, outR + done, n);
+            renderChunk (vp, outL + done, outR + done, n, done);
             done += n;
         }
     }
 
-    void WarprVoice::renderChunk (const VoiceParams& vp, float* outL, float* outR, int n) noexcept
+    void WarprVoice::renderChunk (const VoiceParams& vp, float* outL, float* outR, int n, int rangeOffset) noexcept
     {
         const SampleData& sd = *sample;
         const double nD = (double) n;
@@ -265,6 +268,32 @@ namespace warpr
         warpSpan.os = os;
         warpSpan.osRate = sampleRate * (double) os;
 
+        // ---- shaper stage parameters: morph / mix one-pole 10 ms per chunk, enable linear ramp 5 ms.
+        //      The A/B-set crossfade weight is a function of ABSOLUTE time since the swap (global, base samples),
+        //      so every voice agrees however its chunks are aligned.
+        const float shaperMorph0 = shaperMorphCur;
+        const float shaperMix0 = shaperMixCur * shaperEnCur;
+
+        shaperMorphCur += (vp.shaperMorph - shaperMorphCur) * k10;
+        shaperMixCur += (vp.shaperMix - shaperMixCur) * k10;
+        snapNear (shaperMorphCur, vp.shaperMorph, 1.0e-6f);
+        snapNear (shaperMixCur, vp.shaperMix, 1.0e-6f);
+        shaperEnCur = vp.shaperEnable ? std::min (1.0f, shaperEnCur + enStep) : std::max (0.0f, shaperEnCur - enStep);
+
+        ShaperSpan shaperSpan;
+        shaperSpan.cur = vp.shaperCur;
+        shaperSpan.prev = vp.shaperPrev;
+        shaperSpan.morph0 = shaperMorph0;  shaperSpan.morph1 = shaperMorphCur;
+        shaperSpan.mix0 = shaperMix0;      shaperSpan.mix1 = shaperMixCur * shaperEnCur;
+        shaperSpan.active = shaperSpan.cur != nullptr && (shaperSpan.mix0 > 0.0f || shaperSpan.mix1 > 0.0f);
+
+        if (vp.shaperPrev != nullptr && vp.shaperFadeLen > 0)
+        {
+            const float invLen = 1.0f / (float) vp.shaperFadeLen;
+            shaperSpan.w0 = juce::jlimit (0.0f, 1.0f, (float) (vp.shaperFadeBase + rangeOffset) * invLen);
+            shaperSpan.w1 = juce::jlimit (0.0f, 1.0f, (float) (vp.shaperFadeBase + rangeOffset + n) * invLen);
+        }
+
         const double p1 = pitchCur + (double) bendCur + (double) offsetCur;
 
         region.configure (sd, startCur, endCur, modeFromParam (vp.loopMode));
@@ -295,7 +324,7 @@ namespace warpr
 
             if (rho0 <= maxRho && rho1 <= maxRho && rho0 > 0.0 && rho1 > 0.0)
                 o.render (sd, region, vp.interpQuality, rho0, rho1, os, pgl, pgr, gl, gr,
-                          busL.data(), busR.data(), nOS, &warpSpan);
+                          busL.data(), busR.data(), nOS, &warpSpan, &shaperSpan);
 
             pgl = gl;
             pgr = gr;

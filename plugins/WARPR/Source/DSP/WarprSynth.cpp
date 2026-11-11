@@ -55,8 +55,30 @@ namespace warpr
     //==========================================================================
     // Per-block parameters
     //==========================================================================
+    void WarprSynth::syncShaperToVoices() noexcept
+    {
+        if (shaper == nullptr)
+        {
+            vp.shaperCur = nullptr;
+            vp.shaperPrev = nullptr;
+            vp.shaperFadeBase = 0;
+            return;
+        }
+
+        vp.shaperCur = shaper->current();
+        vp.shaperPrev = shaper->previous();
+        vp.shaperFadeBase = shaper->fadeBase();
+        vp.shaperFadeLen = shaper->fadeLength();
+    }
+
     void WarprSynth::setBlockParams (const ParamBlock& pb) noexcept
     {
+        // Shaper first: adopt a pending LUT set (crossfade bookkeeping) before the minOS below reads it.
+        if (shaper != nullptr)
+            shaper->beginBlock();
+
+        syncShaperToVoices();
+
         vp.sampleStart = pb.get (ParamId::sampleStart);
         vp.sampleEnd = pb.get (ParamId::sampleEnd);
         vp.rootNote = pb.getInt (ParamId::rootNote);
@@ -85,6 +107,10 @@ namespace warpr
         vp.warpB = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpParamB));
         vp.warpMix = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpMix));
 
+        vp.shaperEnable = pb.getBool (ParamId::shaperEnable);
+        vp.shaperMorph = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::shaperMorph));
+        vp.shaperMix = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::shaperMix));
+
         voiceMode = juce::jlimit (0, 2, pb.getInt (ParamId::voiceMode));
         polyLimit = juce::jlimit (1, maxVoices, pb.getInt (ParamId::polyphony));
         unisonLatched = juce::jlimit (1, WarprVoice::maxUnison, pb.getInt (ParamId::unisonVoices));
@@ -94,6 +120,11 @@ namespace warpr
         // max(user oversampling, the selected mode's minOS).  A mid-note mode change keeps the latched factor.
         if (vp.warpEnable && vp.warpAmount > 0.0f && vp.warpMix > 0.0f)
             osLatched = std::max (osLatched, std::min (8, warpModeInfo (vp.warpMode).minOS));
+
+        // The shaper has its own floor, derived from how hard the CURRENT curve is (ShaperLutSet kink metric: a
+        // hard-clip-like curve needs 4x, a smooth one 1x).  Same rule: enabled and audible, latched at note-on.
+        if (shaper != nullptr && vp.shaperEnable && vp.shaperMix > 0.0f)
+            osLatched = std::max (osLatched, std::min (8, shaper->minOsFor (vp.shaperMorph)));
     }
 
     //==========================================================================
@@ -633,6 +664,12 @@ namespace warpr
         for (auto& v : voices)
             if (v.isActive())
                 v.render (vp, outL, outR, n);
+
+        if (shaper != nullptr)
+        {
+            shaper->advance (n);                  // A/B-set crossfade progress, in base samples
+            syncShaperToVoices();
+        }
 
         harvestFinishedVoices();
     }

@@ -2,23 +2,36 @@
 /*
   UiBackendImpl - implementation of WarprUiBackend owned by the processor.
 
-  STATUS after phase D1.  Every interface method exists so the editor compiles and opens
+  STATUS after phase D4.  Every interface method exists so the editor compiles and opens
   without "unknown to the backend" console errors.  Real today:
     - revision counters (atomics) and bumpRevision()
-    - the message-thread UiModel: lfoCount / shape JSON / mod-matrix JSON / shaper-curve JSON /
-      preset name are stored and returned (and persisted by StateIO).  Nothing parses them yet.
-    - shaperReset() restores the identity curve document and bumps Revision::shaperCurves.
+    - the message-thread UiModel: lfoCount / shape JSON / mod-matrix JSON / preset name are stored and
+      returned (and persisted by StateIO).  Nothing parses the LFO documents yet (D8).
+    - SHAPER CURVES (D4): setShaperCurveJson parses + validates the wire format into a ShaperCurve, stores the
+      CANONICAL text, rebuilds the A/B LUT set on the message thread and publishes it to the audio thread
+      (ShaperEngine / LockFreeSwap, 10 ms crossfade).  getShaperCurveJson returns the canonical text.
+      shaperReset -> identity, shaperNormalize -> y *= 1 / max|y| of the effective curve; both write the curve
+      back, rebuild and bump Revision::shaperCurves.  A UI-originated edit NEVER bumps Revision::shaperCurves
+      (echo avoidance) and flips the shaperPreset parameter to Custom; a shaperPreset change (host, automation or
+      UI) loads the preset curve into the curve selected by shaperCurveSelect and DOES bump the revision.
     - loadSampleFile() decodes on the SampleStore loader thread and publishes through the
       lock-free swap (bumps Revision::sample on success, explains failures with an async alert and
       keeps the previous sample); getSampleDisplay() reads the current sample's name / format / peaks.
   Everything else that needs DSP is a documented no-op until its phase:
-    shaperNormalize, shaperPreset side effects  D4
     computeFilterResponse .................... D5      (flat 0 dB, no filter DSP exists yet)
     setLfoShape/setModMatrix publication ..... D8
     presets / settings ....................... D9
   vizFifo() receives real WarprVizFrames from the audio thread since D2 (PluginProcessor ->
   warpr::VizAnalyzer, ~30 Hz, wait-free; voices[] come from the synth's playhead snapshot).
+
+  THREADING of the shaper side
+    All curve parsing, LUT building and publication happen on the calling NON-audio thread (message thread for the
+    editor, the host's state thread for a state load).  The APVTS listener on shaperPreset / shaperSymmetry may be
+    called from ANY thread (host automation): it only sets two atomic dirty flags.  servicePending() - called by
+    the processor's message-thread timer (and by tests) - does the actual work.
 */
+
+#include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <atomic>
@@ -26,13 +39,15 @@
 #include "Backend/UiBackend.h"
 #include "Backend/UiModel.h"
 #include "DSP/SampleStore.h"
+#include "DSP/ShaperCurve.h"
+#include "DSP/ShaperEngine.h"
 #include "DSP/WarprSynth.h"
 
 class UiBackendImpl : public WarprUiBackend
 {
 public:
     UiBackendImpl() = default;
-    ~UiBackendImpl() override = default;
+    ~UiBackendImpl() override;
 
     /** The processor's sample store (outlives the backend's use of it; the processor shuts the
         loader down before destroying the backend). */
@@ -40,6 +55,20 @@ public:
 
     /** The processor's synth, read through its wait-free playhead snapshot only. */
     void attachSynth (const warpr::WarprSynth* s) noexcept { synthRef = s; }
+
+    /** The processor's APVTS (shaperPreset / shaperSymmetry / shaperCurveSelect live there).  Registers the
+        parameter listeners; call once, from the message thread, before audio starts. */
+    void attachApvts (juce::AudioProcessorValueTreeState* apvtsToUse);
+
+    /** The engine the built LUT sets are published to.  Builds and publishes the current curves immediately. */
+    void attachShaper (warpr::ShaperEngine* engine);
+
+    /** MESSAGE THREAD: applies a pending shaperPreset change (loads the preset curve into the selected curve and
+        bumps Revision::shaperCurves) and a pending shaperSymmetry change (rebuilds the LUT set). */
+    void servicePending();
+
+    /** The LUT set most recently built (message-thread copy; tests and later phases). */
+    warpr::ShaperLutSet::Ptr getShaperLut() const;
 
     int getPlayheads (WarprVizFrame::Voice* out, int maxOut) override
     {
@@ -87,11 +116,29 @@ public:
     warpr::UiModel copyModel() const;
 
     /** State load / preset load: replaces the model and bumps uiState, sample, shaperCurves,
-        filterResponse and preset so the editor re-emits everything. */
+        filterResponse and preset so the editor re-emits everything.  The shaper curves are re-parsed
+        (invalid documents fall back to the identity), the LUT set is rebuilt and published, and any pending
+        shaperPreset / shaperSymmetry change from the state load itself is discarded (the stored curve wins). */
     void adoptModel (const warpr::UiModel& newModel);
 
 private:
     static size_t slotOf (Revision r) noexcept            { return static_cast<size_t> (r); }
+
+    // ---- shaper helpers (message / state threads)
+    void rebuildShaper();
+    void applyShaperPreset (int preset);
+    void storeCurve (int curve, const warpr::ShaperCurve& c);
+    void flipPresetToCustom();
+    void setChoiceParam (const char* id, int index);
+    bool isSymmetric() const;
+    int  currentChoice (const char* id) const;
+
+    struct ShaperParamListener : juce::AudioProcessorValueTreeState::Listener
+    {
+        explicit ShaperParamListener (UiBackendImpl& o) noexcept : owner (o) {}
+        void parameterChanged (const juce::String& parameterID, float newValue) override;
+        UiBackendImpl& owner;
+    };
 
     WarprVizFifo viz;
     std::array<std::atomic<uint32_t>, 5> revisions {};
@@ -100,4 +147,12 @@ private:
 
     mutable juce::CriticalSection modelLock;              // message thread + host state thread; never the audio thread
     warpr::UiModel model;
+    std::array<warpr::ShaperCurve, 2> shaperCurves;       // parsed twin of model.shaperCurveJson (guarded by modelLock)
+
+    juce::AudioProcessorValueTreeState* apvts = nullptr;
+    warpr::ShaperEngine* shaperEngine = nullptr;
+    ShaperParamListener shaperListener { *this };
+    std::atomic<bool> presetDirty { false }, symmetryDirty { false };
+    mutable juce::CriticalSection shaperLock;             // serialises build + publish (taken BEFORE modelLock)
+    warpr::ShaperLutSet::Ptr lastLut;                     // guarded by shaperLock
 };

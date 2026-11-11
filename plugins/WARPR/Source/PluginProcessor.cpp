@@ -11,6 +11,9 @@ PluginProcessor::PluginProcessor()
     paramSnapshot.bind (apvts);
     backend.attachSampleStore (&sampleStore);
     backend.attachSynth (&synth);
+    backend.attachApvts (&apvts);                     // shaperPreset / shaperSymmetry listeners
+    synth.attachShaper (&shaperEngine);
+    backend.attachShaper (&shaperEngine);             // builds + publishes the initial (identity) LUT set
     drainTimer.begin();
 }
 
@@ -27,6 +30,8 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     drainRetired();
 
+    shaperEngine.prepare (sampleRate);                // 10 ms LUT crossfade length; drops a running fade
+    backend.servicePending();                         // a shaper preset / symmetry change that arrived while stopped
     synth.prepare (sampleRate, samplesPerBlock);      // designs the half-band, kills all voices
     synth.setCurrentSample (sampleStore.get());
     master.prepare (sampleRate);

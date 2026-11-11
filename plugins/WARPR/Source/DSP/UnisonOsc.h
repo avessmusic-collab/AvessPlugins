@@ -8,7 +8,8 @@
 
   WARP SLOT (phase D2): between the read and the accumulation sits the WarpOscState stage
   (WarpStage.h).  Passing `warp == nullptr` (or a span with active == false) is the bit-exact D1 path.
-  The SHAPER stage (D4) is inserted right after it; until then there is none.
+  SHAPER SLOT (phase D4): right after the warp stage (ShaperEngine.h, ShaperOscState).  A null or inactive
+  ShaperSpan leaves the value untouched (bit-exact); the ADAA history is dropped while inactive.
 
   The interpolated read is wrapped in `readAt (position)` which also applies the forward-loop seam
   crossfade / one-shot end fade for THAT read position, so phase warps (which read at P') get the same
@@ -17,6 +18,7 @@
 
 #include "DSP/RegionFold.h"
 #include "DSP/SampleReader.h"
+#include "DSP/ShaperEngine.h"
 #include "DSP/WarpStage.h"
 
 #include <cmath>
@@ -46,6 +48,7 @@ namespace warpr
         int    dir = 1;              // current travel direction (+1 / -1)
         bool   ended = false;        // One-Shot ran off its end
         WarpOscState warp;           // note-cycle clock + warp kernels (D2)
+        ShaperOscState shaper;       // transfer-curve shaper ADAA history (D4)
 
         /** Index 0 starts exactly at the region start (or end when reversed).  Short (single-cycle
             like) regions spread the start phases of further oscillators by the golden ratio so
@@ -73,17 +76,20 @@ namespace warpr
                 theta0 = c - std::floor (c);
             }
             warp.reset (theta0);
+            shaper.idle();
         }
 
         /** Renders `nOS` oscillator-rate samples, ADDING them (times the ramped pan gains) to busL/busR.
             rho0 / rho1 = source frames per HOST sample at the start / end of the span; the per-OS-sample
             step is rho / os, ramped linearly across the span.  `warpSpan` (optional) describes the warp
-            stage for this span; nullptr or active == false leaves the read untouched. */
+            stage for this span; nullptr or active == false leaves the read untouched.  `shaperSpan` (optional)
+            describes the transfer-curve shaper stage that follows the warp stage (same null / inactive rule). */
         void render (const SampleData& sd, const RegionFold& rg, int quality,
                      double rho0, double rho1, int os,
                      float gL0, float gR0, float gL1, float gR1,
                      float* busL, float* busR, int nOS,
-                     const WarpSpan* warpSpan = nullptr) noexcept
+                     const WarpSpan* warpSpan = nullptr,
+                     const ShaperSpan* shaperSpan = nullptr) noexcept
         {
             if (ended || nOS <= 0)
                 return;
@@ -179,6 +185,24 @@ namespace warpr
                 wm = warpSpan->mix0; dwm = (warpSpan->mix1 - warpSpan->mix0) * inv;
             }
 
+            // ---- shaper stage setup ----------------------------------------------------------------
+            const bool shaperPresent = shaperSpan != nullptr;
+            const bool shaperActive = shaperPresent && shaperSpan->active && shaperSpan->cur != nullptr;
+
+            if (shaperPresent && ! shaperActive)
+                shaper.idle();
+
+            float shMorph = 0.0f, shMix = 1.0f, shW = 1.0f;
+            float dshMorph = 0.0f, dshMix = 0.0f, dshW = 0.0f;
+
+            if (shaperActive)
+            {
+                const float inv = 1.0f / (float) nOS;
+                shMorph = shaperSpan->morph0;  dshMorph = (shaperSpan->morph1 - shaperSpan->morph0) * inv;
+                shMix   = shaperSpan->mix0;    dshMix   = (shaperSpan->mix1 - shaperSpan->mix0) * inv;
+                shW     = shaperSpan->w0;      dshW     = (shaperSpan->w1 - shaperSpan->w0) * inv;
+            }
+
             for (int k = 0; k < nOS; ++k)
             {
                 float sL, sR;
@@ -196,7 +220,14 @@ namespace warpr
                     readAt (pos, sL, sR);
                 }
 
-                // ---- SHAPER SLOT (D4) is inserted here, after the warp stage ----------------------------
+                // ---- SHAPER SLOT (D4): after the warp stage, before pan / accumulation ---------------------
+                if (shaperActive)
+                {
+                    shaper.process (*shaperSpan, (double) shMorph, (double) shMix, (double) shW, sL, sR, stereoSrc);
+                    shMorph += dshMorph;
+                    shMix += dshMix;
+                    shW += dshW;
+                }
 
                 busL[k] += sL * gL;
                 busR[k] += sR * gR;

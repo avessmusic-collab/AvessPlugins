@@ -54,6 +54,10 @@ set(WARPR_CORE_SOURCES
     Source/DSP/HalfbandIIR.cpp
     Source/DSP/WarprVoice.cpp
     Source/DSP/WarprSynth.cpp
+    # Phase D4: A/B transfer-curve shaper (model + JSON, preset library, LUT/antiderivative builder + engine)
+    Source/DSP/ShaperCurve.cpp
+    Source/DSP/ShaperPresetLibrary.cpp
+    Source/DSP/ShaperEngine.cpp
 )
 
 target_sources(WARPR PRIVATE ${WARPR_CORE_SOURCES})
@@ -145,6 +149,7 @@ add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/PhaseD1Tests.cpp
     Source/Tests/PhaseD2Tests.cpp
     Source/Tests/PhaseD3Tests.cpp
+    Source/Tests/PhaseD4Tests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp
     ${WARPR_CORE_SOURCES}

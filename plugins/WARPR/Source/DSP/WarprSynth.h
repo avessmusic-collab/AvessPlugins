@@ -35,6 +35,7 @@
 
 #include "DSP/HalfbandIIR.h"
 #include "DSP/SampleStore.h"
+#include "DSP/ShaperEngine.h"
 #include "DSP/WarprVoice.h"
 #include "Parameters/ParamSnapshot.h"
 #include "Util/LockFreeSwap.h"
@@ -72,6 +73,9 @@ namespace warpr
 
         /** Sets rates, designs nothing per note (the half-band is designed here), kills every voice. */
         void prepare (double newSampleRate, int maxBlockSize);
+
+        /** The shaper engine whose sets the voices read (D4).  nullptr = no shaper stage.  Set once, before audio. */
+        void attachShaper (ShaperEngine* engine) noexcept { shaper = engine; }
 
         /** Kills every voice and releases all sample references directly (audio must be stopped). */
         void reset();
@@ -143,8 +147,10 @@ namespace warpr
 
         void deferRelease (SampleData* s) noexcept;
         void flushBacklog() noexcept;
+        void syncShaperToVoices() noexcept;
 
         RetireList& retireList;
+        ShaperEngine* shaper = nullptr;
         double sampleRate = 44100.0;
         const HalfbandCoeffs* halfband = nullptr;
 

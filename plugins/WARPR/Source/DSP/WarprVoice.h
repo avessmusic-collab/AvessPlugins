@@ -1,9 +1,9 @@
 #pragma once
 /*
   WarprVoice - one note: N unison oscillators -> sum -> ONE decimator -> DC block -> amp ADSR
-  (architecture C12, "Per-voice" chain).  Phase D2 adds the warp stage inside UnisonOsc (modes 0-14
-  real, 15-59 explicit identity); there is still no shaper (D4) or filter stage (D5): the per-voice
-  filter slot (between the DC blocker and the envelope) does not exist yet.
+  (architecture C12, "Per-voice" chain).  Phase D2 adds the warp stage inside UnisonOsc (modes 0-43
+  real after D3, 44-59 explicit identity); D4 adds the shaper stage right after it.  There is still no
+  filter stage (D5): the per-voice filter slot (between the DC blocker and the envelope) does not exist yet.
 
   Everything is fixed-size: a voice owns its OS-rate bus (32 base samples x 8x), its oscillators
   and its decimator state.  Nothing is allocated after construction.
@@ -46,6 +46,15 @@ namespace warpr
         bool  warpEnable = true;
         int   warpMode = 17;
         float warpAmount = 0.0f, warpA = 0.5f, warpB = 0.0f, warpMix = 1.0f;
+
+        // Shaper stage (D4).  The set pointers are owned by the ShaperEngine (valid for the whole block);
+        // `shaperFadeBase` = base samples already elapsed in the running A/B-set crossfade at the START of the
+        // sub-range being rendered (WarprSynth keeps it current).
+        bool  shaperEnable = false;
+        float shaperMorph = 0.0f, shaperMix = 1.0f;
+        const ShaperLutSet* shaperCur = nullptr;
+        const ShaperLutSet* shaperPrev = nullptr;        // nullptr when no crossfade is running
+        int   shaperFadeBase = 0, shaperFadeLen = 480;
     };
 
     class WarprVoice
@@ -132,7 +141,8 @@ namespace warpr
         bool ghost = false;
 
     private:
-        void renderChunk (const VoiceParams& vp, float* outL, float* outR, int n) noexcept;
+        /** `rangeOffset` = base samples between the start of the current render range and this chunk (shaper crossfade). */
+        void renderChunk (const VoiceParams& vp, float* outL, float* outR, int n, int rangeOffset) noexcept;
         void setGlideTarget (double target, double glideMs) noexcept;
         void advanceGlide (int n) noexcept;
 
@@ -157,6 +167,9 @@ namespace warpr
         // root note slew 5 ms (drives the warp cycle length Lc)
         float warpAmtCur = 0.0f, warpACur = 0.5f, warpBCur = 0.0f, warpMixCur = 1.0f, warpEnCur = 1.0f;
         float rootCur = 60.0f;
+
+        // shaper stage smoothers (per chunk): morph / mix one-pole 10 ms, enable linear ramp 5 ms
+        float shaperMorphCur = 0.0f, shaperMixCur = 1.0f, shaperEnCur = 0.0f;
 
         // fades
         int fadeLeft = 0, fadeTotal = 0;
