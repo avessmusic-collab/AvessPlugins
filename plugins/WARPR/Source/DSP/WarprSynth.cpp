@@ -77,6 +77,13 @@ namespace warpr
         vp.bendSemis = bendNorm * (float) vp.bendRangeSemis;
         vp.interpQuality = interpQuality.load (std::memory_order_relaxed);
 
+        vp.warpEnable = pb.getBool (ParamId::warpEnable);
+        vp.warpMode = juce::jlimit (0, kNumWarpModes - 1, pb.getInt (ParamId::warpMode));
+        vp.warpAmount = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpAmount));
+        vp.warpA = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpParamA));
+        vp.warpB = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpParamB));
+        vp.warpMix = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpMix));
+
         voiceMode = juce::jlimit (0, 2, pb.getInt (ParamId::voiceMode));
         polyLimit = juce::jlimit (1, maxVoices, pb.getInt (ParamId::polyphony));
         unisonLatched = juce::jlimit (1, WarprVoice::maxUnison, pb.getInt (ParamId::unisonVoices));

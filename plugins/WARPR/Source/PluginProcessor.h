@@ -7,6 +7,7 @@
 #include "Backend/UiBackendImpl.h"
 #include "DSP/MasterStage.h"
 #include "DSP/SampleStore.h"
+#include "DSP/VizAnalyzer.h"
 #include "DSP/WarprSynth.h"
 #include "Parameters/ParamSnapshot.h"
 #include "Parameters/ParameterLayout.h"
@@ -14,12 +15,12 @@
 #include "Util/LockFreeSwap.h"
 
 /**
- * WARPR processor (Stage 2, phase D1: sample engine + playback + ADSR + voices).
+ * WARPR processor (Stage 2, phase D2: warp framework + bending modes + viz feeds).
  *
  * Instrument: MIDI in, ONE stereo output bus, no input bus (pattern #4).
- * Signal path (D1): MIDI -> WarprSynth (32 voices + 2 ghost slots) -> MasterStage
- * (DC block, masterGain, safety knee soft-clip).  Warp / shaper / filter / granular / LFO
- * arrive in D2-D8; the warp slot inside the oscillator is an explicit identity today.
+ * Signal path (D2): MIDI -> WarprSynth (32 voices + 2 ghost slots, warp modes 0-14 real, 15-59 identity)
+ * -> MasterStage (DC block, masterGain, safety knee soft-clip) -> VizAnalyzer (UI feed only).
+ * Shaper / filter / granular / LFO arrive in D4-D8.
  * Parameters: all 135 from parameter-spec.md via warpr::createParameterLayout().
  */
 class PluginProcessor : public juce::AudioProcessor
@@ -102,6 +103,7 @@ private:
     UiBackendImpl        backend;
     warpr::WarprSynth    synth { retireList };
     warpr::MasterStage   master;
+    warpr::VizAnalyzer   vizAnalyzer;            // pushes WarprVizFrame into backend.vizFifo() (~30 Hz)
     warpr::ParamBlock    paramBlock;
     std::atomic<int>     activeVoices { 0 };
     RetireDrainTimer     drainTimer { *this };

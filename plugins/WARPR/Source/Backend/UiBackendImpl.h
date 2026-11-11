@@ -16,7 +16,8 @@
     computeFilterResponse .................... D5      (flat 0 dB, no filter DSP exists yet)
     setLfoShape/setModMatrix publication ..... D8
     presets / settings ....................... D9
-  vizFifo() is returned but nothing pushes into it yet (organism stays still).
+  vizFifo() receives real WarprVizFrames from the audio thread since D2 (PluginProcessor ->
+  warpr::VizAnalyzer, ~30 Hz, wait-free; voices[] come from the synth's playhead snapshot).
 */
 
 #include <array>

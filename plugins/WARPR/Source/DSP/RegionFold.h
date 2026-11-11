@@ -189,6 +189,45 @@ namespace warpr
             return true;
         }
 
+        /** Folds an arbitrary READ position (playhead + phase-warp offset) back into the region without
+            touching any playhead state: Forward = wrap, Ping-Pong = reflect, One-Shot = clamp.
+            A position already inside the region is returned unchanged (bit-exact). */
+        double foldRead (double p) const noexcept
+        {
+            switch (mode)
+            {
+                case Mode::Forward:
+                {
+                    if (p >= lo && p < hi)
+                        return p;
+
+                    double rel = std::fmod (p - lo, length);
+                    if (rel < 0.0)
+                        rel += length;
+                    return lo + rel;
+                }
+
+                case Mode::PingPong:
+                {
+                    if (p >= lo && p <= hi)
+                        return p;
+
+                    const double period = 2.0 * length;
+                    double rel = std::fmod (p - lo, period);
+                    if (rel < 0.0)
+                        rel += period;
+                    if (rel > length)
+                        rel = period - rel;
+                    return lo + rel;
+                }
+
+                case Mode::OneShot:
+                    return std::clamp (p, lo, hi);
+            }
+
+            return p;
+        }
+
     private:
         const SampleData* cachedFor = nullptr;
 

@@ -22,6 +22,12 @@ namespace warpr
             if (std::abs (target - value) < tolerance)
                 value = target;
         }
+
+        /** Source frames per root-note cycle:  Lc = fileSampleRate / midiToHz(root). */
+        inline double cycleFrames (double fileSampleRate, double rootSemitones) noexcept
+        {
+            return fileSampleRate / (440.0 * std::exp2 ((rootSemitones - 69.0) / 12.0));
+        }
     }
 
     //==========================================================================
@@ -86,8 +92,16 @@ namespace warpr
 
         region.configure (*sample, startCur, endCur, modeFromParam (vp.loopMode));
 
+        warpAmtCur = vp.warpAmount;
+        warpACur = vp.warpA;
+        warpBCur = vp.warpB;
+        warpMixCur = vp.warpMix;
+        warpEnCur = vp.warpEnable ? 1.0f : 0.0f;
+        rootCur = (float) vp.rootNote;
+
         const bool reverse = vp.direction == 1;
         const float norm = 1.0f / std::sqrt ((float) unison);
+        const double lc = cycleFrames (sample->fileSampleRate, (double) rootCur);
 
         for (int u = 0; u < unison; ++u)
         {
@@ -95,7 +109,7 @@ namespace warpr
             balanceGains (spreadCur * unisonPosition (u, unison), gl, gr);
             prevGainL[(size_t) u] = gl * norm;
             prevGainR[(size_t) u] = gr * norm;
-            osc[(size_t) u].start (region, reverse, u);
+            osc[(size_t) u].start (region, reverse, u, lc);
         }
 
         decimator.reset();
@@ -218,6 +232,38 @@ namespace warpr
         snapNear (startCur, vp.sampleStart, 1.0e-6f);
         snapNear (endCur, vp.sampleEnd, 1.0e-6f);
 
+        // ---- warp stage parameters: amount / A / B / mix one-pole 10 ms per chunk, enable linear ramp
+        //      5 ms, root note 5 ms.  The span ramps linearly from the chunk-start to the chunk-end value.
+        const float k10 = slewCoef (0.010);
+        const float warpAmt0 = warpAmtCur, warpA0 = warpACur, warpB0 = warpBCur;
+        const float warpMix0 = warpMixCur * warpEnCur;
+
+        warpAmtCur += (vp.warpAmount - warpAmtCur) * k10;
+        warpACur += (vp.warpA - warpACur) * k10;
+        warpBCur += (vp.warpB - warpBCur) * k10;
+        warpMixCur += (vp.warpMix - warpMixCur) * k10;
+        snapNear (warpAmtCur, vp.warpAmount, 1.0e-6f);
+        snapNear (warpACur, vp.warpA, 1.0e-6f);
+        snapNear (warpBCur, vp.warpB, 1.0e-6f);
+        snapNear (warpMixCur, vp.warpMix, 1.0e-6f);
+
+        const float enStep = (float) (nD / (0.005 * sampleRate));
+        warpEnCur = vp.warpEnable ? std::min (1.0f, warpEnCur + enStep) : std::max (0.0f, warpEnCur - enStep);
+
+        rootCur += ((float) vp.rootNote - rootCur) * k5;
+        snapNear (rootCur, (float) vp.rootNote, 1.0e-6f);
+
+        WarpSpan warpSpan;
+        warpSpan.mode = vp.warpMode;
+        warpSpan.a0 = warpAmt0;   warpSpan.a1 = warpAmtCur;
+        warpSpan.A0 = warpA0;     warpSpan.A1 = warpACur;
+        warpSpan.B0 = warpB0;     warpSpan.B1 = warpBCur;
+        warpSpan.mix0 = warpMix0; warpSpan.mix1 = warpMixCur * warpEnCur;
+        warpSpan.active = warpSpan.mix0 > 0.0f || warpSpan.mix1 > 0.0f;
+        warpSpan.Lc = cycleFrames (sd.fileSampleRate, (double) rootCur);
+        warpSpan.fadeLen = std::max (1, (int) std::lround (0.010 * sampleRate * (double) os));
+        warpSpan.os = os;
+
         const double p1 = pitchCur + (double) bendCur + (double) offsetCur;
 
         region.configure (sd, startCur, endCur, modeFromParam (vp.loopMode));
@@ -248,7 +294,7 @@ namespace warpr
 
             if (rho0 <= maxRho && rho1 <= maxRho && rho0 > 0.0 && rho1 > 0.0)
                 o.render (sd, region, vp.interpQuality, rho0, rho1, os, pgl, pgr, gl, gr,
-                          busL.data(), busR.data(), nOS);
+                          busL.data(), busR.data(), nOS, &warpSpan);
 
             pgl = gl;
             pgr = gr;

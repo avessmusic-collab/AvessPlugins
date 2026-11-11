@@ -13,7 +13,8 @@
       7. scanners + FFT alias meter self-test
       8. FLAC writer API round trip (24-bit)
 
-    Phase D1 block lives in PhaseD1Tests.cpp (runPhaseD1Tests).  Flags:  --full  widens the sweeps.
+    Phase D1 block lives in PhaseD1Tests.cpp (runPhaseD1Tests), phase D2 in PhaseD2Tests.cpp
+    (runPhaseD2Tests).  Flags:  --full  widens the sweeps.
 */
 
 #include "PluginProcessor.h"
@@ -37,6 +38,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// Bit-exact float equality is intentional in this harness (state round trips, FLAC decode,
+// discrete-vs-continuous classification), so the warning is suppressed for this file only.
+JUCE_BEGIN_IGNORE_WARNINGS_GCC_LIKE ("-Wfloat-equal")
 
 namespace
 {
@@ -650,6 +655,7 @@ namespace
 
 //==============================================================================
 int runPhaseD1Tests (bool full);              // Tests/PhaseD1Tests.cpp
+int runPhaseD2Tests (bool full);              // Tests/PhaseD2Tests.cpp
 
 int main (int argc, char** argv)
 {
@@ -673,7 +679,10 @@ int main (int argc, char** argv)
     testFlacRoundTrip();
 
     failures += runPhaseD1Tests (full);
+    failures += runPhaseD2Tests (full);
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;
 }
+
+JUCE_END_IGNORE_WARNINGS_GCC_LIKE

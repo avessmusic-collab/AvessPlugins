@@ -1,9 +1,9 @@
 #pragma once
 /*
   WarprVoice - one note: N unison oscillators -> sum -> ONE decimator -> DC block -> amp ADSR
-  (architecture C12, "Per-voice" chain).  Phase D1 has no warp, shaper or filter stage; the
-  warp / shaper slot inside UnisonOsc is an explicit identity and the per-voice filter slot
-  (between the DC blocker and the envelope) does not exist yet (D5).
+  (architecture C12, "Per-voice" chain).  Phase D2 adds the warp stage inside UnisonOsc (modes 0-14
+  real, 15-59 explicit identity); there is still no shaper (D4) or filter stage (D5): the per-voice
+  filter slot (between the DC blocker and the envelope) does not exist yet.
 
   Everything is fixed-size: a voice owns its OS-rate bus (32 base samples x 8x), its oscillators
   and its decimator state.  Nothing is allocated after construction.
@@ -40,6 +40,12 @@ namespace warpr
         float bendSemis = 0.0f;              // wheel position * range (kept current by the synth)
         int   bendRangeSemis = 2;
         int   interpQuality = 0;             // 0 sinc8, 1 Hermite4 (draft)
+
+        // Warp stage (D2).  Defaults mirror the parameter defaults (Sine Fold = not-yet-implemented
+        // identity, amount 0).
+        bool  warpEnable = true;
+        int   warpMode = 17;
+        float warpAmount = 0.0f, warpA = 0.5f, warpB = 0.0f, warpMix = 1.0f;
     };
 
     class WarprVoice
@@ -146,6 +152,11 @@ namespace warpr
         float bendCur = 0.0f, offsetCur = 0.0f;
         float spreadCur = 0.5f, detuneCur = 12.0f;
         float startCur = 0.0f, endCur = 1.0f;
+
+        // warp stage smoothers (per chunk): amount / A / B / mix one-pole 10 ms, enable linear ramp 5 ms,
+        // root note slew 5 ms (drives the warp cycle length Lc)
+        float warpAmtCur = 0.0f, warpACur = 0.5f, warpBCur = 0.0f, warpMixCur = 1.0f, warpEnCur = 1.0f;
+        float rootCur = 60.0f;
 
         // fades
         int fadeLeft = 0, fadeTotal = 0;

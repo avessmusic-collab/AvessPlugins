@@ -30,6 +30,7 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     synth.prepare (sampleRate, samplesPerBlock);      // designs the half-band, kills all voices
     synth.setCurrentSample (sampleStore.get());
     master.prepare (sampleRate);
+    vizAnalyzer.prepare (sampleRate);
     activeVoices.store (0, std::memory_order_relaxed);
 
     backend.bumpRevision (WarprUiBackend::Revision::filterResponse);   // sample-rate dependent display
@@ -69,6 +70,7 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
 
     synth.renderBlock (left, right, numSamples, midiMessages);
     master.process (left, right, numSamples, paramBlock.get (warpr::ParamId::masterGain));
+    vizAnalyzer.process (left, right, numSamples, backend.vizFifo(), &synth);      // wait-free, no allocation
 
     activeVoices.store (synth.getNumActiveVoices(), std::memory_order_relaxed);
 }

@@ -1,19 +1,23 @@
 #pragma once
 /*
-  UnisonOsc - one unison oscillator: playhead, region fold, interpolated read, pan gains.
+  UnisonOsc - one unison oscillator: playhead, region fold, interpolated read, warp stage, pan gains.
 
   It runs NATIVELY at the oversampled rate (architecture decision 2): `render` produces `nOS`
   oscillator-rate samples and ACCUMULATES them into the voice's OS-rate stereo bus; the voice
   then decimates the summed bus once (OsDecimator).
 
-  PHASE D1 WARP SLOT: the warp / shaper stages of the oscillator pipeline sit between the read
-  and the accumulation (marked below).  In D1 that slot is an explicit IDENTITY pass-through -
-  there is no warp DSP yet (D2 fills it).  It is documented here so the slot cannot be mistaken
-  for finished processing.
+  WARP SLOT (phase D2): between the read and the accumulation sits the WarpOscState stage
+  (WarpStage.h).  Passing `warp == nullptr` (or a span with active == false) is the bit-exact D1 path.
+  The SHAPER stage (D4) is inserted right after it; until then there is none.
+
+  The interpolated read is wrapped in `readAt (position)` which also applies the forward-loop seam
+  crossfade / one-shot end fade for THAT read position, so phase warps (which read at P') get the same
+  seam treatment as the plain playhead.
 */
 
 #include "DSP/RegionFold.h"
 #include "DSP/SampleReader.h"
+#include "DSP/WarpStage.h"
 
 #include <cmath>
 
@@ -41,11 +45,13 @@ namespace warpr
         double pos = 0.0;            // playhead in source frames
         int    dir = 1;              // current travel direction (+1 / -1)
         bool   ended = false;        // One-Shot ran off its end
+        WarpOscState warp;           // note-cycle clock + warp kernels (D2)
 
         /** Index 0 starts exactly at the region start (or end when reversed).  Short (single-cycle
             like) regions spread the start phases of further oscillators by the golden ratio so
-            unison is not phase-locked. */
-        void start (const RegionFold& rg, bool reverse, int index) noexcept
+            unison is not phase-locked.  `Lc` (source frames per root-note cycle, 0 = unknown) seeds
+            the warp cycle clock: theta0 = frac((pos - lo) / Lc). */
+        void start (const RegionFold& rg, bool reverse, int index, double Lc = 0.0) noexcept
         {
             ended = false;
             dir = reverse ? -1 : 1;
@@ -59,15 +65,25 @@ namespace warpr
             }
 
             pos = reverse ? rg.hi - phase * rg.length : rg.lo + phase * rg.length;
+
+            double theta0 = 0.0;
+            if (Lc > 0.0)
+            {
+                const double c = (pos - rg.lo) / Lc;
+                theta0 = c - std::floor (c);
+            }
+            warp.reset (theta0);
         }
 
         /** Renders `nOS` oscillator-rate samples, ADDING them (times the ramped pan gains) to busL/busR.
             rho0 / rho1 = source frames per HOST sample at the start / end of the span; the per-OS-sample
-            step is rho / os, ramped linearly across the span. */
+            step is rho / os, ramped linearly across the span.  `warpSpan` (optional) describes the warp
+            stage for this span; nullptr or active == false leaves the read untouched. */
         void render (const SampleData& sd, const RegionFold& rg, int quality,
                      double rho0, double rho1, int os,
                      float gL0, float gR0, float gL1, float gR1,
-                     float* busL, float* busR, int nOS) noexcept
+                     float* busL, float* busR, int nOS,
+                     const WarpSpan* warpSpan = nullptr) noexcept
         {
             if (ended || nOS <= 0)
                 return;
@@ -91,10 +107,10 @@ namespace warpr
             const bool oneShot = rg.mode == RegionFold::Mode::OneShot;
             const bool seamFade = rg.mode == RegionFold::Mode::Forward && rg.xfade > 0.0;
 
-            for (int k = 0; k < nOS; ++k)
+            // Interpolated read at an arbitrary READ position, with the seam / end fades for that position.
+            auto readAt = [&] (double p, float& sL, float& sR) noexcept
             {
-                float sL, sR;
-                readFrame (rp, pos, sL, sR);
+                readFrame (rp, p, sL, sR);
 
                 if (seamFade)
                 {
@@ -102,16 +118,16 @@ namespace warpr
 
                     if (dir > 0)
                     {
-                        if (pos > rg.hi - rg.xfade)
+                        if (p > rg.hi - rg.xfade)
                         {
-                            t = (pos - (rg.hi - rg.xfade)) / rg.xfade;
-                            q = pos - rg.length + rg.xfade;
+                            t = (p - (rg.hi - rg.xfade)) / rg.xfade;
+                            q = p - rg.length + rg.xfade;
                         }
                     }
-                    else if (pos < rg.lo + rg.xfade)
+                    else if (p < rg.lo + rg.xfade)
                     {
-                        t = (rg.lo + rg.xfade - pos) / rg.xfade;
-                        q = pos + rg.length - rg.xfade;
+                        t = (rg.lo + rg.xfade - p) / rg.xfade;
+                        q = p + rg.length - rg.xfade;
                     }
 
                     if (t >= 0.0)
@@ -131,7 +147,7 @@ namespace warpr
                 }
                 else if (oneShot && rg.endFade > 0.0)
                 {
-                    const double rem = dir > 0 ? rg.hi - pos : pos - rg.lo;
+                    const double rem = dir > 0 ? rg.hi - p : p - rg.lo;
 
                     if (rem < rg.endFade)
                     {
@@ -140,16 +156,55 @@ namespace warpr
                         sR *= g;
                     }
                 }
+            };
 
-                // ---- WARP / SHAPER SLOT -------------------------------------------------------------
-                // D1: IDENTITY.  No warp, fold, distortion or shaper DSP exists yet; sL / sR pass through
-                // unchanged.  D2 (phase / amplitude warps) and D4 (shaper) are inserted exactly here.
-                // -------------------------------------------------------------------------------------
+            // ---- warp stage setup ------------------------------------------------------------------
+            const bool warpPresent = warpSpan != nullptr;
+            const bool warpActive = warpPresent && warpSpan->active;
+            const double invLc = warpPresent && warpSpan->Lc > 0.0 ? 1.0 / warpSpan->Lc : 0.0;
+            const bool stereoSrc = rp.stereo;
+
+            if (warpPresent && ! warpActive)
+                warp.idle();
+
+            float wa = 0.0f, wA = 0.5f, wB = 0.0f, wm = 1.0f;
+            float dwa = 0.0f, dwA = 0.0f, dwB = 0.0f, dwm = 0.0f;
+
+            if (warpActive)
+            {
+                const float inv = 1.0f / (float) nOS;
+                wa = warpSpan->a0;   dwa = (warpSpan->a1 - warpSpan->a0) * inv;
+                wA = warpSpan->A0;   dwA = (warpSpan->A1 - warpSpan->A0) * inv;
+                wB = warpSpan->B0;   dwB = (warpSpan->B1 - warpSpan->B0) * inv;
+                wm = warpSpan->mix0; dwm = (warpSpan->mix1 - warpSpan->mix0) * inv;
+            }
+
+            for (int k = 0; k < nOS; ++k)
+            {
+                float sL, sR;
+
+                if (warpActive)
+                {
+                    warp.process (*warpSpan, wa, wA, wB, wm, pos, dir, step, rg, stereoSrc, readAt, sL, sR);
+                    wa += dwa;
+                    wA += dwA;
+                    wB += dwB;
+                    wm += dwm;
+                }
+                else
+                {
+                    readAt (pos, sL, sR);
+                }
+
+                // ---- SHAPER SLOT (D4) is inserted here, after the warp stage ----------------------------
 
                 busL[k] += sL * gL;
                 busR[k] += sR * gR;
                 gL += dgL;
                 gR += dgR;
+
+                if (warpPresent)
+                    warp.advanceTheta (step * invLc);
 
                 if (! rg.advance (pos, dir, step))
                 {
