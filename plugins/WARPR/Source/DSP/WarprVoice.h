@@ -108,6 +108,16 @@ namespace warpr
         double getPitchSemis() const noexcept { return pitchCur; }
         int   fadeSamplesLeft() const noexcept { return fadeLeft; }
 
+        /** Read position of the first oscillator as a fraction (0..1) of the sample, for the UI
+            playhead.  Audio thread (or any thread that owns the voice); no side effects. */
+        float playheadNorm() const noexcept
+        {
+            if (sample == nullptr || sample->numFrames <= 0)
+                return 0.0f;
+            const double t = osc[0].pos / (double) sample->numFrames;
+            return t < 0.0 ? 0.0f : (t > 1.0 ? 1.0f : (float) t);
+        }
+
         // state owned by the synth's allocation logic
         int  note = -1;
         std::uint64_t age = 0;

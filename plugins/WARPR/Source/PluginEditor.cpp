@@ -271,9 +271,19 @@ void PluginEditor::timerCallback()
 
     auto& be = audioProcessor.getUiBackend();
 
+    // Playheads: wait-free snapshot of the sounding voices' read positions (written by the audio
+    // thread).  D2 will additionally push full frames through the FIFO; a FIFO frame that already
+    // carries voices wins, otherwise the snapshot is merged in.  An idle, silent session emits nothing.
     WarprVizFrame frame;
-    if (be.vizFifo().popLatest (frame))
+    const bool gotFrame = be.vizFifo().popLatest (frame);
+    if (frame.numVoices == 0)
+        frame.numVoices = be.getPlayheads (frame.voices.data(), WarprVizFrame::maxVoices);
+
+    if (gotFrame || frame.numVoices > 0 || playheadsWereShown)
+    {
         emitViz (frame);
+        playheadsWereShown = frame.numVoices > 0;     // one trailing empty frame clears the playheads
+    }
 
     auto changed = [&be] (WarprUiBackend::Revision r, uint32_t& seen)
     {

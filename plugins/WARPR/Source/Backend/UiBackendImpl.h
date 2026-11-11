@@ -25,6 +25,7 @@
 #include "Backend/UiBackend.h"
 #include "Backend/UiModel.h"
 #include "DSP/SampleStore.h"
+#include "DSP/WarprSynth.h"
 
 class UiBackendImpl : public WarprUiBackend
 {
@@ -35,6 +36,20 @@ public:
     /** The processor's sample store (outlives the backend's use of it; the processor shuts the
         loader down before destroying the backend). */
     void attachSampleStore (warpr::SampleStore* store) noexcept { sampleStore = store; }
+
+    /** The processor's synth, read through its wait-free playhead snapshot only. */
+    void attachSynth (const warpr::WarprSynth* s) noexcept { synthRef = s; }
+
+    int getPlayheads (WarprVizFrame::Voice* out, int maxOut) override
+    {
+        if (synthRef == nullptr || out == nullptr)
+            return 0;
+        float pos[WarprVizFrame::maxVoices], lvl[WarprVizFrame::maxVoices];
+        const int n = synthRef->readPlayheads (pos, lvl, std::min (maxOut, (int) WarprVizFrame::maxVoices));
+        for (int i = 0; i < n; ++i)
+            out[i] = { pos[i], lvl[i] };
+        return n;
+    }
 
     //==========================================================================
     // WarprUiBackend
@@ -80,6 +95,7 @@ private:
     WarprVizFifo viz;
     std::array<std::atomic<uint32_t>, 5> revisions {};
     warpr::SampleStore* sampleStore = nullptr;
+    const warpr::WarprSynth* synthRef = nullptr;
 
     mutable juce::CriticalSection modelLock;              // message thread + host state thread; never the audio thread
     warpr::UiModel model;

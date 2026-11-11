@@ -93,6 +93,13 @@ namespace warpr
         int getOscillatorUnitsInUse() const noexcept;    // non-ghost voices: unison * os
 
         //======================================================================
+        // UI playheads: wait-free snapshot written by the audio thread once per block (relaxed
+        // atomics, fixed storage, no allocation) and read by the editor timer.  The count and the
+        // slots may tear against each other by one block, which is harmless for a display.
+        /** Fills up to `maxOut` entries (pos 0..1 absolute in the sample, level 0..1); returns the count. */
+        int readPlayheads (float* posOut, float* levelOut, int maxOut) const noexcept;
+
+        //======================================================================
         // Settings (non-parameter, message thread -> audio thread, relaxed atomics)
         void setOscillatorBudget (int units) noexcept     { oscBudget.store (units, std::memory_order_relaxed); }
         void setInterpolationQuality (int quality) noexcept { interpQuality.store (quality, std::memory_order_relaxed); }
@@ -132,6 +139,7 @@ namespace warpr
         void renderRange (float* outL, float* outR, int n) noexcept;
         void harvestFinishedVoices() noexcept;
         void applyModeAndPolyphonyChanges() noexcept;
+        void publishPlayheads() noexcept;
 
         void deferRelease (SampleData* s) noexcept;
         void flushBacklog() noexcept;
@@ -159,6 +167,9 @@ namespace warpr
 
         std::array<SampleData*, 128> backlog {};     // references waiting for retire-list space
         int backlogCount = 0;
+
+        std::array<std::atomic<float>, (size_t) maxVoices> playheadPos {}, playheadLevel {};
+        std::atomic<int> playheadCount { 0 };
 
         std::atomic<int> oscBudget { 256 };
         std::atomic<int> interpQuality { 0 };

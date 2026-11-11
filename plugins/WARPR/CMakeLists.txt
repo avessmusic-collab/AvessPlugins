@@ -48,6 +48,12 @@ set(WARPR_CORE_SOURCES
     Source/Backend/UiModel.cpp
     Source/Backend/UiBackendImpl.cpp
     Source/State/StateIO.cpp
+    # Phase D1: sample engine, voices, decimator
+    Source/DSP/SampleData.cpp
+    Source/DSP/SampleStore.cpp
+    Source/DSP/HalfbandIIR.cpp
+    Source/DSP/WarprVoice.cpp
+    Source/DSP/WarprSynth.cpp
 )
 
 target_sources(WARPR PRIVATE ${WARPR_CORE_SOURCES})
@@ -136,6 +142,7 @@ target_compile_definitions(WARPR
 # ---------------------------------------------------------------------------
 add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/RunTests.cpp
+    Source/Tests/PhaseD1Tests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp
     ${WARPR_CORE_SOURCES}

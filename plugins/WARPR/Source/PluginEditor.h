@@ -128,6 +128,7 @@ private:
     uint32_t seenUiState = ~0u, seenSample = ~0u, seenShaper = ~0u, seenFilter = ~0u, seenPreset = ~0u;
     std::atomic<bool> sampleRequested { true }, filterRequested { true };
     juce::String lastPresetName;
+    bool playheadsWereShown = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

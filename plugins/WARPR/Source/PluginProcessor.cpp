@@ -10,6 +10,7 @@ PluginProcessor::PluginProcessor()
 {
     paramSnapshot.bind (apvts);
     backend.attachSampleStore (&sampleStore);
+    backend.attachSynth (&synth);
     drainTimer.begin();
 }
 

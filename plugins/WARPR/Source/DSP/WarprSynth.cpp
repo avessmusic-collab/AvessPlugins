@@ -624,6 +624,33 @@ namespace warpr
         harvestFinishedVoices();
     }
 
+    void WarprSynth::publishPlayheads() noexcept
+    {
+        int n = 0;
+        for (const auto& v : voices)
+        {
+            if (n >= maxVoices)
+                break;
+            if (! v.isSounding())
+                continue;
+            playheadPos[(size_t) n].store (v.playheadNorm(), std::memory_order_relaxed);
+            playheadLevel[(size_t) n].store (v.envLevel(), std::memory_order_relaxed);
+            ++n;
+        }
+        playheadCount.store (n, std::memory_order_relaxed);
+    }
+
+    int WarprSynth::readPlayheads (float* posOut, float* levelOut, int maxOut) const noexcept
+    {
+        const int n = std::min (std::min (playheadCount.load (std::memory_order_relaxed), maxVoices), maxOut);
+        for (int i = 0; i < n; ++i)
+        {
+            posOut[i]   = playheadPos[(size_t) i].load (std::memory_order_relaxed);
+            levelOut[i] = playheadLevel[(size_t) i].load (std::memory_order_relaxed);
+        }
+        return n;
+    }
+
     void WarprSynth::renderBlock (float* outL, float* outR, int numSamples, const juce::MidiBuffer& midi) noexcept
     {
         flushBacklog();
@@ -649,5 +676,7 @@ namespace warpr
             renderRange (outL + pos, outR + pos, next - pos);
             pos = next;
         }
+
+        publishPlayheads();
     }
 }

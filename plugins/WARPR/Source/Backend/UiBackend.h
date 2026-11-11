@@ -30,6 +30,10 @@ public:
 
     virtual ~WarprUiBackend() = default;
 
+    // sounding voices' read positions for the waveform playheads (wait-free snapshot; message thread).
+    // Returns the number of entries written to `out` (<= maxOut).
+    virtual int getPlayheads (WarprVizFrame::Voice* out, int maxOut) = 0;
+
     virtual WarprVizFifo& vizFifo() = 0;                                    // audio thread pushes, editor pops
 
     // monotonically increasing counters; the editor timer re-emits the matching event when one changes.

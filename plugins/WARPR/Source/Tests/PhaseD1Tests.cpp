@@ -1386,6 +1386,11 @@ namespace
         const auto ls = warpr::tests::scan (out, 0), rs = warpr::tests::scan (out, 1);
         check (ls.allFinite && ls.peak > 0.05f && rs.peak > 0.02f && ls.peak != rs.peak, "the loaded stereo sample plays through the voices");
 
+        WarprVizFrame::Voice ph[WarprVizFrame::maxVoices];
+        const int nph = be.getPlayheads (ph, WarprVizFrame::maxVoices);
+        check (nph >= 1 && ph[0].pos >= 0.0f && ph[0].pos <= 1.0f && ph[0].level >= 0.0f,
+               "the playhead snapshot reports the sounding voice with a 0..1 position");
+
         // failure: the previous sample is kept, the revision does not move
         const auto revAfter = be.revision (WarprUiBackend::Revision::sample);
         be.loadSampleFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("warpr_no_such_file.wav"));

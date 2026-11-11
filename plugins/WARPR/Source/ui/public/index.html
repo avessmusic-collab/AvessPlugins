@@ -200,7 +200,7 @@
             <div class="vdiv"></div>
             <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
               <span class="lbl">LOOP</span>
-              <select style="max-width:92px" data-sel="loopMode"></select>
+              <select style="width:116px;max-width:116px;font-size:8px;letter-spacing:.02em;padding-left:4px;padding-right:2px" data-sel="loopMode"></select>
               <div class="tg" data-seg="direction"><span>&#9654;</span><span>&#9664;</span></div>
             </div>
           </div>
@@ -746,17 +746,24 @@ function drawSample() {
   const P = { start: nrm("sampleStart"), end: nrm("sampleEnd") };
   if (peaks) {
     const N = peaks.length / 2;
+    /* per pixel column: min/max over every peak pair the column covers (+ the next pair so a
+       smooth/periodic wave draws as a connected line, not zero-length dots), min 1.5 px tall */
+    const col = i => {
+      const j0 = Math.min(N - 1, Math.floor(i / w * N)), j1 = Math.min(N - 1, Math.max(j0, Math.floor((i + 1) / w * N)));
+      let mn = peaks[2*j0], mx = peaks[2*j0+1];
+      for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, peaks[2*j]); mx = Math.max(mx, peaks[2*j+1]); }
+      return [mn, mx];
+    };
+    const seg = (i, mn, mx) => {
+      let y0 = h/2 - mx*h*.40, y1 = h/2 - mn*h*.40;
+      if (y1 - y0 < 1.5) { const c = (y0 + y1) / 2; y0 = c - .75; y1 = c + .75; }
+      x.moveTo(i + .5, y0); x.lineTo(i + .5, y1);
+    };
     x.strokeStyle = "rgba(255,255,255,.14)"; x.lineWidth = 1; x.beginPath();
-    for (let i = 0; i < w; i++) {
-      const j = Math.min(N - 1, Math.floor(i / w * N)), mn = peaks[2*j], mx = peaks[2*j+1];
-      x.moveTo(i + .5, h/2 - mx*h*.40); x.lineTo(i + .5, h/2 - mn*h*.40);
-    }
+    for (let i = 0; i < w; i++) { const [mn, mx] = col(i); seg(i, mn, mx); }
     x.stroke();
     x.strokeStyle = "#FFF"; x.lineWidth = 1; x.beginPath();
-    for (let i = 0; i < w; i++) {
-      const j = Math.min(N - 1, Math.floor(i / w * N)), e = envF(i / w, E), mn = peaks[2*j]*e, mx = peaks[2*j+1]*e;
-      x.moveTo(i + .5, h/2 - mx*h*.40); x.lineTo(i + .5, h/2 - mn*h*.40);
-    }
+    for (let i = 0; i < w; i++) { const [mn, mx] = col(i), e = envF(i / w, E); seg(i, mn*e, mx*e); }
     x.stroke();
   }
   const envY = t => h/2 - envF(t, E)*h*.42;
