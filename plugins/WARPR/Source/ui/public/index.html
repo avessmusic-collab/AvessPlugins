@@ -1168,8 +1168,8 @@ function drawOrg() {
   RNHOLE  = NHOLE.map((v, i) => rot3(v, NHAX[i], T*(0.05 + 0.03*i)));
   for (let hh = 0; hh < 3; hh++) nHoleR[hh] = Math.max(0, 0.42*Math.sin(T*0.09 + hh*2.3) - 0.10 + 0.18*V.en)*(1 - calmV);
   // CALM accumulator: silence smooths the droplet more and more; any sound wakes it instantly
-  calmV = clamp(V.en < 0.04 ? calmV + (1 - calmV)*0.008 : calmV - 0.25*calmV - 0.02, 0, 1);
-  if (calmV > 0.995) calmV = 1;                                // ~10 s of silence -> a perfect sphere
+  calmV = clamp(V.en < 0.04 ? calmV + (1 - calmV)*0.035 : calmV - 0.25*calmV - 0.02, 0, 1);
+  if (calmV > 0.99) calmV = 1;                                 // no sound -> a perfect sphere within ~2 s
   ripples.forEach(r => r.age += 0.03); ripples = ripples.filter(r => r.age < 3);
   for (const m of wob) {                                       // droplet modes: feed, ring, decay
     m.amp = Math.min(0.45, m.amp + V.en*0.0035);
