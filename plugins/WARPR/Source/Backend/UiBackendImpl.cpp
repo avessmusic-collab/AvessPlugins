@@ -350,6 +350,58 @@ WarprSampleDisplay UiBackendImpl::getSampleDisplay()
     return display;
 }
 
+std::vector<float> UiBackendImpl::getRangePeaks (double startNorm, double endNorm, int numPairs)
+{
+    // Waveform zoom (message thread).  The SampleData::Ptr is ref-counted and immutable, so
+    // reading level 0 here is safe even if a new sample is published concurrently.
+    std::vector<float> out;
+
+    if (sampleStore == nullptr)
+        return out;
+
+    const auto sample = sampleStore->latest();
+
+    if (sample == nullptr)
+        return out;
+
+    const auto& l0 = sample->level (0);
+    const int frames = l0.numFrames;
+
+    if (frames <= 0)
+        return out;
+
+    const double a = juce::jlimit (0.0, 1.0, juce::jmin (startNorm, endNorm));
+    const double b = juce::jlimit (0.0, 1.0, juce::jmax (startNorm, endNorm));
+    const int f0 = juce::jlimit (0, frames - 1, (int) std::floor (a * frames));
+    const int f1 = juce::jlimit (f0 + 1, frames, (int) std::ceil (b * frames));
+    const int span = f1 - f0;
+    const int pairs = juce::jlimit (1, warpr::SampleData::maxPeakPairs, juce::jmin (numPairs, span));
+
+    out.resize ((size_t) pairs * 2);
+
+    const float* c0 = l0.channel (0);
+    const float* c1 = sample->numChannels > 1 ? l0.channel (1) : nullptr;
+
+    for (int p = 0; p < pairs; ++p)
+    {
+        const int i0 = f0 + (int) (((juce::int64) p * span) / pairs);
+        const int i1 = juce::jmax (i0 + 1, f0 + (int) (((juce::int64) (p + 1) * span) / pairs));
+        float mn = 1.0e9f, mx = -1.0e9f;
+
+        for (int i = i0; i < i1 && i < f1; ++i)
+        {
+            const float v = c1 != nullptr ? 0.5f * (c0[i] + c1[i]) : c0[i];
+            mn = juce::jmin (mn, v);
+            mx = juce::jmax (mx, v);
+        }
+
+        out[(size_t) p * 2]     = mn;
+        out[(size_t) p * 2 + 1] = mx;
+    }
+
+    return out;
+}
+
 //==============================================================================
 // Filter response
 //==============================================================================

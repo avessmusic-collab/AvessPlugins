@@ -104,6 +104,7 @@ public:
 
     void loadSampleFile (const juce::File& file) override;
     WarprSampleDisplay getSampleDisplay() override;
+    std::vector<float> getRangePeaks (double startNorm, double endNorm, int numPairs) override;
 
     void computeFilterResponse (float* dbOut, int n) override;
 

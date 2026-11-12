@@ -57,6 +57,14 @@ public:
     virtual void loadSampleFile (const juce::File& file) = 0;
     virtual WarprSampleDisplay getSampleDisplay() = 0;
 
+    // waveform zoom: min/max pairs for the sub-range [startNorm, endNorm] of the sample (message
+    // thread; up to numPairs pairs, capped at 2048).  Default: no data (test backends).
+    virtual std::vector<float> getRangePeaks (double startNorm, double endNorm, int numPairs)
+    {
+        juce::ignoreUnused (startNorm, endNorm, numPairs);
+        return {};
+    }
+
     // real filter magnitude response: fills n log-spaced points 20 Hz..20 kHz in dB from the actual filter DSP
     virtual void computeFilterResponse (float* dbOut, int n) = 0;
 

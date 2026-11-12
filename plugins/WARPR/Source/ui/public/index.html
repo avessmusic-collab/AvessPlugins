@@ -429,6 +429,7 @@ const NF = {
   openSettings:     nat("warpr_openSettings"),
   requestSample:    nat("warpr_requestSample"),     // () -> re-emit warprSample
   requestFilterResponse: nat("warpr_requestFilterResponse"),
+  rangePeaks:       nat("warpr_rangePeaks"),        // (startNorm, endNorm, pairs) -> [min,max,...] zoom detail
   midiNote:         nat("warpr_midiNote"),          // (note 0-127, velocity, on) -> synth MIDI stream
   dropBegin:        nat("warpr_dropBegin"),         // (filename) start a drag-and-drop transfer
   dropChunk:        nat("warpr_dropChunk"),         // (base64) one chunk of the dropped file
@@ -806,6 +807,42 @@ const cs = $("#cvSample");
 let peaks = null;                       // Float32Array [min0,max0,min1,max1,...] in -1..1  (HOOK: onSample)
 let voices = [];                        // [{pos:0..1 (absolute in sample), level:0..1}]     (HOOK: onViz)
 let grains = [];                        // [{pos:0..1, level:0..1}] granular grain cloud     (HOOK: onViz)
+let sInfo = null;                       // last warprSample payload (numSamples for the zoom floor)
+
+/* Waveform zoom/pan view: off = left edge, span = visible fraction (1 = whole sample).
+   Scroll = zoom at the cursor, sideways scroll = pan, double-click = back to full view.
+   When zoomed past the 2048 global peak pairs, finer peaks for the visible window are
+   fetched from C++ (NF.rangePeaks) and cached in rpCache until the view leaves them. */
+const WF = { off: 0, span: 1 };
+let rpCache = null, rpTimer = 0;
+function wfRequest() {
+  if (WF.span >= 0.999) { rpCache = null; return; }
+  clearTimeout(rpTimer);
+  rpTimer = setTimeout(async () => {
+    const pad = WF.span * 0.5;                              // half a view of slack each side
+    const a = clamp(WF.off - pad, 0, 1), b = clamp(WF.off + WF.span + pad, 0, 1);
+    try {
+      const arr = await NF.rangePeaks(a, b, Math.min(2048, (cs.width || 800) * 2 | 0));
+      if (arr && arr.length) { rpCache = { start: a, end: b, peaks: Float32Array.from(arr) }; drawSample(); }
+    } catch (_) {}
+  }, 60);
+}
+cs.addEventListener("wheel", e => {
+  if (!peaks) return;
+  e.preventDefault();
+  const r = cs.getBoundingClientRect(), fx = clamp((e.clientX - r.left) / r.width, 0, 1);
+  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {            // sideways: pan
+    WF.off = clamp(WF.off + e.deltaX / r.width * WF.span, 0, 1 - WF.span);
+  } else {                                                  // vertical: zoom anchored at the cursor
+    const minSpan = Math.max(sInfo && sInfo.numSamples ? 64 / sInfo.numSamples : 1 / 512, 1 / 512);
+    const span = clamp(WF.span * Math.exp(e.deltaY * 0.0025), minSpan, 1);
+    const anchor = WF.off + fx * WF.span;
+    WF.off = clamp(anchor - fx * span, 0, 1 - span);
+    WF.span = span;
+  }
+  wfRequest(); drawSample();
+}, { passive: false });
+cs.addEventListener("dblclick", () => { WF.off = 0; WF.span = 1; rpCache = null; drawSample(); });
 
 /* Envelope overlay zones (fraction of view width).  Shape is a graphical map of the 4 ADSR params:
    attack zone 0..0.25, decay zone 0.25..0.50, sustain hold fixed to 0.70, release zone 0.70..1.00. */
@@ -825,14 +862,25 @@ function drawSample() {
   const x = cs.getContext("2d"), w = cs.width, h = cs.height, E = envPts();
   x.clearRect(0, 0, w, h);
   const P = { start: nrm("sampleStart"), end: nrm("sampleEnd") };
+  const zoomed = WF.span < 0.999;
+  const a2x = a => (a - WF.off) / WF.span * w;              // absolute sample fraction -> pixel x
   if (peaks) {
-    const N = peaks.length / 2;
+    /* data source: the cached fine range peaks when they cover the visible window, else the
+       global 2048-pair set.  src covers absolute [s0, s1]. */
+    let src = peaks, s0 = 0, s1 = 1;
+    if (zoomed && rpCache && rpCache.peaks.length &&
+        rpCache.start <= WF.off + 1e-9 && rpCache.end >= WF.off + WF.span - 1e-9) {
+      src = rpCache.peaks; s0 = rpCache.start; s1 = rpCache.end;
+    }
+    const N = src.length / 2, sw = Math.max(s1 - s0, 1e-12);
     /* per pixel column: min/max over every peak pair the column covers (+ the next pair so a
        smooth/periodic wave draws as a connected line, not zero-length dots), min 1.5 px tall */
     const col = i => {
-      const j0 = Math.min(N - 1, Math.floor(i / w * N)), j1 = Math.min(N - 1, Math.max(j0, Math.floor((i + 1) / w * N)));
-      let mn = peaks[2*j0], mx = peaks[2*j0+1];
-      for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, peaks[2*j]); mx = Math.max(mx, peaks[2*j+1]); }
+      const f0 = WF.off + i / w * WF.span, f1 = WF.off + (i + 1) / w * WF.span;
+      const j0 = clamp(Math.floor((f0 - s0) / sw * N), 0, N - 1);
+      const j1 = clamp(Math.max(j0, Math.floor((f1 - s0) / sw * N)), 0, N - 1);
+      let mn = src[2*j0], mx = src[2*j0+1];
+      for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, src[2*j]); mx = Math.max(mx, src[2*j+1]); }
       return [mn, mx];
     };
     /* continuous-line rendering: the envelope-shaped silhouette drawn as ONE closed outline -
@@ -852,7 +900,7 @@ function drawSample() {
     const tops = box(mxs, 2), bots = box(mns, 2);
     const topY = new Float32Array(w), botY = new Float32Array(w);
     for (let i = 0; i < w; i++) {
-      const e = envF(i / w, E);
+      const e = zoomed ? 1 : envF(i / w, E);                // env shaping is a full-view overlay only
       let y0 = h/2 - tops[i]*e*h*.40, y1 = h/2 - bots[i]*e*h*.40;
       if (y1 - y0 < 1.5) { const c = (y0 + y1) / 2; y0 = c - .75; y1 = c + .75; }
       topY[i] = y0; botY[i] = y1;
@@ -866,26 +914,33 @@ function drawSample() {
     x.fillStyle = "rgba(255,255,255,.07)"; x.fill();
     x.strokeStyle = "rgba(255,255,255,.85)"; x.stroke();
   }
-  const envY = t => h/2 - envF(t, E)*h*.42;
-  x.fillStyle = "rgba(255,255,255,.05)"; x.beginPath(); x.moveTo(0, h/2);
-  for (let i = 0; i <= 300; i++) x.lineTo(i/300*w, envY(i/300));
-  x.lineTo(w, h/2); x.closePath(); x.fill();
-  x.strokeStyle = "rgba(255,255,255,.85)"; x.lineWidth = 2; x.beginPath();
-  for (let i = 0; i <= 300; i++) { const t = i/300; i ? x.lineTo(t*w, envY(t)) : x.moveTo(t*w, envY(t)); }
-  x.stroke();
-  x.fillStyle = "rgba(0,0,0,.55)"; x.fillRect(0, 0, P.start*w, h); x.fillRect(P.end*w, 0, w - P.end*w, h);
+  if (!zoomed) {                                          // ADSR overlay is a full-view graphical map
+    const envY = t => h/2 - envF(t, E)*h*.42;
+    x.fillStyle = "rgba(255,255,255,.05)"; x.beginPath(); x.moveTo(0, h/2);
+    for (let i = 0; i <= 300; i++) x.lineTo(i/300*w, envY(i/300));
+    x.lineTo(w, h/2); x.closePath(); x.fill();
+    x.strokeStyle = "rgba(255,255,255,.85)"; x.lineWidth = 2; x.beginPath();
+    for (let i = 0; i <= 300; i++) { const t = i/300; i ? x.lineTo(t*w, envY(t)) : x.moveTo(t*w, envY(t)); }
+    x.stroke();
+  }
+  const sx = clamp(a2x(P.start), 0, w), ex = clamp(a2x(P.end), 0, w);
+  x.fillStyle = "rgba(0,0,0,.55)"; x.fillRect(0, 0, sx, h); x.fillRect(ex, 0, w - ex, h);
   [P.start, P.end].forEach(t => {
-    const px = t*w; x.fillStyle = "rgba(255,255,255,.9)"; x.fillRect(px - 1, 0, 2, h);
+    const px = a2x(t);
+    if (px < -14 || px > w + 14) return;
+    x.fillStyle = "rgba(255,255,255,.9)"; x.fillRect(px - 1, 0, 2, h);
     x.fillRect(px - 7, 0, 14, 10); x.fillStyle = "#000"; x.fillRect(px - 5, 2, 10, 6);
   });
   grains.forEach(g => {                                   // grain cloud (GRANULAR): one short stroke per live grain,
-    const px = g.pos*w, lv = clamp(g.level, 0, 1);        // height + brightness follow the grain's window amplitude
+    const px = a2x(g.pos), lv = clamp(g.level, 0, 1);     // height + brightness follow the grain's window amplitude
+    if (px < -2 || px > w + 2) return;
     const gh = h * (0.22 + 0.68*lv);
     x.fillStyle = `rgba(255,255,255,${(0.15 + 0.55*lv).toFixed(2)})`;
     x.fillRect(px - .5, (h - gh)/2, 1, gh);
   });
   voices.forEach(v => {                                   // one playhead per sounding voice (real DSP read positions)
-    const px = v.pos*w, lv = clamp(v.level, 0, 1);
+    const px = a2x(v.pos), lv = clamp(v.level, 0, 1);
+    if (px < -8 || px > w + 8) return;
     x.fillStyle = `rgba(255,255,255,${(0.04 + 0.10*lv).toFixed(2)})`;    // soft halo
     x.fillRect(px - 3, 0, 6, h);
     x.fillStyle = `rgba(255,255,255,${(0.45 + 0.55*lv).toFixed(2)})`;    // crisp progress line
@@ -894,10 +949,18 @@ function drawSample() {
     x.moveTo(px - 5, 0); x.lineTo(px + 5, 0); x.lineTo(px, 9); x.closePath();
     x.fill();
   });
-  envHandles(E).forEach(hd => {
+  if (!zoomed) envHandles(E).forEach(hd => {
     const px = Math.min(hd.x*w, w - 7), py = h/2 - hd.y*h*.42;
     x.beginPath(); x.arc(px, py, 7, 0, 7); x.fillStyle = "#101010"; x.fill(); x.lineWidth = 2; x.strokeStyle = "#FFF"; x.stroke();
   });
+  if (zoomed) {                                           // minimap strip + zoom factor
+    x.fillStyle = "rgba(255,255,255,.12)"; x.fillRect(0, 0, w, 4);
+    x.fillStyle = "rgba(255,255,255,.75)"; x.fillRect(WF.off*w, 0, Math.max(2, WF.span*w), 4);
+    const z = 1 / WF.span;
+    x.fillStyle = "rgba(255,255,255,.6)"; x.font = "10px 'Inter','Helvetica Neue',sans-serif";
+    x.textAlign = "right"; x.fillText("×" + (z < 10 ? z.toFixed(1) : Math.round(z)), w - 6, 16);
+    x.textAlign = "left";
+  }
   $("#adsrLabel").textContent =
     `A ${F.ms(scl("ampAttack"))} · D ${F.ms(scl("ampDecay"))} · S ${F.pct(scl("ampSustain"))} · R ${F.ms(scl("ampRelease"))}`;
 }
@@ -911,9 +974,10 @@ const gestureEnd   = ids => ids.forEach(i => sliderOf(i).sliderDragEnded());
 cs.style.cursor = "pointer"; cs.style.touchAction = "none";
 cs.addEventListener("pointerdown", e => {
   const p = csXY(e), S = nrm("sampleStart"), En = nrm("sampleEnd");
+  const ax = WF.off + p.x * WF.span;                       // absolute sample fraction under the cursor
   let kind = null;
-  if (Math.abs(p.x - S) < 0.02) kind = "ps"; else if (Math.abs(p.x - En) < 0.02) kind = "pe";
-  else {
+  if (Math.abs(ax - S) < 0.02 * WF.span) kind = "ps"; else if (Math.abs(ax - En) < 0.02 * WF.span) kind = "pe";
+  else if (WF.span >= 0.999) {                             // env handles live on the full view only
     const E = envPts(); let bd = 1e9;
     envHandles(E).forEach(hd => { const d = Math.hypot(p.x - hd.x, (p.y - (.5 - hd.y*.42))*.6); if (d < bd) { bd = d; kind = hd.id; } });
     if (bd >= 0.08) kind = null;
@@ -925,9 +989,10 @@ cs.addEventListener("pointerdown", e => {
 cs.addEventListener("pointermove", e => {
   if (!envDrag) return;
   const p = csXY(e), lvl = clamp((.5 - p.y)/.42, 0, 1), k = envDrag.kind;
+  const ax = clamp(WF.off + p.x * WF.span, 0, 1);          // markers drag in absolute positions (zoom = precision)
   const set = (id, n) => sliderOf(id).setNormalisedValue(clamp(n, 0, 1));
-  if (k === "ps") set("sampleStart", Math.min(p.x, nrm("sampleEnd") - 0.01));
-  if (k === "pe") set("sampleEnd", Math.max(p.x, nrm("sampleStart") + 0.01));
+  if (k === "ps") set("sampleStart", Math.min(ax, nrm("sampleEnd") - 0.01));
+  if (k === "pe") set("sampleEnd", Math.max(ax, nrm("sampleStart") + 0.01));
   if (k === "a")  set("ampAttack", p.x / Z.aw);
   if (k === "d")  { set("ampDecay", (p.x - Z.dx) / Z.dw); set("ampSustain", lvl); }
   if (k === "se") set("ampSustain", lvl);                          // sustain-end x is fixed in production
@@ -1261,6 +1326,8 @@ backend.addEventListener("warprViz", f => {
 /* "warprSample": { name, channels, sampleRate, numSamples, peaks:[min,max,...] (<=2048 pairs) } */
 backend.addEventListener("warprSample", s => {
   peaks = s.peaks && s.peaks.length ? Float32Array.from(s.peaks) : null;
+  sInfo = s;
+  WF.off = 0; WF.span = 1; rpCache = null;                 // a new sample resets the zoom view
   $("#sampleName").textContent = s.name ? s.name.toUpperCase() : "NO SAMPLE";
   $("#sampleName").title = s.name ? `${s.name} · ${s.channels} ch · ${s.sampleRate} Hz · ${s.numSamples} smp` : "";
 });

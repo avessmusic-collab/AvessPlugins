@@ -249,6 +249,22 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
         {
             filterRequested = true; done ({});
         })
+        .withNativeFunction ("warpr_rangePeaks", [be] (const Args& a, Done done)
+        {
+            // waveform zoom: (startNorm, endNorm, pairCount) -> [min, max, ...] for that sub-range
+            juce::Array<juce::var> out;
+
+            if (a.size() >= 3)
+            {
+                const auto pk = be().getRangePeaks ((double) a[0], (double) a[1], (int) a[2]);
+                out.ensureStorageAllocated ((int) pk.size());
+
+                for (float v : pk)
+                    out.add ((double) v);
+            }
+
+            done (juce::var (out));
+        })
         .withNativeFunction ("warpr_presetStep", [be] (const Args& a, Done done)
         {
             if (a.size() > 0) be().presetStep ((int) a[0] < 0 ? -1 : 1);
