@@ -996,6 +996,11 @@ const wob = [ { l: 2.2, f: 1.15, k: 1, amp: 0, ph: 0 },
               { l: 3.1, f: 1.95, k: 2, amp: 0, ph: 0 },
               { l: 4.3, f: 3.10, k: 5, amp: 0, ph: 0 } ];
 
+/* CALM: climbs while no sound plays (full in ~15 s), collapses the moment sound returns.
+   The calmer the droplet, the smoother and more uniform it becomes - detail irons out, holes
+   close, the umbilical relaxes, and only a slow steady drift of the layered body remains. */
+let calmV = 0;
+
 function orgField(nx, ny, nz, layer) {
   const o = layer*4;
   const d0 = nx*NU[o][0]+ny*NU[o][1]+nz*NU[o][2],     d1 = nx*NU[o+1][0]+ny*NU[o+1][1]+nz*NU[o+1][2];
@@ -1011,8 +1016,9 @@ function orgField(nx, ny, nz, layer) {
   d *= 0.55 + 0.55*V.en;                                       // consistent body, sound deepens it
   d += V.low*0.32*Math.sin(2.0*d1 + s*T*0.8) + V.high*0.20*Math.sin(5.2*d3 + s*T*2.6);
   d += V.harsh*0.28*Math.sin(3.4*d2 + s*T*2.1 + 1.0);          // harshness stirs extra motion in
+  d *= 1 - 0.82*calmV;                                         // the longer the silence, the smoother
   for (const m of wob)                                         // zero-g slosh: ringing droplet modes
-    d += m.amp*Math.sin(m.l*(nx*NU[m.k][0] + ny*NU[m.k][1] + nz*NU[m.k][2])*2.6 + m.ph);
+    d += m.amp*(1 - 0.45*calmV)*Math.sin(m.l*(nx*NU[m.k][0] + ny*NU[m.k][1] + nz*NU[m.k][2])*2.6 + m.ph);
   for (const rp of ripples) {                                  // transient: one soft ring each
     const c = nx*rp.u[0] + ny*rp.u[1] + nz*rp.u[2];
     const ang = Math.acos(clamp(c, -1, 1));
@@ -1027,7 +1033,7 @@ function orgField(nx, ny, nz, layer) {
     const wSpd = 1.6 + 2.6*V.harsh + 1.2*V.en;
     d += wAmp*(0.6*Math.sin(a0*7 - T*wSpd) + 0.4*Math.sin(a1*9 - T*wSpd*0.8 + 2.0));
   }
-  const tr = (0.14 + 0.5*V.high + 0.25*V.en)*(1 + 1.8*V.harsh);   // tremor patches: fast local flutter
+  const tr = (0.10 + 0.5*V.high + 0.25*V.en)*(1 + 1.8*V.harsh)*(1 - calmV);   // tremors die first in calm
   for (let k = 0; k < 4; k++) {
     const c = nx*RNPATCH[k][0] + ny*RNPATCH[k][1] + nz*RNPATCH[k][2];
     if (c < 0.72) continue;
@@ -1065,12 +1071,12 @@ function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef, reuseFie
       // eversion throat and they pour through it to trade places
       let hm = 1;
       {
-        const conn = 0.38 + 0.62*nSwap.eI;
+        const conn = (0.38 + 0.62*nSwap.eI)*(1 - 0.75*calmV);  // the umbilical relaxes in calm
         const scx = nx0*nSwap.axis[0] + ny0*nSwap.axis[1] + nz0*nSwap.axis[2];
         const angS = Math.acos(clamp(scx, -1, 1));
         const fun = Math.exp(-Math.pow(angS/0.8, 2));
         r *= 1 + conn*fun*(layer === nSwap.outer ? -(0.72 + 0.2*nSwap.eI) : +(0.95 + 0.35*nSwap.eI));
-        if (layer === nSwap.outer && angS < 0.20 + 0.42*nSwap.eI) hm = 0;
+        if (layer === nSwap.outer && angS < (0.20 + 0.42*nSwap.eI)*(1 - 0.75*calmV)) hm = 0;
       }
       if (layer === nSwap.outer) {                             // ambient holes breathe on the outer body
         for (let hh = 0; hh < 3; hh++) {
@@ -1156,11 +1162,13 @@ function drawOrg() {
   // advance: harsh sound whips the motion; the exchange and its axis creep on
   T += 0.016*(0.25 + 1.7*V.en + 1.6*V.harsh) + 0.025*nSwap.eI;
   rotY3 += 0.0022 + 0.009*V.en + 0.012*V.harsh;
-  nSwap.P = (nSwap.P + 0.016*(0.012 + 0.055*V.en)) % 2;
+  nSwap.P = (nSwap.P + 0.016*(0.012*(1 - 0.85*calmV) + 0.055*V.en)) % 2;
   nSwap.axis = rot3(nSwap.axis, nSwap.ax2, 0.0016 + 0.004*V.en);
   RNPATCH = NPATCH.map((v, i) => rot3(v, NPAX[i], T*(0.12 + 0.05*i)));
   RNHOLE  = NHOLE.map((v, i) => rot3(v, NHAX[i], T*(0.05 + 0.03*i)));
-  for (let hh = 0; hh < 3; hh++) nHoleR[hh] = Math.max(0, 0.42*Math.sin(T*0.09 + hh*2.3) - 0.10 + 0.18*V.en);
+  for (let hh = 0; hh < 3; hh++) nHoleR[hh] = Math.max(0, 0.42*Math.sin(T*0.09 + hh*2.3) - 0.10 + 0.18*V.en)*(1 - calmV);
+  // CALM accumulator: silence smooths the droplet more and more; any sound wakes it instantly
+  calmV = clamp(V.en < 0.04 ? calmV + (1 - calmV)*0.0045 : calmV - 0.25*calmV - 0.02, 0, 1);
   ripples.forEach(r => r.age += 0.03); ripples = ripples.filter(r => r.age < 3);
   for (const m of wob) {                                       // droplet modes: feed, ring, decay
     m.amp = Math.min(0.45, m.amp + V.en*0.0035);
