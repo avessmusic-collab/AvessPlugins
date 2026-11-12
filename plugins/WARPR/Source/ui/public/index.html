@@ -888,34 +888,39 @@ const co = $("#cvOrg"), ox = co.getContext("2d");
 let orgClear = true, T = 0, swells = [], lastTSeq = -1;
 const V = { low: 0, high: 0, rms: 0, theta: 0, r: 0 };          // smoothed in the render loop
 const VT = { low: 0, high: 0, rms: 0, theta: 0, r: 0 };         // targets from the latest "warprViz" frame
-function deform(a, t) {
-  // low bands drive slow low-order lobes, high bands drive finer shimmer; silence -> d = 0 (perfect circles)
-  let d = V.low * (0.26*Math.sin(a*2 + t*.42) + 0.17*Math.sin(a*3 - t*.65 + 1.7))
-        + V.high * (0.10*Math.sin(a*5 + t*.95 + 4.0) + 0.05*Math.sin(a*8 - t*1.3));
-  for (const s of swells) {
-    const dd = Math.atan2(Math.sin(a - s.ang), Math.cos(a - s.ang));
-    d += s.amp * s.life * Math.exp(-(dd*dd)/(s.w*s.w));
+function deform(a, t, s) {
+  // low bands drive big slow lobes, highs drive fine shimmer.  Every term carries a ring-dependent
+  // phase (s*...) so neighbouring rings fall out of step and CROSS each other instead of nesting;
+  // all amplitudes come from real signal energy, so silence still relaxes to perfect circles.
+  let d = V.low  * (0.55*Math.sin(a*2 + t*.9  + s*2.6) + 0.38*Math.sin(a*3 - t*1.5 + 1.7 + s*4.2))
+        + V.high * (0.30*Math.sin(a*5 + t*2.3 + s*6.5) + 0.20*Math.sin(a*9 - t*3.2 + s*9.0)
+                  + 0.12*Math.sin(a*13 + t*4.5 - s*7.5));
+  for (const sw of swells) {
+    const dd = Math.atan2(Math.sin(a - sw.ang), Math.cos(a - sw.ang));
+    d += sw.amp * sw.life * Math.exp(-(dd*dd)/(sw.w*sw.w)) * (1 + 0.8*Math.sin(s*11 + t*2));
   }
   return d;
 }
 function drawOrg() {
   const w = co.width, h = co.height, cx = w*.5, cy = h*.5;
-  for (const k of ["low", "high", "rms", "theta", "r"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .25 : .07);
+  for (const k of ["low", "high", "rms", "theta", "r"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .45 : .10);
   if (orgClear) { ox.fillStyle = "#050505"; ox.fillRect(0, 0, w, h); orgClear = false; }
-  const R = Math.min(w, h) * .26 * (1 + .10 * V.low), K = 48, N = 130;
-  ox.fillStyle = "rgba(5,5,5,0.26)"; ox.fillRect(0, 0, w, h);
+  const en = clamp(V.rms * 3, 0, 1);                       // 0 silence .. 1 loud
+  const R = Math.min(w, h) * .26 * (1 + .16*V.low + .08*en), K = 48, N = 130;
+  ox.fillStyle = `rgba(5,5,5,${(0.30 - 0.14*en).toFixed(2)})`; ox.fillRect(0, 0, w, h);   // louder = longer trails
   for (let k = 1; k <= K; k++) {
-    const s = k/K, wgt = Math.pow(s, 2.0), twist = s*.6 * Math.min(1, V.rms*4);
-    ox.strokeStyle = `rgba(255,255,255,${(.10 + .42*Math.pow(s, 1.3)).toFixed(3)})`; ox.lineWidth = .65 * (SCALE || 1);
+    const s = k/K, wgt = .25 + .75*Math.pow(s, 1.4), twist = s*1.8 * en;
+    ox.strokeStyle = `rgba(255,255,255,${(.10 + .42*Math.pow(s, 1.3)).toFixed(3)})`; ox.lineWidth = .6 * (SCALE || 1);
     ox.beginPath();
     for (let i = 0; i <= N; i++) {
-      const a = i/N*Math.PI*2, d = deform(a + twist*Math.sin(T*.13 + s*1.6), T), r = R*s*(1 + d*.34*wgt);
+      const a = i/N*Math.PI*2, d = deform(a + twist*Math.sin(T*.31 + s*5.2), T, s);
+      const r = R*s*(1 + d*(.30 + .55*en)*wgt);
       const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r*.92;
       i ? ox.lineTo(px, py) : ox.moveTo(px, py);
     }
     ox.closePath(); ox.stroke();
   }
-  T += .004 + .026 * clamp(V.rms * 3, 0, 1);               // time only flows when there is signal
+  T += .004 + .060 * en;                                   // time only flows when there is signal
   swells.forEach(s => s.life *= .965); swells = swells.filter(s => s.life > .02);
   const flux = swells.reduce((a, s) => a + s.amp*s.life, 0);
   $("#mFlux").textContent = "flux " + flux.toFixed(2);
@@ -937,7 +942,7 @@ const toMeter = a => clamp((20*Math.log10(Math.max(a, 1e-5)) + 60) / 60, 0, 1);
 backend.addEventListener("warprViz", f => {
   VT.low = f.low || 0; VT.high = f.high || 0; VT.rms = f.rms || 0; VT.theta = f.theta || 0; VT.r = f.r || 0;
   if (f.tseq !== undefined && f.tseq !== lastTSeq) {
-    if (lastTSeq >= 0 && f.transient > 0.01) swells.push({ ang: f.tang || 0, amp: .14 + .22*clamp(f.transient, 0, 1), w: .6 + .6*clamp(f.transient, 0, 1), life: 1 });
+    if (lastTSeq >= 0 && f.transient > 0.01) swells.push({ ang: f.tang || 0, amp: .35 + .55*clamp(f.transient, 0, 1), w: .35 + .55*clamp(f.transient, 0, 1), life: 1 });
     lastTSeq = f.tseq;
   }
   mtL = toMeter(f.peakL || 0); mtR = toMeter(f.peakR || 0);
