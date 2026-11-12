@@ -835,15 +835,11 @@ function drawSample() {
       for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, peaks[2*j]); mx = Math.max(mx, peaks[2*j+1]); }
       return [mn, mx];
     };
-    const seg = (i, mn, mx) => {
-      let y0 = h/2 - mx*h*.40, y1 = h/2 - mn*h*.40;
-      if (y1 - y0 < 1.5) { const c = (y0 + y1) / 2; y0 = c - .75; y1 = c + .75; }
-      x.moveTo(i + .5, y0); x.lineTo(i + .5, y1);
-    };
-    /* multi-layer rendering: silhouette, envelope-shaped outline, smoothed mid band, bright core,
-       and transient hairlines - all from the same real peak data, layered by brightness */
-    const mns = new Float32Array(w), mxs = new Float32Array(w), amp = new Float32Array(w);
-    for (let i = 0; i < w; i++) { const [mn, mx] = col(i); mns[i] = mn; mxs[i] = mx; amp[i] = Math.max(mx, -mn); }
+    /* continuous-line rendering: the envelope-shaped silhouette drawn as ONE closed outline -
+       across the top edge (maxima) and back along the bottom edge (minima), lightly smoothed
+       so the line flows, with a faint interior fill.  Silent regions converge to a thin center line. */
+    const mns = new Float32Array(w), mxs = new Float32Array(w);
+    for (let i = 0; i < w; i++) { const [mn, mx] = col(i); mns[i] = mn; mxs[i] = mx; }
     const box = (src, r) => {
       const out = new Float32Array(w);
       for (let i = 0; i < w; i++) {
@@ -853,24 +849,22 @@ function drawSample() {
       }
       return out;
     };
-    const sm1 = box(amp, 3), sm2 = box(amp, 10);
-    x.lineWidth = 1;
-    x.strokeStyle = "rgba(255,255,255,.10)"; x.beginPath();                 // raw silhouette
-    for (let i = 0; i < w; i++) seg(i, mns[i], mxs[i]);
-    x.stroke();
-    x.strokeStyle = "rgba(255,255,255,.40)"; x.beginPath();                 // envelope-shaped outline
-    for (let i = 0; i < w; i++) { const e = envF(i / w, E); seg(i, mns[i]*e, mxs[i]*e); }
-    x.stroke();
-    x.strokeStyle = "rgba(255,255,255,.55)"; x.beginPath();                 // smoothed mid band
-    for (let i = 0; i < w; i++) { const e = envF(i / w, E), a = sm1[i]*0.68*e; seg(i, -a, a); }
-    x.stroke();
-    x.strokeStyle = "rgba(255,255,255,.95)"; x.beginPath();                 // bright core
-    for (let i = 0; i < w; i++) { const e = envF(i / w, E), a = sm2[i]*0.36*e; seg(i, -a, a); }
-    x.stroke();
-    x.strokeStyle = "rgba(255,255,255,.22)"; x.beginPath();                 // transient hairlines
-    for (let i = 2; i < w; i++)
-      if (amp[i] - Math.max(amp[i-1], amp[i-2]) > 0.12) { x.moveTo(i + .5, h*0.08); x.lineTo(i + .5, h*0.92); }
-    x.stroke();
+    const tops = box(mxs, 2), bots = box(mns, 2);
+    const topY = new Float32Array(w), botY = new Float32Array(w);
+    for (let i = 0; i < w; i++) {
+      const e = envF(i / w, E);
+      let y0 = h/2 - tops[i]*e*h*.40, y1 = h/2 - bots[i]*e*h*.40;
+      if (y1 - y0 < 1.5) { const c = (y0 + y1) / 2; y0 = c - .75; y1 = c + .75; }
+      topY[i] = y0; botY[i] = y1;
+    }
+    x.lineWidth = 1.2; x.lineJoin = "round";
+    x.beginPath();
+    x.moveTo(.5, topY[0]);
+    for (let i = 1; i < w; i++) x.lineTo(i + .5, topY[i]);
+    for (let i = w - 1; i >= 0; i--) x.lineTo(i + .5, botY[i]);
+    x.closePath();
+    x.fillStyle = "rgba(255,255,255,.07)"; x.fill();
+    x.strokeStyle = "rgba(255,255,255,.85)"; x.stroke();
   }
   const envY = t => h/2 - envF(t, E)*h*.42;
   x.fillStyle = "rgba(255,255,255,.05)"; x.beginPath(); x.moveTo(0, h/2);
