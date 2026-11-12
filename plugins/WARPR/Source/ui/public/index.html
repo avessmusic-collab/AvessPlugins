@@ -989,6 +989,13 @@ const NHOLE  = [...Array(3)].map(randDir), NHAX = [...Array(3)].map(randDir);
 let RNPATCH = NPATCH, RNHOLE = NHOLE, nHoleR = [0, 0, 0], rotY3 = 0, zoomFit = 1;
 const nSwap = { P: 0, axis: randDir(), ax2: randDir(), eI: 0, outer: 0 };
 
+/* ZERO-GRAVITY WATER: the droplet's free oscillation modes.  Sound excites them (transients
+   kick, sustained energy feeds), then they ring on with a slow decay - the whole body sloshes
+   like water floating in zero g.  l = angular order (2 = the classic prolate/oblate wobble). */
+const wob = [ { l: 2.2, f: 1.15, k: 1, amp: 0, ph: 0 },
+              { l: 3.1, f: 1.95, k: 2, amp: 0, ph: 0 },
+              { l: 4.3, f: 3.10, k: 5, amp: 0, ph: 0 } ];
+
 function orgField(nx, ny, nz, layer) {
   const o = layer*4;
   const d0 = nx*NU[o][0]+ny*NU[o][1]+nz*NU[o][2],     d1 = nx*NU[o+1][0]+ny*NU[o+1][1]+nz*NU[o+1][2];
@@ -1001,9 +1008,11 @@ function orgField(nx, ny, nz, layer) {
   const w1 = Math.pow(0.5 + 0.5*Math.sin(T*0.050 + 2.09 + layer*2.4), 3);
   const w2 = Math.pow(0.5 + 0.5*Math.sin(T*0.050 + 4.19 + layer*2.4), 3);
   let d = (w0*f0 + w1*f1 + w2*f2)/(w0 + w1 + w2 + 1e-6);
-  d *= (0.8 + 0.9*V.en)*1.25;                                  // drastic range, slow pace
-  d += V.low*0.40*Math.sin(2.0*d1 + s*T*0.8) + V.high*0.25*Math.sin(5.2*d3 + s*T*2.6);
-  d += V.harsh*0.45*Math.sin(3.4*d2 + s*T*2.1 + 1.0);          // harshness whips extra motion in
+  d *= 0.55 + 0.55*V.en;                                       // consistent body, sound deepens it
+  d += V.low*0.32*Math.sin(2.0*d1 + s*T*0.8) + V.high*0.20*Math.sin(5.2*d3 + s*T*2.6);
+  d += V.harsh*0.28*Math.sin(3.4*d2 + s*T*2.1 + 1.0);          // harshness stirs extra motion in
+  for (const m of wob)                                         // zero-g slosh: ringing droplet modes
+    d += m.amp*Math.sin(m.l*(nx*NU[m.k][0] + ny*NU[m.k][1] + nz*NU[m.k][2])*2.6 + m.ph);
   for (const rp of ripples) {                                  // transient: one soft ring each
     const c = nx*rp.u[0] + ny*rp.u[1] + nz*rp.u[2];
     const ang = Math.acos(clamp(c, -1, 1));
@@ -1028,12 +1037,12 @@ function orgField(nx, ny, nz, layer) {
   return clamp(d, -1.5, 1.9);
 }
 
-const NTH = 64, NPH = 96, NLV = 40, NBK = 7;
+const NTH = 60, NPH = 88, NLV = 30, NBK = 7;
 const NFLD = new Float32Array((NTH+1)*(NPH+1)), NHM = new Float32Array((NTH+1)*(NPH+1));
 const NSX = new Float32Array((NTH+1)*(NPH+1)), NSY = new Float32Array((NTH+1)*(NPH+1)), NSZ = new Float32Array((NTH+1)*(NPH+1));
 const nidx = (i, j) => i*(NPH+1) + j;
 
-function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef) {
+function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef, reuseField) {
   const w = co.width, h = co.height, cx2 = w*0.5, cy2 = h*0.5, fov = 3.4;
   const ry = rotY3*rotMul + layer*1.7, rx = 0.35 + 0.2*Math.sin(T*0.1 + layer);
   const cosY = Math.cos(ry), sinY = Math.sin(ry), cosX = Math.cos(rx), sinX = Math.sin(rx);
@@ -1046,8 +1055,9 @@ function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef) {
     for (let j = 0; j <= NPH; j++) {
       const ph = j/NPH*Math.PI*2;
       const nx0 = sth*Math.cos(ph), ny0 = cth, nz0 = sth*Math.sin(ph);
-      const d = (j === NPH) ? NFLD[nidx(i, 0)] : orgField(nx0, ny0, nz0, layer);
       const k = nidx(i, j);
+      const d = reuseField ? NFLD[k]
+                           : ((j === NPH) ? NFLD[nidx(i, 0)] : orgField(nx0, ny0, nz0, layer));
       NFLD[k] = d; if (d < fMin) fMin = d; if (d > fMax) fMax = d;
       let r = 1 + d*amp;
 
@@ -1130,7 +1140,11 @@ function drawOrg() {
   nSwap.eI = Math.pow(4*f0*(1 - f0), 1.5);
   nSwap.outer = R0 >= R1 ? 0 : 1;
   orgBody(1, R1, -0.55, 0.9, 0.80 + 0.2*(1 - f0), paths, ext);
-  orgBody(0, R0,  1.0,  1.0, 0.80 + 0.2*f0,       paths, ext);
+  // the outer body as PARALLEL LAYERS: the same surface echoed at nested radii (onion shells),
+  // dimmer inward - the field is computed once and re-projected for the inner echoes
+  orgBody(0, R0,       1.0, 1.0,  0.80 + 0.2*f0,        paths, ext);
+  orgBody(0, R0*0.90,  1.0, 0.95, (0.80 + 0.2*f0)*0.60, paths, ext, true);
+  orgBody(0, R0*0.80,  1.0, 0.90, (0.80 + 0.2*f0)*0.38, paths, ext, true);
   ox.lineWidth = 0.5*(SCALE || 1)*(window.devicePixelRatio || 1);
   for (let b = 0; b < NBK; b++) {
     ox.strokeStyle = `rgba(255,255,255,${(0.10 + 0.85*Math.pow((b + 0.5)/NBK, 1.5)).toFixed(3)})`;
@@ -1148,6 +1162,11 @@ function drawOrg() {
   RNHOLE  = NHOLE.map((v, i) => rot3(v, NHAX[i], T*(0.05 + 0.03*i)));
   for (let hh = 0; hh < 3; hh++) nHoleR[hh] = Math.max(0, 0.42*Math.sin(T*0.09 + hh*2.3) - 0.10 + 0.18*V.en);
   ripples.forEach(r => r.age += 0.03); ripples = ripples.filter(r => r.age < 3);
+  for (const m of wob) {                                       // droplet modes: feed, ring, decay
+    m.amp = Math.min(0.45, m.amp + V.en*0.0035);
+    m.amp *= 0.988;                                            // ~4 s ring-down, water-like
+    m.ph += m.f*0.016*(0.6 + 0.8*V.en);
+  }
 
   const flux = ripples.reduce((a, r) => a + r.str*Math.exp(-r.age*1.6), 0) + nSwap.eI;
   $("#mFlux").textContent = "flux " + flux.toFixed(2);
@@ -1173,6 +1192,7 @@ backend.addEventListener("warprViz", f => {
     if (lastTSeq >= 0 && f.transient > 0.01) {
       ripples.push({ u: randDir(), age: 0, str: clamp(f.transient, 0.2, 1) });    // one ring per hit
       if (ripples.length > 5) ripples.shift();
+      for (const m of wob) m.amp = Math.min(0.5, m.amp + clamp(f.transient, 0, 1)*0.11);  // kick the slosh
     }
     lastTSeq = f.tseq;
   }
