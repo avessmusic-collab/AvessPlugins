@@ -885,7 +885,7 @@ function drawFilter() {
    ORGANISM  (audio-reactive; all motion amplitude comes from real DSP data)
    ===================================================================== */
 const co = $("#cvOrg"), ox = co.getContext("2d");
-let orgClear = true, T = 0, swells = [], lastTSeq = -1;
+let orgClear = true, T = 0, swells = [], spikes = [], nextSpikeT = 0, lastTSeq = -1;
 const V = { low: 0, high: 0, rms: 0, theta: 0, r: 0, dom: 0, sharp: 0 };   // smoothed in the render loop
 const VT = { low: 0, high: 0, rms: 0, theta: 0, r: 0, dom: 0, sharp: 0 };  // targets from the latest "warprViz" frame
 function deform(a, t, s) {
@@ -905,6 +905,11 @@ function deform(a, t, s) {
     const dd = Math.atan2(Math.sin(a - sw.ang), Math.cos(a - sw.ang));
     d += sw.amp * sw.life * Math.exp(-(dd*dd)/(sw.w*sw.w)) * (1 + 0.8*Math.sin(s*11 + t*2));
   }
+  // spikes: narrow triangle-sided peaks (linear flanks, not gaussian) that jut out now and then
+  for (const sp of spikes) {
+    const dd = Math.abs(Math.atan2(Math.sin(a - sp.ang), Math.cos(a - sp.ang)));
+    d += sp.amp * sp.life * Math.max(0, 1 - dd/sp.w);
+  }
   return d;
 }
 function drawOrg() {
@@ -914,12 +919,21 @@ function drawOrg() {
   const en = clamp(V.rms * 3, 0, 1);                       // 0 silence .. 1 loud
   const R = Math.min(w, h) * .26 * (1 + .16*V.low + .08*en), K = 48, N = 130;
   ox.fillStyle = `rgba(5,5,5,${(0.30 - 0.14*en).toFixed(2)})`; ox.fillRect(0, 0, w, h);   // louder = longer trails
+  // periodic peaks: while sound sustains, a spike erupts from time to time (cadence quickens with
+  // energy, height rides energy + sharpness); the transient handler adds more on hits.
+  if (en > .08 && T > nextSpikeT) {
+    spikes.push({ ang: (V.theta*4 + T*2.4) % (Math.PI*2), amp: .7 + 1.1*en*(0.5 + V.sharp), w: .07 + .05*Math.random(), life: 1 });
+    nextSpikeT = T + .55 + 1.4*(1 - en);
+  }
   for (let k = 1; k <= K; k++) {
     const s = k/K, wgt = .25 + .75*Math.pow(s, 1.4), twist = s*1.8 * en;
+    // every 4th ring renders as straight chords between the cymatic nodes: a rotating polygonal
+    // lattice woven through the smooth rings (the "linear" layer of the pattern)
+    const nf2 = 2 + V.dom*10, facet = (k % 4 === 0) && en > .05, steps = facet ? Math.max(5, Math.round(nf2)*2) : N;
     ox.strokeStyle = `rgba(255,255,255,${(.10 + .42*Math.pow(s, 1.3)).toFixed(3)})`; ox.lineWidth = .6 * (SCALE || 1);
     ox.beginPath();
-    for (let i = 0; i <= N; i++) {
-      const a = i/N*Math.PI*2, d = deform(a + twist*Math.sin(T*.31 + s*5.2), T, s);
+    for (let i = 0; i <= steps; i++) {
+      const a = i/steps*Math.PI*2, d = deform(a + twist*Math.sin(T*.31 + s*5.2), T, s);
       // the sharper the sound, the further the pattern is thrown from the centre
       const ex = clamp(d*(.30 + .55*en)*(0.8 + 1.1*V.sharp)*wgt, -.9, 2.2);
       const r = R*s*(1 + ex);
@@ -930,6 +944,7 @@ function drawOrg() {
   }
   T += .004 + .060 * en;                                   // time only flows when there is signal
   swells.forEach(s => s.life *= .965); swells = swells.filter(s => s.life > .02);
+  spikes.forEach(s => s.life *= .90);  spikes = spikes.filter(s => s.life > .04);
   const flux = swells.reduce((a, s) => a + s.amp*s.life, 0);
   $("#mFlux").textContent = "flux " + flux.toFixed(2);
   $("#mTheta").textContent = `θ ${V.theta.toFixed(3)} · r ${V.r.toFixed(3)}`;
@@ -951,7 +966,10 @@ backend.addEventListener("warprViz", f => {
   VT.low = f.low || 0; VT.high = f.high || 0; VT.rms = f.rms || 0; VT.theta = f.theta || 0; VT.r = f.r || 0;
   VT.dom = f.dom || 0; VT.sharp = f.sharp || 0;
   if (f.tseq !== undefined && f.tseq !== lastTSeq) {
-    if (lastTSeq >= 0 && f.transient > 0.01) swells.push({ ang: f.tang || 0, amp: .35 + .55*clamp(f.transient, 0, 1), w: .35 + .55*clamp(f.transient, 0, 1), life: 1 });
+    if (lastTSeq >= 0 && f.transient > 0.01) {
+      swells.push({ ang: f.tang || 0, amp: .35 + .55*clamp(f.transient, 0, 1), w: .35 + .55*clamp(f.transient, 0, 1), life: 1 });
+      spikes.push({ ang: f.tang || 0, amp: .8 + .8*clamp(f.transient, 0, 1), w: .08, life: 1 });   // hits spike instantly
+    }
     lastTSeq = f.tseq;
   }
   mtL = toMeter(f.peakL || 0); mtR = toMeter(f.peakR || 0);
