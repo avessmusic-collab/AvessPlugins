@@ -61,6 +61,10 @@ set(WARPR_CORE_SOURCES
     # Phase D5a: standard filter family (coefficient generators + analytic response, per-voice stage)
     Source/DSP/FilterDesign.cpp
     Source/DSP/FilterStage.cpp
+    # Phase D8: LFO shape tables, LFO runtime, mod matrix
+    Source/DSP/LfoTable.cpp
+    Source/DSP/LfoEngine.cpp
+    Source/DSP/ModMatrix.cpp
 )
 
 target_sources(WARPR PRIVATE ${WARPR_CORE_SOURCES})
@@ -156,6 +160,7 @@ add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/PhaseD5Tests.cpp
     Source/Tests/PhaseD6Tests.cpp
     Source/Tests/PhaseD7Tests.cpp
+    Source/Tests/PhaseD8Tests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp
     ${WARPR_CORE_SOURCES}

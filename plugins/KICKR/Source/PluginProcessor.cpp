@@ -175,12 +175,20 @@ void KICKRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 
     // Migration: v1 (pre-sample) states have no sample* params — JUCE applies their v2
     // defaults (sampleEnable off) so an old patch sounds identical.
-    const int stateVersion = (int) tree.getProperty ("stateVersion", kStateVersion);
-    juce::ignoreUnused (stateVersion);
+    // A missing stateVersion property can only mean a pre-versioning state, so the
+    // fallback is 0 (oldest), NOT kStateVersion — otherwise old states skip migration.
+    const int stateVersion = (int) tree.getProperty ("stateVersion", 0);
 
     const auto restoredSampleName = tree.getProperty ("currentSampleName", juce::String()).toString();
 
     apvts.replaceState (tree);
+
+    // v3 migration (2026-09-07): filterSlope was added with default 18 dB/oct, but every
+    // pre-v3 session was mixed through the original 12 dB filter — force 12 so an old
+    // patch with the filter ON keeps its sound. New sessions/presets still default to 18.
+    if (stateVersion < 3)
+        if (auto* slope = apvts.getParameter (kickr::id::filterSlope))
+            slope->setValueNotifyingHost (0.0f);   // choice index 0 = "12 dB"
 
     // PHASE 2.7b — resolve + decode + publish the referenced sample (message thread).
     // Missing file -> layer silent, name retained, no crash.

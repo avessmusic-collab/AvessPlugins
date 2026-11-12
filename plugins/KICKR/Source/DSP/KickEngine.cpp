@@ -48,6 +48,7 @@ namespace kickr
         pFilterType       = apvts.getRawParameterValue (id::filterType);
         pFilterFreq       = apvts.getRawParameterValue (id::filterFreq);
         pFilterRes        = apvts.getRawParameterValue (id::filterRes);
+        pFilterSlope      = apvts.getRawParameterValue (id::filterSlope);   // 2026-09-07
         pClickLevel       = apvts.getRawParameterValue (id::clickLevel);
         pClickTone        = apvts.getRawParameterValue (id::clickTone);
         pClickTime        = apvts.getRawParameterValue (id::clickTime);
@@ -499,6 +500,7 @@ namespace kickr
         snap.limColor01      = load (pLimColor,      0.5f);
         snap.filterOn        = load (pFilterOn,      0.0f) > 0.5f;   // 2026-09-02 — master filter
         snap.filterType      = static_cast<int> (std::lround (load (pFilterType, 0.0f)));
+        snap.filterSlope     = static_cast<int> (std::lround (load (pFilterSlope, 1.0f)));   // 2026-09-07
         snap.filterFreqHz    = load (pFilterFreq, 1000.0f);
         snap.filterRes01     = load (pFilterRes,     0.2f);
         snap.clickLevel      = load (pClickLevel, 0.4f);
@@ -540,20 +542,18 @@ namespace kickr
         // identity at m = 0). The APVTS target params are NOT modified — this only
         // shifts the effective values the engine feeds its components, so each target
         // stays independently automatable. Full-throw amounts are tuned at Stage 17.
-        macroPunchSm.setTargetValue (load (pMacroPunch, 0.5f));
+        // 2026-09-07 — PUNCH module became the PITCH module: the punch macro knob is gone
+        // from the UI. `macroPunch` stays registered (old sessions restore without errors)
+        // but is forced neutral here, so a hidden restored value can never shape the sound
+        // through a control nobody can see. Its former targets (transientAttack,
+        // pitchStart/pitchTime, clickLevel) are all directly automatable anyway.
+        macroPunchSm.setCurrentAndTargetValue (0.5f);
         macroBodySm .setTargetValue (load (pMacroBody,  0.5f));
         macroCrushSm.setTargetValue (load (pMacroCrush, 0.5f));
         macroTailSm .setTargetValue (load (pMacroTail,  0.5f));
-        const float mPunch = (macroPunchSm.getNextValue() - 0.5f) * 2.0f;   // [-1, +1]
-        const float mBody  = (macroBodySm .getNextValue() - 0.5f) * 2.0f;
+        const float mBody  = (macroBodySm .getNextValue() - 0.5f) * 2.0f;   // [-1, +1]
         const float mCrush = (macroCrushSm.getNextValue() - 0.5f) * 2.0f;
         const float mTail  = (macroTailSm .getNextValue() - 0.5f) * 2.0f;
-
-        // PUNCH: sharper transient + tighter, snappier pitch drop + more click.
-        snap.transientAttack  = juce::jlimit (-1.0f, 1.0f,  snap.transientAttack + mPunch * 0.5f);
-        snap.pitchStartRatio  = juce::jlimit (1.0f, 10.0f,  snap.pitchStartRatio * (1.0f + mPunch * 0.6f));
-        snap.pitchTimeMs      = juce::jlimit (5.0f, 500.0f, snap.pitchTimeMs     * (1.0f - mPunch * 0.35f));
-        snap.clickLevel       = juce::jlimit (0.0f, 1.0f,   snap.clickLevel      + mPunch * 0.3f);
 
         // BODY: louder + longer body, deeper tune (<= 3 semitones down).
         snap.bodyLevel        = juce::jlimit (0.0f, 1.0f,      snap.bodyLevel   + mBody * 0.3f);
@@ -616,7 +616,7 @@ namespace kickr
             v.setSampleParams (sp, synthGate, sampleGate);
         }
 
-        const float transientAttackEff = snap.transientAttack;   // (macroPunch already folded in)
+        const float transientAttackEff = snap.transientAttack;
         transientShaper.setParams (transientAttackEff, snap.transientSustain);
 
         const float driveEff     = snap.drive01;       // (macroCrush already folded in)
@@ -626,7 +626,8 @@ namespace kickr
 
         // PHASE 2.9 — tone (pre-distortion) + crossover / width / mix / gain / limiter.
         // low/mid/high, outputWidth/output/mix: no macro targets (per the contract).
-        masterFilter.setParams (snap.filterOn, snap.filterType, snap.filterFreqHz, snap.filterRes01);   // 2026-09-02
+        masterFilter.setParams (snap.filterOn, snap.filterType, snap.filterSlope,
+                                snap.filterFreqHz, snap.filterRes01);   // 2026-09-02 / slope 2026-09-07
 
         ColorLimiter::Params lim;   // 2026-09-02
         lim.enabled      = snap.limiterOn;

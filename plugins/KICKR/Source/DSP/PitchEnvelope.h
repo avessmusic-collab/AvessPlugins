@@ -8,11 +8,23 @@
 namespace kickr
 {
     /**
-        Pitch-drop contour (Open Q 5 RESOLVED — single `pitchCurve`-driven snap+settle).
+        Pitch-drop contour (Open Q 5 RESOLVED — single `pitchCurve`-driven snap+settle;
+        2026-09-07 log→exp morph — see .ideas/improvements/pitch-module-and-filter-slope.md).
 
             tau    = clamp(tSinceTrigger / pitchTime_seconds, 0, 1)
-            k      = 0.6 + pitchCurve * 8.4                         (kMin 0.6 .. kMax 9.0)
-            e(tau) = (exp(-k*tau) - exp(-k)) / (1 - exp(-k))        in [1, 0], exactly 0 at tau = 1
+
+            pitchCurve >= 0.5 (exponential half — punchy 808 snap; fast start, slow settle):
+              k      = 0.6 + (pitchCurve - 0.5) * 2 * 8.4           (kMin 0.6 .. kMax 9.0)
+              e(tau) = (exp(-k*tau) - exp(-k)) / (1 - exp(-k))      in [1, 0], exactly 0 at tau = 1
+
+            pitchCurve < 0.5 (logarithmic half — lazy start, fast end; tuned-808 feel):
+              k      = 0.6 + (0.5 - pitchCurve) * 2 * 8.4
+              e(tau) = 1 - (exp(-k*(1-tau)) - exp(-k)) / (1 - exp(-k))   (time-mirrored easing)
+
+            Both halves meet continuously at pitchCurve = 0.5 (k = 0.6 ≈ linear drop) and
+            keep e(0) = 1, e(1) = 0 exactly, so the contour still lands dead on the
+            fundamental at tau = 1.
+
             f(t)   = fundamentalEff * pitchStart ^ e(tau)           (ratio/log domain — NEVER lerp Hz)
             tau >= 1  ->  f = fundamentalEff  (contour done; body just holds the fundamental)
 
@@ -61,7 +73,8 @@ namespace kickr
         void setParams (float startRatioEff, float timeMs, float curve) noexcept
         {
             const float c = juce::jlimit (0.0f, 1.0f, curve);
-            k        = 0.6f + c * 8.4f;
+            mirrored = c < 0.5f;
+            k        = 0.6f + std::abs (c - 0.5f) * 2.0f * 8.4f;
             expNegK  = std::exp (-k);
             invDenom = 1.0f / juce::jmax (1.0e-9f, 1.0f - expNegK);
 
@@ -81,7 +94,10 @@ namespace kickr
             float f = fundamentalEffHz;
             if (tau < 1.0)
             {
-                const float e = (std::exp (-k * static_cast<float> (tau)) - expNegK) * invDenom;
+                const float tauE = mirrored ? 1.0f - static_cast<float> (tau)
+                                            : static_cast<float> (tau);
+                const float eRaw = (std::exp (-k * tauE) - expNegK) * invDenom;
+                const float e    = mirrored ? 1.0f - eRaw : eRaw;
                 f = fundamentalEffHz * std::exp2 (e * log2StartRatio);
             }
 
@@ -102,5 +118,6 @@ namespace kickr
         float expNegK        { 0.0f };
         float invDenom       { 1.0f };
         float log2StartRatio { 2.0f };
+        bool  mirrored       { false };   // 2026-09-07 — true = logarithmic half (curve < 0.5)
     };
 }

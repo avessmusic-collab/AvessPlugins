@@ -14,11 +14,12 @@ namespace kickr
     FilterDisplay::FilterDisplay (juce::AudioProcessorValueTreeState& state, Analyzer& analyzerToUse)
         : apvts (state), analyzer (analyzerToUse)
     {
-        pType = apvts.getParameter (id::filterType);
-        pFreq = apvts.getParameter (id::filterFreq);
-        pRes  = apvts.getParameter (id::filterRes);
-        pOn   = apvts.getParameter (id::filterOn);
-        jassert (pType != nullptr && pFreq != nullptr && pRes != nullptr && pOn != nullptr);
+        pType  = apvts.getParameter (id::filterType);
+        pFreq  = apvts.getParameter (id::filterFreq);
+        pRes   = apvts.getParameter (id::filterRes);
+        pOn    = apvts.getParameter (id::filterOn);
+        pSlope = apvts.getParameter (id::filterSlope);   // 2026-09-07
+        jassert (pType != nullptr && pFreq != nullptr && pRes != nullptr && pOn != nullptr && pSlope != nullptr);
 
         for (auto* b : { &lpButton, &hpButton })
         {
@@ -30,6 +31,16 @@ namespace kickr
         lpButton.setTooltip ("Low pass - keeps what's below the cutoff");
         hpButton.setTooltip ("High pass - keeps what's above the cutoff");
 
+        // 2026-09-07 — 12/18/24 dB/oct slope radio row.
+        for (auto* b : { &slope12Button, &slope18Button, &slope24Button })
+        {
+            b->setClickingTogglesState (true);
+            b->setRadioGroupId (0x71f8);
+            b->onClick = [this] { setSlopeFromButtons(); };
+            b->setTooltip (paramDescription (id::filterSlope));
+            addAndMakeVisible (b);
+        }
+
         onToggle = std::make_unique<KickrToggle> (apvts, id::filterOn, "ON", pal::red);
         addAndMakeVisible (*onToggle);
         freqKnob = std::make_unique<KickrKnob> (apvts, id::filterFreq, "FREQ", pal::lowfam, false, KickrKnob::Size::Small);
@@ -38,11 +49,12 @@ namespace kickr
         addAndMakeVisible (*resKnob);
 
         auto repaintCb = [this] (float) { repaint(); };
-        if (pType != nullptr) typeAtt = std::make_unique<juce::ParameterAttachment> (*pType, [this] (float) { syncTypeButtons(); repaint(); }, apvts.undoManager);
-        if (pFreq != nullptr) freqAtt = std::make_unique<juce::ParameterAttachment> (*pFreq, repaintCb, apvts.undoManager);
-        if (pRes  != nullptr) resAtt  = std::make_unique<juce::ParameterAttachment> (*pRes,  repaintCb, apvts.undoManager);
-        if (pOn   != nullptr) onAtt   = std::make_unique<juce::ParameterAttachment> (*pOn,   [this] (float) { updateTimer(); repaint(); }, apvts.undoManager);
-        for (auto* a : { typeAtt.get(), freqAtt.get(), resAtt.get(), onAtt.get() })
+        if (pType  != nullptr) typeAtt  = std::make_unique<juce::ParameterAttachment> (*pType, [this] (float) { syncTypeButtons(); repaint(); }, apvts.undoManager);
+        if (pFreq  != nullptr) freqAtt  = std::make_unique<juce::ParameterAttachment> (*pFreq, repaintCb, apvts.undoManager);
+        if (pRes   != nullptr) resAtt   = std::make_unique<juce::ParameterAttachment> (*pRes,  repaintCb, apvts.undoManager);
+        if (pOn    != nullptr) onAtt    = std::make_unique<juce::ParameterAttachment> (*pOn,   [this] (float) { updateTimer(); repaint(); }, apvts.undoManager);
+        if (pSlope != nullptr) slopeAtt = std::make_unique<juce::ParameterAttachment> (*pSlope, [this] (float) { syncSlopeButtons(); repaint(); }, apvts.undoManager);
+        for (auto* a : { typeAtt.get(), freqAtt.get(), resAtt.get(), onAtt.get(), slopeAtt.get() })
             if (a != nullptr) a->sendInitialUpdate();
     }
 
@@ -99,6 +111,23 @@ namespace kickr
         hpButton.setToggleState (hp,   juce::dontSendNotification);
     }
 
+    void FilterDisplay::setSlopeFromButtons()
+    {
+        if (pSlope == nullptr || slopeAtt == nullptr) return;
+        const float idx = slope24Button.getToggleState() ? 2.0f
+                        : slope18Button.getToggleState() ? 1.0f : 0.0f;
+        slopeAtt->setValueAsCompleteGesture (idx);
+    }
+
+    void FilterDisplay::syncSlopeButtons()
+    {
+        if (pSlope == nullptr) return;
+        const int idx = juce::jlimit (0, 2, (int) std::lround (pSlope->convertFrom0to1 (pSlope->getValue())));
+        slope12Button.setToggleState (idx == 0, juce::dontSendNotification);
+        slope18Button.setToggleState (idx == 1, juce::dontSendNotification);
+        slope24Button.setToggleState (idx == 2, juce::dontSendNotification);
+    }
+
     juce::Rectangle<float> FilterDisplay::graphBounds() const
     {
         const float s = juce::jmax (0.5f, (float) getWidth() / 1120.0f);
@@ -134,6 +163,15 @@ namespace kickr
         lpButton.setBounds (left.removeFromTop (sc (22)));
         left.removeFromTop (sc (6));
         hpButton.setBounds (left.removeFromTop (sc (22)));
+        left.removeFromTop (sc (6));
+        // 2026-09-07 — 12 / 18 / 24 slope radio row under the type buttons.
+        {
+            auto slopeRow = left.removeFromTop (sc (22));
+            const int bw = slopeRow.getWidth() / 3;
+            slope12Button.setBounds (slopeRow.removeFromLeft (bw).reduced (sc (1), 0));
+            slope18Button.setBounds (slopeRow.removeFromLeft (bw).reduced (sc (1), 0));
+            slope24Button.setBounds (slopeRow.reduced (sc (1), 0));
+        }
         left.removeFromTop (sc (10));
         onToggle->setBounds (left.removeFromTop (sc (22)).withSizeKeepingCentre (sc (64), sc (22)));
 
@@ -168,11 +206,12 @@ namespace kickr
         const auto gr = graphBounds();
         if (gr.getWidth() < 20.0f || gr.getHeight() < 20.0f) return;
 
-        const bool  on   = pOn   != nullptr && pOn->getValue() > 0.5f;
-        const bool  hp   = pType != nullptr && pType->convertFrom0to1 (pType->getValue()) > 0.5f;
-        const float freq = pFreq != nullptr ? pFreq->convertFrom0to1 (pFreq->getValue()) : 1000.0f;
-        const float res  = pRes  != nullptr ? pRes->convertFrom0to1 (pRes->getValue())   : 0.2f;
-        const float q    = MasterFilter::qFromResonance (res);
+        const bool  on    = pOn   != nullptr && pOn->getValue() > 0.5f;
+        const bool  hp    = pType != nullptr && pType->convertFrom0to1 (pType->getValue()) > 0.5f;
+        const float freq  = pFreq != nullptr ? pFreq->convertFrom0to1 (pFreq->getValue()) : 1000.0f;
+        const float res   = pRes  != nullptr ? pRes->convertFrom0to1 (pRes->getValue())   : 0.2f;
+        const float q     = MasterFilter::qFromResonance (res);
+        const int   slope = pSlope != nullptr ? juce::jlimit (0, 2, (int) std::lround (pSlope->convertFrom0to1 (pSlope->getValue()))) : 1;
 
         // Grid: decades + a few in-between, 0 dB line.
         g.setColour (pal::ink.withAlpha (0.07f));
@@ -189,8 +228,10 @@ namespace kickr
                         juce::Rectangle<float> (xForFreq (f, gr) - 24.0f * s, gr.getBottom() + 1.0f, 48.0f * s, 10.0f * s),
                         juce::Justification::centred, false);
 
-        // Response curve of the 2nd-order SVF: |H| = 1/sqrt((1-x^2)^2 + (x/Q)^2), x = f/fc (LP);
-        // HP multiplies by x^2.
+        // Response curve of the actual cascade (2026-09-07 slope-aware, mirrors MasterFilter):
+        //   stage 1 (always)   2nd-order SVF, user Q: |H| = 1/sqrt((1-x^2)^2 + (x/Q)^2), HP *= x^2
+        //   slope 18 dB adds   1st-order pole:        |H| *= 1/sqrt(1+x^2), HP *= x
+        //   slope 24 dB adds   2nd-order @ Q=0.707
         juce::Path curve;
         const int n = juce::jmax (32, (int) gr.getWidth());
         for (int i = 0; i <= n; ++i)
@@ -198,8 +239,21 @@ namespace kickr
             const float x  = gr.getX() + gr.getWidth() * (float) i / (float) n;
             const float f  = freqForX (x, gr);
             const float xr = f / freq;
-            float mag = 1.0f / std::sqrt (std::max (1.0e-12f, (1.0f - xr * xr) * (1.0f - xr * xr) + (xr / q) * (xr / q)));
-            if (hp) mag *= xr * xr;
+            const float x2 = xr * xr;
+            float mag = 1.0f / std::sqrt (std::max (1.0e-12f, (1.0f - x2) * (1.0f - x2) + x2 / (q * q)));
+            if (hp) mag *= x2;
+            if (slope == 1)
+            {
+                float m1 = 1.0f / std::sqrt (1.0f + x2);
+                if (hp) m1 *= xr;
+                mag *= m1;
+            }
+            else if (slope == 2)
+            {
+                float m2 = 1.0f / std::sqrt (std::max (1.0e-12f, (1.0f - x2) * (1.0f - x2) + x2 * 2.0f));   // Q = 0.707 -> (x/Q)^2 = 2 x^2
+                if (hp) m2 *= x2;
+                mag *= m2;
+            }
             const float db = 20.0f * std::log10 (std::max (1.0e-6f, mag));
             const float y  = yForDb (db);
             if (i == 0) curve.startNewSubPath (x, y); else curve.lineTo (x, y);
@@ -261,6 +315,7 @@ namespace kickr
         g.setColour (pal::ink.withAlpha (0.8f));
         g.setFont (KickrLookAndFeel::microFont (9.0f * s));
         const juce::String txt = (hp ? "HP " : "LP ") + (freq >= 1000.0f ? juce::String (freq / 1000.0f, 2) + " kHz" : juce::String (freq, 0) + " Hz")
+                               + "   " + juce::String (12 + slope * 6) + " dB/oct"
                                + "   res " + juce::String (res, 2) + (on ? "" : "   (off)");
         g.drawText (txt, gr.withHeight (14.0f * s).translated (0.0f, 2.0f * s), juce::Justification::topLeft, false);
     }

@@ -18,8 +18,10 @@ namespace warpr
 
     juce::String UiModel::defaultLfoShapeJson()
     {
-        // Stage 1 default for a never-edited LFO.  D8 replaces this with the real default shape.
-        return R"({"preset":"SINE","points":[],"bends":[],"table":null,"drift":null})";
+        // D8: the UI's newShape() on the wire (v = 1 - y): CUSTOM with y = .9 .1 .65 .25 .9.  LfoShapeDesc::defaultShape() is
+        // the same shape, so a never-edited LFO sounds like it looks.
+        return R"({"preset":"CUSTOM","points":[{"x":0,"v":0.1,"c":0},{"x":0.25,"v":0.9,"c":0},{"x":0.5,"v":0.35,"c":0},)"
+               R"({"x":0.75,"v":0.75,"c":0},{"x":1,"v":0.1,"c":0}],"bends":[],"table":null,"drift":null})";
     }
 
     juce::String UiModel::defaultModMatrixJson()

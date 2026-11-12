@@ -232,10 +232,17 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
     }
 
     // ---------------------------------------------------------------- macro modules
-    heroTitles[0] = &addSectionLabel ("PUNCH", pal::red);
-    heroBig[0]    = &addKnob (kickr::id::macroPunch, "MACRO", pal::red, false, KSize::Large);
-    heroMacro[0]  = nullptr;   // PUNCH's macro IS its hero knob
+    // 2026-09-07 (user request): PUNCH became the PITCH module — the pitch envelope,
+    // previously three small knobs buried in the BODY footer, takes it over. AMOUNT
+    // (`pitchStart`) is the hero; TIME / CURVE join T ATK / T SUS in the footer (the
+    // transient pair kept, rendered smaller — see layoutHeroes). The one-knob punch
+    // MACRO is gone from the UI (`macroPunch` stays registered but neutral — KickEngine).
+    heroTitles[0] = &addSectionLabel ("PITCH", pal::red);
+    heroBig[0]    = &addKnob (kickr::id::pitchStart, "AMOUNT", pal::red, false, KSize::Large);
+    heroMacro[0]  = nullptr;
     punchFooter = {
+        &addKnob (kickr::id::pitchTime,        "TIME",  pal::red, false, KSize::Small),
+        &addKnob (kickr::id::pitchCurve,       "CURVE", pal::red, false, KSize::Small),
         &addKnob (kickr::id::transientAttack,  "T ATK", pal::red, true, KSize::Small),
         &addKnob (kickr::id::transientSustain, "T SUS", pal::red, true, KSize::Small),
     };
@@ -247,9 +254,6 @@ KICKRAudioProcessorEditor::KICKRAudioProcessorEditor (KICKRAudioProcessor& p)
         &addKnob (kickr::id::bodyLevel,     "LEVEL",   pal::violet, false, KSize::Small),
         &addKnob (kickr::id::bodyDecay,     "DECAY",   pal::lowfam, false, KSize::Small),
         &addKnob (kickr::id::bodyHarmonics, "HARM",    pal::violet, false, KSize::Small),
-        &addKnob (kickr::id::pitchStart,    "P START", pal::lowfam, false, KSize::Small),
-        &addKnob (kickr::id::pitchTime,     "P TIME",  pal::lowfam, false, KSize::Small),
-        &addKnob (kickr::id::pitchCurve,    "P CURVE", pal::lowfam, false, KSize::Small),
     };
 
     heroTitles[2] = &addSectionLabel ("CRUSH", pal::magenta);
@@ -913,7 +917,21 @@ void KICKRAudioProcessorEditor::layoutHeroes (juce::Rectangle<int> a)
                                                     : i == 1 ? bodyFooter
                                                     : i == 2 ? crushFooter
                                                              : tailFooter;
-        placeGrid (inner, footer, 3, scaled (4));
+        if (i == 0)
+        {
+            // 2026-09-07 — PITCH module footer: 2x2 grid (TIME / CURVE over T ATK / T SUS),
+            // with the kept transient pair rendered smaller (user decision: "keep the
+            // t attack t sus knobs, make them smaller"). KickrKnob draws to its bounds,
+            // so an extra inset is all "smaller" takes.
+            placeGrid (inner, footer, 2, scaled (4));
+            for (size_t f = 2; f < punchFooter.size(); ++f)
+                if (punchFooter[f] != nullptr)
+                    punchFooter[f]->setBounds (punchFooter[f]->getBounds().reduced (scaled (7)));
+        }
+        else
+        {
+            placeGrid (inner, footer, 3, scaled (4));
+        }
     }
 }
 

@@ -10,12 +10,13 @@
 /**
     Table-driven APVTS parameter layout for KICKR.
 
-    71 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
+    72 automatable parameters total (parameter-spec.md LOCKED v2 + architecture.md
     "Parameter Mapping", plus `morph` added 2026-09-01 — see NOTES.md):
         - 60 juce::AudioParameterFloat   (41 v1 core + 10 v2 SAMPLE + 1 `morph` + 6 LIMITER + 2 FILTER, 2026-09-02)
-        -  5 juce::AudioParameterChoice  (noiseType, oversampling, tuneMode, filterType,
+        -  6 juce::AudioParameterChoice  (noiseType, oversampling, tuneMode, filterType,
                                           morphMode — 2026-09-02, Serum-Warp-style mode
-                                          selector for `morph`, 8 choices)
+                                          selector for `morph`, 8 choices;
+                                          filterSlope — 2026-09-07, 12/18/24 dB/oct)
         -  6 juce::AudioParameterBool    (limiter, filterOn, synthEnable, sampleEnable,
                                           sampleReverse, sampleMidiTrack)
 
@@ -52,7 +53,9 @@ namespace kickr
     inline constexpr std::array<FloatParamSpec, 60> kFloatParams { {
         // ---- PITCH ----
         { id::fundamental,      "Fundamental",          25.0f,   150.0f,   0.1f,   0.5f,   55.0f,  ""   }, // shown as a note (A1); see createParameterLayout special case
-        { id::pitchStart,       "Pitch Start",           1.0f,    10.0f,   0.01f,  0.6f,    4.0f,  "x"  },
+        // 2026-09-07: display name "Pitch Amount" (was "Pitch Start") — the PITCH module's
+        // hero AMOUNT knob. ID unchanged, so state / automation are unaffected.
+        { id::pitchStart,       "Pitch Amount",          1.0f,    10.0f,   0.01f,  0.6f,    4.0f,  "x"  },
         { id::pitchTime,        "Pitch Time",            5.0f,   500.0f,   0.1f,   0.3f,   50.0f,  "ms" },
         { id::pitchCurve,       "Pitch Curve",           0.0f,     1.0f,   0.001f, 1.0f,    0.7f,  ""   },
 
@@ -254,7 +257,7 @@ namespace kickr
                 attrs));
         }
 
-        // ---- 3 Choice parameters ----
+        // ---- 6 Choice parameters ----
         layout.add (std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID { id::noiseType, 1 },
             "Noise Type",
@@ -282,6 +285,14 @@ namespace kickr
             juce::StringArray { "Low Pass", "High Pass" },
             0));
 
+        // 2026-09-07 (user request) — master filter roll-off. Default 18 dB/oct (user
+        // decision); setStateInformation forces 12 dB for pre-filterSlope sessions so an
+        // old mix with the filter ON keeps its original sound (stateVersion migration).
+        layout.add (std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID { id::filterSlope, 1 }, "Filter Slope",
+            juce::StringArray { "12 dB", "18 dB", "24 dB" },
+            1));
+
         // 2026-09-02 (user request — "make the morph knob have choices like Serum's warp
         // mode") — which of the 8 warp algorithms the `morph` amount knob drives. Default
         // 0 = Bend/Skew, bit-identical to pre-morphMode behaviour, so existing presets and
@@ -291,7 +302,7 @@ namespace kickr
             juce::StringArray (kMorphModeNames, 8),
             0));
 
-        // ---- 5 Bool parameters ----
+        // ---- 6 Bool parameters ----
         layout.add (std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID { id::limiter, 1 }, "Limiter", true));
         // 2026-09-02 — master filter on/off (default OFF -> exact bypass).

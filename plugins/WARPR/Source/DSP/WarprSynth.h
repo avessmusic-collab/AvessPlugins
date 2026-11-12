@@ -40,8 +40,11 @@
 */
 
 #include "DSP/HalfbandIIR.h"
+#include "DSP/LfoEngine.h"
+#include "DSP/ModEngine.h"
 #include "DSP/SampleStore.h"
 #include "DSP/ShaperEngine.h"
+#include "DSP/TransportClock.h"
 #include "DSP/WarprVoice.h"
 #include "Parameters/ParamSnapshot.h"
 #include "Util/LockFreeSwap.h"
@@ -84,6 +87,9 @@ namespace warpr
         /** The shaper engine whose sets the voices read (D4).  nullptr = no shaper stage.  Set once, before audio. */
         void attachShaper (ShaperEngine* engine) noexcept { shaper = engine; }
 
+        /** The modulation publication point (LFO shape tables, matrix, lfoCount).  nullptr = no LFO system.  Set once, before audio. */
+        void attachModEngine (ModEngine* engine) noexcept { modEngine = engine; }
+
         /** Kills every voice and releases all sample references directly (audio must be stopped). */
         void reset();
 
@@ -93,8 +99,27 @@ namespace warpr
         /** The sample new notes will use (already acquired from the SampleStore). */
         void setCurrentSample (SampleData* s) noexcept { currentSample = s; }
 
-        /** Reads the block's parameter values (once per block). */
+        /** Reads the block's parameter values (once per block).  Also adopts pending LFO tables / matrix (ModEngine). */
         void setBlockParams (const ParamBlock& pb) noexcept;
+
+        /** Host transport for the NEXT renderBlock (once per block).  Default = no host: internal clock at 120 bpm. */
+        void setTransport (const TransportInfo& info) noexcept { transportInfo = info; }
+
+        /** masterGain (dB) with its modulation (global class G); valid after renderBlock. */
+        float modulatedMasterGainDb (float baseDb) const noexcept;
+
+        /** Viz: direction-mapped phase (0..1) of every LFO, -1 = idle (index >= lfoCount, unused by the matrix, or a voice
+            LFO without an active voice).  Wait-free snapshot written once per block; `out` takes 10 values. */
+        void readLfoPhases (float* out) const noexcept;
+
+        // D8 diagnostics / tests
+        float getGlobalLfoPhase (int lfo) const noexcept      { return gInst[(size_t) lfo].phase; }
+        float getGlobalLfoValue (int lfo) const noexcept      { return gPrev[(size_t) lfo]; }
+        double getGlobalLfoProgress (int lfo) const noexcept  { return gInst[(size_t) lfo].progress; }
+        float getVoiceLfoPhase (int slot, int lfo) const noexcept { return voices[(size_t) slot].lfoPhase (lfo); }
+        float getVoiceLfoValue (int slot, int lfo) const noexcept { return voices[(size_t) slot].lfoEndValue (lfo); }
+        double getVoiceLfoProgress (int slot, int lfo) const noexcept { return voices[(size_t) slot].lfoProgress (lfo); }
+        const TransportClock& getClock() const noexcept       { return clock; }
 
         /** ADDS the synth output to outL / outR (callers clear them first). */
         void renderBlock (float* outL, float* outR, int numSamples, const juce::MidiBuffer& midi) noexcept;
@@ -174,8 +199,32 @@ namespace warpr
         void flushBacklog() noexcept;
         void syncShaperToVoices() noexcept;
 
+        // ---- D8 modulation
+        const ModContext* beginChunkModulation (int m) noexcept;     // advances the global LFOs, returns the voices' context
+        void endChunkModulation() noexcept;                          // voice means, master-gain delta
+        void publishLfoPhases() noexcept;
+        float latchedValue (ParamId p, float base) const noexcept;   // class N (and ampAttack): sampled at note-on
+        float attackNow() const noexcept   { return latchedValue (ParamId::ampAttack, vp.attackMs); }
+        double glideNow() const noexcept   { return (double) latchedValue (ParamId::glideTime, vp.glideMs); }
+
         RetireList& retireList;
         ShaperEngine* shaper = nullptr;
+        ModEngine* modEngine = nullptr;
+
+        TransportInfo transportInfo;
+        TransportClock clock;
+        int blockPos = 0;                            // base samples of the current block already rendered
+        std::array<LfoBlockParams, (size_t) kNumLfos> lfoParams {};
+        std::array<const LfoShapeTable*, (size_t) kNumLfos> tablePtrs {};
+        const ModMatrixSnapshot* matrixPtr = nullptr;
+        int lfoCountBlock = 0;
+        std::uint32_t globalOwnMask = 0, voiceOwnMask = 0;
+        std::array<LfoInstance, (size_t) kNumLfos> gInst {};
+        std::array<float, (size_t) kNumLfos> gPrev {}, gStart {}, gEnd {}, voiceMean {};
+        ModContext modCtx;
+        bool monoResetPending = false;
+        float masterDelta = 0.0f;
+        std::array<std::atomic<float>, (size_t) kNumLfos> lfoPhaseOut {};
         double sampleRate = 44100.0;
         const HalfbandCoeffs* halfband = nullptr;
 
@@ -185,6 +234,7 @@ namespace warpr
 
         int voiceMode = 0, lastVoiceMode = 0;        // 0 Poly, 1 Mono, 2 Legato
         int polyLimit = 16, unisonLatched = 1, osLatched = 2;
+        int lastPolyLimit = -1;                      // live polyphony reduction runs when the parameter changes
         float bendNorm = 0.0f;
         float modWheel = 0.0f;                       // stored; the contract has no destination for it (A2)
         bool pedalDown = false;

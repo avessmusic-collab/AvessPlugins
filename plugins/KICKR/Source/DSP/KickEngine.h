@@ -251,6 +251,7 @@ namespace kickr
         std::atomic<float>* pFilterType    { nullptr };
         std::atomic<float>* pFilterFreq    { nullptr };
         std::atomic<float>* pFilterRes     { nullptr };
+        std::atomic<float>* pFilterSlope   { nullptr };   // 2026-09-07 — 12/18/24 dB/oct
         std::atomic<float>* pClickLevel { nullptr };   // PHASE 2.4
         std::atomic<float>* pClickTone  { nullptr };
         std::atomic<float>* pClickTime  { nullptr };
@@ -331,6 +332,7 @@ namespace kickr
             float limColor01      { 0.5f };
             bool  filterOn        { false };   // 2026-09-02 — master filter
             int   filterType      { 0 };
+            int   filterSlope     { 1 };       // 2026-09-07 — 0=12, 1=18 (default), 2=24 dB/oct
             float filterFreqHz    { 1000.0f };
             float filterRes01     { 0.2f };
             float clickLevel   { 0.4f };     // PHASE 2.4

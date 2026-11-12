@@ -3,9 +3,9 @@
 /**
     Single source of truth for every KICKR APVTS parameter ID string.
 
-    71 automatable parameters: 60 Float, 5 Choice (noiseType, oversampling, tuneMode,
-    filterType, morphMode), 6 Bool (limiter, filterOn, synthEnable, sampleEnable,
-    sampleReverse, sampleMidiTrack).
+    72 automatable parameters: 60 Float, 6 Choice (noiseType, oversampling, tuneMode,
+    filterType, filterSlope, morphMode), 6 Bool (limiter, filterOn, synthEnable,
+    sampleEnable, sampleReverse, sampleMidiTrack).
     `morph` added 2026-09-01 (body oscillator waveform morph — not in the original v2
     parameter-spec.md; see plugins/KICKR/NOTES.md for the addition). `morphMode` added
     2026-09-02 (Serum-Warp-style mode selector for `morph` — see NOTES.md).
@@ -104,7 +104,9 @@ namespace kickr::id
     inline constexpr auto filterOn         = "filterOn";         // Bool, default off
     inline constexpr auto filterType       = "filterType";       // Choice: Low Pass / High Pass
     inline constexpr auto filterFreq       = "filterFreq";       // 20..20000 Hz
-    inline constexpr auto filterRes        = "filterRes";        // 0..1    // Bool
+    inline constexpr auto filterRes        = "filterRes";        // 0..1
+    // 2026-09-07 (user request): selectable roll-off steepness for the master filter.
+    inline constexpr auto filterSlope      = "filterSlope";      // Choice: 12 / 18 / 24 dB/oct
 
     // ---- GLOBAL --------------------------------------------------- --------
     inline constexpr auto oversampling     = "oversampling"; // Choice

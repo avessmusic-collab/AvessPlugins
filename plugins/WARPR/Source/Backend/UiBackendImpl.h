@@ -22,8 +22,13 @@
       the SAME coefficient code the voices run.  Linear types 0-19 only; unimplemented types (20-33, D5b/D5c)
       and a fully open low-pass report a flat 0 dB.  Revision::filterResponse is bumped (wait-free, from the
       APVTS listener, any thread) on every change of any of the 8 filter parameters.
+    - LFO SYSTEM (D8): setLfoShapeJson parses the wire document (LfoShapeDesc), builds the two-sided shape table on the
+      calling thread and publishes it to the audio thread (ModEngine / LockFreeSwap); setModMatrixJson compiles the
+      matrix (unknown / Choice / Bool destinations and invalid routes dropped, depth clamped) and publishes the snapshot;
+      setLfoCount publishes the atomic count.  The model keeps the UI's documents VERBATIM (state round trip and
+      getUiStateJson serve exactly what was sent); adoptModel republishes everything.  A document that does not parse
+      builds the default shape (the UI's newShape()).
   Everything else that needs DSP is a documented no-op until its phase:
-    setLfoShape/setModMatrix publication ..... D8
     presets / settings ....................... D9
   vizFifo() receives real WarprVizFrames from the audio thread since D2 (PluginProcessor ->
   warpr::VizAnalyzer, ~30 Hz, wait-free; voices[] come from the synth's playhead snapshot).
@@ -42,6 +47,8 @@
 
 #include "Backend/UiBackend.h"
 #include "Backend/UiModel.h"
+#include "DSP/LfoTable.h"
+#include "DSP/ModEngine.h"
 #include "DSP/SampleStore.h"
 #include "DSP/ShaperCurve.h"
 #include "DSP/ShaperEngine.h"
@@ -66,6 +73,10 @@ public:
 
     /** The engine the built LUT sets are published to.  Builds and publishes the current curves immediately. */
     void attachShaper (warpr::ShaperEngine* engine);
+
+    /** The publication point of the LFO tables / mod matrix / lfoCount (D8).  Publishes the current model (defaults on
+        a fresh processor) immediately.  Message thread, before audio starts. */
+    void attachModEngine (warpr::ModEngine* engine);
 
     /** Host sample rate for the filter response display (the processor's prepareToPlay).  Wait-free, any thread. */
     void setSampleRate (double fs) noexcept               { responseSampleRate.store (fs > 0.0 ? fs : 48000.0, std::memory_order_relaxed); }
@@ -132,6 +143,10 @@ public:
 private:
     static size_t slotOf (Revision r) noexcept            { return static_cast<size_t> (r); }
 
+    // ---- LFO / matrix publication (message / state threads)
+    void publishLfoTable (int index, const juce::String& json);
+    void publishAllModulation();
+
     // ---- shaper helpers (message / state threads)
     void rebuildShaper();
     void applyShaperPreset (int preset);
@@ -169,6 +184,10 @@ private:
 
     juce::AudioProcessorValueTreeState* apvts = nullptr;
     warpr::ShaperEngine* shaperEngine = nullptr;
+    warpr::ModEngine* modEngine = nullptr;
+    juce::CriticalSection lfoPublishLock;                 // serialises LFO table build + publish (message / state threads)
+    std::array<juce::String, (size_t) warpr::UiModel::maxLfos> publishedLfoJson;
+    std::array<bool, (size_t) warpr::UiModel::maxLfos> lfoPublished {};
     ShaperParamListener shaperListener { *this };
     std::atomic<bool> presetDirty { false }, symmetryDirty { false };
     mutable juce::CriticalSection shaperLock;             // serialises build + publish (taken BEFORE modelLock)

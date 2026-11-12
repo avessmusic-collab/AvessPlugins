@@ -2662,11 +2662,15 @@ int main()
             KICKRAudioProcessor p;  setP (p, macro, v);
             return rmsWindow (kickr::tests::renderNote (p, a1, vel, sr, 512, 1.2), sr, t0, t1);
         };
+        // 2026-09-07 — PUNCH module became the PITCH module: `macroPunch` stays registered
+        // for old-session compatibility but is forced neutral in KickEngine (its knob is
+        // gone from the UI). The contract is now "no effect at ANY value".
         const double p0 = rmsAt ("macroPunch", 0.0f, 0.0, 0.006);
         const double p5 = rmsAt ("macroPunch", 0.5f, 0.0, 0.006);
         const double p1 = rmsAt ("macroPunch", 1.0f, 0.0, 0.006);
         std::printf ("  PUNCH onset RMS 0/0.5/1: %.4f / %.4f / %.4f\n", p0, p5, p1);
-        check (p1 > p5 && p5 > p0, "macroPunch: monotonic onset energy, neutral in the middle");
+        check (std::abs (p1 - p5) < 1.0e-9 && std::abs (p0 - p5) < 1.0e-9,
+               "macroPunch: neutralized - identical render at every value (hidden legacy param)");
 
         const double b0 = rmsAt ("macroBody", 0.0f, 0.05, 0.30);
         const double b1 = rmsAt ("macroBody", 1.0f, 0.05, 0.30);
@@ -4048,6 +4052,25 @@ int main()
                 if (auto stream = out.createOutputStream()) { juce::PNGImageFormat fmt; fmt.writeImageToStream (img, *stream); }
                 std::printf ("  filter-page snapshot: %s\n", out.getFullPathName().toRawUTF8());
             }
+        }
+
+        // F) 2026-09-07 — filterSlope: 12 / 18 / 24 dB/oct cut progressively harder past
+        // the cutoff. HP 400 Hz on the ~55 Hz settled body (~2.9 octaves below cutoff):
+        // each slope step is ~17 dB more attenuation there, so a 0.7x threshold is safe.
+        {
+            auto bodyAtSlope = [&] (float slopeIdx)
+            {
+                KICKRAudioProcessor p;
+                setP (p, "limiter", 0.0f); setP (p, "driveMix", 0.0f);
+                setP (p, "filterOn", 1.0f); setP (p, "filterType", 1.0f);
+                setP (p, "filterFreq", 400.0f); setP (p, "filterRes", 0.0f);
+                setP (p, "filterSlope", slopeIdx);
+                return goertzelF (kickr::tests::renderNote (p, a1, vel, sr, 512, 0.6), sr, 0.15, 0.5, 55.0);
+            };
+            const double s12 = bodyAtSlope (0.0f), s18 = bodyAtSlope (1.0f), s24 = bodyAtSlope (2.0f);
+            std::printf ("  55 Hz body under HP400 @ 12/18/24 dB: %.6f / %.6f / %.6f\n", s12, s18, s24);
+            check (s18 < s12 * 0.7 && s24 < s18 * 0.7,
+                   "filterSlope: steeper slope cuts the 55 Hz body progressively harder");
         }
     }
 

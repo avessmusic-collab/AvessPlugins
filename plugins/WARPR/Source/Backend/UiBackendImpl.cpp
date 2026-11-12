@@ -65,9 +65,16 @@ juce::String UiBackendImpl::getUiStateJson()
 
 void UiBackendImpl::setLfoCount (int n)
 {
-    const juce::ScopedLock sl (modelLock);
-    model.lfoCount = juce::jlimit (1, UiModel::maxLfos, n);
-    // D8: publish lfoCount to the LfoEngine (atomic int).
+    int count = 1;
+
+    {
+        const juce::ScopedLock sl (modelLock);
+        model.lfoCount = juce::jlimit (1, UiModel::maxLfos, n);
+        count = model.lfoCount;
+    }
+
+    if (modEngine != nullptr)
+        modEngine->setLfoCount (count);              // atomic; LFOs >= count are idle, their routes ignored
 }
 
 void UiBackendImpl::setLfoShapeJson (int lfoIndex, const juce::String& json)
@@ -75,16 +82,65 @@ void UiBackendImpl::setLfoShapeJson (int lfoIndex, const juce::String& json)
     if (lfoIndex < 0 || lfoIndex >= UiModel::maxLfos)
         return;
 
-    const juce::ScopedLock sl (modelLock);
-    model.lfoShapeJson[(size_t) lfoIndex] = json;
-    // D8: parse -> LfoTableBuilder -> LockFreeSwap<LfoShapeTable>::publish.
+    {
+        const juce::ScopedLock sl (modelLock);
+        model.lfoShapeJson[(size_t) lfoIndex] = json;           // verbatim: this is what state and the UI get back
+    }
+
+    publishLfoTable (lfoIndex, json);                // parse + build on THIS thread, publish through the lock-free swap
 }
 
 void UiBackendImpl::setModMatrixJson (const juce::String& json)
 {
-    const juce::ScopedLock sl (modelLock);
-    model.modMatrixJson = json;
-    // D8: parse + validate destinations -> ModMatrixSnapshot -> LockFreeSwap::publish.
+    {
+        const juce::ScopedLock sl (modelLock);
+        model.modMatrixJson = json;
+    }
+
+    if (modEngine != nullptr)
+        modEngine->publishMatrix (warpr::ModMatrixSnapshot::fromJson (json));
+}
+
+void UiBackendImpl::attachModEngine (warpr::ModEngine* engine)
+{
+    modEngine = engine;
+    publishAllModulation();
+}
+
+void UiBackendImpl::publishLfoTable (int index, const juce::String& json)
+{
+    if (modEngine == nullptr || index < 0 || index >= UiModel::maxLfos)
+        return;
+
+    // Serialised so the last publication for an index is the newest document; an unchanged document is not rebuilt
+    // (a state load republishes all ten shapes, and the 16384-cell build is the expensive part).
+    const juce::ScopedLock sl (lfoPublishLock);
+
+    if (lfoPublished[(size_t) index] && publishedLfoJson[(size_t) index] == json)
+        return;
+
+    warpr::LfoShapeDesc desc;
+
+    if (! warpr::LfoShapeDesc::fromJson (json, desc))
+        desc = warpr::LfoShapeDesc::defaultShape();         // "" (never edited) or a document that is not an object
+
+    modEngine->publishTable (index, warpr::LfoTableBuilder::build (desc));
+    publishedLfoJson[(size_t) index] = json;
+    lfoPublished[(size_t) index] = true;
+}
+
+void UiBackendImpl::publishAllModulation()
+{
+    if (modEngine == nullptr)
+        return;
+
+    const UiModel m = copyModel();
+
+    for (int i = 0; i < UiModel::maxLfos; ++i)
+        publishLfoTable (i, m.lfoShapeJson[(size_t) i]);
+
+    modEngine->publishMatrix (warpr::ModMatrixSnapshot::fromJson (m.modMatrixJson));
+    modEngine->setLfoCount (m.lfoCount);
 }
 
 //==============================================================================
@@ -484,6 +540,7 @@ void UiBackendImpl::adoptModel (const warpr::UiModel& newModel)
     presetDirty.store (false, std::memory_order_release);
     symmetryDirty.store (false, std::memory_order_release);
     rebuildShaper();
+    publishAllModulation();                          // D8: the loaded LFO shapes, matrix and lfoCount reach the audio thread
 
     bumpRevision (Revision::uiState);
     bumpRevision (Revision::sample);

@@ -20,9 +20,9 @@ namespace kickr
         static const std::map<juce::String, juce::String> table {
             // ---- PITCH ------------------------------------------------------------
             { id::fundamental,      "Body pitch - also the MIDI-Pitch mode reference note." },
-            { id::pitchStart,       "Pitch envelope start, as a multiple of the fundamental - higher = sharper \"laser\" punch." },
+            { id::pitchStart,       "Pitch envelope amount: where the drop starts, as a multiple of the fundamental - higher = sharper \"laser\" punch." },
             { id::pitchTime,        "Time for the pitch envelope to fall to the fundamental." },
-            { id::pitchCurve,       "Pitch envelope shape: low = smooth sweep, high = sharp exponential snap." },
+            { id::pitchCurve,       "Pitch drop shape: 0 = logarithmic (lazy start, tuned-808 feel), 0.5 = linear, 1 = exponential snap (punch)." },
             // ---- BODY ---------------------------------------------------------------
             { id::bodyLevel,        "Level of the sine body oscillator." },
             { id::bodyDecay,        "Decay time of the body's amplitude envelope." },
@@ -91,6 +91,7 @@ namespace kickr
             { id::filterType,       "Low pass keeps what's below the cutoff, high pass keeps what's above." },
             { id::filterFreq,       "Filter cutoff. Drag the node on the FILTER page left/right for the same thing." },
             { id::filterRes,        "Filter resonance - a peak at the cutoff. Drag the node up/down." },
+            { id::filterSlope,      "Roll-off steepness: 12, 18 or 24 dB per octave. Steeper = harder cut past the cutoff." },
             { id::limColor,         "Tone of the saturation - low is warm and round (the lows drive it), high is bright and crunchy (the highs do)." },
             // ---- GLOBAL --------------------------------------------------------------------------
             { id::oversampling,     "Internal oversampling factor - higher = cleaner distortion, more CPU." },

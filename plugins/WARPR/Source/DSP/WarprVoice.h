@@ -18,6 +18,7 @@
 #include "DSP/AmpEnvelope.h"
 #include "DSP/FilterStage.h"
 #include "DSP/HalfbandIIR.h"
+#include "DSP/LfoEngine.h"
 #include "DSP/RegionFold.h"
 #include "DSP/SampleData.h"
 #include "DSP/UnisonOsc.h"
@@ -100,11 +101,32 @@ namespace warpr
         /** Forgets all state.  Does NOT touch the sample reference (see takeSample()). */
         void reset() noexcept;
 
-        /** `ownedSample` already carries ONE reference for this voice. */
-        void start (const StartInfo& info, const VoiceParams& vp, SampleData* ownedSample) noexcept;
+        /** `ownedSample` already carries ONE reference for this voice.  `mc` (D8, optional): the modulation context at the
+            note start - the voice-owned LFOs are reset to their start phase and the latched destination (ampAttack) is
+            evaluated from it. */
+        void start (const StartInfo& info, const VoiceParams& vp, SampleData* ownedSample, const ModContext* mc = nullptr) noexcept;
 
-        /** Adds `numSamples` of audio to outL / outR (any length; chunked to 32 internally). */
+        /** Adds `numSamples` of audio to outL / outR (any length; chunked to 32 internally).  No modulation. */
         void render (const VoiceParams& vp, float* outL, float* outR, int numSamples) noexcept;
+
+        /** D8: renders ONE chunk (n <= 32 base samples) with the modulation of `mc` applied (nullptr = none).
+            `rangeOffset` = base samples between the start of the current render range and this chunk. */
+        void renderModulated (const VoiceParams& vp, float* outL, float* outR, int n, int rangeOffset, const ModContext* mc) noexcept
+        {
+            renderChunk (vp, outL, outR, n, rangeOffset, mc);
+        }
+
+        /** D8: a Mono retrigger is a new note for the voice-owned (RETRIG / ENV) LFOs. */
+        void restartLfos() noexcept
+        {
+            for (auto& l : lfoInst)
+                l.restart();
+        }
+
+        /** D8 diagnostics / viz: direction-mapped shape phase, and the output value (0..1) at the end of the last chunk. */
+        float lfoPhase (int lfo) const noexcept      { return lfoInst[(size_t) lfo].phase; }
+        float lfoEndValue (int lfo) const noexcept   { return lfoPrev[(size_t) lfo]; }
+        double lfoProgress (int lfo) const noexcept  { return lfoInst[(size_t) lfo].progress; }
 
         //======================================================================
         // Control (audio thread)
@@ -184,9 +206,17 @@ namespace warpr
 
     private:
         /** `rangeOffset` = base samples between the start of the current render range and this chunk (shaper crossfade). */
-        void renderChunk (const VoiceParams& vp, float* outL, float* outR, int n, int rangeOffset) noexcept;
+        void renderChunk (const VoiceParams& vp, float* outL, float* outR, int n, int rangeOffset, const ModContext* mc) noexcept;
         void setGlideTarget (double target, double glideMs) noexcept;
         void advanceGlide (int n) noexcept;
+
+        // ---- D8 modulation.  mod0 / mod1 apply the matrix delta at the START / END of the chunk in the parameter's own
+        //      normalised domain (no-op while modActive is false or the delta is exactly 0).
+        void beginModulation (const ModContext* mc) noexcept;
+        void startModulation (const ModContext& mc) noexcept;
+        float mod0 (ParamId p, float v) const noexcept { return modActive ? applyModulation (p, v, modD0[toIndex (p)]) : v; }
+        float mod1 (ParamId p, float v) const noexcept { return modActive ? applyModulation (p, v, modD1[toIndex (p)]) : v; }
+        FilterTargets makeFilterTargets (const VoiceParams& vp, double pitchSemis) const noexcept;
 
         double sampleRate = 44100.0;
         const HalfbandCoeffs* hb = nullptr;
@@ -218,6 +248,12 @@ namespace warpr
         // granular source (D7a): playMode weight (linear 10 ms ramp), scan / scan-dist one-pole 20 ms per chunk
         float granWCur = 0.0f, scanCur = 0.0f, scanDistCur = 0.0f;
         GrainScratch grainScratch;                   // staging shared by this voice's oscillators (rendered one after another)
+
+        // D8: voice-owned LFO instances (RETRIG / ENV) and this chunk's per-parameter deltas (indexed by ParamId)
+        std::array<LfoInstance, (size_t) kNumLfos> lfoInst {};
+        std::array<float, (size_t) kNumLfos> lfoPrev {}, lfoStart {}, lfoEnd {};
+        std::array<float, kNumParams> modD0 {}, modD1 {};
+        bool modActive = false;
 
         // fades
         int fadeLeft = 0, fadeTotal = 0;

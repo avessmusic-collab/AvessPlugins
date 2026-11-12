@@ -27,7 +27,8 @@
                 r = clamp(sqrt(meanM^2 + meanS^2) * sqrt(2), 0, 1)  (a full-scale mono sine -> 1).
     peakL/R     max |sample| since the previous PUSH (post master gain), the quantity the meters show.
     voices      sounding voices' playhead position / envelope level from the synth's wait-free snapshot.
-    lfoPhase    all -1 until the LFO system exists (D8).
+    lfoPhase    D8: the synth's per-block LFO phase snapshot (global LFO: its phase; voice LFO: the newest voice's; -1 =
+                idle: index >= lfoCount, not a source of any matrix route, or a voice LFO with no sounding voice).
 
   Idle suppression: when a frame is entirely zero (no signal, no voices, no transient) and the previous
   pushed frame was also entirely zero, nothing is pushed - an idle, silent session emits nothing.
@@ -274,11 +275,23 @@ namespace warpr
                     f.grains[static_cast<size_t> (i)] = { gp[i], gl[i] };
 
                 f.numGrains = ng;
+
+                // D8: LFO phases (global LFO: its phase; voice LFO: the newest voice's; -1 = idle)
+                float lp[WarprVizFrame::numLfos];
+                synth->readLfoPhases (lp);
+
+                for (int i = 0; i < WarprVizFrame::numLfos; ++i)
+                    f.lfoPhase[static_cast<size_t> (i)] = lp[i];
             }
 
             // every compared quantity is non-negative, so <= 0 means "exactly zero"
+            bool lfoMoving = false;                     // a running LFO keeps the marker alive even when the output is silent
+
+            for (const float p : f.lfoPhase)
+                lfoMoving = lfoMoving || p >= 0.0f;
+
             const bool idle = f.rms <= 0.0f && f.peakL <= 0.0f && f.peakR <= 0.0f && f.numVoices == 0
-                              && f.low <= 0.0f && f.high <= 0.0f && f.transient <= 0.0f;
+                              && f.low <= 0.0f && f.high <= 0.0f && f.transient <= 0.0f && ! lfoMoving;
 
             if (! (idle && lastPushedIdle))
                 fifo.push (f);

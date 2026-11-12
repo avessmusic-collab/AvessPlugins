@@ -16,9 +16,12 @@ namespace kickr
         WAVE / SPECTRUM): an Ableton-Auto-Filter-style view of the master filter.
 
           - response graph on a log-frequency axis (20 Hz .. 20 kHz, -36..+24 dB) with the
-            12 dB LP / HP curve of the current settings and a draggable node: X = cutoff,
-            Y = resonance (up = more), like Ableton's filter display;
-          - LP / HP type buttons (radio), an ON pill (`filterOn`), FREQ / RES knobs.
+            LP / HP curve of the current settings (slope-aware since 2026-09-07: the drawn
+            magnitude is the actual 12 / 18 / 24 dB/oct cascade, resonance on stage 1 only,
+            matching MasterFilter) and a draggable node: X = cutoff, Y = resonance
+            (up = more), like Ableton's filter display;
+          - LP / HP type buttons (radio), 12 / 18 / 24 slope buttons (radio, 2026-09-07),
+            an ON pill (`filterOn`), FREQ / RES knobs.
 
         2026-09-02 (follow-up, user: "make so that the spectrum shows behind the filter when
         filter is on, dont change spectrum page, only add the visual to the filter"): while
@@ -59,22 +62,28 @@ namespace kickr
         float freqForX (float x,  juce::Rectangle<float> g) const;
         void  setTypeFromButtons();
         void  syncTypeButtons();
+        void  setSlopeFromButtons();
+        void  syncSlopeButtons();
 
         juce::AudioProcessorValueTreeState& apvts;
         Analyzer& analyzer;
         juce::Path spectrumFill;   // rebuilt each frame while the filter is on
         std::vector<float> spectrumCols;
-        juce::RangedAudioParameter* pType { nullptr };
-        juce::RangedAudioParameter* pFreq { nullptr };
-        juce::RangedAudioParameter* pRes  { nullptr };
-        juce::RangedAudioParameter* pOn   { nullptr };
+        juce::RangedAudioParameter* pType  { nullptr };
+        juce::RangedAudioParameter* pFreq  { nullptr };
+        juce::RangedAudioParameter* pRes   { nullptr };
+        juce::RangedAudioParameter* pOn    { nullptr };
+        juce::RangedAudioParameter* pSlope { nullptr };   // 2026-09-07 — 12/18/24 dB/oct
 
         juce::TextButton lpButton { "LOW PASS" };
         juce::TextButton hpButton { "HIGH PASS" };
+        juce::TextButton slope12Button { "12" };          // 2026-09-07 — slope radio row
+        juce::TextButton slope18Button { "18" };
+        juce::TextButton slope24Button { "24" };
         std::unique_ptr<KickrToggle> onToggle;
         std::unique_ptr<KickrKnob>   freqKnob, resKnob;
 
-        std::unique_ptr<juce::ParameterAttachment> typeAtt, freqAtt, resAtt, onAtt;
+        std::unique_ptr<juce::ParameterAttachment> typeAtt, freqAtt, resAtt, onAtt, slopeAtt;
         bool dragging { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FilterDisplay)

@@ -6,6 +6,7 @@
 
 #include "Backend/UiBackendImpl.h"
 #include "DSP/MasterStage.h"
+#include "DSP/ModEngine.h"
 #include "DSP/SampleStore.h"
 #include "DSP/ShaperEngine.h"
 #include "DSP/VizAnalyzer.h"
@@ -78,6 +79,9 @@ public:
     /** The shaper's published LUT sets and crossfade state (diagnostics / tests; the backend publishes). */
     warpr::ShaperEngine& getShaperEngine() noexcept { return shaperEngine; }
 
+    /** The LFO tables / mod matrix / lfoCount publication point (D8; the backend publishes). */
+    warpr::ModEngine& getModEngine() noexcept { return modEngine; }
+
     /** Voice engine access for diagnostics, settings (oscillator budget, interpolation quality) and tests. */
     warpr::WarprSynth& getSynth() noexcept { return synth; }
 
@@ -117,6 +121,7 @@ private:
     warpr::RetireList    retireList;
     warpr::SampleStore   sampleStore { retireList };
     warpr::ShaperEngine  shaperEngine { retireList };
+    warpr::ModEngine     modEngine { retireList };
     warpr::ParamSnapshot paramSnapshot;
     UiBackendImpl        backend;
     warpr::WarprSynth    synth { retireList };

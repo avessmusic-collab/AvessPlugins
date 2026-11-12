@@ -82,7 +82,8 @@ public:
     /** PHASE 3.3 — factory + user presets, Randomize / Mutate (message thread only). */
     kickr::PresetManager& getPresetManager() noexcept { return presetManager; }
 
-    static constexpr int kStateVersion = 2;   // v2: SAMPLE group + currentSampleName
+    static constexpr int kStateVersion = 3;   // v2: SAMPLE group + currentSampleName
+                                              // v3: filterSlope (pre-v3 states migrate to 12 dB)
 
     /** 2026-09-02 — the Color Limiter's look-ahead delay at the BASE rate (0 when the
         limiter is off). Read from the raw parameter atomics — safe on either thread.

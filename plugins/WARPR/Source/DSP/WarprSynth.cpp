@@ -24,6 +24,7 @@ namespace warpr
         for (auto& v : voices)
             v.prepare (newSampleRate, *halfband);
 
+        clock.prepare (newSampleRate);
         reset();
     }
 
@@ -51,6 +52,23 @@ namespace warpr
         lastPlayedPitch = -1.0;
         lastVoiceMode = voiceMode;
         vp.bendSemis = 0.0f;
+
+        // D8: global LFO state back to "never run", the clock to its default, the viz phases to idle
+        for (auto& l : gInst)
+            l = LfoInstance {};
+
+        gPrev.fill (0.5f);
+        gStart.fill (0.5f);
+        gEnd.fill (0.5f);
+        voiceMean.fill (0.5f);
+        monoResetPending = false;
+        lastPolyLimit = -1;
+        masterDelta = 0.0f;
+        blockPos = 0;
+        clock.reset();
+
+        for (auto& p : lfoPhaseOut)
+            p.store (-1.0f, std::memory_order_relaxed);
     }
 
     //==========================================================================
@@ -151,6 +169,75 @@ namespace warpr
         // hard-clip-like curve needs 4x, a smooth one 1x).  Same rule: enabled and audible, latched at note-on.
         if (shaper != nullptr && vp.shaperEnable && vp.shaperMix > 0.0f)
             osLatched = std::max (osLatched, std::min (8, shaper->minOsFor (vp.shaperMorph)));
+
+        // ---- D8: adopt pending LFO tables / matrix, read the 10 LFOs' parameters, split them into global / per-voice banks
+        if (modEngine != nullptr)
+        {
+            modEngine->beginBlock();
+            matrixPtr = modEngine->matrix();
+            lfoCountBlock = std::min (modEngine->lfoCount(), (int) kNumLfos);
+
+            for (int i = 0; i < kNumLfos; ++i)
+            {
+                tablePtrs[(size_t) i] = modEngine->tables()[i];
+                lfoParams[(size_t) i] = readLfoParams (pb, i);
+            }
+
+            globalOwnMask = voiceOwnMask = 0;
+
+            for (int i = 0; i < lfoCountBlock; ++i)
+            {
+                const int mode = lfoParams[(size_t) i].mode;
+                const bool voiceType = mode == (int) LfoMode::Retrig || mode == (int) LfoMode::Env;
+                (voiceType ? voiceOwnMask : globalOwnMask) |= 1u << i;
+            }
+
+            modCtx.mm = matrixPtr;
+            modCtx.params = lfoParams.data();
+            modCtx.tables = tablePtrs.data();
+            modCtx.lfoCount = lfoCountBlock;
+            modCtx.voiceOwnMask = voiceOwnMask;
+            modCtx.gStart = gStart.data();
+            modCtx.gEnd = gEnd.data();
+        }
+        else
+        {
+            matrixPtr = nullptr;
+            lfoCountBlock = 0;
+        }
+    }
+
+    float WarprSynth::modulatedMasterGainDb (float baseDb) const noexcept
+    {
+        return applyModulation (ParamId::masterGain, baseDb, masterDelta);
+    }
+
+    void WarprSynth::readLfoPhases (float* out) const noexcept
+    {
+        for (int i = 0; i < kNumLfos; ++i)
+            out[i] = lfoPhaseOut[(size_t) i].load (std::memory_order_relaxed);
+    }
+
+    /** Class N (polyphony, unisonVoices, glideTime) and ampAttack: the destination is sampled once, at note-on.  Sources: the
+        global LFOs' current values; the voice LFOs' value at their start phase (a fresh note has not run yet). */
+    float WarprSynth::latchedValue (ParamId p, float base) const noexcept
+    {
+        if (matrixPtr == nullptr || matrixPtr->empty() || ! matrixPtr->hasDestination (p))
+            return base;
+
+        float srcMod[kNumLfos];
+
+        for (int j = 0; j < kNumLfos; ++j)
+        {
+            if (j >= lfoCountBlock)
+                srcMod[j] = 0.0f;
+            else if (((voiceOwnMask >> j) & 1u) != 0u)
+                srcMod[j] = 2.0f * lfoStartValue (lfoParams[(size_t) j], tablePtrs[(size_t) j]) - 1.0f;
+            else
+                srcMod[j] = 2.0f * gEnd[(size_t) j] - 1.0f;
+        }
+
+        return applyModulation (p, base, matrixPtr->delta (p, srcMod));
     }
 
     //==========================================================================
@@ -355,7 +442,8 @@ namespace warpr
             return nullptr;
 
         const int os = osLatched;
-        int uni = unisonLatched;
+        // D8: unisonVoices is a latched destination - the matrix is sampled here, at note-on
+        int uni = juce::jlimit (1, WarprVoice::maxUnison, juce::roundToInt (latchedValue (ParamId::unisonVoices, (float) unisonLatched)));
         const int budget = oscBudget.load (std::memory_order_relaxed);
 
         // D7b: a granular note is charged by its grain cost (see the header); Classic playback keeps cost = os.
@@ -405,10 +493,10 @@ namespace warpr
         info.unison = uni;
         info.oscCostQ = costQ;
         info.glideFromSemis = lastPlayedPitch >= 0.0 ? lastPlayedPitch : (double) note;
-        info.glideMs = (double) vp.glideMs;
+        info.glideMs = glideNow();
         info.age = ++noteCounter;
 
-        slot->start (info, vp, currentSample);
+        slot->start (info, vp, currentSample, modEngine != nullptr ? &modCtx : nullptr);
         return slot;
     }
 
@@ -421,7 +509,10 @@ namespace warpr
             if (v.isActive() && ! v.ghost && v.note == note)
                 makeGhost (v, ghostFadeSamples());           // (1) the same note
 
-        while (getNumNonGhostVoices() >= polyLimit)
+        // D8: polyphony is a latched destination - sampled here, at note-on (live reduction below uses the plain value)
+        const int limit = juce::jlimit (1, maxVoices, juce::roundToInt (latchedValue (ParamId::polyphony, (float) polyLimit)));
+
+        while (getNumNonGhostVoices() >= limit)
         {
             auto* victim = pickVictim();                     // (2) quietest in release, (3) oldest
             if (victim == nullptr)
@@ -440,14 +531,14 @@ namespace warpr
         {
             if (legato && keysWereAlive)
             {
-                cur->retarget (note, (double) vp.glideMs);              // overlap: pitch only
+                cur->retarget (note, glideNow());              // overlap: pitch only
                 return;
             }
 
             if (! legato && vp.loopMode != 2)
             {
-                cur->retarget (note, (double) vp.glideMs);              // envelope retrigger from the current level
-                cur->retriggerEnvelope (vp.attackMs);
+                cur->retarget (note, glideNow());              // envelope retrigger from the current level
+                cur->retriggerEnvelope (attackNow());
                 cur->setVelocity (velocity);
                 return;
             }
@@ -466,6 +557,9 @@ namespace warpr
 
         if (currentSample == nullptr)
             return;
+
+        if (! keysWereAlive)
+            monoResetPending = true;                 // D8: a new phrase restarts the MONO LFOs (at the next chunk)
 
         if (voiceMode == 0)
             startPoly (note, velocity);
@@ -489,10 +583,10 @@ namespace warpr
         }
         else if (v->note == removedNote)
         {
-            v->retarget ((int) stack[(size_t) (stackCount - 1)], (double) vp.glideMs);
+            v->retarget ((int) stack[(size_t) (stackCount - 1)], glideNow());
 
             if (voiceMode == 1 && vp.loopMode != 2)
-                v->retriggerEnvelope (vp.attackMs);
+                v->retriggerEnvelope (attackNow());
         }
     }
 
@@ -511,10 +605,10 @@ namespace warpr
         }
         else if (! inStack (v->note))
         {
-            v->retarget ((int) stack[(size_t) (stackCount - 1)], (double) vp.glideMs);
+            v->retarget ((int) stack[(size_t) (stackCount - 1)], glideNow());
 
             if (voiceMode == 1 && vp.loopMode != 2)
-                v->retriggerEnvelope (vp.attackMs);
+                v->retriggerEnvelope (attackNow());
         }
     }
 
@@ -680,7 +774,9 @@ namespace warpr
             lastVoiceMode = voiceMode;
         }
 
-        if (voiceMode == 0)
+        // Live reduction happens when the polyphony PARAMETER changes.  Running it every block would also cancel a
+        // note-on limit raised by modulation (the latched class N: voices admitted above the plain value must live).
+        if (voiceMode == 0 && polyLimit != lastPolyLimit)
         {
             while (getNumNonGhostVoices() > polyLimit)
             {
@@ -690,6 +786,8 @@ namespace warpr
                 makeGhost (*victim, ghostFadeSamples());
             }
         }
+
+        lastPolyLimit = polyLimit;
     }
 
     void WarprSynth::renderRange (float* outL, float* outR, int n) noexcept
@@ -697,9 +795,20 @@ namespace warpr
         if (n <= 0)
             return;
 
-        for (auto& v : voices)
-            if (v.isActive())
-                v.render (vp, outL, outR, n);
+        // 32-sample chunks, chunk-outer / voice-inner: the global LFOs advance once per chunk and every voice sees the same
+        // chunk boundaries it always had (a voice renders chunk k of the range exactly as render() would have).
+        for (int off = 0; off < n; off += WarprVoice::chunkSize)
+        {
+            const int m = std::min (WarprVoice::chunkSize, n - off);
+            const ModContext* mc = beginChunkModulation (m);
+
+            for (auto& v : voices)
+                if (v.isActive())
+                    v.renderModulated (vp, outL + off, outR + off, m, off, mc);
+
+            endChunkModulation();
+            blockPos += m;
+        }
 
         if (shaper != nullptr)
         {
@@ -708,6 +817,120 @@ namespace warpr
         }
 
         harvestFinishedVoices();
+    }
+
+    //==========================================================================
+    // D8: per-chunk modulation bookkeeping
+    //==========================================================================
+    const ModContext* WarprSynth::beginChunkModulation (int m) noexcept
+    {
+        if (modEngine == nullptr || lfoCountBlock <= 0)
+            return nullptr;
+
+        if (monoResetPending)
+        {
+            for (int i = 0; i < kNumLfos; ++i)
+                if (lfoParams[(size_t) i].mode == (int) LfoMode::Mono)
+                    gInst[(size_t) i].restart();
+
+            monoResetPending = false;
+        }
+
+        LfoChunkTiming t;
+        t.n = m;
+        t.fs = sampleRate;
+        t.ppq0 = clock.ppqAt (blockPos);
+        t.ppq1 = clock.ppqAt (blockPos + m);
+        t.bpm = clock.bpm();
+        t.barBeats = clock.barBeats();
+
+        LfoBankIO io;
+        io.params = lfoParams.data();
+        io.tables = tablePtrs.data();
+        io.mm = matrixPtr;
+        io.lfoCount = lfoCountBlock;
+        io.timing = t;
+        io.ownMask = globalOwnMask;
+        io.extStart = voiceMean.data();                      // voice LFOs reach the global bank as a one-chunk-late mean
+        io.extEnd = voiceMean.data();
+
+        advanceLfoBank (io, gInst.data(), gPrev.data(), gStart.data(), gEnd.data());
+
+        modCtx.timing = t;
+        return &modCtx;
+    }
+
+    void WarprSynth::endChunkModulation() noexcept
+    {
+        if (modEngine == nullptr || matrixPtr == nullptr || matrixPtr->empty())
+        {
+            masterDelta = 0.0f;
+            return;
+        }
+
+        // mean of the voice-owned LFOs over the sounding voices (feeds the global bank and masterGain one chunk later)
+        const std::uint32_t need = voiceOwnMask & matrixPtr->usedSourceMask();
+
+        for (int i = 0; i < kNumLfos; ++i)
+        {
+            if (((need >> i) & 1u) == 0u)
+                continue;
+
+            float sum = 0.0f;
+            int count = 0;
+
+            for (const auto& v : voices)
+                if (v.isSounding())
+                {
+                    sum += v.lfoEndValue (i);
+                    ++count;
+                }
+
+            voiceMean[(size_t) i] = count > 0 ? sum / (float) count : 0.5f;
+        }
+
+        if (matrixPtr->hasDestination (ParamId::masterGain))
+        {
+            float srcMod[kNumLfos];
+
+            for (int j = 0; j < kNumLfos; ++j)
+                srcMod[j] = j < lfoCountBlock ? 2.0f * gEnd[(size_t) j] - 1.0f : 0.0f;    // gEnd[j] of a voice LFO = its mean
+
+            masterDelta = matrixPtr->delta (ParamId::masterGain, srcMod);
+        }
+        else
+        {
+            masterDelta = 0.0f;
+        }
+    }
+
+    void WarprSynth::publishLfoPhases() noexcept
+    {
+        const WarprVoice* newest = nullptr;
+
+        for (const auto& v : voices)
+            if (v.isSounding() && (newest == nullptr || v.age > newest->age))
+                newest = &v;
+
+        for (int i = 0; i < kNumLfos; ++i)
+        {
+            float ph = -1.0f;
+
+            if (modEngine != nullptr && matrixPtr != nullptr && i < lfoCountBlock && ((matrixPtr->usedSourceMask() >> i) & 1u) != 0u)
+            {
+                if (((voiceOwnMask >> i) & 1u) != 0u)
+                {
+                    if (newest != nullptr)
+                        ph = newest->lfoPhase (i);
+                }
+                else
+                {
+                    ph = gInst[(size_t) i].phase;
+                }
+            }
+
+            lfoPhaseOut[(size_t) i].store (ph, std::memory_order_relaxed);
+        }
     }
 
     void WarprSynth::publishPlayheads() noexcept
@@ -774,6 +997,9 @@ namespace warpr
         flushBacklog();
         applyModeAndPolyphonyChanges();
 
+        clock.beginBlock (transportInfo, numSamples);
+        blockPos = 0;
+
         int pos = 0;
         auto it = midi.begin();
         const auto end = midi.end();
@@ -796,5 +1022,6 @@ namespace warpr
         }
 
         publishPlayheads();
+        publishLfoPhases();
     }
 }

@@ -14,6 +14,8 @@ PluginProcessor::PluginProcessor()
     backend.attachApvts (&apvts);                     // shaperPreset / shaperSymmetry listeners
     synth.attachShaper (&shaperEngine);
     backend.attachShaper (&shaperEngine);             // builds + publishes the initial (identity) LUT set
+    synth.attachModEngine (&modEngine);
+    backend.attachModEngine (&modEngine);             // builds + publishes the default LFO tables, matrix and lfoCount
     drainTimer.begin();
 }
 
@@ -71,6 +73,39 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     paramSnapshot.read (paramBlock);
     synth.setBlockParams (paramBlock);
 
+    // Host transport (ppq / tempo / play state / time signature) for the tempo-synced LFOs; once per block
+    {
+        warpr::TransportInfo info;
+
+        if (auto* head = getPlayHead())
+        {
+            if (const auto pos = head->getPosition())
+            {
+                if (const auto ppq = pos->getPpqPosition())
+                {
+                    info.hasPpq = true;
+                    info.ppq = *ppq;
+                }
+
+                if (const auto bpm = pos->getBpm())
+                {
+                    info.hasBpm = true;
+                    info.bpm = *bpm;
+                }
+
+                info.playing = pos->getIsPlaying();
+
+                if (const auto sig = pos->getTimeSignature())
+                {
+                    info.timeSigNumerator = sig->numerator;
+                    info.timeSigDenominator = sig->denominator;
+                }
+            }
+        }
+
+        synth.setTransport (info);
+    }
+
     // QWERTY keyboard notes queued by the UI (wait-free drain; MidiBuffer keeps events sorted)
     {
         int s1, n1, s2, n2;
@@ -94,7 +129,7 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     float* right = buffer.getWritePointer (1);
 
     synth.renderBlock (left, right, numSamples, midiMessages);
-    master.process (left, right, numSamples, paramBlock.get (warpr::ParamId::masterGain));
+    master.process (left, right, numSamples, synth.modulatedMasterGainDb (paramBlock.get (warpr::ParamId::masterGain)));
     vizAnalyzer.process (left, right, numSamples, backend.vizFifo(), &synth);      // wait-free, no allocation
 
     activeVoices.store (synth.getNumActiveVoices(), std::memory_order_relaxed);
