@@ -961,67 +961,182 @@ function drawFilter() {
    ORGANISM  (audio-reactive; all motion amplitude comes from real DSP data)
    ===================================================================== */
 const co = $("#cvOrg"), ox = co.getContext("2d");
-let orgClear = true, T = 0, swells = [], spikes = [], nextSpikeT = 0, lastTSeq = -1;
+let orgClear = true, T = 0, ripples = [], lastTSeq = -1;
 const V = { low: 0, high: 0, rms: 0, theta: 0, r: 0, dom: 0, sharp: 0 };   // smoothed in the render loop
 const VT = { low: 0, high: 0, rms: 0, theta: 0, r: 0, dom: 0, sharp: 0 };  // targets from the latest "warprViz" frame
-function deform(a, t, s) {
-  // low bands drive big slow lobes, highs drive fine shimmer.  Every term carries a ring-dependent
-  // phase (s*...) so neighbouring rings fall out of step and CROSS each other instead of nesting;
-  // all amplitudes come from real signal energy, so silence still relaxes to perfect circles.
-  let d = V.low  * (0.55*Math.sin(a*2 + t*.9  + s*2.6) + 0.38*Math.sin(a*3 - t*1.5 + 1.7 + s*4.2))
-        + V.high * (0.30*Math.sin(a*5 + t*2.3 + s*6.5) + 0.20*Math.sin(a*9 - t*3.2 + s*9.0)
-                  + 0.12*Math.sin(a*13 + t*4.5 - s*7.5));
-  // cymatics: the dominant frequency picks the lobe count, like a Chladni plate - low notes make
-  // 2-3 broad standing lobes, high notes many fine ones.  Two integer lobe orders are crossfaded
-  // (fr) so a pitch glide morphs between patterns instead of popping.
-  const nf = 2 + V.dom*10, n0 = Math.floor(nf), fr = nf - n0;
-  const E = (V.low + V.high) * (0.5 + 0.9*V.sharp);
-  d += E * 0.75 * ((1-fr)*Math.sin(a*n0 + t*1.2 + s*3.5) + fr*Math.sin(a*(n0+1) + t*1.2 + s*3.5));
-  for (const sw of swells) {
-    const dd = Math.atan2(Math.sin(a - sw.ang), Math.cos(a - sw.ang));
-    d += sw.amp * sw.life * Math.exp(-(dd*dd)/(sw.w*sw.w)) * (1 + 0.8*Math.sin(s*11 + t*2));
-  }
-  // spikes: narrow triangle-sided peaks (linear flanks, not gaussian) that jut out now and then
-  for (const sp of spikes) {
-    const dd = Math.abs(Math.atan2(Math.sin(a - sp.ang), Math.cos(a - sp.ang)));
-    d += sp.amp * sp.life * Math.max(0, 1 - dd/sp.w);
-  }
-  return d;
+/* NEO: a twin-body contour organism (designed interactively in .ideas/mockups/viz-neo.html).
+   Two slowly-metamorphosing 3D bodies, rendered as marching-squares iso-contours of their
+   displacement fields (ultra thin lines), permanently joined by an umbilical throat and
+   continuously trading inside/outside through it (the eversion cycle).  Tremor patches flutter
+   locally, holes breathe open on the outer body, transients ring the surface, and the canvas
+   fades instead of clearing so movement leaves echoes.  All reaction amplitudes come from the
+   real analyzer frames (V.low/high/rms/sharp); "harsh" = spectral sharpness x loudness. */
+function randDir() { const z = Math.random()*2 - 1, a = Math.random()*Math.PI*2, s = Math.sqrt(1 - z*z);
+  return [s*Math.cos(a), z, s*Math.sin(a)]; }
+function rot3(v, k, th) {
+  const c = Math.cos(th), s = Math.sin(th), dot = k[0]*v[0] + k[1]*v[1] + k[2]*v[2];
+  return [ v[0]*c + (k[1]*v[2] - k[2]*v[1])*s + k[0]*dot*(1 - c),
+           v[1]*c + (k[2]*v[0] - k[0]*v[2])*s + k[1]*dot*(1 - c),
+           v[2]*c + (k[0]*v[1] - k[1]*v[0])*s + k[2]*dot*(1 - c) ];
 }
-function drawOrg() {
-  const w = co.width, h = co.height, cx = w*.5, cy = h*.5;
-  for (const k of ["low", "high", "rms", "theta", "r", "dom", "sharp"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .45 : .10);
-  if (orgClear) { ox.fillStyle = "#050505"; ox.fillRect(0, 0, w, h); orgClear = false; }
-  const en = clamp(V.rms * 3, 0, 1);                       // 0 silence .. 1 loud
-  const R = Math.min(w, h) * .26 * (1 + .16*V.low + .08*en), K = 48, N = 130;
-  ox.fillStyle = `rgba(5,5,5,${(0.30 - 0.14*en).toFixed(2)})`; ox.fillRect(0, 0, w, h);   // louder = longer trails
-  // periodic peaks: while sound sustains, a spike erupts from time to time (cadence quickens with
-  // energy, height rides energy + sharpness); the transient handler adds more on hits.
-  if (en > .08 && T > nextSpikeT) {
-    spikes.push({ ang: (V.theta*4 + T*2.4) % (Math.PI*2), amp: .7 + 1.1*en*(0.5 + V.sharp), w: .07 + .05*Math.random(), life: 1 });
-    nextSpikeT = T + .55 + 1.4*(1 - en);
+const NU = [...Array(8)].map(randDir);
+const NPATCH = [...Array(4)].map(randDir), NPAX = [...Array(4)].map(randDir);
+const NHOLE  = [...Array(3)].map(randDir), NHAX = [...Array(3)].map(randDir);
+let RNPATCH = NPATCH, RNHOLE = NHOLE, nHoleR = [0, 0, 0], rotY3 = 0, zoomFit = 1;
+const nSwap = { P: 0, axis: randDir(), ax2: randDir(), eI: 0, outer: 0 };
+
+function orgField(nx, ny, nz, layer) {
+  const o = layer*4;
+  const d0 = nx*NU[o][0]+ny*NU[o][1]+nz*NU[o][2],     d1 = nx*NU[o+1][0]+ny*NU[o+1][1]+nz*NU[o+1][2];
+  const d2 = nx*NU[o+2][0]+ny*NU[o+2][1]+nz*NU[o+2][2], d3 = nx*NU[o+3][0]+ny*NU[o+3][1]+nz*NU[o+3][2];
+  const s = layer ? -1 : 1;                                    // the inner body counter-drifts
+  const f0 = 0.70*Math.sin(2.2*d0 + s*T*0.19) + 0.40*Math.sin(3.1*d1 - s*T*0.13 + 1.2);
+  const f1 = 0.75*Math.sin(2.4*d1 + 2.1*Math.sin(2.0*d2 + s*T*0.11));      // nested fold
+  const f2 = 0.50*Math.sin(3.8*d2 + s*T*0.21) + 0.35*Math.sin(4.7*d3 - s*T*0.14 + 3.0);
+  const w0 = Math.pow(0.5 + 0.5*Math.sin(T*0.050 + layer*2.4), 3);
+  const w1 = Math.pow(0.5 + 0.5*Math.sin(T*0.050 + 2.09 + layer*2.4), 3);
+  const w2 = Math.pow(0.5 + 0.5*Math.sin(T*0.050 + 4.19 + layer*2.4), 3);
+  let d = (w0*f0 + w1*f1 + w2*f2)/(w0 + w1 + w2 + 1e-6);
+  d *= (0.8 + 0.9*V.en)*1.25;                                  // drastic range, slow pace
+  d += V.low*0.40*Math.sin(2.0*d1 + s*T*0.8) + V.high*0.25*Math.sin(5.2*d3 + s*T*2.6);
+  d += V.harsh*0.45*Math.sin(3.4*d2 + s*T*2.1 + 1.0);          // harshness whips extra motion in
+  for (const rp of ripples) {                                  // transient: one soft ring each
+    const c = nx*rp.u[0] + ny*rp.u[1] + nz*rp.u[2];
+    const ang = Math.acos(clamp(c, -1, 1));
+    d += rp.str*Math.exp(-rp.age*1.6)*0.4*Math.sin(6*ang - rp.age*5)*Math.exp(-ang*ang/1.0);
   }
-  for (let k = 1; k <= K; k++) {
-    const s = k/K, wgt = .25 + .75*Math.pow(s, 1.4), twist = s*1.8 * en;
-    // every 4th ring renders as straight chords between the cymatic nodes: a rotating polygonal
-    // lattice woven through the smooth rings (the "linear" layer of the pattern)
-    const nf2 = 2 + V.dom*10, facet = (k % 4 === 0) && en > .05, steps = facet ? Math.max(5, Math.round(nf2)*2) : N;
-    ox.strokeStyle = `rgba(255,255,255,${(.10 + .42*Math.pow(s, 1.3)).toFixed(3)})`; ox.lineWidth = .6 * (SCALE || 1);
-    ox.beginPath();
-    for (let i = 0; i <= steps; i++) {
-      const a = i/steps*Math.PI*2, d = deform(a + twist*Math.sin(T*.31 + s*5.2), T, s);
-      // the sharper the sound, the further the pattern is thrown from the centre
-      const ex = clamp(d*(.30 + .55*en)*(0.8 + 1.1*V.sharp)*wgt, -.9, 2.2);
-      const r = R*s*(1 + ex);
-      const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r*.92;
-      i ? ox.lineTo(px, py) : ox.moveTo(px, py);
+  const tr = (0.14 + 0.5*V.high + 0.25*V.en)*(1 + 1.8*V.harsh);   // tremor patches: fast local flutter
+  for (let k = 0; k < 4; k++) {
+    const c = nx*RNPATCH[k][0] + ny*RNPATCH[k][1] + nz*RNPATCH[k][2];
+    if (c < 0.72) continue;
+    const ang = Math.acos(clamp(c, -1, 1));
+    d += tr*Math.sin(T*(5.5 + k*1.3) + k*2.0 + ang*14)*Math.exp(-ang*ang/0.09);
+  }
+  return clamp(d, -1.5, 1.9);
+}
+
+const NTH = 64, NPH = 96, NLV = 40, NBK = 7;
+const NFLD = new Float32Array((NTH+1)*(NPH+1)), NHM = new Float32Array((NTH+1)*(NPH+1));
+const NSX = new Float32Array((NTH+1)*(NPH+1)), NSY = new Float32Array((NTH+1)*(NPH+1)), NSZ = new Float32Array((NTH+1)*(NPH+1));
+const nidx = (i, j) => i*(NPH+1) + j;
+
+function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef) {
+  const w = co.width, h = co.height, cx2 = w*0.5, cy2 = h*0.5, fov = 3.4;
+  const ry = rotY3*rotMul + layer*1.7, rx = 0.35 + 0.2*Math.sin(T*0.1 + layer);
+  const cosY = Math.cos(ry), sinY = Math.sin(ry), cosX = Math.cos(rx), sinX = Math.sin(rx);
+  const R = Math.min(w, h)*baseR*zoomFit;
+  const amp = (0.40 + 0.50*V.en)*ampMul;
+  let fMin = 1e9, fMax = -1e9;
+
+  for (let i = 0; i <= NTH; i++) {
+    const th = (0.04 + 0.92*i/NTH)*Math.PI, sth = Math.sin(th), cth = Math.cos(th);
+    for (let j = 0; j <= NPH; j++) {
+      const ph = j/NPH*Math.PI*2;
+      const nx0 = sth*Math.cos(ph), ny0 = cth, nz0 = sth*Math.sin(ph);
+      const d = (j === NPH) ? NFLD[nidx(i, 0)] : orgField(nx0, ny0, nz0, layer);
+      const k = nidx(i, j);
+      NFLD[k] = d; if (d < fMin) fMin = d; if (d > fMax) fMax = d;
+      let r = 1 + d*amp;
+
+      // UMBILICAL: the bodies stay connected through one tube; at a crossing it widens into the
+      // eversion throat and they pour through it to trade places
+      let hm = 1;
+      {
+        const conn = 0.38 + 0.62*nSwap.eI;
+        const scx = nx0*nSwap.axis[0] + ny0*nSwap.axis[1] + nz0*nSwap.axis[2];
+        const angS = Math.acos(clamp(scx, -1, 1));
+        const fun = Math.exp(-Math.pow(angS/0.8, 2));
+        r *= 1 + conn*fun*(layer === nSwap.outer ? -(0.72 + 0.2*nSwap.eI) : +(0.95 + 0.35*nSwap.eI));
+        if (layer === nSwap.outer && angS < 0.20 + 0.42*nSwap.eI) hm = 0;
+      }
+      if (layer === nSwap.outer) {                             // ambient holes breathe on the outer body
+        for (let hh = 0; hh < 3; hh++) {
+          if (nHoleR[hh] <= 0.02) continue;
+          const hc = nx0*RNHOLE[hh][0] + ny0*RNHOLE[hh][1] + nz0*RNHOLE[hh][2];
+          const angH = Math.acos(clamp(hc, -1, 1));
+          if (angH < nHoleR[hh]*0.62) hm = 0;
+          r *= 1 - 0.55*Math.exp(-Math.pow(angH/nHoleR[hh], 2)*1.4);
+        }
+      }
+      NHM[k] = hm;
+
+      const px = nx0*r, py = ny0*r, pz = nz0*r;
+      const tx = px*cosY + pz*sinY; let tz = -px*sinY + pz*cosY;
+      const ty = py*cosX - tz*sinX; tz = py*sinX + tz*cosX;
+      const persp = fov/(fov - tz);
+      NSX[k] = cx2 + tx*R*persp; NSY[k] = cy2 + ty*R*persp; NSZ[k] = tz;
+      const e1 = Math.abs(NSX[k] - cx2)/(0.49*w), e2 = Math.abs(NSY[k] - cy2)/(0.46*h);
+      if (e1 > extRef.v) extRef.v = e1; if (e2 > extRef.v) extRef.v = e2;
     }
-    ox.closePath(); ox.stroke();
   }
-  T += .004 + .060 * en;                                   // time only flows when there is signal
-  swells.forEach(s => s.life *= .965); swells = swells.filter(s => s.life > .02);
-  spikes.forEach(s => s.life *= .90);  spikes = spikes.filter(s => s.life > .04);
-  const flux = swells.reduce((a, s) => a + s.amp*s.life, 0);
+
+  const span = Math.max(1e-6, fMax - fMin);
+  const bk = v => Math.min(NBK - 1, Math.max(0, Math.floor(v*NBK)));
+  for (let lv = 0; lv < NLV; lv++) {
+    const L = fMin + (lv + 0.5)/NLV*span;
+    for (let i = 0; i < NTH; i++) for (let j = 0; j < NPH; j++) {
+      const a = nidx(i, j), b = nidx(i, j+1), c = nidx(i+1, j+1), e = nidx(i+1, j);
+      const fa = NFLD[a]-L, fb = NFLD[b]-L, fc = NFLD[c]-L, fe = NFLD[e]-L;
+      const code = (fa>0?8:0)|(fb>0?4:0)|(fc>0?2:0)|(fe>0?1:0);
+      if (code === 0 || code === 15) continue;
+      if (NHM[a]+NHM[b]+NHM[c]+NHM[e] < 3.5) continue;         // inside a puncture
+      const depth = (NSZ[a]+NSZ[c])*0.5;
+      const pts = [];
+      const cut = (k1, k2, f1, f2) => { const t = f1/(f1 - f2); pts.push([NSX[k1]+(NSX[k2]-NSX[k1])*t, NSY[k1]+(NSY[k2]-NSY[k1])*t]); };
+      if ((code&8) !== ((code&4)<<1)) cut(a, b, fa, fb);
+      if ((code&4) !== ((code&2)<<1)) cut(b, c, fb, fc);
+      if ((code&2) !== ((code&1)<<1)) cut(c, e, fc, fe);
+      if (((code&1)<<3) !== (code&8)) cut(e, a, fe, fa);
+      if (pts.length < 2) continue;
+      const dnorm = clamp((depth + 1.2)/2.4, 0, 1);
+      const frill = clamp(Math.abs(NFLD[a])*1.5, 0, 1);
+      const P = paths[bk((0.10 + 0.60*dnorm*dnorm + 0.5*frill*(0.3 + 0.7*dnorm))*alphaMul)];
+      P.moveTo(pts[0][0], pts[0][1]); P.lineTo(pts[1][0], pts[1][1]);
+      if (pts.length === 4) { P.moveTo(pts[2][0], pts[2][1]); P.lineTo(pts[3][0], pts[3][1]); }
+    }
+  }
+}
+
+function drawOrg() {
+  const w = co.width, h = co.height;
+  for (const k of ["low", "high", "rms", "theta", "r", "dom", "sharp"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .45 : .10);
+  V.en = clamp(V.rms*3, 0, 1);
+  const hT = V.rms > 0 ? clamp((0.9*V.sharp + 0.6*V.high)*(0.35 + 0.65*Math.min(1, V.rms*2)), 0, 1) : 0;
+  V.harsh = (V.harsh || 0) + (hT - (V.harsh || 0))*(hT > (V.harsh || 0) ? 0.45 : 0.08);
+  if (orgClear) { ox.fillStyle = "#050505"; ox.fillRect(0, 0, w, h); orgClear = false; }
+
+  // motion echoes: fade instead of clear - louder/harsher = longer trails, silence settles crisp
+  ox.fillStyle = `rgba(5,5,5,${clamp(0.52 - 0.28*V.en - 0.12*V.harsh, 0.10, 0.6).toFixed(2)})`;
+  ox.fillRect(0, 0, w, h);
+
+  const ext = { v: 0 };
+  const paths = [...Array(NBK)].map(() => new Path2D());
+  const f0 = 0.5 + 0.5*Math.cos(Math.PI*nSwap.P);              // eversion sizes cross at f0 = 0.5
+  const big = 0.275, small = 0.135;
+  const R0 = small + (big - small)*f0, R1 = small + (big - small)*(1 - f0);
+  nSwap.eI = Math.pow(4*f0*(1 - f0), 1.5);
+  nSwap.outer = R0 >= R1 ? 0 : 1;
+  orgBody(1, R1, -0.55, 0.9, 0.80 + 0.2*(1 - f0), paths, ext);
+  orgBody(0, R0,  1.0,  1.0, 0.80 + 0.2*f0,       paths, ext);
+  ox.lineWidth = 0.5*(SCALE || 1)*(window.devicePixelRatio || 1);
+  for (let b = 0; b < NBK; b++) {
+    ox.strokeStyle = `rgba(255,255,255,${(0.10 + 0.85*Math.pow((b + 0.5)/NBK, 1.5)).toFixed(3)})`;
+    ox.stroke(paths[b]);
+  }
+  if (ext.v > 1) zoomFit = Math.max(0.3, zoomFit*Math.max(0.85, 1/ext.v));
+  else           zoomFit = Math.min(1, zoomFit + (1 - zoomFit)*0.02);
+
+  // advance: harsh sound whips the motion; the exchange and its axis creep on
+  T += 0.016*(0.25 + 1.7*V.en + 1.6*V.harsh) + 0.025*nSwap.eI;
+  rotY3 += 0.0022 + 0.009*V.en + 0.012*V.harsh;
+  nSwap.P = (nSwap.P + 0.016*(0.012 + 0.055*V.en)) % 2;
+  nSwap.axis = rot3(nSwap.axis, nSwap.ax2, 0.0016 + 0.004*V.en);
+  RNPATCH = NPATCH.map((v, i) => rot3(v, NPAX[i], T*(0.12 + 0.05*i)));
+  RNHOLE  = NHOLE.map((v, i) => rot3(v, NHAX[i], T*(0.05 + 0.03*i)));
+  for (let hh = 0; hh < 3; hh++) nHoleR[hh] = Math.max(0, 0.42*Math.sin(T*0.09 + hh*2.3) - 0.10 + 0.18*V.en);
+  ripples.forEach(r => r.age += 0.03); ripples = ripples.filter(r => r.age < 3);
+
+  const flux = ripples.reduce((a, r) => a + r.str*Math.exp(-r.age*1.6), 0) + nSwap.eI;
   $("#mFlux").textContent = "flux " + flux.toFixed(2);
   $("#mTheta").textContent = `θ ${V.theta.toFixed(3)} · r ${V.r.toFixed(3)}`;
 }
@@ -1043,8 +1158,8 @@ backend.addEventListener("warprViz", f => {
   VT.dom = f.dom || 0; VT.sharp = f.sharp || 0;
   if (f.tseq !== undefined && f.tseq !== lastTSeq) {
     if (lastTSeq >= 0 && f.transient > 0.01) {
-      swells.push({ ang: f.tang || 0, amp: .35 + .55*clamp(f.transient, 0, 1), w: .35 + .55*clamp(f.transient, 0, 1), life: 1 });
-      spikes.push({ ang: f.tang || 0, amp: .8 + .8*clamp(f.transient, 0, 1), w: .08, life: 1 });   // hits spike instantly
+      ripples.push({ u: randDir(), age: 0, str: clamp(f.transient, 0.2, 1) });    // one ring per hit
+      if (ripples.length > 5) ripples.shift();
     }
     lastTSeq = f.tseq;
   }
