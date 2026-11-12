@@ -154,6 +154,7 @@ add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/PhaseD3Tests.cpp
     Source/Tests/PhaseD4Tests.cpp
     Source/Tests/PhaseD5Tests.cpp
+    Source/Tests/PhaseD7Tests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp
     ${WARPR_CORE_SOURCES}
@@ -183,6 +184,13 @@ target_compile_definitions(WARPR_Tests
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1
 )
+
+# The test harness stack-allocates whole processors (34 voices x 8 oscillators x 16-grain pools
+# since D7a), so the default 8 MB main stack overflows in ___chkstk_darwin.  Match the 64 MB
+# stack the Windows test exe already uses.
+if(APPLE)
+    target_link_options(WARPR_Tests PRIVATE "-Wl,-stack_size,0x4000000")
+endif()
 
 # Platform notes
 #   macOS  : WKWebView (built in).  Re-sign installed bundles after install (pattern #27).

@@ -62,6 +62,14 @@ namespace warpr
         int   filterType = 3;
         float filterCutoffHz = 20000.0f, filterRes = 0.0f, filterDriveDb = 0.0f, filterMorph = 0.0f;
         float filterKeyTrack = 0.0f, filterMix = 1.0f;
+
+        // Granular source (D7a).  playMode 1 = Granular; defaults mirror the parameter defaults.
+        int   playMode = 0;
+        int   grainMode = 0;                 // 0 Classic, 1 Loop, 2 Cloud (D7b; plays as Classic)
+        float grainPosition = 0.0f, grainScan = 0.0f, grainScanDist = 0.0f;
+        bool  grainScanLoop = true, grainScanKey = false;
+        float grainSizeMs = 80.0f, grainShape = 0.5f, grainVariation = 0.0f, grainSpread = 0.0f, grainReverse = 0.0f;
+        int   grainDensity = 8;
     };
 
     class WarprVoice
@@ -136,9 +144,32 @@ namespace warpr
         {
             if (sample == nullptr || sample->numFrames <= 0)
                 return 0.0f;
-            const double t = osc[0].pos / (double) sample->numFrames;
+
+            double frames = osc[0].pos;
+
+            // Granular: the read position of the most recently spawned grain (left head), architecture "voices[]"
+            if (granWCur >= 0.5f && osc[0].grain.isRunning())
+                osc[0].grain.newestPosition (frames);
+
+            const double t = frames / (double) sample->numFrames;
             return t < 0.0 ? 0.0f : (t > 1.0 ? 1.0f : (float) t);
         }
+
+        /** Viz feed: position (0..1 of the sample) and window level of every sounding grain of oscillator 0.
+            Audio thread; 0 when the voice is not granular. */
+        int collectGrains (float* posOut, float* levelOut, int maxOut) const noexcept
+        {
+            if (sample == nullptr || ! isSounding() || granWCur <= 0.0f || ! osc[0].grain.isRunning())
+                return 0;
+
+            return osc[0].grain.collect (posOut, levelOut, maxOut, *sample);
+        }
+
+        /** Granular share of the source (playMode crossfade state), 0..1. */
+        float granularShare() const noexcept { return granWCur; }
+
+        /** Diagnostics / tests: the grain engine of unison oscillator `index`. */
+        const GrainEngine& grainEngine (int index) const noexcept { return osc[static_cast<size_t> (index)].grain; }
 
         // state owned by the synth's allocation logic
         int  note = -1;
@@ -177,6 +208,10 @@ namespace warpr
 
         // shaper stage smoothers (per chunk): morph / mix one-pole 10 ms, enable linear ramp 5 ms
         float shaperMorphCur = 0.0f, shaperMixCur = 1.0f, shaperEnCur = 0.0f;
+
+        // granular source (D7a): playMode weight (linear 10 ms ramp), scan / scan-dist one-pole 20 ms per chunk
+        float granWCur = 0.0f, scanCur = 0.0f, scanDistCur = 0.0f;
+        GrainScratch grainScratch;                   // staging shared by this voice's oscillators (rendered one after another)
 
         // fades
         int fadeLeft = 0, fadeTotal = 0;

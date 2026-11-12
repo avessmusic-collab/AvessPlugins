@@ -265,6 +265,15 @@ namespace warpr
                     f.voices[static_cast<size_t> (i)] = { pos[i], lvl[i] };
 
                 f.numVoices = nv;
+
+                // granular voices: the sounding grains (pos 0..1 absolute in the sample, level = window amplitude)
+                float gp[WarprVizFrame::maxGrains], gl[WarprVizFrame::maxGrains];
+                const int ng = synth->readGrains (gp, gl, WarprVizFrame::maxGrains);
+
+                for (int i = 0; i < ng; ++i)
+                    f.grains[static_cast<size_t> (i)] = { gp[i], gl[i] };
+
+                f.numGrains = ng;
             }
 
             // every compared quantity is non-negative, so <= 0 means "exactly zero"

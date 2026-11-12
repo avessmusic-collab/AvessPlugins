@@ -19,6 +19,7 @@ namespace warpr
         sampleRate = newSampleRate;
         halfband = &HalfbandCoeffs::get();            // designed here, never on the audio thread
         (void) SincTable::get();                      // build the interpolation table now, not at the first note
+        (void) GrainWindowTable::get();               // ... and the grain window ramps (D7a)
 
         for (auto& v : voices)
             v.prepare (newSampleRate, *halfband);
@@ -119,6 +120,20 @@ namespace warpr
         vp.filterMorph = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::filterMorph));
         vp.filterKeyTrack = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::filterKeyTrack));
         vp.filterMix = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::filterMix));
+
+        vp.playMode = juce::jlimit (0, 1, pb.getInt (ParamId::playMode));
+        vp.grainMode = juce::jlimit (0, 2, pb.getInt (ParamId::grainMode));
+        vp.grainPosition = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainPosition));
+        vp.grainScan = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainScan));
+        vp.grainScanDist = juce::jlimit (-1.0f, 1.0f, pb.get (ParamId::grainScanDist));
+        vp.grainScanLoop = pb.getBool (ParamId::grainScanLoop);
+        vp.grainScanKey = pb.getBool (ParamId::grainScanKey);
+        vp.grainSizeMs = juce::jlimit (2.0f, 2000.0f, pb.get (ParamId::grainSize));
+        vp.grainShape = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainShape));
+        vp.grainVariation = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainVariation));
+        vp.grainSpread = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainSpread));
+        vp.grainReverse = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainReverse));
+        vp.grainDensity = juce::jlimit (1, 20, pb.getInt (ParamId::grainDensity));
 
         voiceMode = juce::jlimit (0, 2, pb.getInt (ParamId::voiceMode));
         polyLimit = juce::jlimit (1, maxVoices, pb.getInt (ParamId::polyphony));
@@ -697,6 +712,38 @@ namespace warpr
             ++n;
         }
         playheadCount.store (n, std::memory_order_relaxed);
+
+        // sounding grains of the granular voices (oscillator 0 of each), for the waveform grain cloud
+        int ng = 0;
+        for (const auto& v : voices)
+        {
+            if (ng >= maxVizGrains)
+                break;
+            if (! v.isSounding())
+                continue;
+
+            float gp[maxVizGrains], gl[maxVizGrains];
+            const int c = v.collectGrains (gp, gl, maxVizGrains - ng);
+
+            for (int i = 0; i < c; ++i)
+            {
+                grainPos[(size_t) ng].store (gp[i], std::memory_order_relaxed);
+                grainLevel[(size_t) ng].store (gl[i], std::memory_order_relaxed);
+                ++ng;
+            }
+        }
+        grainCount.store (ng, std::memory_order_relaxed);
+    }
+
+    int WarprSynth::readGrains (float* posOut, float* levelOut, int maxOut) const noexcept
+    {
+        const int n = std::min (std::min (grainCount.load (std::memory_order_relaxed), maxVizGrains), maxOut);
+        for (int i = 0; i < n; ++i)
+        {
+            posOut[i]   = grainPos[(size_t) i].load (std::memory_order_relaxed);
+            levelOut[i] = grainLevel[(size_t) i].load (std::memory_order_relaxed);
+        }
+        return n;
     }
 
     int WarprSynth::readPlayheads (float* posOut, float* levelOut, int maxOut) const noexcept

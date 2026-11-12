@@ -70,6 +70,7 @@ namespace warpr
         glideLeft = 0;
         fadeLeft = fadeTotal = 0;
         bendCur = offsetCur = 0.0f;
+        granWCur = scanCur = scanDistCur = 0.0f;
         dcxL = dcxR = dcyL = dcyR = 0.0f;
         region = RegionFold {};
 
@@ -118,6 +119,9 @@ namespace warpr
         shaperMorphCur = vp.shaperMorph;
         shaperMixCur = vp.shaperMix;
         shaperEnCur = vp.shaperEnable ? 1.0f : 0.0f;
+        granWCur = vp.playMode == 1 ? 1.0f : 0.0f;               // a note starts in the current play mode (no fade)
+        scanCur = vp.grainScan;
+        scanDistCur = vp.grainScanDist;
 
         const bool reverse = vp.direction == 1;
         const float norm = 1.0f / std::sqrt ((float) unison);
@@ -129,7 +133,10 @@ namespace warpr
             balanceGains (spreadCur * unisonPosition (u, unison), gl, gr);
             prevGainL[(size_t) u] = gl * norm;
             prevGainR[(size_t) u] = gr * norm;
-            osc[(size_t) u].start (region, reverse, u, lc);
+            // grain PRNG seed: deterministic from the note counter and the oscillator index (no wall-clock entropy)
+            const std::uint32_t seed = static_cast<std::uint32_t> ((info.age + 1u) * 2654435761u)
+                                       ^ (static_cast<std::uint32_t> (u + 1) * 0x9E3779B9u);
+            osc[(size_t) u].start (region, reverse, u, lc, seed);
         }
 
         decimator.reset();
@@ -316,6 +323,42 @@ namespace warpr
 
         region.configure (sd, startCur, endCur, modeFromParam (vp.loopMode));
 
+        // ---- granular source (D7a): playMode weight is a linear 10 ms ramp (both sources run while 0 < w < 1);
+        //      scan / scan distance are one-pole smoothed 20 ms per chunk (the other grain parameters are latched
+        //      by the engine at every spawn).
+        const float granTarget = vp.playMode == 1 ? 1.0f : 0.0f;
+        const float granStep = (float) (nD / (0.010 * sampleRate));
+        const float granW0 = granWCur;
+        granWCur = granTarget > granWCur ? std::min (granTarget, granWCur + granStep)
+                                         : std::max (granTarget, granWCur - granStep);
+
+        scanCur += (vp.grainScan - scanCur) * k20;
+        scanDistCur += (vp.grainScanDist - scanDistCur) * k20;
+        snapNear (scanCur, vp.grainScan, 1.0e-6f);
+        snapNear (scanDistCur, vp.grainScanDist, 1.0e-6f);
+
+        GrainSpan grainSpan;
+        grainSpan.active = granW0 > 0.0f || granWCur > 0.0f;
+        grainSpan.w0 = granW0;
+        grainSpan.w1 = granWCur;
+        grainSpan.mode = vp.grainMode;
+        grainSpan.position = vp.grainPosition;
+        grainSpan.scan = scanCur;
+        grainSpan.scanDist = scanDistCur;
+        grainSpan.scanLoop = vp.grainScanLoop;
+        grainSpan.scanKey = vp.grainScanKey;
+        grainSpan.sizeMs = vp.grainSizeMs;
+        grainSpan.shape = vp.grainShape;
+        grainSpan.variation = vp.grainVariation;
+        grainSpan.spread = vp.grainSpread;
+        grainSpan.reverse = vp.grainReverse;
+        grainSpan.density = vp.grainDensity;
+        grainSpan.reverseDir = vp.direction == 1;
+        grainSpan.pitchSemis = pitchCur;
+        grainSpan.sampleRate = sampleRate;
+        grainSpan.hb = hb;
+        grainSpan.scratch = &grainScratch;
+
         // ---- oscillators -> OS-rate bus
         const int nOS = n * os;
         std::fill_n (busL.begin(), nOS, 0.0f);
@@ -342,7 +385,7 @@ namespace warpr
 
             if (rho0 <= maxRho && rho1 <= maxRho && rho0 > 0.0 && rho1 > 0.0)
                 o.render (sd, region, vp.interpQuality, rho0, rho1, os, pgl, pgr, gl, gr,
-                          busL.data(), busR.data(), nOS, &warpSpan, &shaperSpan);
+                          busL.data(), busR.data(), nOS, &warpSpan, &shaperSpan, &grainSpan);
 
             pgl = gl;
             pgr = gr;

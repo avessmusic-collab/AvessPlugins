@@ -103,6 +103,11 @@ namespace warpr
         /** Fills up to `maxOut` entries (pos 0..1 absolute in the sample, level 0..1); returns the count. */
         int readPlayheads (float* posOut, float* levelOut, int maxOut) const noexcept;
 
+        /** Same wait-free snapshot for the granular voices' sounding grains (D7a): pos 0..1 absolute in the sample,
+            level = the grain's window amplitude.  At most maxVizGrains entries across all voices. */
+        static constexpr int maxVizGrains = 64;
+        int readGrains (float* posOut, float* levelOut, int maxOut) const noexcept;
+
         //======================================================================
         // Settings (non-parameter, message thread -> audio thread, relaxed atomics)
         void setOscillatorBudget (int units) noexcept     { oscBudget.store (units, std::memory_order_relaxed); }
@@ -176,6 +181,8 @@ namespace warpr
 
         std::array<std::atomic<float>, (size_t) maxVoices> playheadPos {}, playheadLevel {};
         std::atomic<int> playheadCount { 0 };
+        std::array<std::atomic<float>, (size_t) maxVizGrains> grainPos {}, grainLevel {};
+        std::atomic<int> grainCount { 0 };
 
         std::atomic<int> oscBudget { 256 };
         std::atomic<int> interpQuality { 0 };

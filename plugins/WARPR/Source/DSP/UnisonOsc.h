@@ -10,18 +10,26 @@
   (WarpStage.h).  Passing `warp == nullptr` (or a span with active == false) is the bit-exact D1 path.
   SHAPER SLOT (phase D4): right after the warp stage (ShaperEngine.h, ShaperOscState).  A null or inactive
   ShaperSpan leaves the value untouched (bit-exact); the ADAA history is dropped while inactive.
+  GRANULAR SOURCE (phase D7a): a GrainSpan (GrainEngine.h) replaces the Classic read as the value that enters the
+  warp stage.  The grain engine is rendered first for the whole span (at min(OS, 2) x the host rate, up-sampled to
+  the OS rate), then every OS sample takes its value from that buffer:  weight 1 = pure granular (the Classic read
+  is skipped and the Classic playhead holds), 0 < weight < 1 = playMode crossfade (both run, linear blend),
+  inactive / nullptr = the bit-exact Classic path.  Phase-domain warps ask `readAt` for a shifted position; in
+  granular mode there is none, so they see the grain value (identity) until the D7b per-grain phase warps.
 
-  The interpolated read is wrapped in `readAt (position)` which also applies the forward-loop seam
-  crossfade / one-shot end fade for THAT read position, so phase warps (which read at P') get the same
-  seam treatment as the plain playhead.
+  The interpolated read is wrapped in `readAtDir (position, direction)` which also applies the forward-loop seam
+  crossfade / one-shot end fade for THAT read position, so phase warps (which read at P') and grains (which
+  travel in their own direction) get the same seam treatment as the plain playhead.
 */
 
+#include "DSP/GrainEngine.h"
 #include "DSP/RegionFold.h"
 #include "DSP/SampleReader.h"
 #include "DSP/ShaperEngine.h"
 #include "DSP/WarpStage.h"
 
 #include <cmath>
+#include <cstdint>
 
 namespace warpr
 {
@@ -49,12 +57,13 @@ namespace warpr
         bool   ended = false;        // One-Shot ran off its end
         WarpOscState warp;           // note-cycle clock + warp kernels (D2)
         ShaperOscState shaper;       // transfer-curve shaper ADAA history (D4)
+        GrainEngine grain;           // granular source (D7a)
 
         /** Index 0 starts exactly at the region start (or end when reversed).  Short (single-cycle
             like) regions spread the start phases of further oscillators by the golden ratio so
             unison is not phase-locked.  `Lc` (source frames per root-note cycle, 0 = unknown) seeds
-            the warp cycle clock: theta0 = frac((pos - lo) / Lc). */
-        void start (const RegionFold& rg, bool reverse, int index, double Lc = 0.0) noexcept
+            the warp cycle clock: theta0 = frac((pos - lo) / Lc).  `grainSeed` seeds the grain PRNG. */
+        void start (const RegionFold& rg, bool reverse, int index, double Lc = 0.0, std::uint32_t grainSeed = 1u) noexcept
         {
             ended = false;
             dir = reverse ? -1 : 1;
@@ -77,27 +86,43 @@ namespace warpr
             }
             warp.reset (theta0);
             shaper.idle();
+            grain.start (grainSeed);
         }
 
         /** Renders `nOS` oscillator-rate samples, ADDING them (times the ramped pan gains) to busL/busR.
             rho0 / rho1 = source frames per HOST sample at the start / end of the span; the per-OS-sample
             step is rho / os, ramped linearly across the span.  `warpSpan` (optional) describes the warp
             stage for this span; nullptr or active == false leaves the read untouched.  `shaperSpan` (optional)
-            describes the transfer-curve shaper stage that follows the warp stage (same null / inactive rule). */
+            describes the transfer-curve shaper stage that follows the warp stage (same null / inactive rule).
+            `grainSpan` (optional) describes the granular source (null / inactive = Classic only). */
         void render (const SampleData& sd, const RegionFold& rg, int quality,
                      double rho0, double rho1, int os,
                      float gL0, float gR0, float gL1, float gR1,
                      float* busL, float* busR, int nOS,
                      const WarpSpan* warpSpan = nullptr,
-                     const ShaperSpan* shaperSpan = nullptr) noexcept
+                     const ShaperSpan* shaperSpan = nullptr,
+                     const GrainSpan* grainSpan = nullptr) noexcept
         {
-            if (ended || nOS <= 0)
+            if (nOS <= 0)
                 return;
 
-            if (! rg.constrain (pos, dir))
+            const bool grainPresent = grainSpan != nullptr;
+            const bool grainActive = grainPresent && grainSpan->active && grainSpan->scratch != nullptr;
+            const bool grainFull = grainActive && grainSpan->w0 >= 1.0f && grainSpan->w1 >= 1.0f;
+
+            if (grainPresent && ! grainActive)
+                grain.idle();
+
+            if (ended && ! grainActive)
+                return;
+
+            // Fully granular: the Classic playhead holds (it is not read), so it is not re-validated either.
+            if (! ended && ! grainFull && ! rg.constrain (pos, dir))
             {
                 ended = true;
-                return;
+
+                if (! grainActive)
+                    return;
             }
 
             const ReadParams rp = makeReadParams (sd, 0.5 * (rho0 + rho1), quality, rg.wrapTaps, rg.lo, rg.hi);
@@ -113,8 +138,9 @@ namespace warpr
             const bool oneShot = rg.mode == RegionFold::Mode::OneShot;
             const bool seamFade = rg.mode == RegionFold::Mode::Forward && rg.xfade > 0.0;
 
-            // Interpolated read at an arbitrary READ position, with the seam / end fades for that position.
-            auto readAt = [&] (double p, float& sL, float& sR) noexcept
+            // Interpolated read at an arbitrary READ position travelling in direction `d`, with the seam / end
+            // fades for that position.
+            auto readAtDir = [&] (double p, int d, float& sL, float& sR) noexcept
             {
                 readFrame (rp, p, sL, sR);
 
@@ -122,7 +148,7 @@ namespace warpr
                 {
                     double t = -1.0, q = 0.0;
 
-                    if (dir > 0)
+                    if (d > 0)
                     {
                         if (p > rg.hi - rg.xfade)
                         {
@@ -153,7 +179,7 @@ namespace warpr
                 }
                 else if (oneShot && rg.endFade > 0.0)
                 {
-                    const double rem = dir > 0 ? rg.hi - p : p - rg.lo;
+                    const double rem = d > 0 ? rg.hi - p : p - rg.lo;
 
                     if (rem < rg.endFade)
                     {
@@ -162,6 +188,52 @@ namespace warpr
                         sR *= g;
                     }
                 }
+            };
+
+            auto readAt = [&] (double p, float& sL, float& sR) noexcept
+            {
+                readAtDir (p, dir, sL, sR);
+            };
+
+            // ---- granular source setup: the whole span is rendered up front ----------------------------
+            GrainOut grainOut;
+            float gw = 0.0f, dgw = 0.0f;
+
+            if (grainActive)
+            {
+                grainOut = grain.render (*grainSpan, rg, sd, 0.5 * (rho0 + rho1), os, nOS, readAtDir);
+                gw = grainSpan->w0;
+                dgw = (grainSpan->w1 - grainSpan->w0) / (float) nOS;
+            }
+
+            float gSL = 0.0f, gSR = 0.0f, curGw = 0.0f;
+
+            // The value entering the warp stage: the Classic read, the grain value, or the playMode crossfade.
+            auto readSrc = [&] (double p, float& sL, float& sR) noexcept
+            {
+                if (! grainActive)
+                {
+                    readAt (p, sL, sR);
+                    return;
+                }
+
+                if (curGw >= 1.0f)
+                {
+                    sL = gSL;
+                    sR = gSR;
+                    return;
+                }
+
+                if (ended)                                            // the Classic part ran off its end: silent
+                {
+                    sL = curGw * gSL;
+                    sR = curGw * gSR;
+                    return;
+                }
+
+                readAt (p, sL, sR);
+                sL += curGw * (gSL - sL);
+                sR += curGw * (gSR - sR);
             };
 
             // ---- warp stage setup ------------------------------------------------------------------
@@ -207,9 +279,17 @@ namespace warpr
             {
                 float sL, sR;
 
+                if (grainActive)
+                {
+                    gSL = grainOut.l[k];
+                    gSR = grainOut.r[k];
+                    curGw = gw;
+                    gw += dgw;
+                }
+
                 if (warpActive)
                 {
-                    warp.process (*warpSpan, wa, wA, wB, wm, pos, dir, step, rg, stereoSrc, readAt, sL, sR);
+                    warp.process (*warpSpan, wa, wA, wB, wm, pos, dir, step, rg, stereoSrc, readSrc, sL, sR);
                     wa += dwa;
                     wA += dwA;
                     wB += dwB;
@@ -217,7 +297,7 @@ namespace warpr
                 }
                 else
                 {
-                    readAt (pos, sL, sR);
+                    readSrc (pos, sL, sR);
                 }
 
                 // ---- SHAPER SLOT (D4): after the warp stage, before pan / accumulation ---------------------
@@ -237,10 +317,12 @@ namespace warpr
                 if (warpPresent)
                     warp.advanceTheta (step * invLc);
 
-                if (! rg.advance (pos, dir, step))
+                if (! grainFull && ! ended && ! rg.advance (pos, dir, step))
                 {
                     ended = true;
-                    break;
+
+                    if (! grainActive)
+                        break;
                 }
 
                 step += dStep;
