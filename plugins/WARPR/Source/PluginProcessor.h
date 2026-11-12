@@ -21,7 +21,8 @@
  * Instrument: MIDI in, ONE stereo output bus, no input bus (pattern #4).
  * Signal path (D4): MIDI -> WarprSynth (32 voices + 2 ghost slots; per oscillator: read -> warp modes 0-43 (44-59 identity)
  * -> shaper (A/B LUT + ADAA)) -> MasterStage (DC block, masterGain, safety knee soft-clip) -> VizAnalyzer (UI feed only).
- * Filter / granular / LFO arrive in D5-D8.
+ * D5a adds the per-voice filter stage (types 0-19) between the voice DC blocker and the amp envelope; the remaining
+ * filter types, granular and the LFO system arrive in D5b-D8.
  * Parameters: all 135 from parameter-spec.md via warpr::createParameterLayout().
  */
 class PluginProcessor : public juce::AudioProcessor

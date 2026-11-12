@@ -111,6 +111,15 @@ namespace warpr
         vp.shaperMorph = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::shaperMorph));
         vp.shaperMix = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::shaperMix));
 
+        vp.filterEnable = pb.getBool (ParamId::filterEnable);
+        vp.filterType = juce::jlimit (0, kNumFilterTypes - 1, pb.getInt (ParamId::filterType));
+        vp.filterCutoffHz = juce::jlimit (20.0f, 20000.0f, pb.get (ParamId::filterCutoff));
+        vp.filterRes = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::filterResonance));
+        vp.filterDriveDb = juce::jlimit (0.0f, 24.0f, pb.get (ParamId::filterDrive));
+        vp.filterMorph = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::filterMorph));
+        vp.filterKeyTrack = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::filterKeyTrack));
+        vp.filterMix = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::filterMix));
+
         voiceMode = juce::jlimit (0, 2, pb.getInt (ParamId::voiceMode));
         polyLimit = juce::jlimit (1, maxVoices, pb.getInt (ParamId::polyphony));
         unisonLatched = juce::jlimit (1, WarprVoice::maxUnison, pb.getInt (ParamId::unisonVoices));

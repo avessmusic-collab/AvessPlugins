@@ -15,7 +15,8 @@
 
     Phase D1 block lives in PhaseD1Tests.cpp (runPhaseD1Tests), phase D2 in PhaseD2Tests.cpp
     (runPhaseD2Tests), phase D3 in PhaseD3Tests.cpp (runPhaseD3Tests; shared class-level machinery in
-    WarpTestKit.h), phase D4 in PhaseD4Tests.cpp (runPhaseD4Tests: shaper curves, LUT/ADAA, backend).
+    WarpTestKit.h), phase D4 in PhaseD4Tests.cpp (runPhaseD4Tests: shaper curves, LUT/ADAA, backend),
+    phase D5 in PhaseD5Tests.cpp (runPhaseD5Tests: standard filters 0-19, response display, switching).
     Flags:  --full  widens the sweeps.
 */
 
@@ -660,6 +661,7 @@ int runPhaseD1Tests (bool full);              // Tests/PhaseD1Tests.cpp
 int runPhaseD2Tests (bool full);              // Tests/PhaseD2Tests.cpp
 int runPhaseD3Tests (bool full);              // Tests/PhaseD3Tests.cpp
 int runPhaseD4Tests (bool full);              // Tests/PhaseD4Tests.cpp
+int runPhaseD5Tests (bool full);              // Tests/PhaseD5Tests.cpp
 
 int main (int argc, char** argv)
 {
@@ -686,6 +688,7 @@ int main (int argc, char** argv)
     failures += runPhaseD2Tests (full);
     failures += runPhaseD3Tests (full);
     failures += runPhaseD4Tests (full);
+    failures += runPhaseD5Tests (full);
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

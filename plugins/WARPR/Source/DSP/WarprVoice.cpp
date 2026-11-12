@@ -28,6 +28,21 @@ namespace warpr
         {
             return fileSampleRate / (440.0 * std::exp2 ((rootSemitones - 69.0) / 12.0));
         }
+
+        /** Filter targets for a chunk: the cutoff follows the voice's glide-smoothed note pitch by `keyTrack`
+            (1 = one-to-one, anchored at note 60).  The stage clamps the result to [10 Hz, 0.45 fs]. */
+        inline FilterTargets filterTargetsFor (const VoiceParams& vp, double pitchSemis) noexcept
+        {
+            FilterTargets ft;
+            ft.enable = vp.filterEnable;
+            ft.type = vp.filterType;
+            ft.cutoffHz = (float) filterdesign::keyTrackedCutoff ((double) vp.filterCutoffHz, (double) vp.filterKeyTrack, pitchSemis);
+            ft.res = vp.filterRes;
+            ft.driveDb = vp.filterDriveDb;
+            ft.morph = vp.filterMorph;
+            ft.mix = vp.filterMix;
+            return ft;
+        }
     }
 
     //==========================================================================
@@ -36,6 +51,7 @@ namespace warpr
         sampleRate = newSampleRate;
         hb = &coeffs;
         dcCoeff = (float) (1.0 - 6.283185307179586 * 5.0 / newSampleRate);
+        filter.prepare (newSampleRate);
         env.prepare (newSampleRate);
         reset();
     }
@@ -63,6 +79,7 @@ namespace warpr
         prevGainL.fill (0.0f);
         prevGainR.fill (0.0f);
         decimator.reset();
+        filter.reset();
         env.reset();
     }
 
@@ -116,6 +133,7 @@ namespace warpr
         }
 
         decimator.reset();
+        filter.snap (filterTargetsFor (vp, pitchCur));         // adopt the current settings, no ramp from stale values
 
         env.setParams (vp.decayMs, vp.sustain, vp.releaseMs);
         env.snapSustain();
@@ -365,7 +383,7 @@ namespace warpr
         env.setParams (vp.decayMs, vp.sustain, vp.releaseMs);
         env.process (envBuf.data(), n);
 
-        // ---- DC block, envelope, velocity, ghost fade, accumulate
+        // ---- voice DC block (in place on the base-rate bus)
         for (int i = 0; i < n; ++i)
         {
             const float xl = busL[(size_t) i], xr = busR[(size_t) i];
@@ -373,7 +391,16 @@ namespace warpr
             const float yr = xr - dcxR + dcCoeff * dcyR;
             dcxL = xl;  dcyL = yl;
             dcxR = xr;  dcyR = yr;
+            busL[(size_t) i] = yl;
+            busR[(size_t) i] = yr;
+        }
 
+        // ---- filter stage (D5a): after the DC blocker, before the envelope.  Key tracking uses the glide-smoothed pitch.
+        filter.process (busL.data(), busR.data(), n, filterTargetsFor (vp, pitchCur));
+
+        // ---- envelope, velocity, ghost fade, accumulate
+        for (int i = 0; i < n; ++i)
+        {
             float g = envBuf[(size_t) i] * velGain;
 
             if (fadeTotal > 0)
@@ -383,8 +410,8 @@ namespace warpr
                     --fadeLeft;
             }
 
-            outL[i] += yl * g;
-            outR[i] += yr * g;
+            outL[i] += busL[(size_t) i] * g;
+            outR[i] += busR[(size_t) i] * g;
         }
 
         if (! env.isActive() || (fadeTotal > 0 && fadeLeft == 0))

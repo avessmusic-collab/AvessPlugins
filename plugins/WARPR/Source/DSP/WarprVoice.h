@@ -2,8 +2,8 @@
 /*
   WarprVoice - one note: N unison oscillators -> sum -> ONE decimator -> DC block -> amp ADSR
   (architecture C12, "Per-voice" chain).  Phase D2 adds the warp stage inside UnisonOsc (modes 0-43
-  real after D3, 44-59 explicit identity); D4 adds the shaper stage right after it.  There is still no
-  filter stage (D5): the per-voice filter slot (between the DC blocker and the envelope) does not exist yet.
+  real after D3, 44-59 explicit identity); D4 adds the shaper stage right after it.  D5a adds the filter
+  stage between the DC blocker and the envelope (types 0-19; see FilterStage.h).
 
   Everything is fixed-size: a voice owns its OS-rate bus (32 base samples x 8x), its oscillators
   and its decimator state.  Nothing is allocated after construction.
@@ -16,6 +16,7 @@
 */
 
 #include "DSP/AmpEnvelope.h"
+#include "DSP/FilterStage.h"
 #include "DSP/HalfbandIIR.h"
 #include "DSP/RegionFold.h"
 #include "DSP/SampleData.h"
@@ -55,6 +56,12 @@ namespace warpr
         const ShaperLutSet* shaperCur = nullptr;
         const ShaperLutSet* shaperPrev = nullptr;        // nullptr when no crossfade is running
         int   shaperFadeBase = 0, shaperFadeLen = 480;
+
+        // Filter stage (D5a).  Defaults mirror the parameter defaults (LP 24, cutoff fully open = transparent).
+        bool  filterEnable = true;
+        int   filterType = 3;
+        float filterCutoffHz = 20000.0f, filterRes = 0.0f, filterDriveDb = 0.0f, filterMorph = 0.0f;
+        float filterKeyTrack = 0.0f, filterMix = 1.0f;
     };
 
     class WarprVoice
@@ -181,6 +188,8 @@ namespace warpr
         OsDecimator decimator;
         float dcxL = 0.0f, dcxR = 0.0f, dcyL = 0.0f, dcyR = 0.0f;
         float dcCoeff = 0.9993f;
+
+        FilterStage filter;                          // D5a: after the DC blocker, before the envelope
 
         AmpEnvelope env;
 

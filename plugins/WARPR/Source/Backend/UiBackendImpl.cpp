@@ -1,4 +1,5 @@
 #include "Backend/UiBackendImpl.h"
+#include "DSP/FilterDesign.h"
 #include "DSP/ShaperPresetLibrary.h"
 
 #include <juce_events/juce_events.h>
@@ -15,6 +16,10 @@ namespace
     constexpr const char* kPresetId   = "shaperPreset";
     constexpr const char* kSymmetryId = "shaperSymmetry";
     constexpr const char* kSelectId   = "shaperCurveSelect";
+
+    // The 8 filter parameters whose change invalidates the response display (Revision::filterResponse).
+    constexpr const char* kFilterIds[8] = { "filterEnable", "filterType", "filterCutoff", "filterResonance",
+                                            "filterDrive", "filterMorph", "filterKeyTrack", "filterMix" };
 
     /** Round trip through the canonical text: the curve the DSP builds from is EXACTLY what the model stores
         (and what a state reload will rebuild). */
@@ -91,6 +96,9 @@ UiBackendImpl::~UiBackendImpl()
     {
         apvts->removeParameterListener (kPresetId, &shaperListener);
         apvts->removeParameterListener (kSymmetryId, &shaperListener);
+
+        for (const char* id : kFilterIds)
+            apvts->removeParameterListener (id, &filterListener);
     }
 }
 
@@ -111,6 +119,9 @@ void UiBackendImpl::attachApvts (juce::AudioProcessorValueTreeState* apvtsToUse)
     {
         apvts->addParameterListener (kPresetId, &shaperListener);
         apvts->addParameterListener (kSymmetryId, &shaperListener);
+
+        for (const char* id : kFilterIds)
+            apvts->addParameterListener (id, &filterListener);
     }
 }
 
@@ -344,10 +355,28 @@ WarprSampleDisplay UiBackendImpl::getSampleDisplay()
 //==============================================================================
 void UiBackendImpl::computeFilterResponse (float* dbOut, int n)
 {
-    // NOT IMPLEMENTED until D5 (FilterResponse::magnitudeDb from the real coefficient code).
-    // There is no filter DSP yet, so report a flat 0 dB line rather than inventing a curve.
-    for (int i = 0; i < n; ++i)
-        dbOut[i] = 0.0f;
+    if (dbOut == nullptr || n <= 0)
+        return;
+
+    // Raw (denormalised) values straight from the atomics: Choice = index, Float = real units.  Without an
+    // APVTS (class-level tests) the parameter defaults are used.
+    auto raw = [this] (const char* id, double fallback)
+    {
+        if (apvts != nullptr)
+            if (auto* a = apvts->getRawParameterValue (id))
+                return static_cast<double> (a->load());
+
+        return fallback;
+    };
+
+    // Same coefficient generators as the voices (FilterDesign); key tracking is note-dependent and not drawn.
+    warpr::FilterResponse::magnitudeDbLogSpaced (juce::roundToInt (raw ("filterType", 3.0)),
+                                                 raw ("filterCutoff", 20000.0),
+                                                 raw ("filterResonance", 0.0),
+                                                 raw ("filterDrive", 0.0),
+                                                 raw ("filterMorph", 0.0),
+                                                 responseSampleRate.load (std::memory_order_relaxed),
+                                                 dbOut, n);
 }
 
 //==============================================================================

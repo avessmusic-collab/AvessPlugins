@@ -38,6 +38,7 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     vizAnalyzer.prepare (sampleRate);
     activeVoices.store (0, std::memory_order_relaxed);
 
+    backend.setSampleRate (sampleRate);                                // the response display is evaluated at this rate
     backend.bumpRevision (WarprUiBackend::Revision::filterResponse);   // sample-rate dependent display
 }
 

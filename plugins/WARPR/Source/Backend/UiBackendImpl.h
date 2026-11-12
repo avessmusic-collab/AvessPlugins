@@ -17,8 +17,12 @@
     - loadSampleFile() decodes on the SampleStore loader thread and publishes through the
       lock-free swap (bumps Revision::sample on success, explains failures with an async alert and
       keeps the previous sample); getSampleDisplay() reads the current sample's name / format / peaks.
+    - FILTER RESPONSE (D5a): computeFilterResponse reads the 8 filter parameters (raw atomics) and evaluates
+      FilterResponse::magnitudeDbLogSpaced at the processor's sample rate (setSampleRate, from prepareToPlay) -
+      the SAME coefficient code the voices run.  Linear types 0-19 only; unimplemented types (20-33, D5b/D5c)
+      and a fully open low-pass report a flat 0 dB.  Revision::filterResponse is bumped (wait-free, from the
+      APVTS listener, any thread) on every change of any of the 8 filter parameters.
   Everything else that needs DSP is a documented no-op until its phase:
-    computeFilterResponse .................... D5      (flat 0 dB, no filter DSP exists yet)
     setLfoShape/setModMatrix publication ..... D8
     presets / settings ....................... D9
   vizFifo() receives real WarprVizFrames from the audio thread since D2 (PluginProcessor ->
@@ -62,6 +66,9 @@ public:
 
     /** The engine the built LUT sets are published to.  Builds and publishes the current curves immediately. */
     void attachShaper (warpr::ShaperEngine* engine);
+
+    /** Host sample rate for the filter response display (the processor's prepareToPlay).  Wait-free, any thread. */
+    void setSampleRate (double fs) noexcept               { responseSampleRate.store (fs > 0.0 ? fs : 48000.0, std::memory_order_relaxed); }
 
     /** MESSAGE THREAD: applies a pending shaperPreset change (loads the preset curve into the selected curve and
         bumps Revision::shaperCurves) and a pending shaperSymmetry change (rebuilds the LUT set). */
@@ -140,8 +147,18 @@ private:
         UiBackendImpl& owner;
     };
 
+    /** Any of the 8 filter parameters changed: bump Revision::filterResponse (a single atomic increment, legal on any thread). */
+    struct FilterParamListener : juce::AudioProcessorValueTreeState::Listener
+    {
+        explicit FilterParamListener (UiBackendImpl& o) noexcept : owner (o) {}
+        void parameterChanged (const juce::String&, float) override { owner.bumpRevision (Revision::filterResponse); }
+        UiBackendImpl& owner;
+    };
+
     WarprVizFifo viz;
     std::array<std::atomic<uint32_t>, 5> revisions {};
+    std::atomic<double> responseSampleRate { 48000.0 };
+    FilterParamListener filterListener { *this };
     warpr::SampleStore* sampleStore = nullptr;
     const warpr::WarprSynth* synthRef = nullptr;
 
