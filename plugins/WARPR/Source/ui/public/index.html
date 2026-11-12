@@ -886,8 +886,8 @@ function drawFilter() {
    ===================================================================== */
 const co = $("#cvOrg"), ox = co.getContext("2d");
 let orgClear = true, T = 0, swells = [], lastTSeq = -1;
-const V = { low: 0, high: 0, rms: 0, theta: 0, r: 0 };          // smoothed in the render loop
-const VT = { low: 0, high: 0, rms: 0, theta: 0, r: 0 };         // targets from the latest "warprViz" frame
+const V = { low: 0, high: 0, rms: 0, theta: 0, r: 0, dom: 0, sharp: 0 };   // smoothed in the render loop
+const VT = { low: 0, high: 0, rms: 0, theta: 0, r: 0, dom: 0, sharp: 0 };  // targets from the latest "warprViz" frame
 function deform(a, t, s) {
   // low bands drive big slow lobes, highs drive fine shimmer.  Every term carries a ring-dependent
   // phase (s*...) so neighbouring rings fall out of step and CROSS each other instead of nesting;
@@ -895,6 +895,12 @@ function deform(a, t, s) {
   let d = V.low  * (0.55*Math.sin(a*2 + t*.9  + s*2.6) + 0.38*Math.sin(a*3 - t*1.5 + 1.7 + s*4.2))
         + V.high * (0.30*Math.sin(a*5 + t*2.3 + s*6.5) + 0.20*Math.sin(a*9 - t*3.2 + s*9.0)
                   + 0.12*Math.sin(a*13 + t*4.5 - s*7.5));
+  // cymatics: the dominant frequency picks the lobe count, like a Chladni plate - low notes make
+  // 2-3 broad standing lobes, high notes many fine ones.  Two integer lobe orders are crossfaded
+  // (fr) so a pitch glide morphs between patterns instead of popping.
+  const nf = 2 + V.dom*10, n0 = Math.floor(nf), fr = nf - n0;
+  const E = (V.low + V.high) * (0.5 + 0.9*V.sharp);
+  d += E * 0.75 * ((1-fr)*Math.sin(a*n0 + t*1.2 + s*3.5) + fr*Math.sin(a*(n0+1) + t*1.2 + s*3.5));
   for (const sw of swells) {
     const dd = Math.atan2(Math.sin(a - sw.ang), Math.cos(a - sw.ang));
     d += sw.amp * sw.life * Math.exp(-(dd*dd)/(sw.w*sw.w)) * (1 + 0.8*Math.sin(s*11 + t*2));
@@ -903,7 +909,7 @@ function deform(a, t, s) {
 }
 function drawOrg() {
   const w = co.width, h = co.height, cx = w*.5, cy = h*.5;
-  for (const k of ["low", "high", "rms", "theta", "r"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .45 : .10);
+  for (const k of ["low", "high", "rms", "theta", "r", "dom", "sharp"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .45 : .10);
   if (orgClear) { ox.fillStyle = "#050505"; ox.fillRect(0, 0, w, h); orgClear = false; }
   const en = clamp(V.rms * 3, 0, 1);                       // 0 silence .. 1 loud
   const R = Math.min(w, h) * .26 * (1 + .16*V.low + .08*en), K = 48, N = 130;
@@ -914,7 +920,9 @@ function drawOrg() {
     ox.beginPath();
     for (let i = 0; i <= N; i++) {
       const a = i/N*Math.PI*2, d = deform(a + twist*Math.sin(T*.31 + s*5.2), T, s);
-      const r = R*s*(1 + d*(.30 + .55*en)*wgt);
+      // the sharper the sound, the further the pattern is thrown from the centre
+      const ex = clamp(d*(.30 + .55*en)*(0.8 + 1.1*V.sharp)*wgt, -.9, 2.2);
+      const r = R*s*(1 + ex);
       const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r*.92;
       i ? ox.lineTo(px, py) : ox.moveTo(px, py);
     }
@@ -941,6 +949,7 @@ let mL = 0, mR = 0, mtL = 0, mtR = 0, lfoPhases = [];
 const toMeter = a => clamp((20*Math.log10(Math.max(a, 1e-5)) + 60) / 60, 0, 1);
 backend.addEventListener("warprViz", f => {
   VT.low = f.low || 0; VT.high = f.high || 0; VT.rms = f.rms || 0; VT.theta = f.theta || 0; VT.r = f.r || 0;
+  VT.dom = f.dom || 0; VT.sharp = f.sharp || 0;
   if (f.tseq !== undefined && f.tseq !== lastTSeq) {
     if (lastTSeq >= 0 && f.transient > 0.01) swells.push({ ang: f.tang || 0, amp: .35 + .55*clamp(f.transient, 0, 1), w: .35 + .55*clamp(f.transient, 0, 1), life: 1 });
     lastTSeq = f.tseq;

@@ -19,6 +19,10 @@
                 tseq++ per hit; `transient` = strength of the strongest hit in this frame period, else 0.
     tang        spectral-centroid surrogate: zero-crossing rate of the HP @ 500 Hz mid signal over 20 ms
                 windows -> log map 200 Hz .. 12 kHz -> 0 .. 2 pi (0 when silent).
+    dom         dominant-frequency surrogate: zero-crossing rate of the DC-blocked (HP @ 10 Hz) raw mid
+                signal over 50 ms windows -> log map 40 Hz .. 8 kHz -> 0..1.  For tonal material this
+                tracks the strongest partial; the UI turns it into the organism's cymatic lobe count.
+    sharp       spectral sharpness: high / (low + high) of the normalised band envelopes (0 when silent).
     theta, r    Mid / Side energies over the frame period:  theta = atan2(rmsSide, rmsMid) in [0, pi/2],
                 r = clamp(sqrt(meanM^2 + meanS^2) * sqrt(2), 0, 1)  (a full-scale mono sine -> 1).
     peakL/R     max |sample| since the previous PUSH (post master gain), the quantity the meters show.
@@ -69,9 +73,12 @@ namespace warpr
             ha1 = static_cast<float> (-2.0 * cw / a0);
             ha2 = static_cast<float> ((1.0 - alpha) / a0);
 
+            aDc = onePole (10.0);
+
             interval = std::max (1, static_cast<int> (std::lround (fs / static_cast<double> (pushHz))));
             refractorySamples = static_cast<int> (std::lround (0.060 * fs));
             zcrWindow = std::max (1, static_cast<int> (std::lround (0.020 * fs)));
+            zcrDomWindow = std::max (1, static_cast<int> (std::lround (0.050 * fs)));
 
             reset();
         }
@@ -88,6 +95,9 @@ namespace warpr
             z500Lp = 0.0f;
             zPos = false;
             zc = zcrCount = zcrLatched = 0;
+            dcLp = 0.0f;
+            zDomPos = false;
+            zDom = zDomCount = zDomLatched = 0;
             tseq = 0;
             frameTransient = 0.0f;
             peakL = peakR = 0.0f;
@@ -162,6 +172,24 @@ namespace warpr
                     zc = 0;
                     zcrCount = 0;
                 }
+
+                // zero-crossing rate of the DC-blocked raw mid signal (dominant frequency; the longer
+                // 50 ms window keeps ~10 Hz resolution down to low fundamentals)
+                dcLp += aDc * (m - dcLp);
+                const float hd = m - dcLp;
+
+                if ((hd > 1.0e-4f && ! zDomPos) || (hd < -1.0e-4f && zDomPos))
+                {
+                    ++zDom;
+                    zDomPos = hd > 0.0f;
+                }
+
+                if (++zDomCount >= zcrDomWindow)
+                {
+                    zDomLatched = zDom;
+                    zDom = 0;
+                    zDomCount = 0;
+                }
             }
 
             accCount += n;
@@ -214,6 +242,15 @@ namespace warpr
                 f.tang = static_cast<float> (6.283185307179586 * t);
             }
 
+            if (f.rms > 0.0f && zDomLatched > 0)
+            {
+                const double hz = static_cast<double> (zDomLatched) * 0.5 / 0.050;
+                f.dom = static_cast<float> (std::log (std::max (40.0, std::min (8000.0, hz)) / 40.0) / std::log (200.0));
+            }
+
+            if (f.low + f.high > 0.0f)
+                f.sharp = f.high / (f.low + f.high);
+
             f.tseq = tseq;
             f.transient = frameTransient;
             f.peakL = peakL;
@@ -260,6 +297,9 @@ namespace warpr
         float z500Lp = 0.0f;
         bool zPos = false;
         int zc = 0, zcrCount = 0, zcrLatched = 0;
+        float aDc = 0.0f, dcLp = 0.0f;
+        bool zDomPos = false;
+        int zDom = 0, zDomCount = 0, zDomLatched = 0, zcrDomWindow = 2205;
         uint32_t tseq = 0;
         float frameTransient = 0.0f;
         float peakL = 0.0f, peakR = 0.0f;

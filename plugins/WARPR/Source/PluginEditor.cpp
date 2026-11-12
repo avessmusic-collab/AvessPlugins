@@ -313,6 +313,7 @@ void PluginEditor::emitViz (const WarprVizFrame& f)
     o->setProperty ("rms", (double) f.rms);          o->setProperty ("theta", (double) f.theta);
     o->setProperty ("r", (double) f.r);              o->setProperty ("transient", (double) f.transient);
     o->setProperty ("tang", (double) f.tang);        o->setProperty ("tseq", (juce::int64) f.tseq);
+    o->setProperty ("dom", (double) f.dom);          o->setProperty ("sharp", (double) f.sharp);
     o->setProperty ("peakL", (double) f.peakL);      o->setProperty ("peakR", (double) f.peakR);
 
     juce::Array<juce::var> voices;

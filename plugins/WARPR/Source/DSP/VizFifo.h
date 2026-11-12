@@ -23,6 +23,8 @@ struct WarprVizFrame
     float r = 0;                            // stereo vector length 0..1
     float transient = 0;                    // strength of the latest detected transient (0 = none this frame)
     float tang = 0;                         // radians: angle on the organism where the swell appears (spectral centroid -> 0..2pi)
+    float dom = 0;                          // dominant frequency, log-mapped 40 Hz..8 kHz -> 0..1 (cymatic lobe count)
+    float sharp = 0;                        // spectral sharpness 0..1 (high-band share of the band energy)
     uint32_t tseq = 0;                      // increments once per detected transient (UI diffs this)
 
     // meters (linear peak since the previous frame, post master gain)
