@@ -1,0 +1,133 @@
+# ============================================================================
+# WARPR v9 - WebView build configuration  (reference for Stage 3 / plugins/WARPR/CMakeLists.txt)
+#
+# This follows the repo's proven WebView plugin layout (see plugins/CORRUPTR/CMakeLists.txt).
+# The root CMakeLists.txt already does project() + add_subdirectory(JUCE) and
+# auto-discovers plugins/*, so do NOT add project() or JUCE here.
+#
+# Stage 2 owns juce_add_plugin + the DSP source list; Stage 3 adds / verifies the
+# WebView pieces marked  [WEBVIEW].  If the plugin is renamed, replace WARPR and
+# rename the "WARPR-WebView2" user-data folder in PluginEditor.cpp.
+#
+# juce8-critical-patterns satisfied here:
+#   #1  juce_generate_juce_header      #3  juce_gui_extra + JUCE_WEB_BROWSER=1
+#   #9  NEEDS_WEB_BROWSER TRUE         #13 check_native_interop.js embedded
+#   #22 IS_SYNTH TRUE (instrument)
+# ============================================================================
+cmake_minimum_required(VERSION 3.15)
+
+# Plugin formats: VST3 + Standalone everywhere; AU is macOS-only.
+set(WARPR_FORMATS VST3 Standalone)
+if(APPLE)
+    list(APPEND WARPR_FORMATS AU)
+endif()
+
+juce_add_plugin(WARPR
+    VERSION 1.0.0
+    COMPANY_NAME "VST Factory"
+    PLUGIN_MANUFACTURER_CODE Vstf
+    PLUGIN_CODE Wrpr
+    FORMATS ${WARPR_FORMATS}
+    PRODUCT_NAME "WARPR"
+    IS_SYNTH TRUE                 # instrument: MIDI in, stereo audio out (pattern #22)
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    NEEDS_WEB_BROWSER TRUE        # [WEBVIEW] required for VST3 to load (pattern #9)
+    NEEDS_WEBVIEW2 TRUE           # [WEBVIEW] bundles the WebView2 loader on Windows (ignored on macOS)
+)
+
+# ---------------------------------------------------------------------------
+# Sources. Stage 2 fills the DSP list; the editor is the Stage 3 file adapted
+# from v9-PluginEditor.h/.cpp.  Suggested layout (see creative-brief Technical Notes):
+# ---------------------------------------------------------------------------
+target_sources(WARPR
+    PRIVATE
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp
+        # Source/DSP/SampleEngine.cpp   Source/DSP/GrainEngine.cpp   Source/DSP/WaveWarpEngine.cpp
+        # Source/DSP/WaveShaper.cpp     Source/DSP/FilterEngine.cpp  Source/DSP/ModulationEngine.cpp
+        # Source/DSP/Voice.cpp          Source/DSP/VizFifo.h         Source/Parameters/ParameterLayout.h
+)
+
+target_include_directories(WARPR
+    PRIVATE
+        Source
+)
+
+# Required JUCE modules
+target_link_libraries(WARPR
+    PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats      # WAV/AIFF decode (AudioFormatManager)
+        juce::juce_audio_plugin_client
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp               # dsp::Oversampling, filters
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra          # [WEBVIEW] WebBrowserComponent
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# Generate JuceHeader.h (JUCE 8 requirement, pattern #1)
+juce_generate_juce_header(WARPR)
+
+# ---------------------------------------------------------------------------
+# [WEBVIEW] UI resources.  Embedded by FILE NAME: index.html -> BinaryData::index_html,
+# js/juce/index.js -> BinaryData::index_js, check_native_interop.js -> BinaryData::check_native_interop_js
+# (Source/ui/public/index.html is v9-ui.html; the two JS files are copied verbatim from
+#  a working plugin, e.g. plugins/CORRUPTR/Source/ui/public/js/juce/.)
+# ---------------------------------------------------------------------------
+juce_add_binary_data(WARPR_UIResources
+    SOURCES
+        Source/ui/public/index.html
+        Source/ui/public/js/juce/index.js
+        Source/ui/public/js/juce/check_native_interop.js
+)
+
+target_link_libraries(WARPR
+    PRIVATE
+        WARPR_UIResources
+)
+
+# ---------------------------------------------------------------------------
+# [WEBVIEW] compile definitions
+# ---------------------------------------------------------------------------
+target_compile_definitions(WARPR
+    PUBLIC
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_WEB_BROWSER=1
+        JUCE_USE_WIN_WEBVIEW2=1      # Windows: WebView2 backend (resource-provider API); no effect on macOS
+        # NEEDS_WEBVIEW2 links WebView2 STATICALLY, so JUCE must call the static entry point;
+        # without this it looks for a missing WebView2Loader.dll and falls back to the legacy IE
+        # control ("Navigation canceled" / white screen).
+        JUCE_USE_WIN_WEBVIEW2_WITH_STATIC_LINKING=1
+        JUCE_USE_CURL=0
+)
+
+# Platform notes
+#   macOS  : WKWebView (built in).  Re-sign installed bundles after install (pattern #27).
+#   Windows: WebView2 runtime; CI needs JUCE_WEBVIEW2_PACKAGE_LOCATION = PARENT of the nuget package dir.
+#   Linux  : not a target for v1.0 (would need webkit2gtk-4.0 via pkg-config).
+
+# ---------------------------------------------------------------------------
+# Optional console QA runner (offline render audit: NaN/inf/DC/discontinuity checks for every
+# warp/filter mode).  Excluded from the default build, mirrors CORRUPTR_Tests.
+# ---------------------------------------------------------------------------
+# add_executable(WARPR_Tests EXCLUDE_FROM_ALL
+#     Source/Tests/RunTests.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp)
+# target_include_directories(WARPR_Tests PRIVATE Source)
+# target_link_libraries(WARPR_Tests PRIVATE WARPR_UIResources
+#     juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_processors juce::juce_audio_utils
+#     juce::juce_core juce::juce_data_structures juce::juce_dsp juce::juce_events juce::juce_graphics
+#     juce::juce_gui_basics juce::juce_gui_extra
+#     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+# target_compile_definitions(WARPR_Tests PUBLIC JUCE_WEB_BROWSER=1 JUCE_USE_CURL=0 JUCE_STANDALONE_APPLICATION=1)

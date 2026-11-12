@@ -1,0 +1,329 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WARPR Neo Blob</title>
+<style>
+  body { margin:0; background:#050505; color:#fff; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; overflow:hidden; }
+  canvas { position:fixed; inset:0; width:100vw; height:100vh; display:block; }
+  #bar { position:fixed; top:0; left:0; right:0; display:flex; gap:16px; align-items:center; padding:10px 16px; z-index:5; }
+  #bar b { letter-spacing:.2em; font-weight:600; }
+  button { background:rgba(10,10,10,.7); color:#fff; border:1px solid #333; font:inherit; padding:6px 14px; letter-spacing:.1em; cursor:pointer; }
+  .hint { color:#777; font-size:11px; }
+  #startOverlay { position:fixed; inset:0; background:rgba(5,5,5,.92); display:flex; flex-direction:column;
+                  align-items:center; justify-content:center; gap:14px; z-index:10; cursor:pointer; }
+  #startOverlay div { letter-spacing:.3em; font-size:20px; }
+  #startOverlay span { color:#888; font-size:12px; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <b>NEO</b>
+  <button id="btnSound">STOP SOUND</button>
+  <span class="hint">keys A W S E D F T G Y H U J K &middot; Z/X octave</span>
+</div>
+<div id="startOverlay"><div>CLICK TO START</div><span>twin-body contour organism &middot; slow metamorphosis &middot; motion echoes</span></div>
+
+<script>
+"use strict";
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+
+/* ---------------------------------- audio ---------------------------------- */
+let actx=null, analyser=null, master=null, soundOn=true, noiseBuf=null, seqT=0;
+function pluck(freq,when,dur,vel,bright){
+  const g=actx.createGain();
+  g.gain.setValueAtTime(0,when); g.gain.linearRampToValueAtTime(vel,when+0.004);
+  g.gain.setTargetAtTime(0,when+0.01,dur*0.3);
+  const o1=actx.createOscillator(); o1.frequency.value=freq; o1.type="sine";
+  const o2=actx.createOscillator(); o2.frequency.value=freq*3.013; o2.type="sine";
+  const g2=actx.createGain(); g2.gain.value=0.22*bright;
+  o1.connect(g); o2.connect(g2); g2.connect(g); g.connect(master);
+  const nb=actx.createBufferSource(); nb.buffer=noiseBuf;
+  const ng=actx.createGain(); ng.gain.setValueAtTime(0.18*vel,when); ng.gain.setTargetAtTime(0,when+0.002,0.012);
+  nb.connect(ng); ng.connect(master);
+  o1.start(when); o1.stop(when+dur); o2.start(when); o2.stop(when+dur); nb.start(when); nb.stop(when+0.08);
+}
+const N2F=n=>440*Math.pow(2,(n-69)/12);
+function schedule(){
+  if(!soundOn) return;
+  const ahead=actx.currentTime+0.2;
+  while(seqT<ahead+4){
+    const t=seqT;
+    [48,55,60,64].forEach(n=>pluck(N2F(n),t,4.5,0.26,0.4));
+    [48,55,60,64,67,72].forEach((n,i)=>pluck(N2F(n),t+5+i*0.55,2.2,0.3,0.6));
+    [36,43].forEach(n=>pluck(N2F(n),t+9,3.5,0.34,0.3));
+    [84,88,91,96,91,88].forEach((n,i)=>pluck(N2F(n),t+9+i*0.45,1.2,0.22,1.0));
+    seqT=t+13.0;
+  }
+}
+const KEYMAP={a:60,w:61,s:62,e:63,d:64,f:65,t:66,g:67,y:68,h:69,u:70,j:71,k:72,o:73,l:74,p:75};
+let kbOct=0;
+addEventListener("keydown",e=>{
+  if(e.repeat||!actx) return;
+  if(e.key==="z"){kbOct=Math.max(-2,kbOct-1);return;}
+  if(e.key==="x"){kbOct=Math.min(2,kbOct+1);return;}
+  const n=KEYMAP[e.key.toLowerCase()];
+  if(n!==undefined) pluck(N2F(n+12*kbOct),actx.currentTime,2.5,0.32,0.7);
+});
+
+/* -------------------------------- analysis -------------------------------- */
+const A={low:0,high:0,rms:0,transient:0,sharp:0,harsh:0};
+const V={low:0,high:0,rms:0,en:0,sharp:0,harsh:0};
+let lowMax=.02,highMax=.02,fastEnv=0,slowEnv=0,cooldown=0,freqData=null,waveData=null;
+const ripples=[];                       // transient rings on the shell
+function analyse(){
+  analyser.getFloatFrequencyData(freqData);
+  analyser.getFloatTimeDomainData(waveData);
+  const fs=actx.sampleRate,nb=freqData.length,hzPer=fs/2/nb;
+  let lowE=0,highE=0;
+  for(let i=1;i<nb;i++){
+    const hz=i*hzPer,m=Math.pow(10,freqData[i]/20);
+    if(hz<200)lowE+=m; else if(hz>4000)highE+=m;
+  }
+  let r=0; for(let i=0;i<waveData.length;i++) r+=waveData[i]*waveData[i];
+  r=Math.sqrt(r/waveData.length);
+  A.rms=r<3e-5?0:Math.min(1,r*2.2);
+  lowMax=Math.max(lowMax*0.9994,lowE); highMax=Math.max(highMax*0.9994,highE);
+  A.low=A.rms>0?lowE/Math.max(lowMax,.02):0;
+  A.high=A.rms>0?highE/Math.max(highMax,.02):0;
+  // HARSHNESS: how aggressive the sound is - bright spectral balance x loudness, plus raw highs.
+  // Drives the violence of the movement (a soft pad barely stirs it, a rasping lead whips it).
+  A.sharp=(lowE+highE)>0? highE/(lowE+highE):0;
+  A.harsh=A.rms>0? clamp((0.9*A.sharp+0.6*A.high)*(0.35+0.65*A.rms*2),0,1):0;
+  fastEnv+=(A.rms-fastEnv)*0.5; slowEnv+=(A.rms-slowEnv)*0.03;
+  if(cooldown>0)cooldown--;
+  if(cooldown===0&&fastEnv>slowEnv*1.8+0.012){
+    const z=Math.random()*2-1,a=Math.random()*Math.PI*2,s=Math.sqrt(1-z*z);
+    ripples.push({u:[s*Math.cos(a),z,s*Math.sin(a)],age:0,str:clamp((fastEnv/(slowEnv+0.012))*0.25,0.2,1)});
+    if(ripples.length>5)ripples.shift();
+    cooldown=10;
+  }
+  for(const k of ["low","high","rms","sharp","harsh"]) V[k]+=(A[k]-V[k])*(A[k]>V[k]?0.45:0.08);
+  V.en=clamp(V.rms*3,0,1);
+}
+
+/* ------------------------------ the twin body ------------------------------ */
+const cv=document.getElementById("cv"), x=cv.getContext("2d");
+let W=0,H=0;
+function fit(){ const r=devicePixelRatio||1; W=cv.width=innerWidth*r; H=cv.height=innerHeight*r; }
+addEventListener("resize",fit); fit();
+
+function randDir(){ const z=Math.random()*2-1,a=Math.random()*Math.PI*2,s=Math.sqrt(1-z*z);
+  return [s*Math.cos(a),z,s*Math.sin(a)]; }
+function rot(v,k,th){
+  const c=Math.cos(th), s=Math.sin(th), dot=k[0]*v[0]+k[1]*v[1]+k[2]*v[2];
+  return [ v[0]*c+(k[1]*v[2]-k[2]*v[1])*s+k[0]*dot*(1-c),
+           v[1]*c+(k[2]*v[0]-k[0]*v[2])*s+k[1]*dot*(1-c),
+           v[2]*c+(k[0]*v[1]-k[1]*v[0])*s+k[2]*dot*(1-c) ];
+}
+const U=[...Array(8)].map(randDir);
+
+/* TREMOR PATCHES: small drifting regions where the surface flutters fast while the rest stays slow */
+const PATCH=[...Array(4)].map(randDir), PAX=[...Array(4)].map(randDir);
+let RPATCH=PATCH;
+
+/* 3D HOLES: punctures that open through the shell (contours suppressed inside, rim pulled in) */
+const HOLE=[...Array(3)].map(randDir), HAX=[...Array(3)].map(randDir);
+let RHOLE=HOLE, holeR=[0,0,0];
+
+/* EVERSION: the two bodies continuously exchange places THROUGH each other.  Phase P runs the
+   cycle: size_0 = small + (big-small)*(0.5+0.5*cos(pi P)), size_1 its complement - they cross at
+   P = 0.5, 1.5, ...  Near a crossing the swap intensity eI = 4 f (1-f) peaks: the shrinking body
+   funnels INWARD along the exchange axis, the growing body extrudes a neck OUTWARD along it, and
+   a hole opens in whichever is currently outside - so the inner one visibly streams out through
+   the throat while the outer one collapses into it. */
+const swap={ P:0, axis:randDir(), ax2:randDir(), eI:0, shrinking:[false,false], outer:0 };
+
+let T=0, rotY=0, zoomFit=1;
+
+/* two independent slowly-metamorphosing fields: the SHELL (outer) and the CORE (inner).
+   Each blends smooth nested-sine shapes with weights drifting on very slow sines - the forms
+   never repeat and never contain a straight edge.  Audio feeds motion: silence nearly freezes T. */
+function field(nx,ny,nz,layer){
+  const o=layer*4;
+  const d0=nx*U[o][0]+ny*U[o][1]+nz*U[o][2],     d1=nx*U[o+1][0]+ny*U[o+1][1]+nz*U[o+1][2];
+  const d2=nx*U[o+2][0]+ny*U[o+2][1]+nz*U[o+2][2], d3=nx*U[o+3][0]+ny*U[o+3][1]+nz*U[o+3][2];
+  const s=layer?-1:1;                                          // the core counter-drifts
+  const f0=0.70*Math.sin(2.2*d0+s*T*0.19)+0.40*Math.sin(3.1*d1-s*T*0.13+1.2);
+  const f1=0.75*Math.sin(2.4*d1+2.1*Math.sin(2.0*d2+s*T*0.11));          // nested fold
+  const f2=0.50*Math.sin(3.8*d2+s*T*0.21)+0.35*Math.sin(4.7*d3-s*T*0.14+3.0);
+  const w0=Math.pow(0.5+0.5*Math.sin(T*0.050+layer*2.4),3);
+  const w1=Math.pow(0.5+0.5*Math.sin(T*0.050+2.09+layer*2.4),3);
+  const w2=Math.pow(0.5+0.5*Math.sin(T*0.050+4.19+layer*2.4),3);
+  let d=(w0*f0+w1*f1+w2*f2)/(w0+w1+w2+1e-6);
+  d*=(0.8+0.9*V.en)*1.25;                                      // drastic range, slow pace
+  d+=V.low*0.40*Math.sin(2.0*d1+s*T*0.8)+V.high*0.25*Math.sin(5.2*d3+s*T*2.6);
+  d+=V.harsh*0.45*Math.sin(3.4*d2+s*T*2.1+1.0);                // harshness whips extra motion in
+  for(const rp of ripples){                                    // transient: one soft ring each
+    const c=nx*rp.u[0]+ny*rp.u[1]+nz*rp.u[2];
+    const ang=Math.acos(clamp(c,-1,1));
+    d+=rp.str*Math.exp(-rp.age*1.6)*0.4*Math.sin(6*ang-rp.age*5)*Math.exp(-ang*ang/1.0);
+  }
+  // tremor patches: fast local flutter (the patch centres drift; everything else keeps the slow pace)
+  const tr=(0.14+0.5*V.high+0.25*V.en)*(1+1.8*V.harsh);
+  for(let k=0;k<4;k++){
+    const c=nx*RPATCH[k][0]+ny*RPATCH[k][1]+nz*RPATCH[k][2];
+    if(c<0.72) continue;
+    const ang=Math.acos(clamp(c,-1,1));
+    d+=tr*Math.sin(T*(5.5+k*1.3)+k*2.0+ang*14)*Math.exp(-ang*ang/0.09);
+  }
+  return clamp(d,-1.5,1.9);
+}
+
+const TH=72, PH=104, LEVELS=46, BUCKETS=7;
+const F=new Float32Array((TH+1)*(PH+1));
+const SX=new Float32Array((TH+1)*(PH+1)), SY=new Float32Array((TH+1)*(PH+1)), SZ=new Float32Array((TH+1)*(PH+1));
+const HM=new Float32Array((TH+1)*(PH+1));                      // hole mask: 0 inside a puncture
+const idx=(i,j)=>i*(PH+1)+j;
+
+function contourBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef){
+  const cx=W/2, cy=H/2, fov=3.4;
+  const ry=rotY*rotMul+layer*1.7, rx=0.35+0.2*Math.sin(T*0.1+layer);
+  const cosY=Math.cos(ry), sinY=Math.sin(ry), cosX=Math.cos(rx), sinX=Math.sin(rx);
+  const R=Math.min(W,H)*baseR*zoomFit;
+  const amp=(0.40+0.50*V.en)*ampMul;
+  let fMin=1e9, fMax=-1e9;
+
+  for(let i=0;i<=TH;i++){
+    const th=(0.04+0.92*i/TH)*Math.PI, sth=Math.sin(th), cth=Math.cos(th);
+    for(let j=0;j<=PH;j++){
+      const ph=j/PH*Math.PI*2;
+      const nx0=sth*Math.cos(ph), ny0=cth, nz0=sth*Math.sin(ph);
+      const d=(j===PH)?F[idx(i,0)]:field(nx0,ny0,nz0,layer);
+      const k=idx(i,j);
+      F[k]=d; if(d<fMin)fMin=d; if(d>fMax)fMax=d;
+      let r=1+d*amp;
+
+      // UMBILICAL: the two bodies are CONNECTED AT ALL TIMES - the inner one extrudes a neck
+      // outward along the exchange axis, the outer one funnels inward and stays open around it,
+      // so one continuous tube joins them.  At a crossing (eI peaks) the tube widens into the
+      // full eversion throat and they pour through it to trade places.
+      let hm=1;
+      {
+        const conn=0.38+0.62*swap.eI;
+        const scx=nx0*swap.axis[0]+ny0*swap.axis[1]+nz0*swap.axis[2];
+        const angS=Math.acos(clamp(scx,-1,1));
+        const fun=Math.exp(-Math.pow(angS/0.8,2));
+        r*=1+conn*fun*(layer===swap.outer? -(0.72+0.2*swap.eI) : +(0.95+0.35*swap.eI));
+        if(layer===swap.outer && angS<0.20+0.42*swap.eI) hm=0; // the permanent opening
+      }
+
+      // ambient HOLES (outer body only): punctures that breathe open with pulled-in lips
+      if(layer===swap.outer){
+        for(let h=0;h<3;h++){
+          if(holeR[h]<=0.02) continue;
+          const hc=nx0*RHOLE[h][0]+ny0*RHOLE[h][1]+nz0*RHOLE[h][2];
+          const angH=Math.acos(clamp(hc,-1,1));
+          if(angH<holeR[h]*0.62) hm=0;                         // puncture: nothing drawn here
+          r*=1-0.55*Math.exp(-Math.pow(angH/holeR[h],2)*1.4);  // the lip folds inward (3D rim)
+        }
+      }
+      HM[k]=hm;
+      const px=nx0*r, py=ny0*r, pz=nz0*r;
+      const tx=px*cosY+pz*sinY; let tz=-px*sinY+pz*cosY;
+      const ty=py*cosX-tz*sinX; tz=py*sinX+tz*cosX;
+      const persp=fov/(fov-tz);
+      SX[k]=cx+tx*R*persp; SY[k]=cy+ty*R*persp; SZ[k]=tz;
+      const e1=Math.abs(SX[k]-cx)/(0.49*W), e2=Math.abs(SY[k]-cy)/(0.42*H);
+      if(e1>extRef.v)extRef.v=e1; if(e2>extRef.v)extRef.v=e2;
+    }
+  }
+
+  const span=Math.max(1e-6,fMax-fMin);
+  const bk=v=>Math.min(BUCKETS-1,Math.max(0,Math.floor(v*BUCKETS)));
+  for(let lv=0;lv<LEVELS;lv++){
+    const L=fMin+(lv+0.5)/LEVELS*span;
+    for(let i=0;i<TH;i++) for(let j=0;j<PH;j++){
+      const a=idx(i,j), b=idx(i,j+1), c=idx(i+1,j+1), e=idx(i+1,j);
+      const fa=F[a]-L, fb=F[b]-L, fc=F[c]-L, fe=F[e]-L;
+      const code=(fa>0?8:0)|(fb>0?4:0)|(fc>0?2:0)|(fe>0?1:0);
+      if(code===0||code===15) continue;
+      if(HM[a]+HM[b]+HM[c]+HM[e]<3.5) continue;                // inside / on the edge of a puncture
+      const depth=(SZ[a]+SZ[c])*0.5;
+      const pts=[];
+      const cut=(k1,k2,f1,f2)=>{ const t=f1/(f1-f2); pts.push([SX[k1]+(SX[k2]-SX[k1])*t, SY[k1]+(SY[k2]-SY[k1])*t]); };
+      if((code&8)!==((code&4)<<1)) cut(a,b,fa,fb);
+      if((code&4)!==((code&2)<<1)) cut(b,c,fb,fc);
+      if((code&2)!==((code&1)<<1)) cut(c,e,fc,fe);
+      if(((code&1)<<3)!==(code&8)) cut(e,a,fe,fa);
+      if(pts.length<2) continue;
+      const dnorm=clamp((depth+1.2)/2.4,0,1);
+      const frill=clamp(Math.abs(F[a])*1.5,0,1);
+      const P=paths[bk((0.10+0.60*dnorm*dnorm+0.5*frill*(0.3+0.7*dnorm))*alphaMul)];
+      P.moveTo(pts[0][0],pts[0][1]); P.lineTo(pts[1][0],pts[1][1]);
+      if(pts.length===4){ P.moveTo(pts[2][0],pts[2][1]); P.lineTo(pts[3][0],pts[3][1]); }
+    }
+  }
+}
+
+function draw(){
+  // MOTION ECHO: the canvas is faded, not cleared - moving lines leave brief ghost trails,
+  // longer when the music is loud, so movement itself becomes visible.  Silence settles crisp.
+  x.fillStyle=`rgba(5,5,5,${clamp(0.52-0.28*V.en-0.12*V.harsh,0.10,0.6).toFixed(2)})`;
+  x.fillRect(0,0,W,H);
+  const ext={v:0};
+  const paths=[...Array(BUCKETS)].map(()=>new Path2D());
+  // eversion sizes: f0 in 0..1 cycles with P; the bodies cross at f = 0.5 and trade outside/inside
+  const f0=0.5+0.5*Math.cos(Math.PI*swap.P);
+  const big=0.275, small=0.135;
+  const R0=small+(big-small)*f0, R1=small+(big-small)*(1-f0);
+  swap.eI=Math.pow(4*f0*(1-f0),1.5);                            // swap intensity peaks at the crossing
+  const dir=Math.sin(Math.PI*swap.P);                           // >0: body 0 shrinking, body 1 growing
+  swap.shrinking=[dir>0, dir<=0];
+  swap.outer=R0>=R1?0:1;
+  contourBody(1, R1, -0.55, 0.9, 0.80+0.2*(1-f0), paths, ext);
+  contourBody(0, R0,  1.0,  1.0, 0.80+0.2*f0,     paths, ext);
+  x.lineWidth=0.5*(devicePixelRatio||1);
+  for(let b=0;b<BUCKETS;b++){
+    x.strokeStyle=`rgba(255,255,255,${(0.10+0.85*Math.pow((b+0.5)/BUCKETS,1.5)).toFixed(3)})`;
+    x.stroke(paths[b]);
+  }
+  if(ext.v>1) zoomFit=Math.max(0.3, zoomFit*Math.max(0.85,1/ext.v));
+  else        zoomFit=Math.min(1, zoomFit+(1-zoomFit)*0.02);
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  if(!actx) return;
+  analyse();
+  ripples.forEach(r=>r.age+=0.03);
+  T+=0.016*(0.25+1.7*V.en+1.6*V.harsh)+0.025*swap.eI;          // harsh sound whips the motion
+  rotY+=0.0022+0.009*V.en+0.012*V.harsh;
+
+  // drift the tremor patches and the holes across the surface
+  RPATCH=PATCH.map((v,i)=>rot(v,PAX[i],T*(0.12+0.05*i)));
+  RHOLE =HOLE.map((v,i)=>rot(v,HAX[i],T*(0.05+0.03*i)));
+  // holes breathe open and shut on their own slow cycles; sound widens them
+  for(let h=0;h<3;h++)
+    holeR[h]=Math.max(0, 0.42*Math.sin(T*0.09+h*2.3)-0.10+0.18*V.en);
+
+  // eversion phase: creeps in silence, flows with sound; the exchange axis itself drifts slowly
+  swap.P=(swap.P+0.016*(0.012+0.055*V.en))%2;
+  swap.axis=rot(swap.axis, swap.ax2, 0.0016+0.004*V.en);
+
+  draw();
+}
+
+document.getElementById("startOverlay").addEventListener("click",function(){
+  this.remove();
+  actx=new AudioContext();
+  master=actx.createGain(); master.gain.value=0.5;
+  analyser=actx.createAnalyser(); analyser.fftSize=4096; analyser.smoothingTimeConstant=0.5;
+  master.connect(analyser); analyser.connect(actx.destination);
+  freqData=new Float32Array(analyser.frequencyBinCount);
+  waveData=new Float32Array(analyser.fftSize);
+  noiseBuf=actx.createBuffer(1,actx.sampleRate*0.1,actx.sampleRate);
+  const nd=noiseBuf.getChannelData(0); for(let i=0;i<nd.length;i++) nd[i]=Math.random()*2-1;
+  seqT=actx.currentTime+0.1;
+  schedule(); setInterval(schedule,1000);
+  loop();
+});
+document.getElementById("btnSound").addEventListener("click",function(){
+  soundOn=!soundOn; this.textContent=soundOn?"STOP SOUND":"PLAY SOUND";
+  if(soundOn&&actx){ seqT=actx.currentTime+0.1; }
+});
+</script>
+</body>
+</html>

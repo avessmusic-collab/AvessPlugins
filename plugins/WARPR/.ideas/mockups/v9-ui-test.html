@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WARPR v9 mockup — tabbed warp/shaper slot, perfect fit</title>
+<style>
+  :root{ --tx:#FFF; --tx2:#8C8C8C; --tx3:#5A5A5A; --arc:#2E2E2E;
+    --rp:14px; --rs:10px; --rc:8px; }
+  *{margin:0;padding:0;box-sizing:border-box;transition:none!important;font-family:Inter,"Helvetica Neue",Helvetica,Arial,sans-serif;user-select:none}
+  html,body{background:#1C1C1C}
+  #plugin{width:1200px;height:820px;margin:24px auto;position:relative;color:var(--tx);
+    display:flex;flex-direction:column;overflow:hidden;border:1px solid #000;border-radius:18px;
+    background:radial-gradient(130% 100% at 50% 0%, #161616 0%, #0A0A0A 55%, #050505 100%);
+    box-shadow:0 30px 80px rgba(0,0,0,.8);}
+  #hdr{height:88px;display:flex;align-items:center;gap:12px;padding:0 18px;flex:none;
+    background:linear-gradient(180deg,#232323,#121212);
+    border-bottom:1px solid #000;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 4px 14px rgba(0,0,0,.5)}
+  #hdr .title{font-size:21px;font-weight:700;letter-spacing:.22em;
+    background:linear-gradient(180deg,#FFF,#9A9A9A);-webkit-background-clip:text;background-clip:text;color:transparent}
+  #hdr .wt{font-size:8px;color:var(--tx3);letter-spacing:.18em;margin-top:8px}
+  .btn{background:linear-gradient(180deg,#2C2C2C,#161616);border:1px solid #000;color:#CFCFCF;border-radius:var(--rc);
+    font-size:9px;font-weight:600;letter-spacing:.12em;padding:6px 12px;cursor:pointer;
+    box-shadow:0 2px 5px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12)}
+  .btn:active,.btn.solid{background:linear-gradient(180deg,#F5F5F5,#C9C9C9);color:#000;box-shadow:inset 0 2px 4px rgba(0,0,0,.35)}
+  #presetName{border:1px solid #000;border-radius:var(--rc);background:linear-gradient(180deg,#070707,#0E0E0E);
+    box-shadow:inset 0 2px 8px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.06);
+    padding:6px 22px;font-size:10px;font-weight:500;letter-spacing:.1em;min-width:150px;text-align:center}
+  .spacer{flex:1}
+  .sec{border:1px solid #000;border-radius:var(--rp);display:flex;flex-direction:column;min-height:0;overflow:hidden;
+    background:linear-gradient(180deg,#1B1B1B,#0D0D0D);
+    box-shadow:0 10px 26px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.07)}
+  .sec-h{display:flex;align-items:center;gap:9px;padding:6px 12px;flex:none;
+    border-bottom:1px solid #000;background:linear-gradient(180deg,#202020,#151515);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+  .sec-h .name{font-size:10px;font-weight:600;letter-spacing:.22em;color:#D8D8D8;text-shadow:0 1px 2px #000}
+  .sec-b{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px 12px;gap:7px}
+  .sub{display:flex;align-items:center;gap:8px;padding-top:7px;margin-top:2px;
+    border-top:1px solid rgba(255,255,255,.07)}
+  .sub .name{font-size:9px;font-weight:600;letter-spacing:.2em;color:#9A9A9A}
+  .onbox{width:13px;height:13px;border:1px solid #000;border-radius:4px;cursor:pointer;flex:none;
+    background:linear-gradient(180deg,#FFF,#BDBDBD);box-shadow:0 1px 3px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.6)}
+  .onbox.off{background:linear-gradient(180deg,#222,#111);box-shadow:inset 0 2px 4px rgba(0,0,0,.8)}
+  select{background:linear-gradient(180deg,#242424,#141414);color:#DDD;border:1px solid #000;border-radius:var(--rc);
+    font-size:9px;font-weight:500;letter-spacing:.06em;padding:5px 7px;cursor:pointer;max-width:215px;
+    box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.1)}
+  .row{display:flex;align-items:flex-end;gap:11px;flex-wrap:nowrap}
+  .lbl{font-size:8px;font-weight:600;letter-spacing:.14em;color:var(--tx2)}
+  .micro{font-size:8px;color:var(--tx3);letter-spacing:.08em;font-variant-numeric:tabular-nums}
+  .screen{position:relative;border:1px solid #000;border-radius:var(--rs);overflow:hidden;
+    background:linear-gradient(180deg,#050505,#0C0C0C);
+    box-shadow:inset 0 4px 14px rgba(0,0,0,.95),inset 0 0 0 1px rgba(255,255,255,.04),0 1px 0 rgba(255,255,255,.06)}
+  .screen::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:var(--rs);
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.02) 0 1px,transparent 1px 3px)}
+  canvas{display:block;width:100%;height:100%}
+  svg.disp{background:linear-gradient(180deg,#050505,#0C0C0C);border:1px solid #000;border-radius:var(--rs);
+    box-shadow:inset 0 4px 14px rgba(0,0,0,.95);display:block}
+  .k{display:inline-flex;flex-direction:column;align-items:center;gap:3px;cursor:ns-resize}
+  .k .wrap{position:relative;width:54px;height:54px}
+  .k.md .wrap{width:64px;height:64px}
+  .k.sm .wrap{width:42px;height:42px}
+  /* VARIANT 3: inset well + raised cap + ticks */
+  .k .well{position:absolute;inset:0;border-radius:50%;
+    background:radial-gradient(circle at 50% 42%,#0A0A0A,#111 58%,#1C1C1C 72%,#0A0A0A);
+    box-shadow:inset 0 3px 9px rgba(0,0,0,.95),inset 0 -1px 0 rgba(255,255,255,.07),0 1px 0 rgba(255,255,255,.05)}
+  .k .tick{position:absolute;left:50%;top:50%;width:1.5px;height:50%;transform-origin:50% 0%;pointer-events:none}
+  .k .tick::after{content:"";position:absolute;bottom:0;left:0;width:1.5px;height:12%;background:rgba(255,255,255,.5)}
+  .k .well{z-index:2}
+  .k .mring{z-index:1}
+  .k .cap{position:absolute;inset:16%;border-radius:50%;border:1px solid #000;
+    background:radial-gradient(circle at 38% 26%,#4A4A4A,#1C1C1C 58%,#0C0C0C);
+    box-shadow:0 4px 9px rgba(0,0,0,.85),inset 0 1.5px 1.5px rgba(255,255,255,.3),inset 0 -3px 5px rgba(0,0,0,.75)}
+  .k .ind{position:absolute;left:50%;top:50%;width:2.5px;height:34%;background:#FFF;border-radius:2px;
+    transform-origin:50% 0%}
+  .k .kl{font-size:8px;font-weight:600;letter-spacing:.12em;color:var(--tx2)}
+  .k .kv{font-size:9px;font-weight:500;font-variant-numeric:tabular-nums;color:#EFEFEF;border-radius:6px;
+    background:linear-gradient(180deg,#060606,#0D0D0D);border:1px solid #000;padding:1px 7px;
+    box-shadow:inset 0 2px 5px rgba(0,0,0,.9)}
+  /* --- Serum-style mod assignment: thin WHITE LINE RIM --- */
+  .mring{position:absolute;inset:-4px;border-radius:50%;pointer-events:auto;cursor:ns-resize;
+    -webkit-mask:radial-gradient(closest-side,transparent 90%,#000 91%);
+    mask:radial-gradient(closest-side,transparent 90%,#000 91%)}
+  .mbadge{position:absolute;top:-9px;right:-9px;width:15px;height:15px;border-radius:5px;z-index:3;
+    background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;border:1px solid #000;
+    font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:ns-resize;
+    box-shadow:0 2px 5px rgba(0,0,0,.6)}
+  #dragGhost{position:fixed;z-index:99;width:22px;height:22px;border-radius:6px;pointer-events:none;
+    background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;border:1px solid #000;
+    font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;
+    box-shadow:0 4px 12px rgba(0,0,0,.7)}
+  .k.droptarget .well{box-shadow:0 0 0 2px #FFF,inset 0 3px 9px rgba(0,0,0,.95)}
+  .tgv{display:flex;flex-direction:column;border:1px solid #000;border-radius:var(--rc);overflow:hidden;
+    box-shadow:0 2px 4px rgba(0,0,0,.5);align-self:center}
+  .tgv span{padding:6px 8px;font-size:7px;font-weight:700;letter-spacing:.08em;cursor:pointer;text-align:center;
+    background:linear-gradient(180deg,#232323,#141414);color:#9A9A9A;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+  .tgv span.on{background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;box-shadow:inset 0 2px 4px rgba(0,0,0,.3)}
+  .tg{display:inline-flex;border:1px solid #000;border-radius:var(--rc);overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,.5)}
+  .tg span{padding:5px 10px;font-size:8px;font-weight:700;letter-spacing:.1em;cursor:pointer;
+    background:linear-gradient(180deg,#232323,#141414);color:#9A9A9A;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+  .tg span.on{background:linear-gradient(180deg,#F5F5F5,#C4C4C4);color:#000;box-shadow:inset 0 2px 4px rgba(0,0,0,.3)}
+  .stepper{display:inline-flex;align-items:center;border:1px solid #000;border-radius:var(--rc);overflow:hidden;box-shadow:0 2px 4px rgba(0,0,0,.5)}
+  .stepper b{padding:4px 10px;font-size:10px;font-weight:600;font-variant-numeric:tabular-nums;
+    background:linear-gradient(180deg,#060606,#0E0E0E);color:#FFF;box-shadow:inset 0 2px 6px rgba(0,0,0,.9)}
+  .stepper span{padding:4px 8px;cursor:pointer;font-size:9px;color:#BBB;background:linear-gradient(180deg,#242424,#141414)}
+  #main{display:flex;gap:10px;padding:10px 16px 0;flex:1;min-height:0}
+  #leftcol{width:500px;flex:none;display:flex;min-height:0}
+  #rightcol{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+  .k.sm{gap:2px}
+  .k.sm .kv{font-size:8px;padding:0 5px}
+  .k.sm .kl{font-size:7.5px}
+  .k.xs{gap:2px}
+  .k.xs .wrap{width:32px;height:32px}
+  .k.xs .dial{inset:5px}
+  .k.xs .kl{font-size:7px}
+  .k.xs .kv{font-size:8px;padding:0 4px}
+  #bottombar{height:84px;margin-top:10px;border-top:1px solid #000;display:flex;align-items:center;gap:15px;padding:0 18px;flex:none;
+    background:linear-gradient(180deg,#191919,#0D0D0D);box-shadow:inset 0 1px 0 rgba(255,255,255,.07)}
+  .meter{display:flex;gap:3px;height:34px;align-items:flex-end}
+  .meter i{display:block;width:10px;border:1px solid #000;border-radius:4px;position:relative;height:100%;overflow:hidden;
+    background:linear-gradient(180deg,#060606,#0C0C0C);box-shadow:inset 0 2px 6px rgba(0,0,0,.9)}
+  .meter i::after{content:"";position:absolute;left:1px;right:1px;bottom:1px;border-radius:3px;background:linear-gradient(0deg,#777,#FFF)}
+  .meter i:nth-child(1)::after{height:62%}.meter i:nth-child(2)::after{height:55%}
+  .vdiv{width:1px;align-self:stretch;background:#000;box-shadow:1px 0 0 rgba(255,255,255,.06);margin:4px 0}
+  .hint{font-size:8px;letter-spacing:.12em;color:var(--tx3)}
+  .pt{fill:#111;stroke:#E8E8E8;stroke-width:1.3;cursor:pointer}
+  .grid line{stroke:#1E1E1E;stroke-width:1}
+  #stage{position:relative;flex:1;min-height:0}
+  #stage .corner{position:absolute;pointer-events:none;z-index:2}
+  .kgrid{display:flex;flex-wrap:wrap;gap:5px 9px;justify-content:space-between}
+  #lfoEd{flex:1;min-width:0;height:100%;cursor:crosshair}
+  #fxrow .sec-h{gap:6px;padding:6px 8px}
+  #fxrow .tg span{padding:4px 6px}
+  #fxrow select{padding:4px 5px}
+  .lfopt{fill:#111;stroke:#FFF;stroke-width:1.6;cursor:grab}
+  .lfoc{fill:#0A0A0A;stroke:rgba(255,255,255,.55);stroke-width:1.2;cursor:ns-resize}
+  .lfogrid line{stroke:#1C1C1C;stroke-width:1}
+  .lfogrid line.maj{stroke:#262626}
+</style>
+</head>
+<body>
+<div id="plugin">
+
+  <!-- HEADER -->
+  <div id="hdr">
+    <div class="title">WARPR</div><div class="wt">WORKING TITLE</div>
+    <div class="spacer"></div>
+    <button class="btn">◀</button><div id="presetName">Init</div><button class="btn">▶</button>
+    <button class="btn solid">SAVE</button><button class="btn">LOAD</button>
+    <div class="spacer"></div>
+    <button class="btn">⚙</button>
+    <span class="k sm" data-l="MASTER" data-v="0.0 dB" data-r="0"></span>
+    <div class="meter" style="height:46px"><i></i><i></i></div>
+  </div>
+
+  <div id="main">
+
+    <!-- MERGED SOURCE PANEL -->
+    <div id="leftcol">
+      <div class="sec" style="flex:1">
+        <div class="sec-h">
+          <span class="name">SOURCE</span>
+          <button class="btn" style="padding:4px 9px">LOAD</button>
+          <span class="micro">NO SAMPLE</span>
+          <div class="spacer"></div>
+          <div class="tg" id="pmode"><span class="on">CLASSIC</span><span>GRANULAR</span></div>
+        </div>
+        <div class="sec-b" style="gap:6px">
+
+          <!-- sample -->
+          <div class="screen" style="min-height:96px;flex:1"><canvas id="cvSample"></canvas>
+            <span class="micro" id="adsrLabel" style="position:absolute;top:3px;left:7px;z-index:2">A 4ms · D 180ms · S 70% · R 240ms</span>
+          </div>
+          <div id="classicRow" class="row" style="align-items:flex-end;justify-content:space-between">
+            <span class="k sm" data-l="START" data-v="0.0%" data-r="-135"></span>
+            <span class="k sm" data-l="END" data-v="100%" data-r="135"></span>
+            <div class="vdiv"></div>
+            <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
+              <span class="lbl">TUNE</span>
+              <div class="stepper"><span>−</span><b>C3</b><span>+</span></div>
+              <div style="display:flex;gap:8px">
+                <span class="k xs" data-l="SEMI" data-v="0" data-r="0"></span>
+                <span class="k xs" data-l="FINE" data-v="0 ct" data-r="0"></span>
+              </div>
+            </div>
+            <div class="vdiv"></div>
+            <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
+              <span class="lbl">LOOP</span>
+              <select style="max-width:92px"><option>FWD LOOP</option><option>PING-PONG</option><option>ONE-SHOT</option></select>
+              <div class="tg"><span class="on">▶</span><span>◀</span></div>
+            </div>
+          </div>
+          <div id="granRow" style="display:none;flex-direction:column;gap:7px">
+            <div class="row" style="align-items:center">
+              <div class="tg" id="grainMode"><span class="on">CLASSIC</span><span>LOOP</span><span>CLOUD</span></div>
+              <span class="lbl" style="margin-left:6px">SCAN:</span>
+              <div class="tg"><span class="on">LOOP</span><span>OFF</span></div>
+              <div class="tg"><span>KEY</span><span class="on">OFF</span></div>
+              <div class="spacer"></div>
+              <span class="hint">GRAIN ENGINE</span>
+            </div>
+            <div class="kgrid">
+              <span class="k xs" data-l="POSITION" data-v="32%" data-r="-60"></span>
+              <span class="k xs" data-l="SCAN" data-v="0%" data-r="0"></span>
+              <span class="k xs" data-l="DIST" data-v="25%" data-r="-45"></span>
+              <span class="k xs" data-l="SIZE" data-v="80 ms" data-r="-45"></span>
+              <span class="k xs" id="grainShapeK" data-l="SHAPE" data-v="50%" data-r="0"></span>
+              <span class="k xs" data-l="VAR" data-v="10%" data-r="-105"></span>
+              <span class="k xs" data-l="SPREAD" data-v="65%" data-r="50"></span>
+              <span class="k xs" id="grainModeK" data-l="—" data-v="–" data-r="-135" style="opacity:.35;pointer-events:none"></span>
+            </div>
+          </div>
+
+          <!-- envelope (single ADSR) -->
+          <div class="sub">
+            <span class="name">ENVELOPE</span>
+            <div class="spacer"></div>
+            <span class="hint">CURVE ON WAVEFORM ↑</span>
+          </div>
+          <div class="row" style="justify-content:space-evenly;align-items:flex-end;padding-bottom:2px">
+            <span class="k md" data-l="A" data-v="4 ms" data-r="-120"></span>
+            <span class="k md" data-l="D" data-v="180 ms" data-r="-60"></span>
+            <span class="k md" data-l="S" data-v="70%" data-r="60"></span>
+            <span class="k md" data-l="R" data-v="240 ms" data-r="-50"></span>
+          </div>
+
+          <!-- WARP / SHAPER tabbed slot -->
+          <div class="sub">
+            <div class="tg" id="fxTabs"><span class="on">WARP</span><span>SHAPER</span></div>
+            <div class="spacer"></div>
+            <span class="hint" id="fxHint">WAVE WARP ENGINE</span>
+          </div>
+          <div id="pageWarp" style="display:flex;flex-direction:column;gap:8px">
+            <div class="row" style="align-items:center">
+              <div class="onbox" onclick="this.classList.toggle('off')"></div>
+              <select id="warpMode" style="flex:1;max-width:none"></select>
+              <span class="lbl">OS</span>
+              <select style="max-width:56px"><option>1X</option><option selected>2X</option><option>4X</option><option>8X</option></select>
+            </div>
+            <div class="row" style="align-items:flex-end;justify-content:space-between;padding:0 2px">
+              <span class="k md" data-l="WARP" data-v="38%" data-r="-33"></span>
+              <span class="k sm" data-l="A" data-v="50%" data-r="0"></span>
+              <span class="k sm" data-l="B" data-v="0%" data-r="-135"></span>
+              <div style="display:flex;flex-direction:column;gap:4px;align-items:center">
+                <span class="lbl">MOD OSC</span>
+                <select style="max-width:90px"><option>SINE</option><option>TRI</option><option>SAW</option><option>SQ</option><option selected>SAMPLE</option></select>
+              </div>
+              <span class="k sm" data-l="RATIO" data-v="2.0x" data-r="-45"></span>
+              <span class="k sm" data-l="MIX" data-v="100%" data-r="135"></span>
+            </div>
+          </div>
+          <div id="pageShaper" style="display:none;flex-direction:column;gap:8px">
+            <div class="row" style="align-items:center">
+              <div class="onbox" onclick="this.classList.toggle('off')"></div>
+              <div class="tg"><span class="on">A</span><span>B</span></div>
+              <select style="flex:1;max-width:none"><option>SOFT SAT</option><option>HARD CLIP</option><option>TUBE</option><option>DIODE</option><option>FOLD</option><option>SINE</option><option>TRI</option><option>EXPO</option><option selected>CUSTOM</option></select>
+              <button class="btn" style="padding:3px 7px">RESET</button>
+              <button class="btn" style="padding:3px 7px">NORM</button>
+            </div>
+            <div class="row" style="align-items:center;justify-content:space-between;padding:0 2px">
+              <svg id="shaperSvg" class="disp" viewBox="0 0 200 200" style="height:96px;aspect-ratio:1">
+                <g class="grid">
+                  <line x1="100" y1="0" x2="100" y2="200"/><line x1="0" y1="100" x2="200" y2="100"/>
+                </g>
+                <path d="M 0 188 C 55 185 70 150 100 100 C 130 50 145 15 200 12" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="7"/>
+                <path d="M 0 188 C 55 185 70 150 100 100 C 130 50 145 15 200 12" fill="none" stroke="#FFF" stroke-width="2"/>
+                <circle class="pt" cx="62" cy="166" r="6"/><circle class="pt" cx="100" cy="100" r="6"/><circle class="pt" cx="138" cy="34" r="6"/>
+              </svg>
+              <span class="k md" data-l="MORPH" data-v="A" data-r="-135"></span>
+              <span class="k sm" data-l="MIX" data-v="100%" data-r="135"></span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: ORGANISM STAGE + FILTER STRIP -->
+    <div id="rightcol">
+      <div id="stage" class="screen">
+        <canvas id="cvOrg"></canvas>
+        <span class="micro corner" style="top:6px;left:10px">θ 0.000 · r 1.000</span>
+        <span class="micro corner" style="top:6px;right:10px" id="mFlux">flux 0.00</span>
+        <span class="micro corner" style="bottom:6px;right:10px">POST-WARP</span>
+      </div>
+      <!-- FILTER + LFO side by side (filter's old strip split) -->
+      <div id="fxrow" style="display:flex;gap:10px;height:218px;flex:none">
+        <div class="sec" style="flex:1.12;min-width:0;order:2">
+          <div class="sec-h">
+            <div class="onbox" onclick="this.classList.toggle('off')"></div>
+            <span class="name">FILTER</span>
+            <button class="btn" style="padding:3px 7px">◀</button>
+            <select id="filterType" style="flex:1;max-width:none"></select>
+            <button class="btn" style="padding:3px 7px">▶</button>
+          </div>
+          <div class="sec-b" style="gap:5px;padding:4px 8px">
+            <div class="screen" style="flex:1;min-height:0;cursor:crosshair"><canvas id="cvFilter"></canvas>
+              <span class="micro" id="fltReadout" style="position:absolute;top:3px;left:7px;z-index:2">1.2 kHz · Q 22%</span>
+              <span class="micro" style="position:absolute;top:3px;right:7px;z-index:2">DRAG = CUTOFF / RES</span>
+            </div>
+            <div class="row" style="justify-content:space-evenly;align-items:flex-end">
+              <span class="k xs" id="kCutoff" data-l="CUTOFF" data-v="1.2 kHz" data-r="10"></span>
+              <span class="k xs" id="kRes" data-l="RES" data-v="22%" data-r="-75"></span>
+              <span class="k xs" data-l="DRIVE" data-v="4.0 dB" data-r="-105"></span>
+              <span class="k xs" data-l="MORPH" data-v="0%" data-r="-135"></span>
+              <span class="k xs" data-l="KEY" data-v="0%" data-r="-135"></span>
+              <span class="k xs" data-l="MIX" data-v="100%" data-r="135"></span>
+            </div>
+          </div>
+        </div>
+        <div class="sec" style="flex:1.23;min-width:0;order:1">
+          <div class="sec-h">
+            <span class="name">LFO</span>
+            <div class="tg" id="lfoTabs"><span class="on">1</span><span>2</span><span>3</span><span title="add LFO (max 10)">+</span></div>
+            <select id="lfoShapeSel" style="flex:1;max-width:none">
+              <option selected>CUSTOM</option><option>SINE</option><option>TRIANGLE</option>
+              <option>SAW UP</option><option>SAW DOWN</option><option>SQUARE</option>
+              <option>PUMP</option><option>STEPS 4</option><option>STEPS 8</option>
+              <option>STEPS 16</option><option>SWING</option><option>S&amp;H NOISE</option>
+              <option>DRIFT</option>
+            </select>
+            <div class="tg" id="lfoDir"><span class="on">▶</span><span>◀</span><span>⇄</span></div>
+            <div class="tg"><span>HZ</span><span class="on">SYNC</span></div>
+          </div>
+          <div class="sec-b" style="flex-direction:row;gap:7px;padding:4px 8px">
+            <div class="tgv" id="lfoMode">
+              <span>FREE</span><span class="on">RETRIG</span><span>ENV</span><span>MONO</span>
+            </div>
+            <div class="screen" style="flex:1;min-width:0">
+              <svg id="lfoEd" preserveAspectRatio="none"></svg>
+            </div>
+            <div class="tgv" id="lfoTool">
+              <span class="on">PT</span><span>FLAT</span><span>UP</span><span>DN</span>
+            </div>
+          </div>
+          <div class="row" style="align-items:flex-end;gap:7px;padding:0 10px 5px">
+            <span class="lbl" style="padding-bottom:14px">X</span>
+            <select id="lfoGridSel" style="max-width:48px;margin-bottom:12px"><option>2</option><option>3</option><option>4</option><option>6</option><option selected>8</option><option>12</option><option>16</option><option>24</option><option>32</option><option>OFF</option></select>
+            <span class="lbl" style="padding-bottom:14px">Y</span>
+            <select id="lfoGridYSel" style="max-width:48px;margin-bottom:12px"><option>2</option><option>4</option><option selected>8</option><option>12</option><option>16</option><option>OFF</option></select>
+            <span class="hint" style="padding-bottom:14px">⇧=STEPS</span>
+            <div class="spacer"></div>
+            <span class="k xs" data-l="RATE" data-v="1/4" data-r="-30"></span>
+            <span class="k xs" data-l="PHASE" data-v="0°" data-r="-135"></span>
+            <span class="k xs" data-l="SMOOTH" data-v="8%" data-r="-110"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div id="bottombar">
+    <div class="tg"><span class="on">POLY</span><span>MONO</span><span>LEGATO</span></div>
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:center"><span class="lbl">VOICES</span><div class="stepper"><span>−</span><b>16</b><span>+</span></div></div>
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:center"><span class="lbl">UNISON</span><div class="stepper"><span>−</span><b>1</b><span>+</span></div></div>
+    <span class="k sm" data-l="DETUNE" data-v="12 ct" data-r="-80"></span>
+    <span class="k sm" data-l="SPREAD" data-v="50%" data-r="0"></span>
+    <span class="k sm" data-l="GLIDE" data-v="0 ms" data-r="-135"></span>
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:center"><span class="lbl">BEND</span><select><option>±2</option><option>±12</option><option>±24</option></select></div>
+    <div class="spacer"></div>
+  </div>
+</div>
+
+<script>
+/* ---- knobs (variant 3: inset well + cap + ticks) ---- */
+/* needle/tick baseline flipped (+180) so 0% sits bottom-LEFT and 100% bottom-RIGHT, Serum-style */
+const KROT=r=>`translateX(-50%) rotate(${r+180}deg)`;
+let TICKS='';for(let i=0;i<=10;i++){TICKS+=`<span class="tick" style="transform:rotate(${45+i*27}deg)"></span>`;}
+document.querySelectorAll('.k').forEach(k=>{
+  const l=k.dataset.l||'', v=k.dataset.v||'', r=parseFloat(k.dataset.r||0);
+  k.innerHTML=`<span class="wrap"><span class="well">${TICKS}<span class="cap"><span class="ind" style="transform:${KROT(r)}"></span></span></span></span><span class="kl">${l}</span><span class="kv">${v}</span>`;
+  let drag=null;
+  k.addEventListener('pointerdown',e=>{drag={y:e.clientY,r:parseFloat(k.dataset.r)};k.setPointerCapture(e.pointerId)});
+  k.addEventListener('pointermove',e=>{
+    if(!drag)return;
+    let nr=Math.max(-135,Math.min(135,drag.r+(drag.y-e.clientY)*1.4));
+    k.dataset.r=nr;
+    k.querySelector('.ind').style.transform=KROT(nr);
+    k.querySelector('.kv').textContent=Math.round((nr+135)/270*100)+'%';
+  });
+  k.addEventListener('pointerup',()=>drag=null);
+  k.addEventListener('dblclick',()=>{k.dataset.r=0;k.querySelector('.ind').style.transform=KROT(0)});
+});
+/* ---- toggles ---- */
+document.querySelectorAll('.tg,.tgv').forEach(tg=>{
+  tg.querySelectorAll('span').forEach(s=>s.addEventListener('click',()=>{
+    tg.querySelectorAll('span').forEach(x=>x.classList.remove('on'));s.classList.add('on');
+    if(tg.id==='pmode'){
+      const g=s.textContent==='GRANULAR';
+      document.getElementById('classicRow').style.display=g?'none':'flex';
+      document.getElementById('granRow').style.display=g?'flex':'none';
+    }
+    if(tg.id==='lfoTool'){lfoTool={PT:'POINT',FLAT:'FLAT',UP:'RISE',DN:'FALL'}[s.textContent]||'POINT';}
+    if(tg.id==='lfoTabs'&&s.textContent==='+'){s.classList.remove('on');tg.querySelector('span').classList.add('on');}
+    if(tg.id==='grainMode'){
+      const m=s.textContent, mk=document.getElementById('grainModeK'), sk=document.getElementById('grainShapeK');
+      const set=(el,label,val,on)=>{el.querySelector('.kl').textContent=label;el.querySelector('.kv').textContent=val;
+        el.style.opacity=on?'1':'.35';el.style.pointerEvents=on?'auto':'none';};
+      if(m==='CLASSIC')set(mk,'—','–',false);
+      if(m==='LOOP')set(mk,'REV %','0%',true);
+      if(m==='CLOUD')set(mk,'DENSITY','8',true);
+      // Shape fixed in Cloud mode (as in Granulator III)
+      sk.style.opacity=m==='CLOUD'?'.35':'1';sk.style.pointerEvents=m==='CLOUD'?'none':'auto';
+    }
+    if(tg.id==='fxTabs'){
+      const sh=s.textContent==='SHAPER';
+      document.getElementById('pageWarp').style.display=sh?'none':'flex';
+      document.getElementById('pageShaper').style.display=sh?'flex':'none';
+      document.getElementById('fxHint').textContent=sh?'TRANSFER CURVE EDITOR':'WAVE WARP ENGINE';
+    }
+  }));
+});
+/* ---- selects ---- */
+const warpModes={
+ 'WAVE BENDING':['Bend Positive','Bend Negative','Bend Symmetric','Bend Asymmetric','Asym Positive','Asym Negative','Asym Bidirectional','PWM','Flip','Mirror','Wave Skew','Wave Stretch','Wave Compress','Wave Expand','Variable Duty Cycle'],
+ 'WAVEFOLDING':['Linear Fold','Multi Fold','Sine Fold','Triangle Fold','Soft Fold','Hard Fold','Symmetric Fold','Asymmetric Fold','Dynamic Fold','Chebyshev Fold'],
+ 'DISTORTION':['Hard Clip','Soft Clip','Tanh','Arctangent','Tube Saturation','Diode 1','Diode 2','Cubic','Sinusoidal','Exponential','Asymmetric','Polynomial','Chebyshev Harmonic','Full Wave Rect','Half Wave Rect','Soft Rect','Bitcrush','SR Reduction','Quantization'],
+ 'PHASE & TIME':['Phase Distortion','Phase Stretch','Phase Compression','Phase Mirror','Phase Skew','Phase Quantization','Phase Remapping','Windowed Sync','Hard Sync','Soft Sync'],
+ 'MODULATION':['FM','PM','AM','RM','Self FM','Cross Mod']};
+const wm=document.getElementById('warpMode');
+for(const g in warpModes){const og=document.createElement('optgroup');og.label=g;
+  warpModes[g].forEach(m=>{const o=document.createElement('option');o.textContent=m;if(m==='Sine Fold')o.selected=true;og.appendChild(o)});wm.appendChild(og);}
+const fTypes={
+ 'STANDARD':['LP 6','LP 12','LP 18','LP 24','LP 36','LP 48','HP 6','HP 12','HP 18','HP 24','HP 36','HP 48','BP 6','BP 12','BP 24','Notch','Var Notch','Peak','Low Shelf','High Shelf'],
+ 'SPECIAL':['Comb +','Comb −','All Pass','Serial AP','Formant','Vowel','Morph Formant','Phaser','Res LP','Res HP','Dist LP','Scream','S&H','Ring Mod']};
+const ft=document.getElementById('filterType');
+for(const g in fTypes){const og=document.createElement('optgroup');og.label=g;
+  fTypes[g].forEach(m=>{const o=document.createElement('option');o.textContent=m;if(m==='LP 24')o.selected=true;og.appendChild(o)});ft.appendChild(og);}
+
+function fit(c){c.width=c.clientWidth*2;c.height=c.clientHeight*2;}
+
+/* ---- SAMPLE waveform + DRAGGABLE ADSR overlay ---- */
+const cs=document.getElementById('cvSample');fit(cs);
+const E={a:0.10,d:0.28,s:0.70,se:0.52,re:0.88};   // attack end, decay end, sustain level, sustain end, RELEASE end (draggable)
+const P={start:0.03,end:0.90,ph:0};        // sample start/end markers + playhead phase
+const wave=t=>Math.sin(t*46)*Math.exp(-t*2.9)*(0.62+0.38*Math.sin(t*7));
+function envF(t){
+  if(t<E.a)return t/Math.max(E.a,0.001);
+  if(t<E.d)return 1-(1-E.s)*((t-E.a)/Math.max(E.d-E.a,0.001));
+  if(t<E.se)return E.s;
+  if(t<E.re)return E.s*(1-(t-E.se)/Math.max(E.re-E.se,0.001));
+  return 0;
+}
+function handles(){
+  return [{id:'a',x:E.a,y:1},{id:'d',x:E.d,y:E.s},{id:'se',x:E.se,y:E.s},{id:'re',x:E.re,y:0}];
+}
+function drawSample(){
+  const x=cs.getContext('2d'),w=cs.width,h=cs.height;
+  x.clearRect(0,0,w,h);
+  const envY=t=>h/2-envF(t)*h*0.42;
+  x.strokeStyle='rgba(255,255,255,.14)';x.lineWidth=1.1;x.beginPath();
+  for(let i=0;i<=800;i++){const t=i/800;const y=wave(t);
+    const px=t*w,py=h/2-y*h*0.40;i?x.lineTo(px,py):x.moveTo(px,py);}x.stroke();
+  x.strokeStyle='#FFF';x.lineWidth=1.5;x.beginPath();
+  for(let i=0;i<=800;i++){const t=i/800;const y=wave(t)*envF(t);
+    const px=t*w,py=h/2-y*h*0.40;i?x.lineTo(px,py):x.moveTo(px,py);}x.stroke();
+  x.fillStyle='rgba(255,255,255,.05)';x.beginPath();x.moveTo(0,h/2);
+  for(let i=0;i<=300;i++){const t=i/300;x.lineTo(t*w,envY(t));}x.lineTo(w,h/2);x.closePath();x.fill();
+  x.strokeStyle='rgba(255,255,255,.85)';x.lineWidth=2;x.beginPath();
+  for(let i=0;i<=300;i++){const t=i/300;i?x.lineTo(t*w,envY(t)):x.moveTo(t*w,envY(t));}x.stroke();
+  // dim everything outside start/end
+  x.fillStyle='rgba(0,0,0,.55)';
+  x.fillRect(0,0,P.start*w,h);x.fillRect(P.end*w,0,w-P.end*w,h);
+  // start / end marker lines with grips
+  [[P.start,'S'],[P.end,'E']].forEach(([t])=>{
+    const px=t*w;
+    x.fillStyle='rgba(255,255,255,.9)';x.fillRect(px-1,0,2,h);
+    x.fillRect(px-7,0,14,10);x.fillStyle='#000';x.fillRect(px-5,2,10,6);});
+  // playhead between start and end
+  const phx=(P.start+(P.end-P.start)*P.ph)*w;
+  x.fillStyle='rgba(255,255,255,.45)';x.fillRect(phx-0.75,0,1.5,h);
+  handles().forEach(hd=>{
+    const px=Math.min(hd.x*w,w-7),py=h/2-hd.y*h*0.42;
+    x.beginPath();x.arc(px,py,7,0,7);x.fillStyle='#101010';x.fill();
+    x.lineWidth=2;x.strokeStyle='#FFF';x.stroke();});
+  document.getElementById('adsrLabel').textContent=
+    `A ${Math.round(E.a*1000)}ms · D ${Math.round((E.d-E.a)*1000)}ms · S ${Math.round(E.s*100)}% / ${Math.round((E.se-E.d)*1000)}ms · R ${Math.round((E.re-E.se)*1000)}ms`;
+}
+drawSample();
+let envDrag=null;
+function csXY(e){const r=cs.getBoundingClientRect();
+  return {x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),
+          y:(e.clientY-r.top)/r.height};}
+cs.style.cursor='pointer';
+cs.addEventListener('pointerdown',e=>{
+  const p=csXY(e);
+  // start/end lines take priority near them
+  if(Math.abs(p.x-P.start)<0.02){envDrag='ps';cs.setPointerCapture(e.pointerId);return;}
+  if(Math.abs(p.x-P.end)<0.02){envDrag='pe';cs.setPointerCapture(e.pointerId);return;}
+  let best=null,bd=1e9;
+  handles().forEach(hd=>{
+    const hy=0.5-hd.y*0.42;
+    const d=Math.hypot(p.x-hd.x,(p.y-hy)*0.6);
+    if(d<bd){bd=d;best=hd.id;}});
+  if(bd<0.08){envDrag=best;cs.setPointerCapture(e.pointerId);}
+});
+cs.addEventListener('pointermove',e=>{
+  if(!envDrag)return;
+  const p=csXY(e);
+  const lvl=Math.max(0,Math.min(1,(0.5-p.y)/0.42));
+  if(envDrag==='a')E.a=Math.max(0.01,Math.min(E.d-0.02,p.x));
+  if(envDrag==='d'){E.d=Math.max(E.a+0.02,Math.min(E.se-0.02,p.x));E.s=lvl;}
+  if(envDrag==='se'){E.se=Math.max(E.d+0.02,Math.min(E.re-0.02,p.x));E.s=lvl;}
+  if(envDrag==='re')E.re=Math.max(E.se+0.02,Math.min(1,p.x));   // extendable release
+  if(envDrag==='ps')P.start=Math.max(0,Math.min(P.end-0.04,p.x));
+  if(envDrag==='pe')P.end=Math.max(P.start+0.04,Math.min(1,p.x));
+  drawSample();
+});
+cs.addEventListener('pointerup',()=>envDrag=null);
+(function phLoop(){P.ph=(P.ph+0.0035)%1;drawSample();requestAnimationFrame(phLoop);})();
+
+/* ---- FILTER: interactive response display (drag node: x=cutoff, y=res) ---- */
+const cf=document.getElementById('cvFilter');fit(cf);
+let fcut=0.52,fres=0.22;
+function fmtHz(t){const f=20*Math.pow(10,3*t);
+  return f>=1000?(f/1000).toFixed(1)+' kHz':Math.round(f)+' Hz';}
+function syncFilterKnobs(){
+  const kc=document.getElementById('kCutoff'),kr=document.getElementById('kRes');
+  const rc=-135+fcut*270, rr=-135+fres*270;
+  kc.dataset.r=rc;kc.querySelector('.ind').style.transform=KROT(rc);
+  kc.querySelector('.kv').textContent=fmtHz(fcut);
+  kr.dataset.r=rr;kr.querySelector('.ind').style.transform=KROT(rr);
+  kr.querySelector('.kv').textContent=Math.round(fres*100)+'%';
+  document.getElementById('fltReadout').textContent=`${fmtHz(fcut)} · Q ${Math.round(fres*100)}%`;
+}
+function drawFilter(){
+  const x=cf.getContext('2d'),w=cf.width,h=cf.height;
+  x.clearRect(0,0,w,h);
+  // faint grid dots
+  x.fillStyle='rgba(255,255,255,.1)';
+  for(let i=1;i<8;i++)for(let j=1;j<4;j++)x.fillRect(i/8*w-1,j/4*h-1,2,2);
+  // low-pass style response with resonant peak at cutoff
+  const base=0.56;
+  const resp=t=>{let y=base;
+    if(t>fcut)y=base-Math.min(0.5,(t-fcut)*3.4);
+    y+=Math.exp(-Math.pow((t-fcut)/0.04,2))*fres*0.75;return y;};
+  // filled area under the curve (fades downward)
+  const grad=x.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,'rgba(255,255,255,.16)');grad.addColorStop(1,'rgba(255,255,255,.02)');
+  x.fillStyle=grad;x.beginPath();x.moveTo(0,h);
+  for(let i=0;i<=300;i++){const t=i/300;x.lineTo(t*w,h-resp(t)*h);}
+  x.lineTo(w,h);x.closePath();x.fill();
+  // cutoff guide line
+  x.fillStyle='rgba(255,255,255,.12)';x.fillRect(fcut*w-0.5,0,1,h);
+  x.strokeStyle='#FFF';x.lineWidth=1.8;x.beginPath();
+  for(let i=0;i<=300;i++){const t=i/300;
+    const px=t*w,py=h-resp(t)*h;i?x.lineTo(px,py):x.moveTo(px,py);}
+  x.stroke();
+  // draggable node at the cutoff/resonance point
+  const nx=fcut*w, ny=h-(base+fres*0.75)*h;
+  x.beginPath();x.arc(nx,ny,9,0,7);x.fillStyle='#101010';x.fill();
+  x.lineWidth=2.5;x.strokeStyle='#FFF';x.stroke();
+}
+drawFilter();
+let fltDrag=false;
+cf.parentElement.addEventListener('pointerdown',e=>{
+  fltDrag=true;cf.parentElement.setPointerCapture(e.pointerId);
+  const r=cf.parentElement.getBoundingClientRect();
+  fcut=Math.max(0.02,Math.min(0.98,(e.clientX-r.left)/r.width));
+  fres=Math.max(0,Math.min(1,1-(e.clientY-r.top)/r.height-0.3));
+  drawFilter();syncFilterKnobs();
+});
+cf.parentElement.addEventListener('pointermove',e=>{
+  if(!fltDrag)return;
+  const r=cf.parentElement.getBoundingClientRect();
+  fcut=Math.max(0.02,Math.min(0.98,(e.clientX-r.left)/r.width));
+  fres=Math.max(0,Math.min(1,1-(e.clientY-r.top)/r.height-0.3));
+  drawFilter();syncFilterKnobs();
+});
+cf.parentElement.addEventListener('pointerup',()=>fltDrag=false);
+
+/* ---- ORGANISM: ultra-thin-line contour form ---- */
+const co=document.getElementById('cvOrg');fit(co);
+const ox=co.getContext('2d');
+let T=0,transients=[];
+setInterval(()=>{if(Math.random()<0.55)transients.push({ang:Math.random()*Math.PI*2,amp:0.14+Math.random()*0.22,w:0.6+Math.random()*0.6,life:1});},800);
+function deform(a,t){
+  // soft, flowing: low orders only, no sharp high-frequency content
+  let d=0.26*Math.sin(a*2+t*0.42)
+       +0.17*Math.sin(a*3-t*0.65+1.7)
+       +0.10*Math.sin(a*5+t*0.95+4.0)
+       +0.05*Math.sin(a*8-t*1.3);
+  d+=0.09*Math.sin(t*0.33);
+  for(const tr of transients){
+    let dd=Math.atan2(Math.sin(a-tr.ang),Math.cos(a-tr.ang));
+    d+=tr.amp*tr.life*Math.exp(-(dd*dd)/(tr.w*tr.w));   // wide, rounded swells
+  }
+  return d;
+}
+function drawOrg(){
+  const w=co.width,h=co.height,cx=w*0.5,cy=h*0.5;
+  const R=Math.min(w,h)*0.26, K=48, N=130;                   // smaller module
+  ox.fillStyle='rgba(5,5,5,0.26)';ox.fillRect(0,0,w,h);      // faint trails
+  for(let k=1;k<=K;k++){
+    const s=k/K;
+    const wgt=Math.pow(s,2.0);                               // inner calm, outer flowing
+    const twist=s*0.6;                                       // gentler shear
+    const alpha=0.10+0.42*Math.pow(s,1.3);                   // whiter
+    ox.strokeStyle=`rgba(255,255,255,${alpha})`;
+    ox.lineWidth=0.65;
+    ox.beginPath();
+    for(let i=0;i<=N;i++){
+      const a=i/N*Math.PI*2;
+      const d=deform(a+twist*Math.sin(T*0.13+ s*1.6), T);
+      const r=R*s*(1+d*0.34*wgt);                            // no hairline shimmer — smooth
+      const px=cx+Math.cos(a)*r;
+      const py=cy+Math.sin(a)*r*0.92;
+      i?ox.lineTo(px,py):ox.moveTo(px,py);
+    }
+    ox.closePath();ox.stroke();
+  }
+  T+=0.022;                                                  // lively but still smooth
+  transients.forEach(tr=>tr.life*=0.965);
+  transients=transients.filter(tr=>tr.life>0.02);
+  const flux=transients.reduce((s,tr)=>s+tr.amp*tr.life,0);
+  document.getElementById('mFlux').textContent='flux '+flux.toFixed(2);
+  requestAnimationFrame(drawOrg);
+}
+requestAnimationFrame(drawOrg);
+
+/* ---- LFO EDITOR ---- */
+const led=document.getElementById('lfoEd');
+const NS='http://www.w3.org/2000/svg';
+let LW=100,LH=100, lfoPts=[{x:0,y:0.9},{x:0.25,y:0.1},{x:0.5,y:0.65},{x:0.75,y:0.25},{x:1,y:0.9}];
+let gridN=8, gridY=8, lfoFn=null, lfoTool='POINT';   // lfoFn set => preset renders as exact analytic curve
+let fnPts=[];   // single edit points laid ON TOP of a preset curve (local bends, no dot conversion)
+function lfoResize(){
+  const r=led.parentElement.getBoundingClientRect();
+  LW=Math.max(60,r.width-2);LH=Math.max(40,r.height-2);
+  led.setAttribute('viewBox',`0 0 ${LW} ${LH}`);
+  led.style.width='100%';led.style.height='100%';
+  lfoRender();
+}
+function snap(v,n){return n?Math.round(v*n)/n:v;}
+function lfoRender(){
+  led.innerHTML='';
+  // dot grid: points at intersections, one faint center line — no line cage
+  const g=document.createElementNS(NS,'g');
+  const gn=gridN==='OFF'?8:gridN;
+  const mid=document.createElementNS(NS,'line');
+  mid.setAttribute('x1',0);mid.setAttribute('y1',LH/2);mid.setAttribute('x2',LW);mid.setAttribute('y2',LH/2);
+  mid.setAttribute('stroke','rgba(255,255,255,.09)');mid.setAttribute('stroke-width','1');
+  g.appendChild(mid);
+  const gy=gridY==='OFF'?8:gridY;
+  for(let i=0;i<=gn;i++)for(let j=0;j<=gy;j++){
+    const dot=document.createElementNS(NS,'circle');
+    dot.setAttribute('cx',i/gn*LW);dot.setAttribute('cy',j/gy*LH);
+    dot.setAttribute('r',(i===0||i===gn||j===0||j===gy)?1.4:1);
+    dot.setAttribute('fill',(j===gy/2)?'rgba(255,255,255,.3)':'rgba(255,255,255,.14)');
+    g.appendChild(dot);}
+  led.appendChild(g);
+  // preset mode: exact analytic curve; user points add LOCAL bends only
+  if(lfoFn){
+    const fp=[...fnPts].sort((a,b)=>a.x-b.x);
+    const anchors=[{x:0,dy:0},...fp.map(p=>({x:p.x,dy:p.y-lfoFn(p.x)})),{x:1,dy:0}];
+    const ys=t=>{let i=0;while(i<anchors.length-2&&t>anchors[i+1].x)i++;
+      const a0=anchors[i],a1=anchors[i+1];
+      const u=(t-a0.x)/Math.max(a1.x-a0.x,0.001);
+      const uu=u*u*(3-2*u);                      // smooth blend between bends
+      return lfoFn(t)+a0.dy*(1-uu)+a1.dy*uu;};
+    let d='';
+    for(let i=0;i<=220;i++){const t=i/220;
+      d+=(i?' L ':'M ')+(t*LW)+' '+(ys(t)*LH);}
+    const glow=document.createElementNS(NS,'path');
+    glow.setAttribute('d',d);glow.setAttribute('fill','none');
+    glow.setAttribute('stroke','rgba(255,255,255,.12)');glow.setAttribute('stroke-width','6');
+    led.appendChild(glow);
+    const fl=document.createElementNS(NS,'path');
+    fl.setAttribute('d',d+` L ${LW} ${LH} L 0 ${LH} Z`);
+    fl.setAttribute('fill','rgba(255,255,255,.09)');
+    led.appendChild(fl);
+    const pth=document.createElementNS(NS,'path');
+    pth.setAttribute('d',d);pth.setAttribute('fill','none');
+    pth.setAttribute('stroke','#FFF');pth.setAttribute('stroke-width','1.7');
+    led.appendChild(pth);
+    fp.forEach(p=>{
+      const c=document.createElementNS(NS,'circle');
+      c.setAttribute('class','lfopt');c.setAttribute('r','5.5');
+      c.setAttribute('cx',p.x*LW);c.setAttribute('cy',p.y*LH);
+      c.addEventListener('pointerdown',e=>{e.stopPropagation();dragPt=p;led.setPointerCapture(e.pointerId)});
+      c.addEventListener('dblclick',e=>{e.stopPropagation();fnPts=fnPts.filter(q=>q!==p);lfoRender();});
+      led.appendChild(c);});
+    return;
+  }
+  const pts=[...lfoPts].sort((a,b)=>a.x-b.x);
+  // per-segment curvature: p.c in [-1,1], 0 = linear (bend by dragging mid-segment handle)
+  const seg=(p0,p1,t)=>{const e=Math.pow(2,(p0.c||0)*3);return p0.y+(p1.y-p0.y)*Math.pow(t,e);};
+  let d=`M ${pts[0].x*LW} ${pts[0].y*LH}`;
+  for(let i=1;i<pts.length;i++){
+    const p0=pts[i-1],p1=pts[i];
+    for(let s=1;s<=24;s++){const t=s/24;
+      d+=` L ${(p0.x+(p1.x-p0.x)*t)*LW} ${seg(p0,p1,t)*LH}`;}}
+  const glow=document.createElementNS(NS,'path');
+  glow.setAttribute('d',d);glow.setAttribute('fill','none');
+  glow.setAttribute('stroke','rgba(255,255,255,.12)');glow.setAttribute('stroke-width','6');
+  led.appendChild(glow);
+  const fill=document.createElementNS(NS,'path');
+  fill.setAttribute('d',d+` L ${LW} ${LH} L 0 ${LH} Z`);
+  fill.setAttribute('fill','rgba(255,255,255,.09)');fill.setAttribute('stroke','none');
+  led.appendChild(fill);
+  const path=document.createElementNS(NS,'path');
+  path.setAttribute('d',d);path.setAttribute('fill','none');
+  path.setAttribute('stroke','#FFF');path.setAttribute('stroke-width','1.7');
+  led.appendChild(path);
+  // mid-segment bend handles
+  for(let i=1;i<pts.length;i++){
+    const p0=pts[i-1],p1=pts[i];
+    if(Math.abs(p1.x-p0.x)<0.015)continue;
+    const h=document.createElementNS(NS,'circle');
+    h.setAttribute('class','lfoc');h.setAttribute('r','3.5');
+    h.setAttribute('cx',(p0.x+p1.x)/2*LW);h.setAttribute('cy',seg(p0,p1,0.5)*LH);
+    h.addEventListener('pointerdown',e=>{e.stopPropagation();
+      dragBend={p0,p1,c0:p0.c||0,y0:lfoXY(e).y};led.setPointerCapture(e.pointerId)});
+    h.addEventListener('dblclick',e=>{e.stopPropagation();p0.c=0;lfoRender();});
+    led.appendChild(h);}
+  pts.forEach(p=>{
+    const c=document.createElementNS(NS,'circle');
+    c.setAttribute('class','lfopt');c.setAttribute('r','5.5');
+    c.setAttribute('cx',p.x*LW);c.setAttribute('cy',p.y*LH);
+    c.addEventListener('pointerdown',e=>{e.stopPropagation();dragPt=p;led.setPointerCapture(e.pointerId)});
+    c.addEventListener('dblclick',e=>{e.stopPropagation();
+      if(lfoPts.length>2){lfoPts=lfoPts.filter(q=>q!==p);lfoRender();}});
+    led.appendChild(c);});
+}
+let dragPt=null,dragBend=null;
+function lfoXY(e){
+  const r=led.getBoundingClientRect();
+  return {x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),
+          y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};
+}
+function ySnapN(){return gridY==='OFF'?0:gridY;}
+function cellOf(px){const gn=gridN==='OFF'?8:gridN;const i=Math.max(0,Math.min(gn-1,Math.floor(px*gn)));
+  return {x0:i/gn,x1:(i+1)/gn};}
+function clearCell(c){lfoPts=lfoPts.filter(q=>q.x<c.x0-0.001||q.x>c.x1-0.002);}
+function stampCell(c,y,kind){ // step-sequencer style cell stamping
+  clearCell(c);
+  if(kind==='FLAT'){lfoPts.push({x:c.x0,y,c:0},{x:c.x1-0.004,y,c:0});}
+  if(kind==='RISE'){lfoPts.push({x:c.x0,y:0.92,c:0},{x:c.x1-0.004,y,c:0});}
+  if(kind==='FALL'){lfoPts.push({x:c.x0,y,c:0},{x:c.x1-0.004,y:0.92,c:0});}
+  lfoRender();
+}
+let stepDraw=false;
+led.addEventListener('pointermove',e=>{
+  if(stepDraw){const p=lfoXY(e);stampCell(cellOf(p.x),snap(p.y,ySnapN()),'FLAT');return;}
+  if(dragBend){
+    const p=lfoXY(e);
+    const dir=Math.sign((dragBend.p1.y-dragBend.p0.y)||1);
+    dragBend.p0.c=Math.max(-1,Math.min(1,dragBend.c0+(p.y-dragBend.y0)*4*dir));
+    lfoRender();return;
+  }
+  if(!dragPt)return;const p=lfoXY(e);const n=gridN==='OFF'?0:gridN;
+  if(lfoFn){ // bend point over a preset curve: free within 0..1
+    dragPt.x=Math.max(0.01,Math.min(0.99,snap(p.x,n)));
+    dragPt.y=snap(p.y,ySnapN());
+    lfoRender();return;
+  }
+  const first=dragPt===lfoPts.reduce((a,b)=>a.x<b.x?a:b), last=dragPt===lfoPts.reduce((a,b)=>a.x>b.x?a:b);
+  if(!first&&!last)dragPt.x=snap(p.x,n);
+  dragPt.y=snap(p.y,ySnapN());
+  lfoRender();});
+led.addEventListener('pointerup',()=>{dragPt=null;dragBend=null;stepDraw=false;});
+led.addEventListener('pointerdown',e=>{
+  if(lfoFn){
+    if(e.target.tagName==='circle')return;       // dragging an existing bend point
+    const p=lfoXY(e);
+    if(lfoTool==='POINT'&&!e.shiftKey){           // ONE spot, curve stays a curve
+      const n=gridN==='OFF'?0:gridN;
+      const np={x:snap(p.x,n),y:snap(p.y,ySnapN())};
+      fnPts.push(np);dragPt=np;led.setPointerCapture(e.pointerId);
+      lfoRender();return;
+    }
+    // step tools / shift-steps need the point editor: convert, then stamp
+    const fn=lfoFn;lfoFn=null;fnPts=[];
+    lfoPts=[];for(let i=0;i<=8;i++)lfoPts.push({x:i/8,y:fn(i/8),c:0});
+    document.getElementById('lfoShapeSel').value='CUSTOM';
+  }
+  const p=lfoXY(e);
+  // Shift-drag = step sequencing (flat steps painted per grid column)
+  if(e.shiftKey){stepDraw=true;led.setPointerCapture(e.pointerId);
+    stampCell(cellOf(p.x),snap(p.y,ySnapN()),'FLAT');return;}
+  if(e.target.tagName==='circle')return;
+  // drawing tools
+  if(lfoTool!=='POINT'){stampCell(cellOf(p.x),snap(p.y,ySnapN()),
+    lfoTool==='FLAT'?'FLAT':lfoTool==='RISE'?'RISE':'FALL');return;}
+  const n=gridN==='OFF'?0:gridN;
+  lfoPts.push({x:snap(p.x,n),y:snap(p.y,ySnapN()),c:0});lfoRender();});
+document.getElementById('lfoGridSel').addEventListener('change',e=>{
+  gridN=e.target.value==='OFF'?'OFF':parseInt(e.target.value);lfoRender();});
+document.getElementById('lfoGridYSel').addEventListener('change',e=>{
+  gridY=e.target.value==='OFF'?'OFF':parseInt(e.target.value);lfoRender();});
+/* ---- LFO shape presets: exact analytic curves (y: 0=top/max, 1=bottom/min) ---- */
+const TAU=Math.PI*2;
+function stepsFn(n){return t=>0.1+0.8*(Math.min(n-1,Math.floor(t*n))/(n-1));}
+function shNoiseFn(n){const L=Array.from({length:n},()=>0.1+Math.random()*0.8);
+  return t=>L[Math.min(n-1,Math.floor(t*n))];}
+function driftFn(){const a=Math.random()*TAU,b=Math.random()*TAU;
+  return t=>0.5+0.26*Math.sin(TAU*t+a)+0.14*Math.sin(2*TAU*t+b);}
+const LFO_SHAPES={
+  'SINE':()=>t=>0.5-0.4*Math.sin(TAU*t),
+  'TRIANGLE':()=>t=>0.1+0.8*Math.abs(2*t-1),
+  'SAW UP':()=>t=>0.9-0.8*(t%1),
+  'SAW DOWN':()=>t=>0.1+0.8*(t%1),
+  'SQUARE':()=>t=>(t<0.5?0.1:0.9),
+  'PUMP':()=>t=>0.9-0.8*Math.exp(-4.5*t),
+  'STEPS 4':()=>stepsFn(4),'STEPS 8':()=>stepsFn(8),'STEPS 16':()=>stepsFn(16),
+  'SWING':()=>t=>{const u=t<0.62?Math.pow(t/0.62,1.5):1-0.75*((t-0.62)/0.38);
+    return 0.9-0.8*u;},
+  'S&H NOISE':()=>shNoiseFn(8),'DRIFT':()=>driftFn()
+};
+document.getElementById('lfoShapeSel').addEventListener('change',e=>{
+  const s=LFO_SHAPES[e.target.value];
+  fnPts=[];
+  if(!s){lfoFn=null;lfoRender();return;} // CUSTOM -> editable points
+  lfoFn=s();
+  lfoRender();
+});
+window.addEventListener('resize',lfoResize);
+setTimeout(lfoResize,0);
+
+/* ---- Serum-2-style LFO -> knob assignment ---- */
+const ghost=document.createElement('div');ghost.id='dragGhost';document.body.appendChild(ghost);
+let chipDrag=null; // {num, started}
+function assignMod(knob,num,deg){
+  const wrap=knob.querySelector('.wrap');
+  let ring=wrap.querySelector('.mring');
+  if(!ring){
+    ring=document.createElement('span');ring.className='mring';wrap.appendChild(ring);
+    const b=document.createElement('span');b.className='mbadge';wrap.appendChild(b);
+    const adj=e0=>{
+      e0.stopPropagation();e0.preventDefault();
+      const startY=e0.clientY,startD=parseFloat(ring.dataset.md);
+      const mv=e=>{ring.dataset.md=Math.max(0,Math.min(270,startD+(startY-e.clientY)*1.8));paintRing(ring);};
+      const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);};
+      window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
+    };
+    ring.addEventListener('pointerdown',adj);
+    b.addEventListener('pointerdown',adj);
+    b.addEventListener('dblclick',e=>{e.stopPropagation();ring.remove();b.remove();});
+  }
+  ring.dataset.md=deg;ring.dataset.src=num;
+  wrap.querySelector('.mbadge').textContent=num;
+  paintRing(ring);
+}
+function paintRing(ring){
+  const d=parseFloat(ring.dataset.md);
+  // gray depth line only — no visible track when idle
+  ring.style.background=`conic-gradient(from 225deg, #8C8C8C 0deg ${d}deg, transparent ${d}deg 360deg)`;
+}
+document.querySelectorAll('#lfoTabs span').forEach(chip=>{
+  chip.addEventListener('pointerdown',e=>{
+    if(!/^\d+$/.test(chip.textContent))return;   // "+" chip is not a mod source
+    chipDrag={num:chip.textContent,sx:e.clientX,sy:e.clientY,started:false};
+  });
+});
+window.addEventListener('pointermove',e=>{
+  if(!chipDrag)return;
+  if(!chipDrag.started && Math.hypot(e.clientX-chipDrag.sx,e.clientY-chipDrag.sy)<6)return;
+  chipDrag.started=true;
+  ghost.style.display='flex';ghost.textContent=chipDrag.num;
+  ghost.style.left=(e.clientX-11)+'px';ghost.style.top=(e.clientY-11)+'px';
+  document.querySelectorAll('.k.droptarget').forEach(k=>k.classList.remove('droptarget'));
+  const el=document.elementFromPoint(e.clientX,e.clientY);
+  const k=el&&el.closest?el.closest('.k'):null;
+  if(k)k.classList.add('droptarget');
+});
+window.addEventListener('pointerup',e=>{
+  if(!chipDrag)return;
+  if(chipDrag.started){
+    ghost.style.display='none';
+    const el=document.elementFromPoint(e.clientX,e.clientY);
+    const k=el&&el.closest?el.closest('.k'):null;
+    if(k)assignMod(k,chipDrag.num,110);
+    document.querySelectorAll('.k.droptarget').forEach(x=>x.classList.remove('droptarget'));
+  }
+  chipDrag=null;
+});
+/* demo pre-assignments */
+document.querySelectorAll('.k').forEach(k=>{
+  if(k.dataset.l==='WARP')assignMod(k,'1',130);
+  if(k.dataset.l==='CUTOFF')assignMod(k,'2',85);
+});
+</script>
+</body>
+</html>

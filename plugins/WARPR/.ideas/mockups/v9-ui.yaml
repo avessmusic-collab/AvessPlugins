@@ -1,0 +1,114 @@
+# WARPR UI Design Specification v9
+# Status: DRAFT (not finalized)
+
+metadata:
+  plugin: WARPR            # working title — rename pending
+  version: v9
+  base: v8
+  created: 2026-11-11
+  finalized: true          # FINALIZED 2026-11-11 — source of truth for Stage 3 GUI
+
+deltas_from_v8:
+  tabbed_fx_slot:
+    - WARP and SHAPER now share ONE slot in the SOURCE panel with a
+      WARP | SHAPER page toggle on the slot itself (only that slot switches;
+      everything else stays put). Hint label names the active page.
+    - Warp page: enable, full-width 60-mode select, OS, WARP knob, A/B,
+      mod osc (src + ratio), MIX.
+    - Shaper page: enable, A/B curve select, preset select, RESET/NORM,
+      large transfer curve, MORPH (md), MIX.
+  fit_pass (verified by screenshot):
+    - Left SOURCE column widened to 402px; CLASSIC/GRANULAR toggle,
+      direction toggle, and warp-row knobs no longer clip.
+    - Sample waveform screen is now flexible (flex:1, min 96px) and absorbs
+      spare panel height; ENVELOPE row sits snug at the panel bottom —
+      dead space eliminated.
+    - Bottom bar raised to 64px with xs knobs (DETUNE/SPREAD/GLIDE/MASTER
+      values no longer clip); header MASTER knob xs.
+    - "— DROP SAMPLE —" shortened to "NO SAMPLE".
+  organism:
+    - Blob radius reduced again (0.26 of stage min-dimension) and the stage
+      module itself is smaller: FILTER/LFO row raised to 168px.
+  granulator_v3_style (user: "almost identical to Ableton Granulator III";
+      researched from Robert Henke's Granulator III documentation —
+      original implementation, no Ableton/Henke code or assets):
+    - Grain modes: CLASSIC (2 overlapping grains/channel) / LOOP
+      (crossfading playback, random position) / CLOUD (up to 20 unsynced
+      grains/channel — dense textures).
+    - SCAN system: ramp from note-on moving Position; DIST knob sets end
+      position relative to Position; SCAN LOOP on/off (restart vs stop);
+      SCAN KEY on/off (speed follows note pitch).
+    - Knobs: POSITION (%), SCAN (speed), DIST, SIZE (2 ms - 2 s),
+      SHAPE (grain-envelope morph: sharp-attack -> crossfade -> exp-attack;
+      crossfade length in Loop; FIXED/disabled in Cloud, as in G3),
+      VAR (per-grain variation amount; production: per-target amounts for
+      position 0-2s / size / transpose (cloud) / volume),
+      SPREAD (stereo detune of L/R grains + grain-start offset),
+      8th slot is MODE-DEPENDENT exactly like G3: disabled in Classic,
+      REV % (reverse-grain chance) in Loop, DENSITY (grains) in Cloud.
+    - Mockup behavior: mode toggle live-swaps the 8th knob and dims SHAPE
+      in Cloud.
+    - Parameter set: grainMode, grainPosition, grainScan, grainScanDist,
+      grainScanLoop, grainScanKey, grainSize, grainShape, grainVariation
+      (+sub-amounts), grainSpread, grainReverse (loop), grainDensity (cloud).
+    - Size changes apply after current grain completes (click-free, per G3).
+  lfo_system_v2 (user spec paste — Serum-2-inspired behavior, original UI):
+    - Up to 10 independent LFOs (mockup shows tabs 1-3 + "+" add chip).
+    - Modes: FREE / RETRIG / ENV / MONO; playback FWD / REV / PING-PONG;
+      HZ free-run + host-SYNC BPM divisions; RATE / PHASE / SMOOTH knobs.
+    - Editor: draggable/addable/deletable points, per-segment curve tension
+      handles, independent X (2-32/OFF) and Y (2-16/OFF) grid divisions
+      with snap on both axes, dot-grid visual.
+    - Tools: POINT / FLAT / RISE / FALL cell stamps; SHIFT-drag paints
+      flat steps per column (step sequencing).
+    - Production requirements: sample-accurate mod engine, polyphonic
+      where appropriate, CPU-efficient, DAW-transport synced; per-target
+      depth with live ring feedback; shapes/grids/modes/assignments all
+      persisted in presets and host state.
+  lfo_shape_presets (user: "all that exist in Serum 2"):
+    - Shape dropdown restored in the LFO panel (above RATE/DELAY/SMOOTH):
+      CUSTOM, SINE, TRIANGLE, SAW UP, SAW DOWN, SQUARE, PUMP, STEPS 4/8/16,
+      SWING, S&H NOISE (random steps, regenerated per pick), DRIFT (smooth
+      random). Serum-style grid-shape staples; Serum 2's own stock list is
+      not published, so this is the recognized set its editor tools produce.
+    - Selecting a preset LOADS its point set into the drawable editor
+      (still fully editable afterwards; CUSTOM keeps the current drawing).
+  knob_mod_refinements:
+    - Mod rim: idle track removed entirely — only the depth arc shows when
+      a modulation is assigned, in gray (#8C8C8C), as a thin line rim.
+    - Tick marks brightened (alpha .5) and layered above the mod arc.
+    - Knob rotation flipped Serum-style: 0% bottom-left, 100% bottom-right.
+  knob_style_v3 (user chose from 3 variations):
+    - All knobs now "INSET CAP · TICKS": recessed well sunk into the panel,
+      raised cap with strong edge light, white needle, 11 faint tick marks
+      ringing the well. No value arc.
+    - Modulation shown as a thin WHITE LINE RIM: 1-2px conic arc circling
+      just outside the well (bright white = depth, faint track for the
+      remainder), plus the numbered source badge. Drag rim/badge = depth.
+    - Rejected variants kept for reference in knob-variants.html
+      (1: machined dome + outer arc — previous style; 2: flat ring + dot).
+  waveform_tail:
+    - Demo sample decays fully by ~75% of the view; END marker defaults to
+      90% — visible empty space after the tail (user request).
+  control_polish:
+    - ENVELOPE A/D/S/R knobs enlarged to md size (68px) — the biggest in
+      the SOURCE panel after WARP.
+    - Tuning moved into a labeled TUNE group (root stepper over SEMI/FINE
+      xs knobs) between START/END and the LOOP group, with divider rails.
+    - LFO (left) and FILTER (right) swapped in the fx row.
+    - sm-knob value chips reduced (8px) so MASTER / DETUNE / SPREAD /
+      GLIDE fit their bars; header 88px, bottom bar 84px.
+  late_tweaks (user, after rebalance):
+    - ENVELOPE block moved ABOVE the WARP/SHAPER tab slot (sample → env →
+      warp/shaper, top to bottom in SOURCE panel).
+    - MASTER knob + stereo meter moved to top header right side; removed
+      from bottom bar (bottom bar = performance controls only).
+    - Stage ("blob window") reduced again: FILTER/LFO row height 205px.
+  width_rebalance (user: "left wider, right narrower 10%"):
+    - SOURCE column 402px -> 478px (~10% of total width moved from right
+      to left); stage and FILTER/LFO row narrowed to match.
+    - Fit fixes after rebalance: filter response thumb 64px, filter flex
+      1.12 vs LFO 1.23, tighter fxrow header gaps/paddings so LFO tabs
+      1/2/3, GRID and HZ/SYNC all fit. Verified by scoped screenshot.
+  unchanged: mod-assign drag-drop system, parameter set, soft/white contour
+    rendering, production binding rules.
