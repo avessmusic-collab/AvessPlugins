@@ -725,6 +725,7 @@ window.addEventListener("resize", applyScale);
 const cs = $("#cvSample");
 let peaks = null;                       // Float32Array [min0,max0,min1,max1,...] in -1..1  (HOOK: onSample)
 let voices = [];                        // [{pos:0..1 (absolute in sample), level:0..1}]     (HOOK: onViz)
+let grains = [];                        // [{pos:0..1, level:0..1}] granular grain cloud     (HOOK: onViz)
 
 /* Envelope overlay zones (fraction of view width).  Shape is a graphical map of the 4 ADSR params:
    attack zone 0..0.25, decay zone 0.25..0.50, sustain hold fixed to 0.70, release zone 0.70..1.00. */
@@ -778,9 +779,21 @@ function drawSample() {
     const px = t*w; x.fillStyle = "rgba(255,255,255,.9)"; x.fillRect(px - 1, 0, 2, h);
     x.fillRect(px - 7, 0, 14, 10); x.fillStyle = "#000"; x.fillRect(px - 5, 2, 10, 6);
   });
+  grains.forEach(g => {                                   // grain cloud (GRANULAR): one short stroke per live grain,
+    const px = g.pos*w, lv = clamp(g.level, 0, 1);        // height + brightness follow the grain's window amplitude
+    const gh = h * (0.22 + 0.68*lv);
+    x.fillStyle = `rgba(255,255,255,${(0.15 + 0.55*lv).toFixed(2)})`;
+    x.fillRect(px - .5, (h - gh)/2, 1, gh);
+  });
   voices.forEach(v => {                                   // one playhead per sounding voice (real DSP read positions)
-    x.fillStyle = `rgba(255,255,255,${(0.25 + 0.5*clamp(v.level, 0, 1)).toFixed(2)})`;
-    x.fillRect(v.pos*w - .75, 0, 1.5, h);
+    const px = v.pos*w, lv = clamp(v.level, 0, 1);
+    x.fillStyle = `rgba(255,255,255,${(0.04 + 0.10*lv).toFixed(2)})`;    // soft halo
+    x.fillRect(px - 3, 0, 6, h);
+    x.fillStyle = `rgba(255,255,255,${(0.45 + 0.55*lv).toFixed(2)})`;    // crisp progress line
+    x.fillRect(px - 1, 0, 2, h);
+    x.beginPath();                                                       // cap riding along the top edge
+    x.moveTo(px - 5, 0); x.lineTo(px + 5, 0); x.lineTo(px, 9); x.closePath();
+    x.fill();
   });
   envHandles(E).forEach(hd => {
     const px = Math.min(hd.x*w, w - 7), py = h/2 - hd.y*h*.42;
@@ -917,6 +930,7 @@ function drawOrg() {
      transient: 0..1, tseq: uint (increments per detected transient), tang: radians (spectral-centroid angle),
      peakL, peakR : linear amplitude 0..1+,
      voices: [{pos:0..1, level:0..1}],           // per sounding voice: absolute read position in the sample
+     grains: [{pos:0..1, level:0..1}],           // granular grain cloud (empty until the grain engine, D8)
      lfo: [phase0..9 in 0..1]  (-1 = LFO idle) } */
 let mL = 0, mR = 0, mtL = 0, mtR = 0, lfoPhases = [];
 const toMeter = a => clamp((20*Math.log10(Math.max(a, 1e-5)) + 60) / 60, 0, 1);
@@ -927,7 +941,7 @@ backend.addEventListener("warprViz", f => {
     lastTSeq = f.tseq;
   }
   mtL = toMeter(f.peakL || 0); mtR = toMeter(f.peakR || 0);
-  voices = f.voices || []; lfoPhases = f.lfo || [];
+  voices = f.voices || []; grains = f.grains || []; lfoPhases = f.lfo || [];
 });
 /* "warprSample": { name, channels, sampleRate, numSamples, peaks:[min,max,...] (<=2048 pairs) } */
 backend.addEventListener("warprSample", s => {

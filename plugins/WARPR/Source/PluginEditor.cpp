@@ -279,10 +279,11 @@ void PluginEditor::timerCallback()
     if (frame.numVoices == 0)
         frame.numVoices = be.getPlayheads (frame.voices.data(), WarprVizFrame::maxVoices);
 
-    if (gotFrame || frame.numVoices > 0 || playheadsWereShown)
+    if (gotFrame || frame.numVoices > 0 || frame.numGrains > 0 || playheadsWereShown)
     {
         emitViz (frame);
-        playheadsWereShown = frame.numVoices > 0;     // one trailing empty frame clears the playheads
+        // one trailing empty frame clears the playheads / grain cloud
+        playheadsWereShown = frame.numVoices > 0 || frame.numGrains > 0;
     }
 
     auto changed = [&be] (WarprUiBackend::Revision r, uint32_t& seen)
@@ -323,6 +324,16 @@ void PluginEditor::emitViz (const WarprVizFrame& f)
         voices.add (juce::var (v));
     }
     o->setProperty ("voices", voices);
+
+    juce::Array<juce::var> grains;
+    for (int i = 0; i < juce::jmin (f.numGrains, WarprVizFrame::maxGrains); ++i)
+    {
+        auto* g = new juce::DynamicObject();
+        g->setProperty ("pos",   (double) f.grains[(size_t) i].pos);
+        g->setProperty ("level", (double) f.grains[(size_t) i].level);
+        grains.add (juce::var (g));
+    }
+    o->setProperty ("grains", grains);
 
     juce::Array<juce::var> lfo;
     for (float ph : f.lfoPhase) lfo.add ((double) ph);

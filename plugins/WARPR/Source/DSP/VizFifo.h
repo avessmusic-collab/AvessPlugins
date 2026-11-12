@@ -33,6 +33,14 @@ struct WarprVizFrame
     struct Voice { float pos = 0, level = 0; };            // pos 0..1 absolute in the sample
     std::array<Voice, maxVoices> voices{};
 
+    // live grain read positions for the waveform grain cloud (GRANULAR engine, phase D8 publishes
+    // these; until then numGrains stays 0 and the UI draws nothing).  One entry per sounding grain
+    // across all voices, pos 0..1 absolute in the sample, level = that grain's window amplitude.
+    static constexpr int maxGrains = 64;
+    int numGrains = 0;
+    struct Grain { float pos = 0, level = 0; };
+    std::array<Grain, maxGrains> grains{};
+
     // LFO phases 0..1 of the most recent voice (-1 = LFO idle / unused)
     std::array<float, numLfos> lfoPhase{ -1,-1,-1,-1,-1,-1,-1,-1,-1,-1 };
 };
