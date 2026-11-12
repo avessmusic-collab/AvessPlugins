@@ -1016,9 +1016,9 @@ function orgField(nx, ny, nz, layer) {
   d *= 0.55 + 0.55*V.en;                                       // consistent body, sound deepens it
   d += V.low*0.32*Math.sin(2.0*d1 + s*T*0.8) + V.high*0.20*Math.sin(5.2*d3 + s*T*2.6);
   d += V.harsh*0.28*Math.sin(3.4*d2 + s*T*2.1 + 1.0);          // harshness stirs extra motion in
-  d *= 1 - 0.82*calmV;                                         // the longer the silence, the smoother
+  d *= 1 - calmV;                                              // full calm = perfectly spherical
   for (const m of wob)                                         // zero-g slosh: ringing droplet modes
-    d += m.amp*(1 - 0.45*calmV)*Math.sin(m.l*(nx*NU[m.k][0] + ny*NU[m.k][1] + nz*NU[m.k][2])*2.6 + m.ph);
+    d += m.amp*(1 - calmV)*Math.sin(m.l*(nx*NU[m.k][0] + ny*NU[m.k][1] + nz*NU[m.k][2])*2.6 + m.ph);
   for (const rp of ripples) {                                  // transient: one soft ring each
     const c = nx*rp.u[0] + ny*rp.u[1] + nz*rp.u[2];
     const ang = Math.acos(clamp(c, -1, 1));
@@ -1071,12 +1071,12 @@ function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef, reuseFie
       // eversion throat and they pour through it to trade places
       let hm = 1;
       {
-        const conn = (0.38 + 0.62*nSwap.eI)*(1 - 0.75*calmV);  // the umbilical relaxes in calm
+        const conn = (0.38 + 0.62*nSwap.eI)*(1 - calmV);       // the umbilical vanishes in calm
         const scx = nx0*nSwap.axis[0] + ny0*nSwap.axis[1] + nz0*nSwap.axis[2];
         const angS = Math.acos(clamp(scx, -1, 1));
         const fun = Math.exp(-Math.pow(angS/0.8, 2));
         r *= 1 + conn*fun*(layer === nSwap.outer ? -(0.72 + 0.2*nSwap.eI) : +(0.95 + 0.35*nSwap.eI));
-        if (layer === nSwap.outer && angS < (0.20 + 0.42*nSwap.eI)*(1 - 0.75*calmV)) hm = 0;
+        if (layer === nSwap.outer && angS < (0.20 + 0.42*nSwap.eI)*(1 - calmV)) hm = 0;
       }
       if (layer === nSwap.outer) {                             // ambient holes breathe on the outer body
         for (let hh = 0; hh < 3; hh++) {
@@ -1168,7 +1168,8 @@ function drawOrg() {
   RNHOLE  = NHOLE.map((v, i) => rot3(v, NHAX[i], T*(0.05 + 0.03*i)));
   for (let hh = 0; hh < 3; hh++) nHoleR[hh] = Math.max(0, 0.42*Math.sin(T*0.09 + hh*2.3) - 0.10 + 0.18*V.en)*(1 - calmV);
   // CALM accumulator: silence smooths the droplet more and more; any sound wakes it instantly
-  calmV = clamp(V.en < 0.04 ? calmV + (1 - calmV)*0.0045 : calmV - 0.25*calmV - 0.02, 0, 1);
+  calmV = clamp(V.en < 0.04 ? calmV + (1 - calmV)*0.008 : calmV - 0.25*calmV - 0.02, 0, 1);
+  if (calmV > 0.995) calmV = 1;                                // ~10 s of silence -> a perfect sphere
   ripples.forEach(r => r.age += 0.03); ripples = ripples.filter(r => r.age < 3);
   for (const m of wob) {                                       // droplet modes: feed, ring, decay
     m.amp = Math.min(0.45, m.amp + V.en*0.0035);
