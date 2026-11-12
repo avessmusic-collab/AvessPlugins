@@ -136,7 +136,7 @@ namespace
         check (familyBad == 0, "families: FOLD 15-22 + 24, DYN 23, CLIP 25-37, RECT 38-40, QNT 41-43");
         check (flagBad == 0, "flags: stepFlag on the quantisers 41-43 only, aliasByDesign on Bitcrush + SR Reduction only, no seam jumps");
         check (osBad == 0, "minOS hints are 1, 2, 4 or 8");
-        check (stillTodo == 0 && warpr::kNumImplementedWarpModes == 44, "rows 44-59 (D6) are still explicit identity; 44 implemented modes");
+        check (stillTodo == 16 && warpr::kNumImplementedWarpModes == 60, "rows 44-59 are implemented by D6 (see [D6]); all 60 rows are real");
     }
 
     //==========================================================================
@@ -740,16 +740,17 @@ namespace
                     ++mixBad;
             }
 
+            // D6: the new rows are bit-exact dry at a = 0 as well (the identity-by-flag path is gone; the rows are real)
             for (int mode = 44; mode < 60; ++mode)
             {
-                const auto t = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (mode, 1.0f, 0.5f, 0.5f, 1.0f));
+                const auto t = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (mode, 0.0f, 0.5f, 0.5f, 1.0f));
                 if (! bitEqual (base.L, t.L))
                     ++todoBad;
             }
 
             check (zeroBad == 0, "a == 0 is bit-exact dry for all 29 D3 modes (A in {0, 0.5, 1}, B in {0, 1}); Bitcrush / Quantization / SR Reduction included");
             check (mixBad == 0, "warpMix = 0 is the dry signal for all 29 D3 modes (-140 dB null)");
-            check (todoBad == 0, "modes 44-59 are still the exact identity");
+            check (todoBad == 0, "modes 44-59 (D6) at a = 0 are the exact identity");
         }
     }
 
@@ -814,7 +815,7 @@ namespace
             { 17, 25, 0.1, true }, { 27, 15, 0.1, true }, { 29, 38, 0.1, true }, { 35, 26, 0.1, true }, { 19, 30, 0.1, true },
             { 22, 3, 0.1, true },  { 32, 21, 0.1, true }, { 16, 34, 0.1, true }, { 24, 25, 0.1, true }, { 20, 40, 0.1, true },
             { 36, 28, 0.1, true }, { 31, 37, 0.1, true }, { 23, 17, 0.1, false },
-            { 35, 41, 0.3, false }, { 42, 27, 0.3, false }, { 43, 15, 0.3, true }, { 41, 17, 0.3, false }, { 44, 33, 0.1, true }
+            { 35, 41, 0.3, false }, { 42, 27, 0.3, false }, { 43, 15, 0.3, true }, { 41, 17, 0.3, false }, { 48, 33, 0.1, true }
         };
         constexpr int totalBase = 9600, switchChunk = 150;
 

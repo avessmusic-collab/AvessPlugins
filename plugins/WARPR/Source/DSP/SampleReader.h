@@ -29,6 +29,8 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <new>
 
 namespace warpr
 {
@@ -221,6 +223,73 @@ namespace warpr
 
         return acc;
     }
+
+    //==========================================================================
+    /** SPEED-AWARE MIP SELECTION (architecture C2, finalised in D6).
+
+        A read that travels `mult` times faster than the chunk's nominal speed (a phase warp that speeds the read up, a
+        modulator playhead at ratio x, a Cloud grain transposed up) must come from a mip level chosen for the SPEED IT
+        ACTUALLY HAS, or its content folds.  `mipIndexForMult` quantises the multiplier to half-octave steps ROUNDED UP
+        (so the effective speed is never underestimated): 0 for mult < 1.09 (the chunk's own parameters, i.e. a read at
+        nominal speed is bit-identical to the old behaviour), else ceil (2 log2 mult), at most 8 (16x).  The reader
+        parameters of index i are makeReadParams (rho * 2^(i/2)).  ReadParamsCache builds them lazily (placement into
+        raw storage, no initialisation of unused slots): the common case touches slot 0 only. */
+    inline int mipIndexForMult (double mult) noexcept
+    {
+        if (! (mult >= 1.09))
+            return 0;
+
+        const double v = 2.0 * std::log2 (mult);
+        const int i = (int) std::ceil (v - 1.0e-9);
+        return i < 1 ? 1 : (i > 8 ? 8 : i);
+    }
+
+    class ReadParamsCache
+    {
+    public:
+        static constexpr int slots = 9;
+
+        void reset (const SampleData& data, double rhoBase, int qualityIn, bool wrapRegionIn, double loIn, double hiIn) noexcept
+        {
+            sd = &data;
+            rho = rhoBase;
+            quality = qualityIn;
+            wrapRegion = wrapRegionIn;
+            lo = loIn;
+            hi = hiIn;
+            valid = 0u;
+        }
+
+        const ReadParams& get (int index) noexcept
+        {
+            const int i = index < 0 ? 0 : (index >= slots ? slots - 1 : index);
+            auto* slot = reinterpret_cast<ReadParams*> (&storage[(size_t) i]);
+
+            if ((valid & (1u << i)) == 0u)
+            {
+                new (slot) ReadParams (makeReadParams (*sd, i == 0 ? rho : rho * std::exp2 (0.5 * (double) i), quality, wrapRegion, lo, hi));
+                valid |= 1u << i;
+            }
+
+            return *slot;
+        }
+
+        const ReadParams& forMult (double mult) noexcept { return get (mipIndexForMult (mult)); }
+
+    private:
+        const SampleData* sd = nullptr;
+        double rho = 1.0, lo = 0.0, hi = 1.0;
+        int quality = 0;
+        bool wrapRegion = false;
+        unsigned valid = 0u;
+
+        struct Slot
+        {
+            alignas (ReadParams) unsigned char bytes[sizeof (ReadParams)];
+        };
+
+        Slot storage[(size_t) slots];
+    };
 
     /** Reads one frame at level-0 position `pos` (source frames), both channels. */
     inline void readFrame (const ReadParams& rp, double pos, float& outL, float& outR) noexcept

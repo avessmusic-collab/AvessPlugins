@@ -117,6 +117,7 @@ namespace warpr
         warpMixCur = vp.warpMix;
         warpEnCur = vp.warpEnable ? 1.0f : 0.0f;
         rootCur = (float) vp.rootNote;
+        modRatioCur = vp.modOscRatio;
         shaperMorphCur = vp.shaperMorph;
         shaperMixCur = vp.shaperMix;
         shaperEnCur = vp.shaperEnable ? 1.0f : 0.0f;
@@ -282,6 +283,16 @@ namespace warpr
         rootCur += ((float) vp.rootNote - rootCur) * k5;
         snapNear (rootCur, (float) vp.rootNote, 1.0e-6f);
 
+        // modOscRatio: multiplicative (log-domain) one-pole, 15 ms
+        const float modRatio0 = modRatioCur;
+        {
+            const float ratioTarget = juce::jlimit (0.25f, 16.0f, vp.modOscRatio);
+            const float k15 = slewCoef (0.015);
+            const float lc = std::log2 (modRatioCur), lt = std::log2 (ratioTarget);
+            modRatioCur = std::exp2 (lc + (lt - lc) * k15);
+            snapNear (modRatioCur, ratioTarget, 1.0e-5f);
+        }
+
         WarpSpan warpSpan;
         warpSpan.mode = vp.warpMode;
         warpSpan.a0 = warpAmt0;   warpSpan.a1 = warpAmtCur;
@@ -293,6 +304,10 @@ namespace warpr
         warpSpan.fadeLen = std::max (1, (int) std::lround (0.010 * sampleRate * (double) os));
         warpSpan.os = os;
         warpSpan.osRate = sampleRate * (double) os;
+        warpSpan.modSource = vp.modOscSource;
+        warpSpan.ratio0 = modRatio0;
+        warpSpan.ratio1 = modRatioCur;
+        warpSpan.curve = vp.shaperCur;               // Phase Remapping reads the shaper curves even while the shaper is off (A4)
 
         // ---- shaper stage parameters: morph / mix one-pole 10 ms per chunk, enable linear ramp 5 ms.
         //      The A/B-set crossfade weight is a function of ABSOLUTE time since the swap (global, base samples),
@@ -369,6 +384,9 @@ namespace warpr
         grainSpan.warp.B0 = warpSpan.B0;     grainSpan.warp.B1 = warpSpan.B1;
         grainSpan.warp.mix0 = warpSpan.mix0; grainSpan.warp.mix1 = warpSpan.mix1;
         grainSpan.warp.Lc = warpSpan.Lc;
+        grainSpan.warp.modSource = warpSpan.modSource;
+        grainSpan.warp.ratio0 = warpSpan.ratio0; grainSpan.warp.ratio1 = warpSpan.ratio1;
+        grainSpan.warp.curve = warpSpan.curve;
 
         // ---- oscillators -> OS-rate bus
         const int nOS = n * os;

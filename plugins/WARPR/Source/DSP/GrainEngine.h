@@ -17,8 +17,21 @@
   oscillator uses.  warpMix is applied per grain (dry/wet of the head value), the Mirror SeamBridge is per head,
   and a warp-mode change cross-fades old and new offset over 10 ms (engine level, frozen old parameters).  The
   oscillator-level warp stage still runs on top for the amplitude-domain modes (it sees the grain value, so a phase
-  mode is an identity there, never applied twice).  Grains also carry the reserved slots a D6 mode needs
-  (GrainWarpSlots: Self-FM feedback, sync master phase); D6 plugs its kernels into `warpedHeads` (see SEAM D6).
+  mode is an identity there, never applied twice).
+
+  D6.  Every implemented phase-kind row is applied per grain now: the map modes 44-53 (PhaseWarp.h evalMap: up to two
+  read taps per head, an amplitude window, Soft Sync's parity) and the modulation kernels 54, 55, 58, 59 (PhaseKernel.h).
+  The per-grain STATE lives in the head: its cycle clock theta and parity, a ModState (modulator phase, Sample-source
+  follower / integrator, Self FM loop, Cross Mod previous value) and a second ModState for the outgoing mode while the
+  10 ms mode cross-fade runs.  Each head is its own channel, so Self FM / Cross Mod close their loop per head (the
+  architecture's "per channel").  The Sample-source modulator follows the head: P_m = lo + ratio (P_head - lo), read
+  through the same reader as the grain with its own speed multiplier (ratio x grain ratio).  AM / RM (amplitude kind)
+  stay with the oscillator-level stage; its Sample modulator follows the oscillator's virtual playhead.
+
+  SPEED-AWARE MIP SELECTION.  Every read the engine asks of the oscillator carries `mult`: how much faster than the
+  chunk's nominal speed it travels (the grain's own ratio - Cloud transposition and spread detune - times the measured
+  speed of the warped read).  The oscillator picks the mip level for rho x mult (SampleReader.h, ReadParamsCache), so a
+  grain transposed up by an octave or sped up by a phase warp no longer reads folded content.
 
   GRAINS.  One Grain is a STEREO pair: a left and a right read head with their own detune (+-30 cents x
   grainSpread) and start offset (<= size/4 x grainSpread) but one shared window and one shared random draw.
@@ -74,6 +87,8 @@
 */
 
 #include "DSP/HalfbandIIR.h"
+#include "DSP/ModOsc.h"
+#include "DSP/PhaseKernel.h"
 #include "DSP/PhaseWarp.h"
 #include "DSP/RegionFold.h"
 #include "DSP/SampleData.h"
@@ -203,6 +218,12 @@ namespace warpr
         float  B0 = 0.0f,  B1 = 0.0f;
         float  mix0 = 1.0f, mix1 = 1.0f;       // warpMix * enable ramp
         double Lc = 0.0;                       // source frames per root-note cycle (0 = unknown: no cycle clock)
+
+        // D6
+        int    modSource = 4;                  // modOscSource 0..4
+        float  ratio0 = 1.0f, ratio1 = 1.0f;   // modOscRatio ramp
+        const ShaperLutSet* curve = nullptr;   // Phase Remapping curves (nullptr = identity)
+        bool   blep = true;                    // Hard Sync polyBLEP
     };
 
     /** Per-chunk description of the granular source (built by the voice). */
@@ -469,7 +490,8 @@ namespace warpr
             const double grainRate = sp.sampleRate * (double) grainFactor;
             const int fadeLen = std::max (1, (int) std::lround (fadeSeconds * grainRate));
             const double invLc = sp.warp.Lc > 0.0 ? 1.0 / sp.warp.Lc : 0.0;
-            const Ctx c { sp, rg, sd, grainRate, rhoHost / (double) grainFactor, fadeLen, invLc };
+            const Ctx c { sp, rg, sd, grainRate, rhoHost / (double) grainFactor, fadeLen, invLc,
+                          modosc::coefsFor (grainRate), 1.0 / (1.0 + 0.0002 * grainRate) };
             const int sched = sp.mode == 2 ? 2 : (sp.mode == 1 ? 1 : 0);
 
             if (! running)
@@ -583,7 +605,7 @@ namespace warpr
                         if (warpOn)
                             warpedHeads (readGrain, g, c, wn, haveL, haveR, vL, vR);
                         else
-                            readHeads (readGrain, g.posL, g.dirL, haveL, g.posR, g.dirR, haveR, vL, vR);
+                            readHeads (readGrain, g.posL, g.dirL, (double) g.ratioL, haveL, g.posR, g.dirR, (double) g.ratioR, haveR, vL, vR);
 
                         sumL += w * vL;
                         sumR += w * vR;
@@ -669,10 +691,19 @@ namespace warpr
         {
             double theta = 0.0;                      // note-cycle phase of this head, [0, 1)
             bool   wrapped = false;                  // the clock wrapped on the previous sample
+            int    parity = 0;                       // master cycles elapsed mod 2 (Soft Sync)
             double lastPw = 0.0, lastStep = 0.0;     // SeamBridge: previous warped read position / step
             bool   lastValid = false;
             float  bridgeOff = 0.0f;
             int    bridgeLeft = 0;
+
+            // D6 per-grain kernel state: the modulation kernels (modulator phase, Sample follower / integrator, Self FM
+            // loop, Cross Mod previous value) of the current mode and of the outgoing one during the mode cross-fade,
+            // each tagged with the mode it belongs to (stateFor), and the measured read speed (mip selection)
+            phasewarp::ModState msCur, msOld;
+            int    modeCur = -2, modeOld = -2;
+            double qOff = 0.0, qSm = 1.0;
+            bool   qValid = false;
 
             void advance (double dTheta) noexcept
             {
@@ -683,17 +714,9 @@ namespace warpr
                 {
                     theta -= std::floor (theta);
                     wrapped = true;
+                    parity ^= 1;
                 }
             }
-        };
-
-        /** SEAM D6.  State slots a D6 kernel needs per grain, reserved (and reset at every spawn) so the pool layout
-            does not change again: Self FM keeps its low-passed feedback value per head, a sync mode its master phase
-            per head.  Nothing reads or writes them yet. */
-        struct GrainWarpSlots
-        {
-            float  selfFmL = 0.0f, selfFmR = 0.0f;
-            double syncPhaseL = 0.0, syncPhaseR = 0.0;
         };
 
         struct Grain
@@ -708,8 +731,7 @@ namespace warpr
             int relLeft = 0, relTotal = 1;
             int inLeft = 0, inTotal = 1;
             std::uint32_t serial = 0;
-            HeadWarp hL, hR;                         // per-grain phase warp (D7b)
-            GrainWarpSlots slots;                    // reserved for D6
+            HeadWarp hL, hR;                         // per-grain phase warp state (D7b, D6)
         };
 
         struct Ctx
@@ -721,6 +743,8 @@ namespace warpr
             double stepBase;                     // source frames per grain-rate sample at the voice pitch
             int fadeLen;
             double invLc;                        // 1 / Lc (0 = no cycle clock)
+            modosc::Coefs coefs;                 // Sample-modulator time constants at the grain rate (D6)
+            double kq;                           // read-speed release coefficient per grain-rate sample (D6)
         };
 
         /** Engine-level state of the per-grain phase warp: the mode the grains currently apply (-1 = none) and the
@@ -741,6 +765,7 @@ namespace warpr
             double a = 0.0, A = 0.5, B = 0.0;
             double oldA = 0.0, oldAA = 0.5, oldB = 0.0;
             float  mix = 1.0f;
+            double ratio = 1.0;                  // modOscRatio at this sample
             bool   fading = false;
             float  t = 1.0f;                     // cross-fade weight of the new mode (1 = new only)
         };
@@ -753,8 +778,8 @@ namespace warpr
                 return;
             }
 
-            // SEAM D6: a mode is applied per grain when it is an IMPLEMENTED phase-kind row of WarpModeTable.  D6 turns
-            // rows 44-55, 58, 59 on (implemented = true) and teaches phasewarp::delta / warpedHeads their kernels.
+            // A mode is applied per grain when it is an IMPLEMENTED phase-kind row of WarpModeTable (D6: 0-3, 7, 9, 14,
+            // 44-55, 58, 59); the amplitude-kind rows (4-6, 8, 10-13, 15-43, 56, 57) stay with the oscillator-level stage.
             const auto& info = warpModeInfo (gw.mode);
             const int eff = info.implemented && info.kind == WarpKind::Phase ? gw.mode : -1;
 
@@ -782,6 +807,7 @@ namespace warpr
             n.A = (double) (gw.A0 + (gw.A1 - gw.A0) * tt);
             n.B = (double) (gw.B0 + (gw.B1 - gw.B0) * tt);
             n.mix = gw.mix0 + (gw.mix1 - gw.mix0) * tt;
+            n.ratio = (double) (gw.ratio0 + (gw.ratio1 - gw.ratio0) * tt);
 
             if (wctl.fadeLeft > 0)
             {
@@ -809,24 +835,24 @@ namespace warpr
         /** Reads the two heads (left head: channel 0 at posL; right head: channel 1 at posR).  A head that has ended
             reads 0.  Identical head positions share one read. */
         template <class Read>
-        static void readHeads (Read& rd, double pL, int dL, bool haveL, double pR, int dR, bool haveR,
+        static void readHeads (Read& rd, double pL, int dL, double mL, bool haveL, double pR, int dR, double mR, bool haveR,
                                float& outL, float& outR) noexcept
         {
             float l0 = 0.0f, l1 = 0.0f, rv = 0.0f;
 
             if (haveL)
-                rd (pL, dL, l0, l1);
+                rd (pL, dL, mL, l0, l1);
 
             if (haveR)
             {
-                if (haveL && juce::exactlyEqual (pR, pL) && dR == dL)
+                if (haveL && juce::exactlyEqual (pR, pL) && dR == dL && juce::exactlyEqual (mR, mL))
                 {
                     rv = l1;
                 }
                 else
                 {
                     float r0 = 0.0f, r1 = 0.0f;
-                    rd (pR, dR, r0, r1);
+                    rd (pR, dR, mR, r0, r1);
                     rv = r1;
                 }
             }
@@ -835,30 +861,131 @@ namespace warpr
             outR = rv;
         }
 
-        /** Read position of one head under phase mode `mode`; `moved` is false (position returned unchanged) when the
-            offset is exactly zero, which keeps the warp bit-exact at warpAmount 0. */
-        static double warpedPos (const RegionFold& rg, double Lc, int mode, double amt, double pA, double pB,
-                                 const HeadWarp& h, double dTheta, double p, int dir, bool& moved) noexcept
+        /** The ModState a head uses for `mode`: the current one, the outgoing one, or (a mode the head has not run yet)
+            a fresh one that pushes the current state into the outgoing slot. */
+        static phasewarp::ModState& stateFor (HeadWarp& h, int mode) noexcept
         {
-            moved = false;
+            if (mode == h.modeCur)
+                return h.msCur;
+
+            if (mode == h.modeOld)
+                return h.msOld;
+
+            h.msOld = h.msCur;
+            h.modeOld = h.modeCur;
+            h.msCur.reset();
+            h.modeCur = mode;
+            return h.msCur;
+        }
+
+        /** What one head does under one phase mode in one grain-rate sample: the PhaseOut, the read positions of its
+            taps, and the speed multiplier its warped reads need (the head's ratio x the measured read speed). */
+        struct HeadTap
+        {
+            phasewarp::PhaseOut po;
+            double pw0 = 0.0, pw1 = 0.0;
+            double mult = 1.0;
+            bool   moved = false;                // false: the read is exactly the plain read (bit-exact warp at amount 0)
+        };
+
+        template <class Read>
+        static HeadTap evalHead (Read& rd, HeadWarp& h, int mode, double a, double A, double B, double dT, const WarpNow& wn,
+                                 const Ctx& c, double p, int dir, float ratio, double step, bool trackSpeed) noexcept
+        {
+            HeadTap t;
+            t.pw0 = t.pw1 = p;
+            t.mult = (double) ratio;
 
             if (mode < 0)
-                return p;
+                return t;
 
-            const double delta = phasewarp::delta (mode, amt, pA, pB, h.theta, dTheta);
+            const GrainWarp& gw = c.sp.warp;
+            const RegionFold& rg = c.rg;
+            const double Lc = gw.Lc;
 
-            if (juce::exactlyEqual (delta, 0.0))
-                return p;
+            if (warpModeInfo (mode).family == WarpFamily::Mod)
+            {
+                phasewarp::ModState& st = stateFor (h, mode);
+                const phasewarp::ModIn mi { h.theta, dT, wn.ratio, gw.modSource, &c.coefs };
 
-            moved = true;
-            return rg.foldRead (p + (double) dir * Lc * delta);
+                auto rdm = [&] (double off) noexcept
+                {
+                    const double pm = rg.foldRead (rg.lo + wn.ratio * (p - rg.lo) + (double) dir * Lc * off);
+                    float m0 = 0.0f, m1 = 0.0f;
+                    rd (pm, dir, (double) ratio * wn.ratio, m0, m1);
+                    return 0.5 * ((double) m0 + (double) m1);
+                };
+
+                t.po = phasewarp::evalMod (mode, a, A, B, mi, st, rdm);
+            }
+            else
+            {
+                const phasewarp::MapCtx cx { gw.curve, h.parity, gw.blep };
+                t.po = phasewarp::evalMap (mode, a, A, B, h.theta, dT, cx);
+            }
+
+            t.moved = ! t.po.identity();
+
+            if (t.moved)
+            {
+                t.pw0 = rg.foldRead (p + (double) dir * Lc * t.po.d0);
+
+                if (t.po.g1 > 0.0f)
+                    t.pw1 = rg.foldRead (p + (double) dir * Lc * t.po.d1);
+            }
+
+            if (trackSpeed)
+            {
+                double q = 1.0;
+
+                // measured on the UNFOLDED offset: region wraps of the head do not count as speed
+                const double off = t.moved ? (double) dir * Lc * t.po.d0 : 0.0;
+
+                if (h.qValid)
+                {
+                    q = std::abs ((double) dir * step + (off - h.qOff)) / std::max (step, 1.0e-12);
+
+                    if (! (q < 40.0))
+                        q = 1.0;                                    // a reset / jump, not a speed
+                }
+
+                h.qOff = off;
+                h.qValid = true;
+                h.qSm = q > h.qSm ? q : h.qSm + c.kq * (q - h.qSm);
+            }
+
+            t.mult = (double) ratio * h.qSm;
+            return t;
+        }
+
+        /** The wet values of the two heads from their taps: tap 0 (+ tap 1, equal-power / linear weights) times the amplitude
+            window.  `wetL` / `wetR` come in holding nothing meaningful and go out as the heads' wet values. */
+        template <class Read>
+        static void wetHeads (Read& rd, const Grain& g, const HeadTap& tL, const HeadTap& tR, bool haveL, bool haveR,
+                              float& wetL, float& wetR) noexcept
+        {
+            readHeads (rd, tL.pw0, g.dirL, tL.mult, haveL, tR.pw0, g.dirR, tR.mult, haveR, wetL, wetR);
+
+            if (tL.po.g1 > 0.0f || tR.po.g1 > 0.0f)
+            {
+                float l1 = 0.0f, r1 = 0.0f;
+                readHeads (rd, tL.pw1, g.dirL, tL.mult, haveL, tR.pw1, g.dirR, tR.mult, haveR, l1, r1);
+                wetL = tL.po.g0 * wetL + tL.po.g1 * l1;               // a head without a second tap has g0 = 1, g1 = 0
+                wetR = tR.po.g0 * wetR + tR.po.g1 * r1;
+            }
+
+            if (! juce::exactlyEqual (tL.po.amp, 1.0f))
+                wetL *= tL.po.amp;
+
+            if (! juce::exactlyEqual (tR.po.amp, 1.0f))
+                wetR *= tR.po.amp;
         }
 
         /** Mirror-style SeamBridge of one head: at a cycle wrap the warp map may jump; read where continuity of the
             read position would have led and split the output difference over two grain-rate samples. */
         template <class Read>
         static void bridgeHead (Read& rd, const RegionFold& rg, HeadWarp& h, float& wet, double pw, double step,
-                                int dir, bool have, bool rightChannel) noexcept
+                                int dir, double mult, bool have, bool rightChannel) noexcept
         {
             if (! have)
             {
@@ -869,7 +996,7 @@ namespace warpr
             if (h.wrapped && h.lastValid)
             {
                 float a = 0.0f, b = 0.0f;
-                rd (rg.foldRead (h.lastPw + (double) dir * h.lastStep), dir, a, b);
+                rd (rg.foldRead (h.lastPw + (double) dir * h.lastStep), dir, mult, a, b);
                 h.bridgeOff = (rightChannel ? b : a) - wet;
                 h.bridgeLeft = 1;                                  // total 2: weights 1/2 then 0
             }
@@ -885,22 +1012,21 @@ namespace warpr
             h.lastValid = true;
         }
 
-        /** The head values of one grain with the phase warp applied: dry / wet per head, SeamBridge, old -> new mode
-            cross-fade, warpMix.  SEAM D6: new kernels (sync, FM / PM, Self FM) add their position offset (and use
-            g.slots) at the two `warpedPos` calls; everything around them already is per grain. */
+        /** The head values of one grain with the phase warp applied: per-head kernel (map / modulation, up to two taps and
+            an amplitude window), dry / wet, SeamBridge, old -> new mode cross-fade, warpMix.  Everything is per grain
+            head: its cycle clock, parity, modulator and feedback state live in g.hL / g.hR. */
         template <class Read>
         void warpedHeads (Read& rd, Grain& g, const Ctx& c, const WarpNow& wn, bool haveL, bool haveR,
                           float& outL, float& outR) noexcept
         {
             const RegionFold& rg = c.rg;
-            const double Lc = c.sp.warp.Lc;
             const double stepL = c.stepBase * (double) g.ratioL, stepR = c.stepBase * (double) g.ratioR;
             const double dTL = stepL * c.invLc, dTR = stepR * c.invLc;
+            const double mL = (double) g.ratioL, mR = (double) g.ratioR;
 
-            bool mvL = false, mvR = false;
-            const double pwL = warpedPos (rg, Lc, wn.cur, wn.a, wn.A, wn.B, g.hL, dTL, g.posL, g.dirL, mvL);
-            const double pwR = warpedPos (rg, Lc, wn.cur, wn.a, wn.A, wn.B, g.hR, dTR, g.posR, g.dirR, mvR);
-            const bool curMoved = mvL || mvR;
+            const HeadTap tL = evalHead (rd, g.hL, wn.cur, wn.a, wn.A, wn.B, dTL, wn, c, g.posL, g.dirL, g.ratioL, stepL, true);
+            const HeadTap tR = evalHead (rd, g.hR, wn.cur, wn.a, wn.A, wn.B, dTR, wn, c, g.posR, g.dirR, g.ratioR, stepR, true);
+            const bool curMoved = tL.moved || tR.moved;
 
             // the dry read is only skipped for a fully wet, non-fading, moved read
             const bool needDry = wn.mix < 1.0f || wn.fading || ! curMoved;
@@ -908,17 +1034,24 @@ namespace warpr
             float dryL = 0.0f, dryR = 0.0f;
 
             if (needDry)
-                readHeads (rd, g.posL, g.dirL, haveL, g.posR, g.dirR, haveR, dryL, dryR);
+                readHeads (rd, g.posL, g.dirL, mL, haveL, g.posR, g.dirR, mR, haveR, dryL, dryR);
 
             float wetL = dryL, wetR = dryR;
 
             if (curMoved)
-                readHeads (rd, pwL, g.dirL, haveL, pwR, g.dirR, haveR, wetL, wetR);
+                wetHeads (rd, g, tL, tR, haveL, haveR, wetL, wetR);
+
+            // Self FM / Cross Mod close their loop on each head's own wet value (the feedback guard lives in feed())
+            if ((wn.cur == 58 || wn.cur == 59) && wn.a > 0.0)
+            {
+                phasewarp::feed (wn.cur, wn.A, (double) wetL, c.grainRate, stateFor (g.hL, wn.cur));
+                phasewarp::feed (wn.cur, wn.A, (double) wetR, c.grainRate, stateFor (g.hR, wn.cur));
+            }
 
             if (wn.cur >= 0 && warpModeInfo (wn.cur).seamJump)
             {
-                bridgeHead (rd, rg, g.hL, wetL, pwL, stepL, g.dirL, haveL, false);
-                bridgeHead (rd, rg, g.hR, wetR, pwR, stepR, g.dirR, haveR, true);
+                bridgeHead (rd, rg, g.hL, wetL, tL.pw0, stepL, g.dirL, mL, haveL, false);
+                bridgeHead (rd, rg, g.hR, wetR, tR.pw0, stepR, g.dirR, mR, haveR, true);
             }
             else
             {
@@ -930,12 +1063,17 @@ namespace warpr
             {
                 float oldL = dryL, oldR = dryR;
 
-                bool omL = false, omR = false;
-                const double poL = warpedPos (rg, Lc, wn.old, wn.oldA, wn.oldAA, wn.oldB, g.hL, dTL, g.posL, g.dirL, omL);
-                const double poR = warpedPos (rg, Lc, wn.old, wn.oldA, wn.oldAA, wn.oldB, g.hR, dTR, g.posR, g.dirR, omR);
+                const HeadTap oL = evalHead (rd, g.hL, wn.old, wn.oldA, wn.oldAA, wn.oldB, dTL, wn, c, g.posL, g.dirL, g.ratioL, stepL, false);
+                const HeadTap oR = evalHead (rd, g.hR, wn.old, wn.oldA, wn.oldAA, wn.oldB, dTR, wn, c, g.posR, g.dirR, g.ratioR, stepR, false);
 
-                if (omL || omR)
-                    readHeads (rd, poL, g.dirL, haveL, poR, g.dirR, haveR, oldL, oldR);
+                if (oL.moved || oR.moved)
+                    wetHeads (rd, g, oL, oR, haveL, haveR, oldL, oldR);
+
+                if ((wn.old == 58 || wn.old == 59) && wn.oldA > 0.0)
+                {
+                    phasewarp::feed (wn.old, wn.oldAA, (double) oldL, c.grainRate, stateFor (g.hL, wn.old));
+                    phasewarp::feed (wn.old, wn.oldAA, (double) oldR, c.grainRate, stateFor (g.hR, wn.old));
+                }
 
                 wetL = oldL + wn.t * (wetL - oldL);
                 wetR = oldR + wn.t * (wetR - oldR);

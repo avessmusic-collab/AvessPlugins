@@ -91,7 +91,7 @@ namespace
     //==========================================================================
     void testModeTable()
     {
-        std::printf ("\n[D2] WarpModeTable: 60 rows, names == spec, 44 implemented (D2 + D3), rest explicit identity\n");
+        std::printf ("\n[D2] WarpModeTable: 60 rows, names == spec, all implemented (D2 + D3 + D6)\n");
 
         int nameMismatch = 0, implementedWrong = 0, familyWrong = 0;
 
@@ -115,7 +115,7 @@ namespace
 
         check (warpr::kWarpModes.size() == 60 && warpr::kNumWarpModes == 60, "table has exactly 60 rows");
         check (nameMismatch == 0, "every row name equals choices::warpMode[i] (parameter-spec order and spelling)");
-        check (implementedWrong == 0, "exactly indices 0-43 are implemented (D2 + D3); 44-59 carry the not-yet-implemented flag");
+        check (implementedWrong == 0 && warpr::kNumImplementedWarpModes == 60, "all 60 indices are implemented (D2: 0-14, D3: 15-43, D6: 44-59)");
         check (familyWrong == 0, "family / kind: H {0,1,2,3,7,9,14}, V {4,5,6,11,12,13}, VT {8,10}");
         check (warpr::warpModeInfo (-5).name == warpr::kWarpModes[0].name && warpr::warpModeInfo (99).name == warpr::kWarpModes[59].name,
                "warpModeInfo clamps out-of-range indices");
@@ -466,10 +466,12 @@ namespace
                     DETAIL ("        mode %d is not the exact identity\n", mode);
                 }
             }
-            check (notIdentity == 0, "all 16 not-yet-implemented modes (44-59) are the exact identity at a = 1");
+            check (notIdentity == 0, "no mode is left unimplemented after D6 (the identity-by-flag path stays in the machinery)");
 
-            const auto mixHalf = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (47, 1.0f, 0.5f, 0.5f, 0.4f));
-            check (bitEqual (base.L, mixHalf.L), "unimplemented mode with warpMix 0.4 is still the exact identity");
+            // D6: a = 0 is the exact identity for the new rows too (Phase Mirror, FM) even at warpMix 0.4
+            const auto mixHalf = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (47, 0.0f, 0.5f, 0.5f, 0.4f));
+            const auto fmHalf = renderOsc (*sd, 220.0, fs, 2, 6400, constSpan (54, 0.0f, 0.5f, 0.5f, 0.4f));
+            check (bitEqual (base.L, mixHalf.L) && bitEqual (base.L, fmHalf.L), "Phase Mirror / FM at warpAmount 0 with warpMix 0.4 are the exact identity");
 
             const auto inactive = renderOsc (*sd, 220.0, fs, 2, 6400, [] (int, warpr::WarpSpan& sp) { sp.active = false; sp.mode = 3; sp.a0 = sp.a1 = 1.0f; return true; });
             check (bitEqual (base.L, inactive.L) && bitEqual (base.R, inactive.R), "warpEnable off (span inactive) is bit-exact dry");
@@ -506,7 +508,7 @@ namespace
         constexpr double fs = 48000.0;
         auto sine = makeCycle (2048, 0.5f);
 
-        const int pairs[][2] = { { 0, 13 }, { 4, 2 }, { 11, 14 }, { 6, 3 }, { 12, 5 }, { 7, 12 }, { 3, 30 }, { 44, 0 }, { 30, 44 }, { 13, 1 }, { 14, 6 }, { 2, 17 } };
+        const int pairs[][2] = { { 0, 13 }, { 4, 2 }, { 11, 14 }, { 6, 3 }, { 12, 5 }, { 7, 12 }, { 3, 30 }, { 17, 0 }, { 30, 17 }, { 13, 1 }, { 14, 6 }, { 2, 17 } };
         constexpr int totalBase = 9600, switchChunk = 150;
 
         int stepBad = 0, tailBad = 0;
@@ -546,7 +548,7 @@ namespace
         }
 
         std::printf ("        (%d pairs, worst max step %.4f FS)\n", (int) (sizeof (pairs) / sizeof (pairs[0])), worstStep);
-        check (stepBad == 0, "mode switch mid-note: max step <= 0.1 FS (incl. pairs with a not-yet-implemented identity mode)");
+        check (stepBad == 0, "mode switch mid-note: max step <= 0.1 FS (incl. pairs with the D3 shapers)");
         check (tailBad == 0, "after the 10 ms fade the output equals the new mode rendered alone");
     }
 
@@ -693,15 +695,15 @@ namespace
         setParam (proc, "warpEnable", 1.0f);
         setParam (proc, "warpAmount", 0.0f);
         const auto zero = warpr::tests::render (proc, midi, fs, 256, 0.4);
-        setParam (proc, "warpMode", 47.0f);                          // unimplemented -> identity
-        setParam (proc, "warpAmount", 1.0f);
+        setParam (proc, "warpMode", 47.0f);                          // D6 Phase Mirror at warpAmount 0 -> identity
+        setParam (proc, "warpAmount", 0.0f);
         const auto ident = warpr::tests::render (proc, midi, fs, 256, 0.4);
 
         auto toVec = [] (const juce::AudioBuffer<float>& b, int ch) { return std::vector<float> (b.getReadPointer (ch), b.getReadPointer (ch) + b.getNumSamples()); };
         check (nullDb (toVec (off, 0), toVec (zero, 0)) <= -100.0 && nullDb (toVec (off, 1), toVec (zero, 1)) <= -100.0,
                "warpEnable off and (enable on, warpAmount 0) render the same sound (-100 dB null)");
         check (bitEqual (toVec (off, 0), toVec (ident, 0)) && bitEqual (toVec (off, 1), toVec (ident, 1)),
-               "an unimplemented mode (Phase Mirror, index 47) is bit-exact dry through the whole voice path");
+               "Phase Mirror (index 47) at warpAmount 0 is bit-exact dry through the whole voice path");
 
         // enabling the warp mid-note ramps in (no click)
         PluginProcessor p2;

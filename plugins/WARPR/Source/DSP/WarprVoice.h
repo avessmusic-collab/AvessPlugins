@@ -47,6 +47,8 @@ namespace warpr
         bool  warpEnable = true;
         int   warpMode = 17;
         float warpAmount = 0.0f, warpA = 0.5f, warpB = 0.0f, warpMix = 1.0f;
+        int   modOscSource = 4;              // D6: 0 Sine, 1 Triangle, 2 Saw, 3 Square, 4 Sample (parameter default)
+        float modOscRatio = 1.0f;            // D6: modulator frequency / note frequency
 
         // Shaper stage (D4).  The set pointers are owned by the ShaperEngine (valid for the whole block);
         // `shaperFadeBase` = base samples already elapsed in the running A/B-set crossfade at the START of the
@@ -208,6 +210,7 @@ namespace warpr
         // root note slew 5 ms (drives the warp cycle length Lc)
         float warpAmtCur = 0.0f, warpACur = 0.5f, warpBCur = 0.0f, warpMixCur = 1.0f, warpEnCur = 1.0f;
         float rootCur = 60.0f;
+        float modRatioCur = 1.0f;                    // modOscRatio, log-domain one-pole 15 ms (D6)
 
         // shaper stage smoothers (per chunk): morph / mix one-pole 10 ms, enable linear ramp 5 ms
         float shaperMorphCur = 0.0f, shaperMixCur = 1.0f, shaperEnCur = 0.0f;

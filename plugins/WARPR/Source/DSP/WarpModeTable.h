@@ -8,11 +8,10 @@
       family     the shared-infrastructure family (architecture "Family map")
       kind       Phase  : adds a read-position offset  P' = P + dir * Lc * Delta(theta)  (before the read)
                  Amp    : shapes the value read from the sample
-      implemented  true  : real DSP exists (D2: indices 0-14, D3: 15-43)
+      implemented  true  : real DSP exists (D2: indices 0-14, D3: 15-43, D6: 44-59 - all 60 rows are real now)
                    false : NOT YET IMPLEMENTED.  STATIC MAPPING: the mode is the IDENTITY (wet = dry,
-                           bit-exact) until its phase fills it in:
-                             44-59  phase & time, sync, modulation ........................ D6
-                           Selecting such a mode is safe and testable; no fake DSP stands in for it.
+                           bit-exact).  No row uses it any more; the flag and the identity behaviour stay in the
+                           machinery (WarpStage, GrainEngine) for a future mode.
       minOS      oversampling hint (UI/governor only; never forces the factor).  For the D3 static shapers
                  it is the smallest factor at which the measured alias level meets gate A2 (see
                  PhaseD3Tests); Hard Clip, Tanh and Linear Fold are raised to 4 per risk R1(b).  minOS IS
@@ -85,7 +84,7 @@ namespace warpr
     }
 
     inline constexpr int kNumWarpModes = 60;
-    inline constexpr int kNumImplementedWarpModes = 44;      // D2: indices 0-14, D3: indices 15-43
+    inline constexpr int kNumImplementedWarpModes = 60;      // D2: indices 0-14, D3: 15-43, D6: 44-59 (all)
 
     inline constexpr std::array<WarpModeInfo, 60> kWarpModes {{
         // ---- WAVE BENDING (0-14): IMPLEMENTED in D2 ---------------------------------------------------
@@ -138,25 +137,27 @@ namespace warpr
         detail::shape ("SR Reduction",     detail::F::Qnt,  1, "interpolation",          "clock jitter",   true, true),
         detail::shape ("Quantization",     detail::F::Qnt,  2, "step softness",          "offset (mid-rise)", true),
 
-        // ---- PHASE & TIME (44-53): D6 ----------------------------------------------------------------
-        detail::todo ("Phase Distortion",  detail::F::Phm, detail::K::Phase, 2),
-        detail::todo ("Phase Stretch",     detail::F::Phm, detail::K::Phase, 2),
-        detail::todo ("Phase Compression", detail::F::Phm, detail::K::Phase, 2),
-        detail::todo ("Phase Mirror",      detail::F::Phm, detail::K::Phase, 2),
-        detail::todo ("Phase Skew",        detail::F::Phm, detail::K::Phase, 2),
-        detail::todo ("Phase Quantization", detail::F::Phm, detail::K::Phase, 2),
-        detail::todo ("Phase Remapping",   detail::F::Phm, detail::K::Phase, 2),
-        detail::todo ("Windowed Sync",     detail::F::Syn, detail::K::Phase, 4),
-        detail::todo ("Hard Sync",         detail::F::Syn, detail::K::Phase, 4),
-        detail::todo ("Soft Sync",         detail::F::Syn, detail::K::Phase, 2),
+        // ---- PHASE & TIME (44-53): IMPLEMENTED in D6 (PhaseWarp.h evalMap) ----------------------------
+        // seamJump: the map can jump at the cycle wrap (SeamBridge); stepFlag: an INTENDED discontinuity (sync reset,
+        // the hard staircase of Phase Quantization at smoothness 0, partial reflection).
+        detail::row ("Phase Distortion",   detail::F::Phm, detail::K::Phase, true, 2, false, true,  "corner rounding",   "resonance multiple"),
+        detail::row ("Phase Stretch",      detail::F::Phm, detail::K::Phase, true, 2, false, true,  "window position",   "edge crossfade"),
+        detail::row ("Phase Compression",  detail::F::Phm, detail::K::Phase, true, 2, false, true,  "integer snap",      "sub-cycle crossfade"),
+        detail::row ("Phase Mirror",       detail::F::Phm, detail::K::Phase, true, 2, false, true,  "-",                "apex rounding"),
+        detail::row ("Phase Skew",         detail::F::Phm, detail::K::Phase, true, 2, false, false, "skew centre",      "2nd-harmonic skew"),
+        detail::row ("Phase Quantization", detail::F::Phm, detail::K::Phase, true, 2, true,  false, "step smoothness",  "-"),
+        detail::row ("Phase Remapping",    detail::F::Phm, detail::K::Phase, true, 2, false, true,  "curve A/B blend",   "-"),
+        detail::row ("Windowed Sync",      detail::F::Syn, detail::K::Phase, true, 4, true,  false, "ratio fine",        "window width"),
+        detail::row ("Hard Sync",          detail::F::Syn, detail::K::Phase, true, 4, true,  false, "ratio fine",        "reset-edge softness"),
+        detail::row ("Soft Sync",          detail::F::Syn, detail::K::Phase, true, 2, true,  false, "ratio fine",        "reflection amount"),
 
-        // ---- MODULATION (54-59): D6 ------------------------------------------------------------------
-        detail::todo ("FM",                detail::F::Mod, detail::K::Phase, 4),
-        detail::todo ("PM",                detail::F::Mod, detail::K::Phase, 4),
-        detail::todo ("AM",                detail::F::Mod, detail::K::Amp,   2),
-        detail::todo ("RM",                detail::F::Mod, detail::K::Amp,   2),
-        detail::todo ("Self FM",           detail::F::Mod, detail::K::Phase, 4),
-        detail::todo ("Cross Mod",         detail::F::Mod, detail::K::Phase, 4)
+        // ---- MODULATION (54-59): IMPLEMENTED in D6 (PhaseKernel.h) ------------------------------------
+        detail::row ("FM",                 detail::F::Mod, detail::K::Phase, true, 4, false, false, "index range",       "modulator phase offset"),
+        detail::row ("PM",                 detail::F::Mod, detail::K::Phase, true, 4, false, false, "index range",       "modulator self-feedback"),
+        detail::row ("AM",                 detail::F::Mod, detail::K::Amp,   true, 2, false, false, "uni/bipolar blend", "modulator bias"),
+        detail::row ("RM",                 detail::F::Mod, detail::K::Amp,   true, 2, false, false, "modulator drive",   "-"),
+        detail::row ("Self FM",            detail::F::Mod, detail::K::Phase, true, 4, false, false, "feedback LP cut",   "feedback gain trim"),
+        detail::row ("Cross Mod",          detail::F::Mod, detail::K::Phase, true, 4, false, false, "index ratio",       "mutual feedback")
     }};
 
     /** Row for a warpMode index (clamped into 0..59). */

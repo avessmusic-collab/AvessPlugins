@@ -60,6 +60,9 @@ namespace warpr
         WarpOscState warp;           // note-cycle clock + warp kernels (D2)
         ShaperOscState shaper;       // transfer-curve shaper ADAA history (D4)
         GrainEngine grain;           // granular source (D7a)
+        double vpos = 0.0;           // virtual playhead the Sample-source modulator follows while the grains hold `pos` (D6)
+        int    vdir = 1;
+        double qSm = 1.0;            // smoothed read speed of the warp stage (speed-aware mip selection, D6)
 
         /** Index 0 starts exactly at the region start (or end when reversed).  Short (single-cycle
             like) regions spread the start phases of further oscillators by the golden ratio so
@@ -89,6 +92,9 @@ namespace warpr
             warp.reset (theta0);
             shaper.idle();
             grain.start (grainSeed);
+            vpos = pos;
+            vdir = dir;
+            qSm = 1.0;
         }
 
         /** Renders `nOS` oscillator-rate samples, ADDING them (times the ramped pan gains) to busL/busR.
@@ -127,7 +133,13 @@ namespace warpr
                     return;
             }
 
-            const ReadParams rp = makeReadParams (sd, 0.5 * (rho0 + rho1), quality, rg.wrapTaps, rg.lo, rg.hi);
+            // Reader parameters for the chunk's nominal speed (index 0, bit-identical to the pre-D6 single ReadParams) and, lazily,
+            // for faster reads (warped playheads, transposed grains): ReadParamsCache / mipIndexForMult.
+            const double rhoMid = 0.5 * (rho0 + rho1);
+            ReadParamsCache rpc;
+            rpc.reset (sd, rhoMid, quality, rg.wrapTaps, rg.lo, rg.hi);
+            const ReadParams* rpCur = &rpc.get (0);
+            const bool stereoSrc = rpCur->stereo;
 
             const double invOs = 1.0 / (double) os;
             double step = rho0 * invOs;
@@ -140,9 +152,9 @@ namespace warpr
             const bool oneShot = rg.mode == RegionFold::Mode::OneShot;
             const bool seamFade = rg.mode == RegionFold::Mode::Forward && rg.xfade > 0.0;
 
-            // Interpolated read at an arbitrary READ position travelling in direction `d`, with the seam / end
-            // fades for that position.
-            auto readAtDir = [&] (double p, int d, float& sL, float& sR) noexcept
+            // Interpolated read with reader parameters `rp`, at an arbitrary READ position travelling in direction `d`,
+            // with the seam / end fades for that position.
+            auto readWith = [&] (const ReadParams& rp, double p, int d, float& sL, float& sR) noexcept
             {
                 readFrame (rp, p, sL, sR);
 
@@ -192,9 +204,10 @@ namespace warpr
                 }
             };
 
-            auto readAt = [&] (double p, float& sL, float& sR) noexcept
+            // `mult` = how much faster than the chunk's nominal speed this read travels (grain transposition x warp speed)
+            auto readAtDir = [&] (double p, int d, double mult, float& sL, float& sR) noexcept
             {
-                readAtDir (p, dir, sL, sR);
+                readWith (rpc.forMult (mult), p, d, sL, sR);
             };
 
             // ---- granular source setup: the whole span is rendered up front ----------------------------
@@ -211,11 +224,11 @@ namespace warpr
             float gSL = 0.0f, gSR = 0.0f, curGw = 0.0f;
 
             // The value entering the warp stage: the Classic read, the grain value, or the playMode crossfade.
-            auto readSrc = [&] (double p, float& sL, float& sR) noexcept
+            auto readSrcWith = [&] (const ReadParams& rpx, double p, float& sL, float& sR) noexcept
             {
                 if (! grainActive)
                 {
-                    readAt (p, sL, sR);
+                    readWith (rpx, p, dir, sL, sR);
                     return;
                 }
 
@@ -233,22 +246,36 @@ namespace warpr
                     return;
                 }
 
-                readAt (p, sL, sR);
+                readWith (rpx, p, dir, sL, sR);
                 sL += curGw * (gSL - sL);
                 sR += curGw * (gSR - sR);
             };
+
+            auto readSrc = [&] (double p, float& sL, float& sR) noexcept { readSrcWith (*rpCur, p, sL, sR); };
+            auto readSrcDry = [&] (double p, float& sL, float& sR) noexcept { readSrcWith (rpc.get (0), p, sL, sR); };
 
             // ---- warp stage setup ------------------------------------------------------------------
             const bool warpPresent = warpSpan != nullptr;
             const bool warpActive = warpPresent && warpSpan->active;
             const double invLc = warpPresent && warpSpan->Lc > 0.0 ? 1.0 / warpSpan->Lc : 0.0;
-            const bool stereoSrc = rp.stereo;
 
             if (warpPresent && ! warpActive)
+            {
                 warp.idle();
+                qSm = 1.0;
+            }
 
-            float wa = 0.0f, wA = 0.5f, wB = 0.0f, wm = 1.0f;
-            float dwa = 0.0f, dwA = 0.0f, dwB = 0.0f, dwm = 0.0f;
+            // a fully granular span: the grains apply the phase modes themselves, the stage keeps the amplitude modes only
+            WarpSpan stageSpan;
+
+            if (warpActive)
+            {
+                stageSpan = *warpSpan;
+                stageSpan.grainDriven = grainFull;
+            }
+
+            float wa = 0.0f, wA = 0.5f, wB = 0.0f, wm = 1.0f, wr = 1.0f;
+            float dwa = 0.0f, dwA = 0.0f, dwB = 0.0f, dwm = 0.0f, dwr = 0.0f;
 
             if (warpActive)
             {
@@ -257,7 +284,26 @@ namespace warpr
                 wA = warpSpan->A0;   dwA = (warpSpan->A1 - warpSpan->A0) * inv;
                 wB = warpSpan->B0;   dwB = (warpSpan->B1 - warpSpan->B0) * inv;
                 wm = warpSpan->mix0; dwm = (warpSpan->mix1 - warpSpan->mix0) * inv;
+                wr = warpSpan->ratio0; dwr = (warpSpan->ratio1 - warpSpan->ratio0) * inv;
             }
+
+            // Sample-source modulator (D6): its own reader parameters for the modulator speed rho x ratio, so the
+            // modulator's content never folds (15 kHz content read at 4x is removed by the mip level, not aliased).
+            ReadParams rpMod;
+
+            if (warpActive && warpSpan->modSource >= 4)
+            {
+                const double ratioMid = 0.5 * ((double) warpSpan->ratio0 + (double) warpSpan->ratio1);
+                rpMod = makeReadParams (sd, rhoMid * std::max (ratioMid, 0.0625), quality, rg.wrapTaps, rg.lo, rg.hi);
+            }
+
+            auto readModAt = [&] (double p, float& sL, float& sR) noexcept
+            {
+                readWith (rpMod, p, dir, sL, sR);
+            };
+
+            // read-speed smoothing of the warp stage: instant attack (never underestimate), 0.2 ms release
+            const double kq = 1.0 / (1.0 + 0.0002 * (warpPresent ? warpSpan->osRate : 48000.0));
 
             // ---- shaper stage setup ----------------------------------------------------------------
             const bool shaperPresent = shaperSpan != nullptr;
@@ -291,11 +337,19 @@ namespace warpr
 
                 if (warpActive)
                 {
-                    warp.process (*warpSpan, wa, wA, wB, wm, pos, dir, step, rg, stereoSrc, readSrc, sL, sR);
+                    // the modulator follows the carrier playhead, or the virtual one while the grains hold `pos`
+                    warp.process (stageSpan, wa, wA, wB, wm, wr, pos, dir, step, grainFull ? vpos : pos, grainFull ? vdir : dir,
+                                  rg, stereoSrc, readSrc, readSrcDry, readModAt, sL, sR);
                     wa += dwa;
                     wA += dwA;
                     wB += dwB;
                     wm += dwm;
+                    wr += dwr;
+
+                    // speed-aware mip selection: the next read's level follows the measured speed of the warped read
+                    const double qRaw = warp.speedRatio();
+                    qSm = qRaw > qSm ? qRaw : qSm + kq * (qRaw - qSm);
+                    rpCur = &rpc.forMult (qSm);
                 }
                 else
                 {
@@ -325,6 +379,16 @@ namespace warpr
 
                     if (! grainActive)
                         break;
+                }
+
+                if (grainFull)
+                {
+                    (void) rg.advance (vpos, vdir, step);          // the virtual playhead keeps travelling while `pos` holds
+                }
+                else
+                {
+                    vpos = pos;
+                    vdir = dir;
                 }
 
                 step += dStep;

@@ -107,6 +107,8 @@ namespace warpr
         vp.warpA = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpParamA));
         vp.warpB = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpParamB));
         vp.warpMix = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::warpMix));
+        vp.modOscSource = juce::jlimit (0, 4, pb.getInt (ParamId::modOscSource));
+        vp.modOscRatio = juce::jlimit (0.25f, 16.0f, pb.get (ParamId::modOscRatio));
 
         vp.shaperEnable = pb.getBool (ParamId::shaperEnable);
         vp.shaperMorph = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::shaperMorph));

@@ -445,7 +445,7 @@ namespace
         warpr::RegionFold rg;
         rg.configure (*sd, 0.0f, 1.0f, warpr::RegionFold::Mode::Forward);
 
-        auto zeroRead = [] (double, int, float& l, float& r) { l = 0.0f; r = 0.0f; };
+        auto zeroRead = [] (double, int, double, float& l, float& r) { l = 0.0f; r = 0.0f; };   // D6: reads carry a speed multiplier
 
         struct Case
         {
@@ -878,7 +878,7 @@ namespace
         warpr::RegionFold rg;
         rg.configure (*sd, 0.0f, 1.0f, warpr::RegionFold::Mode::Forward);
 
-        auto zeroRead = [] (double, int, float& l, float& r) { l = 0.0f; r = 0.0f; };
+        auto zeroRead = [] (double, int, double, float& l, float& r) { l = 0.0f; r = 0.0f; };   // D6: reads carry a speed multiplier
 
         auto spawnStats = [&] (int mode, float reverse, bool reverseDir)
         {
@@ -1435,7 +1435,7 @@ namespace
         const auto sd = makeMixSample (96000);
         warpr::RegionFold rg;
         rg.configure (*sd, 0.0f, 1.0f, warpr::RegionFold::Mode::Forward);
-        auto zeroRead = [] (double, int, float& l, float& r) { l = 0.0f; r = 0.0f; };
+        auto zeroRead = [] (double, int, double, float& l, float& r) { l = 0.0f; r = 0.0f; };   // D6: reads carry a speed multiplier
 
         struct Run
         {
@@ -1929,14 +1929,14 @@ namespace
             const auto a0 = render ([] (warpr::GrainWarp& w) { w.active = true; w.mode = 0; w.Lc = 480.0; });                    // amount 0
             const auto mix0 = render ([] (warpr::GrainWarp& w) { w.active = true; w.mode = 2; w.a0 = w.a1 = 0.9f; w.mix0 = w.mix1 = 0.0f; w.Lc = 480.0; });
             const auto amp = render ([] (warpr::GrainWarp& w) { w.active = true; w.mode = 17; w.a0 = w.a1 = 0.9f; w.Lc = 480.0; });   // Sine Fold: oscillator stage's job
-            const auto todo = render ([] (warpr::GrainWarp& w) { w.active = true; w.mode = 50; w.a0 = w.a1 = 0.9f; w.Lc = 480.0; });  // Phase Remapping: D6
+            const auto todo = render ([] (warpr::GrainWarp& w) { w.active = true; w.mode = 56; w.a0 = w.a1 = 0.9f; w.Lc = 480.0; });  // AM (D6): amplitude kind, the oscillator stage's job
             const auto noLc = render ([] (warpr::GrainWarp& w) { w.active = true; w.mode = 0; w.a0 = w.a1 = 0.9f; w.Lc = 0.0; });    // no cycle length known
             const auto warped = render ([] (warpr::GrainWarp& w) { w.active = true; w.mode = 0; w.a0 = w.a1 = 0.9f; w.Lc = 480.0; });
 
             check (bitEqual (base.l, a0.l) && bitEqual (base.r, a0.r) && peakOf (base.l) > 0.05, "warp amount 0: the granular output is bit-identical to no warp");
             check (bitEqual (base.l, mix0.l) && bitEqual (base.r, mix0.r), "warp mix 0 (stage active, mode 2, a 0.9): bit-identical to no warp");
             check (bitEqual (base.l, amp.l) && bitEqual (base.r, amp.r), "an amplitude-domain mode is not applied by the grains (identity here; the oscillator stage owns it)");
-            check (bitEqual (base.l, todo.l) && bitEqual (base.r, todo.r), "an unimplemented phase mode (50, D6) is the exact identity per grain");
+            check (bitEqual (base.l, todo.l) && bitEqual (base.r, todo.r), "an amplitude-kind D6 mode (AM, 56) is not applied by the grains (identity here)");
             check (bitEqual (base.l, noLc.l) && bitEqual (base.r, noLc.r), "unknown cycle length (Lc 0): no per-grain warp");
             std::printf ("        (Bend Positive a 0.9 vs no warp: null %.1f dB)\n", nullDb (base.l, warped.l, 512));
             check (nullDb (base.l, warped.l, 512) > -12.0 && allFinite (warped.l) && allFinite (warped.r), "an active phase mode really changes the grain output");

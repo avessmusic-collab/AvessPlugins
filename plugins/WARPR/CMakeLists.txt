@@ -154,6 +154,7 @@ add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/PhaseD3Tests.cpp
     Source/Tests/PhaseD4Tests.cpp
     Source/Tests/PhaseD5Tests.cpp
+    Source/Tests/PhaseD6Tests.cpp
     Source/Tests/PhaseD7Tests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp
