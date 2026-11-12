@@ -24,6 +24,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"            // WARPR_*_PARAMS relay macro tables
 #include "Parameters/ParamTable.h"
+#include "DSP/WarpModeTable.h"
+#include "DSP/FilterTypeTable.h"
 #include "State/StateIO.h"
 #include "Util/LockFreeSwap.h"
 #include "Tests/AllocHook.h"
@@ -655,6 +657,74 @@ namespace
         }
         check (exact, "FLAC 24-bit decode is bit-exact for 24-bit-representable samples");
     }
+
+    //==========================================================================
+    // G2: choice lists the WebView builds its selects from + the filter display feed for every type
+    //==========================================================================
+    void testG2ChoiceListsAndFilterFeed()
+    {
+        std::printf ("\n[G2] choice lists (APVTS -> UI selects) and filter response feed\n");
+
+        PluginProcessor proc;
+        auto choiceOf = [&proc] (const char* id) { return dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter (id)); };
+        auto* warpMode   = choiceOf ("warpMode");
+        auto* filterType = choiceOf ("filterType");
+
+        // index.html keeps ONLY the group boundaries: warp 15/10/19/10/6, filter 20/14 - the sums must equal the APVTS lists
+        constexpr int warpGroups[] = { 15, 10, 19, 10, 6 }, filterGroups[] = { 20, 14 };
+        int wsum = 0, fsum = 0;
+        for (int g : warpGroups)   wsum += g;
+        for (int g : filterGroups) fsum += g;
+        check (warpMode != nullptr && filterType != nullptr
+               && warpMode->choices.size() == wsum && filterType->choices.size() == fsum
+               && wsum == warpr::kNumWarpModes && fsum == warpr::kNumFilterTypes,
+               "warpMode 60 / filterType 34 choices == the UI group tables (15+10+19+10+6, 20+14)");
+
+        int nameMismatch = 0;
+        if (warpMode != nullptr)
+            for (int i = 0; i < warpr::kNumWarpModes; ++i)
+                if (warpMode->choices[i] != juce::String::fromUTF8 (warpr::kWarpModes[(size_t) i].name)) ++nameMismatch;
+        if (filterType != nullptr)
+            for (int i = 0; i < warpr::kNumFilterTypes; ++i)
+                if (filterType->choices[i] != juce::String::fromUTF8 (warpr::kFilterTypes[(size_t) i].name)) ++nameMismatch;
+        checkCount (nameMismatch, "every APVTS warp / filter entry names its DSP table row");
+
+        check (warpMode != nullptr && warpMode->choices[15] == "Linear Fold" && warpMode->choices[25] == "Hard Clip"
+               && warpMode->choices[44] == "Phase Distortion" && warpMode->choices[54] == "FM"
+               && filterType != nullptr && filterType->choices[20] == "Comb +",
+               "group boundaries land on the first entry of each group");
+
+        // filter display feed: every type, a few cutoff / res / morph combos -> finite, inside the display range
+        auto& be = proc.getBackendImpl();
+        be.setSampleRate (48000.0);
+        auto setParam = [&proc] (const char* id, float real)
+        {
+            if (auto* q = dynamic_cast<juce::RangedAudioParameter*> (proc.apvts.getParameter (id)))
+                q->setValueNotifyingHost (q->convertTo0to1 (real));
+        };
+        int bad = 0, flatTypes = 0;
+        std::array<float, 256> db {};
+        for (int t = 0; t < warpr::kNumFilterTypes; ++t)
+        {
+            bool anyNonFlat = false;
+            for (float cutoff : { 200.0f, 1000.0f, 8000.0f })
+                for (float res : { 0.0f, 0.6f, 1.0f })
+                    for (float morph : { 0.0f, 0.5f, 1.0f })
+                    {
+                        setParam ("filterType", (float) t); setParam ("filterCutoff", cutoff);
+                        setParam ("filterResonance", res); setParam ("filterMorph", morph);
+                        be.computeFilterResponse (db.data(), 256);
+                        for (float v : db)
+                        {
+                            if (! std::isfinite (v) || v < -48.0f || v > 24.0f) { ++bad; break; }
+                            if (v != 0.0f) anyNonFlat = true;
+                        }
+                    }
+            if (! anyNonFlat) { ++flatTypes; std::printf ("    type %d (%s) draws flat in every probe\n", t, warpr::kFilterTypes[(size_t) t].name); }
+        }
+        checkCount (bad, "computeFilterResponse: all 34 types x 27 settings finite and inside [-48, +24] dB");
+        check (flatTypes <= 3, "at most the intrinsically flat types (all-pass family) draw as a flat line");
+    }
 }
 
 //==============================================================================
@@ -685,6 +755,7 @@ int main (int argc, char** argv)
     testProcessorShell();
     testScanners();
     testFlacRoundTrip();
+    testG2ChoiceListsAndFilterFeed();
 
     failures += runPhaseD1Tests (full);
     failures += runPhaseD2Tests (full);

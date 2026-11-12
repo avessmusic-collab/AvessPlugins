@@ -735,39 +735,33 @@ function bindSegBool(el, pid) {                 // first span = true, second = f
   watch(pid, "t", upd); tap(spans[0], () => st.setValue(true)); tap(spans[1], () => st.setValue(false)); upd();
 }
 
-const WARP_MODES = {
- "WAVE BENDING":["Bend Positive","Bend Negative","Bend Symmetric","Bend Asymmetric","Asym Positive","Asym Negative","Asym Bidirectional","PWM","Flip","Mirror","Wave Skew","Wave Stretch","Wave Compress","Wave Expand","Variable Duty Cycle"],
- "WAVEFOLDING":["Linear Fold","Multi Fold","Sine Fold","Triangle Fold","Soft Fold","Hard Fold","Symmetric Fold","Asymmetric Fold","Dynamic Fold","Chebyshev Fold"],
- "DISTORTION":["Hard Clip","Soft Clip","Tanh","Arctangent","Tube Saturation","Diode 1","Diode 2","Cubic","Sinusoidal","Exponential","Asymmetric","Polynomial","Chebyshev Harmonic","Full Wave Rect","Half Wave Rect","Soft Rect","Bitcrush","SR Reduction","Quantization"],
- "PHASE & TIME":["Phase Distortion","Phase Stretch","Phase Compression","Phase Mirror","Phase Skew","Phase Quantization","Phase Remapping","Windowed Sync","Hard Sync","Soft Sync"],
- "MODULATION":["FM","PM","AM","RM","Self FM","Cross Mod"]};
-const FILTER_TYPES = {
- "STANDARD":["LP 6","LP 12","LP 18","LP 24","LP 36","LP 48","HP 6","HP 12","HP 18","HP 24","HP 36","HP 48","BP 6","BP 12","BP 24","Notch","Var Notch","Peak","Low Shelf","High Shelf"],
- "SPECIAL":["Comb +","Comb −","All Pass","Serial AP","Formant","Vowel","Morph Formant","Phaser","Res LP","Res HP","Dist LP","Scream","S&H","Ring Mod"]};
-const GROUPS = { warp: WARP_MODES, filter: FILTER_TYPES };
+/* Choice lists come from the APVTS (st.properties.choices).  Only the GROUP BOUNDARIES (label + entry count,
+   from parameter-spec.md) live here; if the parameter's length ever disagrees the list falls back to flat. */
+const GROUPS = {
+  warp:   [["WAVE BENDING", 15], ["WAVEFOLDING", 10], ["DISTORTION", 19], ["PHASE & TIME", 10], ["MODULATION", 6]],   // 60
+  filter: [["STANDARD", 20], ["SPECIAL", 14]]                                                                          // 34
+};
 
 function bindSelect(el, pid) {
   const st = comboOf(pid), grouped = el.dataset.grouped;
   const fill = () => {
-    if (grouped) {
-      if (!el.dataset.filled) {
+    const ch = st.properties.choices || [];
+    if (ch.length && el.dataset.filled !== String(ch.length)) {
+      el.innerHTML = "";
+      const groups = grouped ? GROUPS[grouped] : null;
+      const total = groups ? groups.reduce((a, g) => a + g[1], 0) : 0;
+      if (groups && total === ch.length) {
         let idx = 0;
-        for (const g in GROUPS[grouped]) {
-          const og = document.createElement("optgroup"); og.label = g;
-          GROUPS[grouped][g].forEach(m => { const o = document.createElement("option"); o.textContent = m; o.value = String(idx++); og.appendChild(o); });
+        groups.forEach(([label, count]) => {
+          const og = document.createElement("optgroup"); og.label = label;
+          for (let k = 0; k < count; k++, idx++) { const o = document.createElement("option"); o.value = String(idx); o.textContent = ch[idx]; og.appendChild(o); }
           el.appendChild(og);
-        }
-        el.dataset.filled = "1";
+        });
+      } else {
+        if (groups) console.error(`${pid}: group table covers ${total} entries, parameter has ${ch.length} - flat list`);
+        ch.forEach((c, i) => { const o = document.createElement("option"); o.value = String(i); o.textContent = grouped ? c : c.toUpperCase(); el.appendChild(o); });
       }
-      const n = st.properties.choices && st.properties.choices.length;
-      if (n && n !== el.options.length) console.error(`${pid}: UI lists ${el.options.length} entries, parameter has ${n}`);
-    } else {
-      const ch = st.properties.choices || [];
-      if (ch.length && el.dataset.filled !== String(ch.length)) {
-        el.innerHTML = "";
-        ch.forEach((c, i) => { const o = document.createElement("option"); o.value = String(i); o.textContent = c.toUpperCase(); el.appendChild(o); });
-        el.dataset.filled = String(ch.length);
-      }
+      el.dataset.filled = String(ch.length);
     }
     el.value = String(cidx(st, el.options.length));
   };
@@ -778,7 +772,11 @@ $$("[data-sel]").forEach(el => bindSelect(el, el.dataset.sel));
 $$("[data-step]").forEach(el => {
   const pid = el.dataset.step, f = F[el.dataset.f], b = el.querySelector("b"), [dn, up] = el.querySelectorAll("span");
   const upd = () => { b.textContent = f(scl(pid)); };
-  const bump = d => { const st = sliderOf(pid); setSliderGesture(pid, toNorm(st, st.getScaledValue() + d)); };
+  const bump = d => {
+    const st = sliderOf(pid), p = st.properties;
+    if (!(p.end > p.start)) return;                               // properties not delivered yet
+    setSliderGesture(pid, toNorm(st, Math.round(st.getScaledValue()) + d));
+  };
   watch(pid, "s", upd); tap(dn, () => bump(-1)); tap(up, () => bump(1)); upd();
 });
 
@@ -808,7 +806,7 @@ $$("#fxTabs span").forEach((s, i) => tap(s, () => {
 
 /* filter type prev/next */
 function stepFilterType(d) {
-  const st = comboOf("filterType"), n = st.properties.choices.length || 34;
+  const st = comboOf("filterType"), n = (st.properties.choices && st.properties.choices.length) || 34;
   setChoice(st, (cidx(st, n) + d + n) % n);
 }
 tap($("#btnFltPrev"), () => stepFilterType(-1)); tap($("#btnFltNext"), () => stepFilterType(1));
@@ -1021,6 +1019,8 @@ function drawFilter() {
   for (let i = 1; i < 8; i++) for (let j = 1; j < 4; j++) x.fillRect(i/8*w - 1, j/4*h - 1, 2, 2);
   const cx = cutX();
   x.fillStyle = "rgba(255,255,255,.12)"; x.fillRect(cx*w - .5, 0, 1, h);
+  const fltOn = toggleOf("filterEnable").getValue();
+  x.globalAlpha = fltOn ? 1 : 0.35;                                  // bypassed filter: curve stays, dimmed
   if (fltResp && fltResp.length > 1) {
     const N = fltResp.length, yOf = db => h * (1 - clamp((db - DB_MIN) / (DB_MAX - DB_MIN), 0, 1));
     const grad = x.createLinearGradient(0, 0, 0, h);
@@ -1032,6 +1032,7 @@ function drawFilter() {
     for (let i = 0; i < N; i++) { const px = i/(N-1)*w, py = yOf(fltResp[i]); i ? x.lineTo(px, py) : x.moveTo(px, py); }
     x.stroke();
   }
+  x.globalAlpha = 1;
   x.beginPath(); x.arc(cx*w, resY()*h, 9, 0, 7); x.fillStyle = "#101010"; x.fill(); x.lineWidth = 2.5; x.strokeStyle = "#FFF"; x.stroke();
   $("#fltReadout").textContent = `${F.hz(scl("filterCutoff"))} · Q ${F.pct(scl("filterResonance"))}`;
 }
@@ -1047,7 +1048,8 @@ function drawFilter() {
   scr.addEventListener("pointermove", e => { if (fd) apply(e); });
   const up = () => { if (fd) { fd = false; gestureEnd(["filterCutoff", "filterResonance"]); } };
   scr.addEventListener("pointerup", up); scr.addEventListener("pointercancel", up);
-  ["filterCutoff", "filterResonance"].forEach(p => watch(p, "s", drawFilter));
+  ["filterCutoff", "filterResonance"].forEach(p => watch(p, "s", drawFilter));   // node follows host automation too
+  watch("filterEnable", "t", drawFilter);
 }
 
 /* =====================================================================
@@ -1340,8 +1342,12 @@ backend.addEventListener("warprSample", s => {
 backend.addEventListener("warprFilterResponse", r => { fltResp = r.db && r.db.length ? Float32Array.from(r.db) : null; drawFilter(); });
 backend.addEventListener("warprPreset", p => { $("#presetName").textContent = p.name || "Init"; });
 backend.addEventListener("warprUiState", s => loadUiState(typeof s === "string" ? s : JSON.stringify(s)));
+let shaperDragging = false, shaperDeferred = {};      // external curve updates wait until the drag ends
+const shaperApply = (id, curve) => { shaperCurves[id] = normaliseCurve(curve); };
 backend.addEventListener("warprShaperCurve", c => {
-  if (c && c.id && c.curve) { shaperCurves[c.id] = normaliseCurve(c.curve); shaperRender(); }
+  if (!(c && c.id && c.curve)) return;
+  if (shaperDragging) { shaperDeferred[c.id] = c.curve; return; }
+  shaperApply(c.id, c.curve); shaperRender();
 });
 /* re-request filter response whenever a filter-relevant param moves (C++ also pushes on preset load) */
 ["filterType","filterCutoff","filterResonance","filterDrive","filterMorph","filterKeyTrack","filterEnable"].forEach(p =>
@@ -1412,7 +1418,7 @@ const shaperPush = () => NF.setShaperCurve(shaperId(), JSON.stringify(shaperCurv
     if (!hit) {                                              // add a point
       hit = { x: p.x, y: p.y }; c.points.push(hit); c.points.sort((a, b) => a.x - b.x);
     }
-    drag = { c, pt: hit }; shaperSvg.setPointerCapture(e.pointerId); shaperRender();
+    drag = { c, pt: hit }; shaperDragging = true; shaperSvg.setPointerCapture(e.pointerId); shaperRender();
   });
   shaperSvg.addEventListener("pointermove", e => {
     if (!drag) return;
@@ -1422,7 +1428,13 @@ const shaperPush = () => NF.setShaperCurve(shaperId(), JSON.stringify(shaperCurv
     drag.pt.y = p.y;
     shaperRender(); clearTimeout(pushT); pushT = setTimeout(shaperPush, 40);
   });
-  const up = () => { if (drag) { drag = null; shaperPush(); } };
+  const up = () => {
+    if (!drag) return;
+    drag = null; shaperDragging = false; clearTimeout(pushT);      // a stale debounce must not overwrite a later RESET/NORM
+    const dragged = shaperId(); shaperPush();                      // the UI edit is the last writer of the dragged curve in C++ ...
+    const def = shaperDeferred; shaperDeferred = {};               // ... so only the OTHER curve takes a mid-drag external update
+    const ids = Object.keys(def).filter(id => id !== dragged); ids.forEach(id => shaperApply(id, def[id])); if (ids.length) shaperRender();
+  };
   shaperSvg.addEventListener("pointerup", up); shaperSvg.addEventListener("pointercancel", up);
   shaperSvg.addEventListener("dblclick", e => {
     const c = shaperCurves[shaperId()], p = xy(e), hit = near(c, isSym() && p.x < 0 ? { x: -p.x, y: -p.y } : p);
@@ -1658,7 +1670,11 @@ function loadUiState(json) {
   lfoShapes.forEach(sh => { if (sh.points.length < 2) sh.points = newShape().points; });
   activeLfo = Math.min(activeLfo, n - 1);
   mods = Array.isArray(s.modMatrix) ? s.modMatrix.map(m => ({ src: m.src | 0, dst: String(m.dst), depth: clamp(+m.depth, 0, 1) })) : [];
-  if (s.shaperCurves) { shaperCurves.A = normaliseCurve(s.shaperCurves.A || identityCurve()); shaperCurves.B = normaliseCurve(s.shaperCurves.B || identityCurve()); }
+  if (s.shaperCurves) {
+    const a = s.shaperCurves.A || identityCurve(), b = s.shaperCurves.B || identityCurve();
+    if (shaperDragging) { shaperDeferred.A = a; shaperDeferred.B = b; }
+    else { shaperApply("A", a); shaperApply("B", b); }
+  }
   buildTabs(); lfoRefreshWidgets(); repaintMods(); shaperRender();
 }
 
