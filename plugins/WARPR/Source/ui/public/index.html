@@ -883,43 +883,27 @@ function drawSample() {
       for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, src[2*j]); mx = Math.max(mx, src[2*j+1]); }
       return [mn, mx];
     };
-    /* continuous-line rendering: the envelope-shaped silhouette drawn as ONE closed outline -
-       across the top edge (maxima) and back along the bottom edge (minima), lightly smoothed
-       so the line flows, with a faint interior fill.  Silent regions converge to a thin center line. */
-    const mns = new Float32Array(w), mxs = new Float32Array(w);
-    for (let i = 0; i < w; i++) { const [mn, mx] = col(i); mns[i] = mn; mxs[i] = mx; }
-    const box = (src, r) => {
-      const out = new Float32Array(w);
-      for (let i = 0; i < w; i++) {
-        let s2 = 0, n2 = 0;
-        for (let j = Math.max(0, i - r); j <= Math.min(w - 1, i + r); j++) { s2 += src[j]; n2++; }
-        out[i] = s2 / n2;
-      }
-      return out;
-    };
-    const tops = box(mxs, 2), bots = box(mns, 2);
-    const topY = new Float32Array(w), botY = new Float32Array(w);
-    for (let i = 0; i < w; i++) {
-      const e = zoomed ? 1 : envF(i / w, E);                // env shaping is a full-view overlay only
-      let y0 = h/2 - tops[i]*e*h*.40, y1 = h/2 - bots[i]*e*h*.40;
-      if (y1 - y0 < 1.5) { const c = (y0 + y1) / 2; y0 = c - .75; y1 = c + .75; }
-      topY[i] = y0; botY[i] = y1;
-    }
-    x.lineWidth = 1.2; x.lineJoin = "round";
+    /* solid filled waveform (sampler style): every pixel column is filled from its true minimum
+       to its true maximum - one flat shape at full detail, no smoothing, no envelope shaping.
+       Silent regions keep a thin center line so the wave reads edge to edge. */
+    x.fillStyle = "rgba(255,255,255,.90)";
     x.beginPath();
-    x.moveTo(.5, topY[0]);
-    for (let i = 1; i < w; i++) x.lineTo(i + .5, topY[i]);
-    for (let i = w - 1; i >= 0; i--) x.lineTo(i + .5, botY[i]);
-    x.closePath();
-    x.fillStyle = "rgba(255,255,255,.07)"; x.fill();
-    x.strokeStyle = "rgba(255,255,255,.85)"; x.stroke();
+    for (let i = 0; i < w; i++) {
+      const [mn, mx] = col(i);
+      let y0 = h/2 - mx*h*.40, y1 = h/2 - mn*h*.40;
+      if (y1 - y0 < 1.2) { const c = (y0 + y1) / 2; y0 = c - .6; y1 = c + .6; }
+      x.rect(i, y0, 1, y1 - y0);
+    }
+    x.fill();
   }
   if (!zoomed) {                                          // ADSR overlay is a full-view graphical map
     const envY = t => h/2 - envF(t, E)*h*.42;
-    x.fillStyle = "rgba(255,255,255,.05)"; x.beginPath(); x.moveTo(0, h/2);
-    for (let i = 0; i <= 300; i++) x.lineTo(i/300*w, envY(i/300));
-    x.lineTo(w, h/2); x.closePath(); x.fill();
-    x.strokeStyle = "rgba(255,255,255,.85)"; x.lineWidth = 2; x.beginPath();
+    /* dark under-stroke then white stroke, so the curve reads over the solid white wave AND the black background */
+    x.lineJoin = "round";
+    x.strokeStyle = "rgba(0,0,0,.75)"; x.lineWidth = 4; x.beginPath();
+    for (let i = 0; i <= 300; i++) { const t = i/300; i ? x.lineTo(t*w, envY(t)) : x.moveTo(t*w, envY(t)); }
+    x.stroke();
+    x.strokeStyle = "rgba(255,255,255,.95)"; x.lineWidth = 2; x.beginPath();
     for (let i = 0; i <= 300; i++) { const t = i/300; i ? x.lineTo(t*w, envY(t)) : x.moveTo(t*w, envY(t)); }
     x.stroke();
   }
@@ -928,6 +912,7 @@ function drawSample() {
   [P.start, P.end].forEach(t => {
     const px = a2x(t);
     if (px < -14 || px > w + 14) return;
+    x.fillStyle = "rgba(0,0,0,.7)"; x.fillRect(px - 2, 0, 4, h);         // dark edge so the line reads on the wave
     x.fillStyle = "rgba(255,255,255,.9)"; x.fillRect(px - 1, 0, 2, h);
     x.fillRect(px - 7, 0, 14, 10); x.fillStyle = "#000"; x.fillRect(px - 5, 2, 10, 6);
   });
@@ -935,14 +920,16 @@ function drawSample() {
     const px = a2x(g.pos), lv = clamp(g.level, 0, 1);     // height + brightness follow the grain's window amplitude
     if (px < -2 || px > w + 2) return;
     const gh = h * (0.22 + 0.68*lv);
-    x.fillStyle = `rgba(255,255,255,${(0.15 + 0.55*lv).toFixed(2)})`;
+    x.fillStyle = `rgba(0,0,0,${(0.25 + 0.45*lv).toFixed(2)})`;          // dark core reads over the white wave
+    x.fillRect(px - 1.5, (h - gh)/2, 3, gh);
+    x.fillStyle = `rgba(255,255,255,${(0.35 + 0.55*lv).toFixed(2)})`;    // bright center reads over the background
     x.fillRect(px - .5, (h - gh)/2, 1, gh);
   });
   voices.forEach(v => {                                   // one playhead per sounding voice (real DSP read positions)
     const px = a2x(v.pos), lv = clamp(v.level, 0, 1);
     if (px < -8 || px > w + 8) return;
-    x.fillStyle = `rgba(255,255,255,${(0.04 + 0.10*lv).toFixed(2)})`;    // soft halo
-    x.fillRect(px - 3, 0, 6, h);
+    x.fillStyle = `rgba(0,0,0,${(0.30 + 0.35*lv).toFixed(2)})`;          // dark edge over the wave
+    x.fillRect(px - 2, 0, 4, h);
     x.fillStyle = `rgba(255,255,255,${(0.45 + 0.55*lv).toFixed(2)})`;    // crisp progress line
     x.fillRect(px - 1, 0, 2, h);
     x.beginPath();                                                       // cap riding along the top edge
