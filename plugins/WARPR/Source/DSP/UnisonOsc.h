@@ -15,7 +15,9 @@
   the OS rate), then every OS sample takes its value from that buffer:  weight 1 = pure granular (the Classic read
   is skipped and the Classic playhead holds), 0 < weight < 1 = playMode crossfade (both run, linear blend),
   inactive / nullptr = the bit-exact Classic path.  Phase-domain warps ask `readAt` for a shifted position; in
-  granular mode there is none, so they see the grain value (identity) until the D7b per-grain phase warps.
+  granular mode there is no single playhead to shift, so the oscillator-level stage sees the grain value (an identity
+  for phase modes) and the GRAIN ENGINE applies the phase mode itself, per grain head (D7b; GrainSpan::warp is filled
+  by the voice).  Amplitude-domain modes are applied here, on the grain sum, exactly as for the Classic read.
 
   The interpolated read is wrapped in `readAtDir (position, direction)` which also applies the forward-loop seam
   crossfade / one-shot end fade for THAT read position, so phase warps (which read at P') and grains (which

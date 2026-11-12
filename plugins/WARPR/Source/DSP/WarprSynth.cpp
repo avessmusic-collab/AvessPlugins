@@ -172,13 +172,18 @@ namespace warpr
         return n;
     }
 
-    int WarprSynth::getOscillatorUnitsInUse() const noexcept
+    int WarprSynth::getOscillatorQuarterUnitsInUse() const noexcept
     {
-        int units = 0;
+        int quarter = 0;
         for (const auto& v : voices)
             if (v.isActive() && ! v.ghost)
-                units += v.getOs() * v.getUnison();
-        return units;
+                quarter += v.getOscCostQ() * v.getUnison();
+        return quarter;
+    }
+
+    int WarprSynth::getOscillatorUnitsInUse() const noexcept
+    {
+        return (getOscillatorQuarterUnitsInUse() + 3) / 4;
     }
 
     WarprSynth::VoiceInfo WarprSynth::getVoiceInfo (int slot) const noexcept
@@ -193,6 +198,7 @@ namespace warpr
             info.note = v.note;
             info.unison = v.getUnison();
             info.os = v.getOs();
+            info.costQ = v.getOscCostQ();
             info.level = v.envLevel();
         }
 
@@ -350,11 +356,14 @@ namespace warpr
         int uni = unisonLatched;
         const int budget = oscBudget.load (std::memory_order_relaxed);
 
+        // D7b: a granular note is charged by its grain cost (see the header); Classic playback keeps cost = os.
+        const int costQ = oscillatorCostQ (os, vp.playMode == 1, grainsPerChannel (vp.grainMode, vp.grainDensity));
+
         if (budget > 0)
         {
             for (int guard = 0; guard < totalSlots + 2; ++guard)
             {
-                const int fit = (budget - getOscillatorUnitsInUse()) / os;
+                const int fit = (budget * 4 - getOscillatorQuarterUnitsInUse()) / costQ;
 
                 if (fit >= 1)
                 {
@@ -392,6 +401,7 @@ namespace warpr
         info.velocity = velocity;
         info.os = os;
         info.unison = uni;
+        info.oscCostQ = costQ;
         info.glideFromSemis = lastPlayedPitch >= 0.0 ? lastPlayedPitch : (double) note;
         info.glideMs = (double) vp.glideMs;
         info.age = ++noteCounter;

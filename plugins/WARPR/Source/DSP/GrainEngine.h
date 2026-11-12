@@ -1,14 +1,24 @@
 #pragma once
 /*
-  GrainEngine - per-oscillator granular source (architecture C7), phase D7a: CLASSIC + LOOP schedulers.
+  GrainEngine - per-oscillator granular source (architecture C7), phases D7a (CLASSIC + LOOP) and D7b (CLOUD +
+  per-grain phase warps).
 
   WHERE IT SITS.  A granular voice replaces the Classic sample read at the very top of the oscillator
   (UnisonOsc::render).  The grain pool is rendered at S = min(OS, 2) times the host rate (architecture:
   "granular source rate"), up-sampled with the same half-band all-pass design as the voice decimator to the
   OS rate, and then fed into the SAME warp -> shaper -> pan -> decimator -> DC block -> filter -> ADSR chain as
-  the Classic read.  Amplitude-domain warp modes and the shaper therefore work on grains unchanged; the
-  phase-domain warps (H family, FM, sync ...) have no read position to move in granular mode and are an
-  identity there until D7b (per-grain phase warps).
+  the Classic read.  Amplitude-domain warp modes and the shaper therefore work on grains unchanged.
+
+  PER-GRAIN PHASE WARPS (D7b).  The phase-domain warps (kind Phase in WarpModeTable: today the H family 0, 1, 2, 3,
+  7, 9, 14) move the READ position, which only a grain has.  So the engine evaluates them itself, inside the grain
+  loop: every grain head (left / right) carries its own cycle clock `theta` (seeded at spawn from the head's start
+  position exactly like UnisonOsc::start seeds the Classic clock, advanced by step / Lc per grain-rate sample), and
+  reads the sample at  fold(P + dir * Lc * Delta(theta))  with phasewarp::delta - the same function the Classic
+  oscillator uses.  warpMix is applied per grain (dry/wet of the head value), the Mirror SeamBridge is per head,
+  and a warp-mode change cross-fades old and new offset over 10 ms (engine level, frozen old parameters).  The
+  oscillator-level warp stage still runs on top for the amplitude-domain modes (it sees the grain value, so a phase
+  mode is an identity there, never applied twice).  Grains also carry the reserved slots a D6 mode needs
+  (GrainWarpSlots: Self-FM feedback, sync master phase); D6 plugs its kernels into `warpedHeads` (see SEAM D6).
 
   GRAINS.  One Grain is a STEREO pair: a left and a right read head with their own detune (+-30 cents x
   grainSpread) and start offset (<= size/4 x grainSpread) but one shared window and one shared random draw.
@@ -25,7 +35,14 @@
              a + r = 1 with raised-cosine ramps, the windows of a hop-spaced train sum to exactly 1.
     LOOP     hop = size * (1 - x), x = clamp(shape / 2, 0.5 ms / size, 1/2): flat-top window with equal-power
              (quarter-sine) ramps of length x * size - a looped segment with a crossfade.
-    CLOUD    (D7b) plays as CLASSIC until the cloud scheduler lands.
+    CLOUD    (D7b) grainDensity N (1..20) = number of simultaneous UNSYNCED grains per channel.  There is no hop: the
+             scheduler keeps N grains alive.  A note / scheduler switch starts with N grains of uniformly random
+             age ("running forever"); afterwards every grain RESPAWNS WHEN IT ENDS (at scanPos + variation, size /
+             transposition / volume jitter) after a short random stagger (about size / (4 N) x (0.5 .. 1.5)) that
+             also spreads grains added by a density increase.  A density decrease simply stops respawning (the extra
+             grains finish naturally).  Fixed Hann window (grainShape ignored), per-grain gain sqrt(2 / N) = the
+             architecture's 1 / sqrt(0.5 N): uncorrelated material comes out at the same -1.25 dB as Classic for
+             every N.  Variation also transposes a Cloud grain by +-12 v semitones.
   A grain train is started "as if it had been running forever": the first call spawns the grain one hop old
   AND a fresh one, so the level is steady from the first sample (the amp envelope owns the note attack).
 
@@ -40,8 +57,11 @@
   starts at norm = pos + (clamp(pos + dist, 0, 1) - pos) * scanPhase(n) (+ variation), scanPhase(n) = n / (D * rate).
 
   VARIATION v (one master amount, fixed internal weights): start position +- v * 2 s (source time), size
-  x 2^(+-0.5 v), volume 0 .. -6 dB x v.  Four random numbers are drawn per spawn whatever v is, so the stream
-  never depends on the parameters.  PRNG: per-oscillator xorshift32 seeded from the note counter.
+  x 2^(+-0.5 v), volume 0 .. -6 dB x v, Cloud only: transposition +-12 v semitones.  Four random numbers are drawn
+  per Classic / Loop spawn whatever v is (D7a stream, unchanged), SIX per Cloud spawn (the two extra: transposition
+  and the random pre-age used by the start-up fill) plus one stagger draw per scheduler-driven Cloud respawn, so
+  the stream never depends on the parameters, only on the scheduler.  PRNG: per-oscillator xorshift32 seeded from
+  the note counter.
 
   SWITCHES.  playMode (Classic <-> Granular) is a 10 ms weight ramp owned by the voice/oscillator.  A scheduler
   change (grainMode) lets every sounding grain fade out over 10 ms while the new scheduler pre-rolls and fades in
@@ -49,11 +69,15 @@
 
   Real-time rules: fixed pool (poolSize grains, a spawn with no free slot is dropped and counted), no
   allocation, no locks.  The window table is built by GrainWindowTable::get() (WarprSynth::prepare calls it).
+  Pool: 24 stereo grains per oscillator = the 20 of a full Cloud + 4 of headroom so that the 10 ms fade-out of
+  the old scheduler's grains and the pre-roll of the new one can overlap without dropping spawns.
 */
 
 #include "DSP/HalfbandIIR.h"
+#include "DSP/PhaseWarp.h"
 #include "DSP/RegionFold.h"
 #include "DSP/SampleData.h"
+#include "DSP/WarpModeTable.h"
 
 #include <algorithm>
 #include <array>
@@ -154,6 +178,7 @@ namespace warpr
             int    len = 0;                   // grain length, grain-rate samples
             bool   reversed = false;
             bool   preAged = false;
+            double ratio = 1.0;               // Cloud transposition jitter (1 for Classic / Loop), before the spread detune
         };
 
         std::array<Entry, static_cast<std::size_t> (capacity)> entries {};
@@ -167,16 +192,30 @@ namespace warpr
         std::array<float, static_cast<std::size_t> (capacity)> aL {}, aR {}, bL {}, bR {};
     };
 
+    /** The warp stage as the grains need it (D7b).  Filled by the voice from its WarpSpan; the amounts ramp linearly
+        across the span exactly like the oscillator-level stage.  `active` false (or Lc <= 0): no per-grain warp. */
+    struct GrainWarp
+    {
+        bool   active = false;
+        int    mode = 17;
+        float  a0 = 0.0f,  a1 = 0.0f;
+        float  A0 = 0.5f,  A1 = 0.5f;
+        float  B0 = 0.0f,  B1 = 0.0f;
+        float  mix0 = 1.0f, mix1 = 1.0f;       // warpMix * enable ramp
+        double Lc = 0.0;                       // source frames per root-note cycle (0 = unknown: no cycle clock)
+    };
+
     /** Per-chunk description of the granular source (built by the voice). */
     struct GrainSpan
     {
         bool   active = false;                 // false: the engine is idle (Classic only)
         float  w0 = 0.0f, w1 = 0.0f;           // granular share (playMode crossfade) at the start / end of the span
-        int    mode = 0;                       // grainMode: 0 Classic, 1 Loop, 2 Cloud (D7b; plays as Classic)
+        int    mode = 0;                       // grainMode: 0 Classic, 1 Loop, 2 Cloud
+        GrainWarp warp;                        // per-grain phase warp (D7b)
         float  position = 0.0f, scan = 0.0f, scanDist = 0.0f;
         bool   scanLoop = true, scanKey = false;
         float  sizeMs = 80.0f, shape = 0.5f, variation = 0.0f, spread = 0.0f, reverse = 0.0f;
-        int    density = 8;                    // Cloud only (D7b)
+        int    density = 8;                    // Cloud only: simultaneous grains per channel, 1..20
         bool   reverseDir = false;             // direction parameter
         double pitchSemis = 60.0;              // glide-smoothed note pitch (SCAN KEY)
         double sampleRate = 44100.0;           // host rate
@@ -243,7 +282,8 @@ namespace warpr
     class GrainEngine
     {
     public:
-        static constexpr int poolSize = 16;                // stereo grains per oscillator (D7b Cloud will raise it)
+        static constexpr int maxCloudGrains = 20;          // grainDensity maximum (simultaneous grains per channel)
+        static constexpr int poolSize = 24;                // stereo grains per oscillator: 20 Cloud + 4 switch-overlap headroom
         static constexpr double fadeSeconds = 0.010;       // scheduler-switch fade
 
         //----------------------------------------------------------------------
@@ -331,6 +371,8 @@ namespace warpr
 
             scanPhaseV = 0.0;
             countdown = 0.0;
+            cloudTimer = 0.0;
+            wctl = WarpCtl {};
         }
 
         bool isRunning() const noexcept        { return running; }
@@ -345,6 +387,18 @@ namespace warpr
 
             for (const auto& g : pool)
                 if (g.active)
+                    ++n;
+
+            return n;
+        }
+
+        /** Cloud grains that are not fading out (the "live" count the scheduler keeps at grainDensity). */
+        int cloudGrainCount() const noexcept
+        {
+            int n = 0;
+
+            for (const auto& g : pool)
+                if (g.active && g.sched == 2 && g.relLeft == 0)
                     ++n;
 
             return n;
@@ -414,14 +468,17 @@ namespace warpr
             const int nS = std::max (0, std::min (nOS / ratio, GrainScratch::capacity / ratio));
             const double grainRate = sp.sampleRate * (double) grainFactor;
             const int fadeLen = std::max (1, (int) std::lround (fadeSeconds * grainRate));
-            const Ctx c { sp, rg, sd, grainRate, rhoHost / (double) grainFactor, fadeLen };
-            const int sched = sp.mode == 1 ? 1 : 0;
+            const double invLc = sp.warp.Lc > 0.0 ? 1.0 / sp.warp.Lc : 0.0;
+            const Ctx c { sp, rg, sd, grainRate, rhoHost / (double) grainFactor, fadeLen, invLc };
+            const int sched = sp.mode == 2 ? 2 : (sp.mode == 1 ? 1 : 0);
 
             if (! running)
             {
                 running = true;
                 curSched = sched;
                 scanPhaseV = 0.0;
+                cloudTimer = 0.0;
+                wctl = WarpCtl {};
 
                 for (auto& g : pool)
                     g.active = false;
@@ -457,15 +514,42 @@ namespace warpr
             const double scanSeconds = scanDurationSeconds (sp.scan, sp.scanKey, sp.pitchSemis);
             const double scanInc = scanSeconds > 0.0 ? 1.0 / (scanSeconds * grainRate) : 0.0;
 
+            // ---- per-grain phase warp control (D7b): which phase mode the grains apply, and its 10 ms switch fade
+            updateWarpCtl (sp.warp, fadeLen);
+
+            const int cloudTarget = std::clamp (sp.density, 1, maxCloudGrains);
+            const double cloudMeanLen = std::clamp ((double) sp.sizeMs * 0.001, 0.002, 2.0) * grainRate;
+
             for (int j = 0; j < nS; ++j)
             {
-                int guard = 0;
-
-                while (countdown <= 0.0 && guard++ < 4)
+                if (curSched == 2)
                 {
-                    spawn (c, 0.0, false);
-                    countdown += std::max (1.0, hopSeconds (curSched, sp.sizeMs, sp.shape) * grainRate);
+                    // CLOUD: keep `cloudTarget` live grains.  A missing grain is respawned when the stagger timer has run
+                    // out (one per grain-rate sample at most), so grains that end together do not restart together.
+                    cloudTimer = std::max (0.0, cloudTimer - 1.0);
+
+                    if (cloudTimer <= 0.0 && cloudGrainCount() < cloudTarget)
+                    {
+                        spawn (c, 0.0, false);
+                        cloudTimer = std::max (1.0, 0.5 * cloudMeanLen / (double) cloudTarget * (0.5 + (double) unit()));
+                    }
                 }
+                else
+                {
+                    int guard = 0;
+
+                    while (countdown <= 0.0 && guard++ < 4)
+                    {
+                        spawn (c, 0.0, false);
+                        countdown += std::max (1.0, hopSeconds (curSched, sp.sizeMs, sp.shape) * grainRate);
+                    }
+                }
+
+                WarpNow wn;
+                const bool warpOn = wctl.cur >= 0 || wctl.fadeLeft > 0;
+
+                if (warpOn)
+                    wn = warpNowAt (sp.warp, (float) j / (float) nS);
 
                 float sumL = 0.0f, sumR = 0.0f;
 
@@ -493,28 +577,16 @@ namespace warpr
 
                     if (w > 0.0f)
                     {
-                        float l0 = 0.0f, l1 = 0.0f, rv = 0.0f;
+                        float vL = 0.0f, vR = 0.0f;
                         const bool haveL = ! g.endedL, haveR = ! g.endedR;
 
-                        if (haveL)
-                            readGrain (g.posL, g.dirL, l0, l1);
+                        if (warpOn)
+                            warpedHeads (readGrain, g, c, wn, haveL, haveR, vL, vR);
+                        else
+                            readHeads (readGrain, g.posL, g.dirL, haveL, g.posR, g.dirR, haveR, vL, vR);
 
-                        if (haveR)
-                        {
-                            if (haveL && juce::exactlyEqual (g.posR, g.posL) && g.dirR == g.dirL)
-                            {
-                                rv = l1;
-                            }
-                            else
-                            {
-                                float r0 = 0.0f, r1 = 0.0f;
-                                readGrain (g.posR, g.dirR, r0, r1);
-                                rv = r1;
-                            }
-                        }
-
-                        sumL += w * l0;
-                        sumR += w * rv;
+                        sumL += w * vL;
+                        sumR += w * vR;
                     }
 
                     if (! g.endedL && ! rg.advance (g.posL, g.dirL, c.stepBase * (double) g.ratioL))
@@ -523,11 +595,21 @@ namespace warpr
                     if (! g.endedR && ! rg.advance (g.posR, g.dirR, c.stepBase * (double) g.ratioR))
                         g.endedR = true;
 
+                    // per-grain cycle clocks advance with the head's own step, also while no warp is applied
+                    if (c.invLc > 0.0)
+                    {
+                        g.hL.advance (c.stepBase * (double) g.ratioL * c.invLc);
+                        g.hR.advance (c.stepBase * (double) g.ratioR * c.invLc);
+                    }
+
                     ++g.age;
 
                     if (finished || g.age >= g.len || (g.endedL && g.endedR))
                         g.active = false;
                 }
+
+                if (warpOn)
+                    finishWarpSample (wn);
 
                 const auto jj = static_cast<std::size_t> (j);
                 sc.aL[jj] = sumL;
@@ -581,9 +663,43 @@ namespace warpr
         }
 
     private:
+        /** Per-head (left / right read head) phase-warp state of ONE grain (D7b).  `theta` is the head's cycle clock;
+            the rest is the Mirror SeamBridge of that head. */
+        struct HeadWarp
+        {
+            double theta = 0.0;                      // note-cycle phase of this head, [0, 1)
+            bool   wrapped = false;                  // the clock wrapped on the previous sample
+            double lastPw = 0.0, lastStep = 0.0;     // SeamBridge: previous warped read position / step
+            bool   lastValid = false;
+            float  bridgeOff = 0.0f;
+            int    bridgeLeft = 0;
+
+            void advance (double dTheta) noexcept
+            {
+                theta += dTheta;
+                wrapped = false;
+
+                if (theta >= 1.0)
+                {
+                    theta -= std::floor (theta);
+                    wrapped = true;
+                }
+            }
+        };
+
+        /** SEAM D6.  State slots a D6 kernel needs per grain, reserved (and reset at every spawn) so the pool layout
+            does not change again: Self FM keeps its low-passed feedback value per head, a sync mode its master phase
+            per head.  Nothing reads or writes them yet. */
+        struct GrainWarpSlots
+        {
+            float  selfFmL = 0.0f, selfFmR = 0.0f;
+            double syncPhaseL = 0.0, syncPhaseR = 0.0;
+        };
+
         struct Grain
         {
             bool active = false, endedL = false, endedR = false;
+            std::uint8_t sched = 0;                  // scheduler that spawned the grain (0 Classic, 1 Loop, 2 Cloud)
             int age = 0, len = 2;
             int dirL = 1, dirR = 1;
             double posL = 0.0, posR = 0.0;
@@ -592,6 +708,8 @@ namespace warpr
             int relLeft = 0, relTotal = 1;
             int inLeft = 0, inTotal = 1;
             std::uint32_t serial = 0;
+            HeadWarp hL, hR;                         // per-grain phase warp (D7b)
+            GrainWarpSlots slots;                    // reserved for D6
         };
 
         struct Ctx
@@ -602,7 +720,238 @@ namespace warpr
             double grainRate;
             double stepBase;                     // source frames per grain-rate sample at the voice pitch
             int fadeLen;
+            double invLc;                        // 1 / Lc (0 = no cycle clock)
         };
+
+        /** Engine-level state of the per-grain phase warp: the mode the grains currently apply (-1 = none) and the
+            10 ms cross-fade from the previous one (frozen parameters, like WarpOscState). */
+        struct WarpCtl
+        {
+            bool   primed = false;
+            int    cur = -1, old = -1;
+            double oldA = 0.0, oldAA = 0.5, oldB = 0.0;        // frozen parameters of the outgoing mode
+            double lastA = 0.0, lastAA = 0.5, lastB = 0.0;     // parameters of the previous grain-rate sample
+            int    fadeLeft = 0, fadeTotal = 1;
+        };
+
+        /** The warp parameters for ONE grain-rate sample. */
+        struct WarpNow
+        {
+            int    cur = -1, old = -1;
+            double a = 0.0, A = 0.5, B = 0.0;
+            double oldA = 0.0, oldAA = 0.5, oldB = 0.0;
+            float  mix = 1.0f;
+            bool   fading = false;
+            float  t = 1.0f;                     // cross-fade weight of the new mode (1 = new only)
+        };
+
+        void updateWarpCtl (const GrainWarp& gw, int fadeLen) noexcept
+        {
+            if (! gw.active || gw.Lc <= 0.0)
+            {
+                wctl = WarpCtl {};               // stage bypassed (mix is 0 / ramping out): nothing audible to cross-fade
+                return;
+            }
+
+            // SEAM D6: a mode is applied per grain when it is an IMPLEMENTED phase-kind row of WarpModeTable.  D6 turns
+            // rows 44-55, 58, 59 on (implemented = true) and teaches phasewarp::delta / warpedHeads their kernels.
+            const auto& info = warpModeInfo (gw.mode);
+            const int eff = info.implemented && info.kind == WarpKind::Phase ? gw.mode : -1;
+
+            if (! wctl.primed)
+            {
+                wctl.primed = true;
+                wctl.cur = eff;
+            }
+            else if (eff != wctl.cur)
+            {
+                wctl.old = wctl.cur;
+                wctl.oldA = wctl.lastA;
+                wctl.oldAA = wctl.lastAA;
+                wctl.oldB = wctl.lastB;
+                wctl.cur = eff;
+                wctl.fadeLeft = wctl.fadeTotal = std::max (1, fadeLen);
+            }
+        }
+
+        WarpNow warpNowAt (const GrainWarp& gw, float tt) const noexcept
+        {
+            WarpNow n;
+            n.cur = wctl.cur;
+            n.a = (double) (gw.a0 + (gw.a1 - gw.a0) * tt);
+            n.A = (double) (gw.A0 + (gw.A1 - gw.A0) * tt);
+            n.B = (double) (gw.B0 + (gw.B1 - gw.B0) * tt);
+            n.mix = gw.mix0 + (gw.mix1 - gw.mix0) * tt;
+
+            if (wctl.fadeLeft > 0)
+            {
+                n.fading = true;
+                n.old = wctl.old;
+                n.oldA = wctl.oldA;
+                n.oldAA = wctl.oldAA;
+                n.oldB = wctl.oldB;
+                n.t = (float) (wctl.fadeTotal - wctl.fadeLeft + 1) / (float) wctl.fadeTotal;
+            }
+
+            return n;
+        }
+
+        void finishWarpSample (const WarpNow& wn) noexcept
+        {
+            wctl.lastA = wn.a;
+            wctl.lastAA = wn.A;
+            wctl.lastB = wn.B;
+
+            if (wctl.fadeLeft > 0 && --wctl.fadeLeft == 0)
+                wctl.old = -1;
+        }
+
+        /** Reads the two heads (left head: channel 0 at posL; right head: channel 1 at posR).  A head that has ended
+            reads 0.  Identical head positions share one read. */
+        template <class Read>
+        static void readHeads (Read& rd, double pL, int dL, bool haveL, double pR, int dR, bool haveR,
+                               float& outL, float& outR) noexcept
+        {
+            float l0 = 0.0f, l1 = 0.0f, rv = 0.0f;
+
+            if (haveL)
+                rd (pL, dL, l0, l1);
+
+            if (haveR)
+            {
+                if (haveL && juce::exactlyEqual (pR, pL) && dR == dL)
+                {
+                    rv = l1;
+                }
+                else
+                {
+                    float r0 = 0.0f, r1 = 0.0f;
+                    rd (pR, dR, r0, r1);
+                    rv = r1;
+                }
+            }
+
+            outL = l0;
+            outR = rv;
+        }
+
+        /** Read position of one head under phase mode `mode`; `moved` is false (position returned unchanged) when the
+            offset is exactly zero, which keeps the warp bit-exact at warpAmount 0. */
+        static double warpedPos (const RegionFold& rg, double Lc, int mode, double amt, double pA, double pB,
+                                 const HeadWarp& h, double dTheta, double p, int dir, bool& moved) noexcept
+        {
+            moved = false;
+
+            if (mode < 0)
+                return p;
+
+            const double delta = phasewarp::delta (mode, amt, pA, pB, h.theta, dTheta);
+
+            if (juce::exactlyEqual (delta, 0.0))
+                return p;
+
+            moved = true;
+            return rg.foldRead (p + (double) dir * Lc * delta);
+        }
+
+        /** Mirror-style SeamBridge of one head: at a cycle wrap the warp map may jump; read where continuity of the
+            read position would have led and split the output difference over two grain-rate samples. */
+        template <class Read>
+        static void bridgeHead (Read& rd, const RegionFold& rg, HeadWarp& h, float& wet, double pw, double step,
+                                int dir, bool have, bool rightChannel) noexcept
+        {
+            if (! have)
+            {
+                h.bridgeLeft = 0;
+                return;
+            }
+
+            if (h.wrapped && h.lastValid)
+            {
+                float a = 0.0f, b = 0.0f;
+                rd (rg.foldRead (h.lastPw + (double) dir * h.lastStep), dir, a, b);
+                h.bridgeOff = (rightChannel ? b : a) - wet;
+                h.bridgeLeft = 1;                                  // total 2: weights 1/2 then 0
+            }
+
+            if (h.bridgeLeft > 0)
+            {
+                wet += h.bridgeOff * (float) h.bridgeLeft * 0.5f;
+                --h.bridgeLeft;
+            }
+
+            h.lastPw = pw;
+            h.lastStep = step;
+            h.lastValid = true;
+        }
+
+        /** The head values of one grain with the phase warp applied: dry / wet per head, SeamBridge, old -> new mode
+            cross-fade, warpMix.  SEAM D6: new kernels (sync, FM / PM, Self FM) add their position offset (and use
+            g.slots) at the two `warpedPos` calls; everything around them already is per grain. */
+        template <class Read>
+        void warpedHeads (Read& rd, Grain& g, const Ctx& c, const WarpNow& wn, bool haveL, bool haveR,
+                          float& outL, float& outR) noexcept
+        {
+            const RegionFold& rg = c.rg;
+            const double Lc = c.sp.warp.Lc;
+            const double stepL = c.stepBase * (double) g.ratioL, stepR = c.stepBase * (double) g.ratioR;
+            const double dTL = stepL * c.invLc, dTR = stepR * c.invLc;
+
+            bool mvL = false, mvR = false;
+            const double pwL = warpedPos (rg, Lc, wn.cur, wn.a, wn.A, wn.B, g.hL, dTL, g.posL, g.dirL, mvL);
+            const double pwR = warpedPos (rg, Lc, wn.cur, wn.a, wn.A, wn.B, g.hR, dTR, g.posR, g.dirR, mvR);
+            const bool curMoved = mvL || mvR;
+
+            // the dry read is only skipped for a fully wet, non-fading, moved read
+            const bool needDry = wn.mix < 1.0f || wn.fading || ! curMoved;
+
+            float dryL = 0.0f, dryR = 0.0f;
+
+            if (needDry)
+                readHeads (rd, g.posL, g.dirL, haveL, g.posR, g.dirR, haveR, dryL, dryR);
+
+            float wetL = dryL, wetR = dryR;
+
+            if (curMoved)
+                readHeads (rd, pwL, g.dirL, haveL, pwR, g.dirR, haveR, wetL, wetR);
+
+            if (wn.cur >= 0 && warpModeInfo (wn.cur).seamJump)
+            {
+                bridgeHead (rd, rg, g.hL, wetL, pwL, stepL, g.dirL, haveL, false);
+                bridgeHead (rd, rg, g.hR, wetR, pwR, stepR, g.dirR, haveR, true);
+            }
+            else
+            {
+                g.hL.bridgeLeft = g.hR.bridgeLeft = 0;
+                g.hL.lastValid = g.hR.lastValid = false;
+            }
+
+            if (wn.fading)
+            {
+                float oldL = dryL, oldR = dryR;
+
+                bool omL = false, omR = false;
+                const double poL = warpedPos (rg, Lc, wn.old, wn.oldA, wn.oldAA, wn.oldB, g.hL, dTL, g.posL, g.dirL, omL);
+                const double poR = warpedPos (rg, Lc, wn.old, wn.oldA, wn.oldAA, wn.oldB, g.hR, dTR, g.posR, g.dirR, omR);
+
+                if (omL || omR)
+                    readHeads (rd, poL, g.dirL, haveL, poR, g.dirR, haveR, oldL, oldR);
+
+                wetL = oldL + wn.t * (wetL - oldL);
+                wetR = oldR + wn.t * (wetR - oldR);
+            }
+
+            if (wn.mix >= 1.0f)
+            {
+                outL = wetL;
+                outR = wetR;
+            }
+            else
+            {
+                outL = dryL + wn.mix * (wetL - dryL);
+                outR = dryR + wn.mix * (wetR - dryR);
+            }
+        }
 
         std::uint32_t nextRandom() noexcept
         {
@@ -618,6 +967,18 @@ namespace warpr
         /** The grain train starts "as if it had been running": one grain a hop old plus a fresh one. */
         void preroll (const Ctx& c, bool fadeIn) noexcept
         {
+            if (curSched == 2)
+            {
+                // Cloud: N grains of uniformly random age (negative age = "draw it"), no hop clock
+                const int n = std::clamp (c.sp.density, 1, maxCloudGrains);
+
+                for (int i = 0; i < n; ++i)
+                    spawn (c, -1.0, fadeIn);
+
+                cloudTimer = 0.0;
+                return;
+            }
+
             const double hop = std::max (1.0, hopSeconds (curSched, c.sp.sizeMs, c.sp.shape) * c.grainRate);
             spawn (c, std::round (hop), fadeIn);                 // rounded: a hop that is a whole number of cycles stays coherent
             spawn (c, 0.0, fadeIn);
@@ -626,8 +987,16 @@ namespace warpr
 
         void spawn (const Ctx& c, double ageSamples, bool fadeIn) noexcept
         {
-            // four draws per spawn, always (the stream must not depend on the parameters)
+            // four draws per spawn, always (the stream must not depend on the parameters); Cloud draws two more
             const float rPos = bipolar(), rSize = bipolar(), rRev = unit(), rVol = unit();
+            const bool cloud = curSched == 2;
+            float rPitch = 0.0f, rAux = 0.0f;
+
+            if (cloud)
+            {
+                rPitch = bipolar();                               // transposition jitter
+                rAux = unit();                                    // start-up fill: the grain's random age
+            }
 
             const GrainSpan& sp = c.sp;
             const RegionFold& rg = c.rg;
@@ -654,7 +1023,8 @@ namespace warpr
             const double nominal = std::clamp ((double) sp.sizeMs * 0.001, 0.002, 2.0);
             const double sizeSec = std::clamp (nominal * std::exp2 (v * (double) rSize * 0.5), 0.001, 4.0);
             const int len = std::max (2, (int) std::lround (sizeSec * c.grainRate));
-            const int age0 = (int) std::floor (ageSamples);
+            const double ageUse = ageSamples < 0.0 ? (double) rAux * (double) len : ageSamples;
+            const int age0 = (int) std::floor (ageUse);
 
             if (age0 >= len)
                 return;                                           // older than its own length: already over
@@ -672,7 +1042,8 @@ namespace warpr
             // stereo spread: opposite detune of the two heads and a start offset of the right head
             const double spread = (double) std::clamp (sp.spread, 0.0f, 1.0f);
             const double detuneRatio = std::exp2 (spread * 30.0 / 1200.0);
-            const float ratioL = (float) (1.0 / detuneRatio), ratioR = (float) detuneRatio;
+            const double jitter = cloud ? std::exp2 (v * (double) rPitch) : 1.0;     // Cloud: +-12 v semitones
+            const float ratioL = (float) (jitter / detuneRatio), ratioR = (float) (jitter * detuneRatio);
             const double offsetR = spread * 0.25 * sizeSec * c.sd.fileSampleRate;
 
             const double span = (double) len * c.stepBase;
@@ -688,6 +1059,25 @@ namespace warpr
             pL = rg.foldRead (pL);
             pR = rg.foldRead (pR);
 
+            // per-head cycle clocks (D7b): seeded from the head's start position like the Classic clock in
+            // UnisonOsc::start, then aged with the pre-roll
+            double thL = 0.0, thR = 0.0;
+
+            if (c.invLc > 0.0)
+            {
+                thL = (pL - rg.lo) * c.invLc;
+                thR = (pR - rg.lo) * c.invLc;
+
+                if (age0 > 0)
+                {
+                    thL += (double) age0 * c.stepBase * (double) ratioL * c.invLc;
+                    thR += (double) age0 * c.stepBase * (double) ratioR * c.invLc;
+                }
+
+                thL -= std::floor (thL);
+                thR -= std::floor (thR);
+            }
+
             bool endL = false, endR = false;
 
             if (age0 > 0)
@@ -697,6 +1087,9 @@ namespace warpr
             }
 
             Grain g;
+            g.hL.theta = thL;
+            g.hR.theta = thR;
+            g.sched = static_cast<std::uint8_t> (curSched);
             g.active = true;
             g.endedL = endL;
             g.endedR = endR;
@@ -708,8 +1101,11 @@ namespace warpr
             g.posR = pR;
             g.ratioL = ratioL;
             g.ratioR = ratioR;
-            g.win = makeWindow (loop, sp.shape, sizeSec);
+            g.win = makeWindow (loop, cloud ? 0.5f : sp.shape, sizeSec);      // Cloud: fixed Hann (grainShape ignored)
             g.gain = g.win.gain * (float) std::pow (10.0, -6.0 * v * (double) rVol / 20.0);
+
+            if (cloud)                                           // 1 / sqrt(0.5 N): uncorrelated grains sum to the Classic level
+                g.gain *= std::sqrt (2.0f / (float) std::clamp (sp.density, 1, maxCloudGrains));
             g.serial = ++serialCounter;
 
             if (fadeIn)
@@ -734,6 +1130,7 @@ namespace warpr
                 e.len = len;
                 e.reversed = reversed;
                 e.preAged = age0 > 0;
+                e.ratio = jitter;
             }
         }
 
@@ -745,6 +1142,8 @@ namespace warpr
         int curSched = 0;
         double scanPhaseV = 0.0;
         double countdown = 0.0;
+        double cloudTimer = 0.0;                 // Cloud respawn stagger, grain-rate samples (0 = ready)
+        WarpCtl wctl;                            // per-grain phase-warp control (D7b)
         std::int64_t sampleClock = 0;
         std::uint32_t serialCounter = 0, newestSerial = 0;
         int newestSlot = -1;

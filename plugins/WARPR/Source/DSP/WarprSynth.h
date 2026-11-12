@@ -25,9 +25,15 @@
   Pitch bend: wheel -> [-1, 1] * bendRange (2 / 12 / 24 st); the voices slew it over 3 ms.
   Velocity : fixed law 0.25 + 0.75 * v (no parameter exists, ambiguity A2).
 
-  Oscillator-budget governor (skeleton, default 256 OS-weighted units; 0 disables): a new note first
+  Oscillator-budget governor (default 256 OS-weighted units; 0 disables): a new note first
   reduces ITS OWN unison count (never below 1), then steals other voices.  It never changes the
-  unison / OS of a sounding voice.  Cost of an oscillator = os (Classic playback = 1 unit x OS).
+  unison / OS of a sounding voice.  Cost of an oscillator = os x c_mode (architecture "Voice budget governor"):
+  c_classic = 1 for Classic playback, c_granular = 1 + 0.25 x grains for a granular note, where grains = the
+  scheduler's simultaneous grains per channel (Classic 2, Loop 2, Cloud = grainDensity).  Costs are kept in
+  QUARTER units (an integer: os x (4 + grains)) so the arithmetic is exact; the budget is multiplied by 4.  The cost
+  is latched at note-on from playMode / grainMode / grainDensity / OS: a later playMode or density edit never
+  changes what a sounding voice is charged.  This is also the "unison cap in Granular": a Cloud of 20 grains at
+  OS 2 costs 12 units per oscillator, so a 256-unit budget fits 21 of them and new notes shrink their own unison.
 
   Sample references: each voice owns one explicit reference to the SampleData it plays and returns it
   through the RetireList (deferRelease) when it ends, so the final delete is never on the audio thread.
@@ -59,6 +65,7 @@ namespace warpr
         {
             bool active = false, ghost = false;
             int note = -1, unison = 0, os = 1;
+            int costQ = 4;                       // quarter units per oscillator (D7b)
             float level = 0.0f;
         };
 
@@ -94,7 +101,20 @@ namespace warpr
 
         int getNumActiveVoices() const noexcept;         // includes ghosts
         int getNumNonGhostVoices() const noexcept;
-        int getOscillatorUnitsInUse() const noexcept;    // non-ghost voices: unison * os
+        int getOscillatorUnitsInUse() const noexcept;    // non-ghost voices: sum of unison * cost, in units (rounded up)
+        int getOscillatorQuarterUnitsInUse() const noexcept;   // the same in exact quarter units
+
+        /** Budget cost of ONE oscillator in quarter units: os x (4 for Classic playback; 4 + grains when granular). */
+        static constexpr int oscillatorCostQ (int os, bool granular, int grains) noexcept
+        {
+            return os * (granular ? 4 + grains : 4);
+        }
+
+        /** Simultaneous grains per channel of a grain scheduler (grainMode 0 Classic, 1 Loop, 2 Cloud). */
+        static constexpr int grainsPerChannel (int grainMode, int density) noexcept
+        {
+            return grainMode == 2 ? (density < 1 ? 1 : (density > 20 ? 20 : density)) : 2;
+        }
 
         //======================================================================
         // UI playheads: wait-free snapshot written by the audio thread once per block (relaxed

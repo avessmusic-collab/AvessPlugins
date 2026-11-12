@@ -65,7 +65,7 @@ namespace warpr
 
         // Granular source (D7a).  playMode 1 = Granular; defaults mirror the parameter defaults.
         int   playMode = 0;
-        int   grainMode = 0;                 // 0 Classic, 1 Loop, 2 Cloud (D7b; plays as Classic)
+        int   grainMode = 0;                 // 0 Classic, 1 Loop, 2 Cloud
         float grainPosition = 0.0f, grainScan = 0.0f, grainScanDist = 0.0f;
         bool  grainScanLoop = true, grainScanKey = false;
         float grainSizeMs = 80.0f, grainShape = 0.5f, grainVariation = 0.0f, grainSpread = 0.0f, grainReverse = 0.0f;
@@ -86,6 +86,7 @@ namespace warpr
             float velocity = 1.0f;               // 0..1
             int os = 2;                          // 1 / 2 / 4 / 8, latched for the life of the note
             int unison = 1;                      // 1..8, latched
+            int oscCostQ = 4;                    // budget cost of ONE oscillator in quarter-units (latched, D7b)
             double glideFromSemis = 60.0;
             double glideMs = 0.0;
             std::uint64_t age = 0;               // note counter (stealing order)
@@ -135,6 +136,7 @@ namespace warpr
         float envLevel() const noexcept  { return env.getLevel(); }
         int   getUnison() const noexcept { return unison; }
         int   getOs() const noexcept     { return os; }
+        int   getOscCostQ() const noexcept { return oscCostQ; }      // quarter-units per oscillator, charged at note-on
         double getPitchSemis() const noexcept { return pitchCur; }
         int   fadeSamplesLeft() const noexcept { return fadeLeft; }
 
@@ -193,6 +195,7 @@ namespace warpr
         bool killedByGuard = false;
         float velGain = 1.0f;
         int os = 2, unison = 1;
+        int oscCostQ = 4;
 
         // pitch
         double pitchCur = 60.0, pitchTarget = 60.0, glideRate = 0.0;

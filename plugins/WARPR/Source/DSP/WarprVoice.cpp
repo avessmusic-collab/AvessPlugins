@@ -97,6 +97,7 @@ namespace warpr
         velGain = 0.25f + 0.75f * juce::jlimit (0.0f, 1.0f, info.velocity);   // fixed velocity law (A2)
         os = juce::jlimit (1, maxOs, info.os);
         unison = juce::jlimit (1, maxUnison, info.unison);
+        oscCostQ = std::max (1, info.oscCostQ);
 
         pitchCur = info.glideMs > 0.0 ? info.glideFromSemis : (double) info.note;
         setGlideTarget ((double) info.note, info.glideMs);
@@ -358,6 +359,16 @@ namespace warpr
         grainSpan.sampleRate = sampleRate;
         grainSpan.hb = hb;
         grainSpan.scratch = &grainScratch;
+
+        // per-grain phase warp (D7b): the grains apply the phase-domain modes themselves, with the same smoothed
+        // amount / A / B / mix ramps as the oscillator-level stage (amplitude-domain modes stay in that stage)
+        grainSpan.warp.active = warpSpan.active;
+        grainSpan.warp.mode = warpSpan.mode;
+        grainSpan.warp.a0 = warpSpan.a0;     grainSpan.warp.a1 = warpSpan.a1;
+        grainSpan.warp.A0 = warpSpan.A0;     grainSpan.warp.A1 = warpSpan.A1;
+        grainSpan.warp.B0 = warpSpan.B0;     grainSpan.warp.B1 = warpSpan.B1;
+        grainSpan.warp.mix0 = warpSpan.mix0; grainSpan.warp.mix1 = warpSpan.mix1;
+        grainSpan.warp.Lc = warpSpan.Lc;
 
         // ---- oscillators -> OS-rate bus
         const int nOS = n * os;
