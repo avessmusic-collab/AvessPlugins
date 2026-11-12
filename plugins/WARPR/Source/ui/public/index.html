@@ -996,6 +996,10 @@ const wob = [ { l: 2.2, f: 1.15, k: 1, amp: 0, ph: 0 },
               { l: 3.1, f: 1.95, k: 2, amp: 0, ph: 0 },
               { l: 4.3, f: 3.10, k: 5, amp: 0, ph: 0 } ];
 
+/* SQUISH: now and then (while sound plays) the whole droplet gets gently squashed along a random
+   axis - poles compress, the equator bulges - and springs back, like squeezing a water balloon. */
+const squish = { v: 0, target: 0, dir: randDir(), next: 14 };
+
 /* CALM: climbs while no sound plays (full in ~15 s), collapses the moment sound returns.
    The calmer the droplet, the smoother and more uniform it becomes - detail irons out, holes
    close, the umbilical relaxes, and only a slow steady drift of the layered body remains. */
@@ -1005,7 +1009,7 @@ function orgField(nx, ny, nz, layer) {
   const o = layer*4;
   const d0 = nx*NU[o][0]+ny*NU[o][1]+nz*NU[o][2],     d1 = nx*NU[o+1][0]+ny*NU[o+1][1]+nz*NU[o+1][2];
   const d2 = nx*NU[o+2][0]+ny*NU[o+2][1]+nz*NU[o+2][2], d3 = nx*NU[o+3][0]+ny*NU[o+3][1]+nz*NU[o+3][2];
-  const s = layer ? -1 : 1;                                    // the inner body counter-drifts
+  const s = 1;                                                 // both bodies drift in PARALLEL
   const f0 = 0.70*Math.sin(2.2*d0 + s*T*0.19) + 0.40*Math.sin(3.1*d1 - s*T*0.13 + 1.2);
   const f1 = 0.75*Math.sin(2.4*d1 + 2.1*Math.sin(2.0*d2 + s*T*0.11));      // nested fold
   const f2 = 0.50*Math.sin(3.8*d2 + s*T*0.21) + 0.35*Math.sin(4.7*d3 - s*T*0.14 + 3.0);
@@ -1043,6 +1047,13 @@ function orgField(nx, ny, nz, layer) {
     const ang = Math.acos(clamp(c, -1, 1));
     if (ang > pw*3) continue;
     d += pAmp*(0.95 - 0.22*k)*Math.sin(T*(1.1 + k*0.4) + k*2.1)*Math.exp(-(ang*ang)/(pw*pw));
+  }
+  // WATER RINGS: fine concentric ripples spreading from two drifting points, like rain on water
+  const wr2 = (0.05 + 0.16*V.en)*(1 - calmV);
+  if (wr2 > 0.03) {
+    const a1 = Math.acos(clamp(nx*RNPATCH[3][0] + ny*RNPATCH[3][1] + nz*RNPATCH[3][2], -1, 1));
+    const a2 = Math.acos(clamp(nx*RNHOLE[1][0] + ny*RNHOLE[1][1] + nz*RNHOLE[1][2], -1, 1));
+    d += wr2*(Math.sin(a1*16 - T*4.2)*Math.exp(-a1*1.1) + Math.sin(a2*13 - T*3.4 + 1.5)*Math.exp(-a2*1.3));
   }
   const tr = (0.10 + 0.5*V.high + 0.25*V.en)*(1 + 1.8*V.harsh)*(1 - calmV);   // tremors die first in calm
   for (let k = 0; k < 4; k++) {
@@ -1088,6 +1099,10 @@ function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef, reuseFie
         const fun = Math.exp(-Math.pow(angS/0.8, 2));
         r *= 1 + conn*fun*(layer === nSwap.outer ? -(0.72 + 0.2*nSwap.eI) : +(0.95 + 0.35*nSwap.eI));
         if (layer === nSwap.outer && angS < (0.20 + 0.42*nSwap.eI)*(1 - calmV)) hm = 0;
+      }
+      if (squish.v > 0.01) {                                   // the water-balloon squash
+        const cq = nx0*squish.dir[0] + ny0*squish.dir[1] + nz0*squish.dir[2];
+        r *= 1 - squish.v*(1 - calmV)*(0.38*cq*cq - 0.16*(1 - cq*cq));
       }
       if (layer === nSwap.outer) {                             // ambient holes breathe on the outer body
         for (let hh = 0; hh < 3; hh++) {
@@ -1152,11 +1167,11 @@ function drawOrg() {
   const ext = { v: 0 };
   const paths = [...Array(NBK)].map(() => new Path2D());
   const f0 = 0.5 + 0.5*Math.cos(Math.PI*nSwap.P);              // eversion sizes cross at f0 = 0.5
-  const big = 0.275, small = 0.135;
+  const big = 0.315, small = 0.16;
   const R0 = small + (big - small)*f0, R1 = small + (big - small)*(1 - f0);
   nSwap.eI = Math.pow(4*f0*(1 - f0), 1.5);
   nSwap.outer = R0 >= R1 ? 0 : 1;
-  orgBody(1, R1, -0.55, 0.9, 0.80 + 0.2*(1 - f0), paths, ext);
+  orgBody(1, R1, 0.85, 0.9, 0.80 + 0.2*(1 - f0), paths, ext);   // inner moves parallel to the outer
   // the outer body as PARALLEL LAYERS: the same surface echoed at nested radii (onion shells),
   // dimmer inward - the field is computed once and re-projected for the inner echoes
   orgBody(0, R0,       1.0, 1.0,  0.80 + 0.2*f0,        paths, ext);
@@ -1180,6 +1195,11 @@ function drawOrg() {
   for (let hh = 0; hh < 3; hh++) nHoleR[hh] = Math.max(0, 0.42*Math.sin(T*0.09 + hh*2.3) - 0.10 + 0.18*V.en)*(1 - calmV);
   // CALM accumulator: silence smooths the droplet more and more; any sound wakes it instantly
   calmV = clamp(V.en < 0.04 ? calmV + (1 - calmV)*0.035 : calmV - 0.25*calmV - 0.02, 0, 1);
+  // squish scheduling: a squash pulse every ~10-25 s of playing, springing back over ~1 s
+  if (squish.target === 0 && squish.v < 0.02 && T > squish.next && V.en > 0.1) { squish.target = 1; squish.dir = randDir(); }
+  if (squish.target === 1 && squish.v > 0.9) squish.target = 0;
+  squish.v += (squish.target - squish.v)*(squish.target === 1 ? 0.07 : 0.04);
+  if (squish.target === 0 && squish.v < 0.02) squish.next = T + 10 + Math.random()*15;
   if (calmV > 0.99) calmV = 1;                                 // no sound -> a perfect sphere within ~2 s
   ripples.forEach(r => r.age += 0.03); ripples = ripples.filter(r => r.age < 3);
   for (const m of wob) {                                       // droplet modes: feed, ring, decay
