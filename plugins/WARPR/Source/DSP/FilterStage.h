@@ -34,7 +34,12 @@
   low-pass" convention of FilterDesign.h) the samples are not touched at all - the output is bit-identical to the
   input - and the cores are parked (state cleared) so re-enabling starts clean behind the 5 ms ramp.
 
-  Types >= 20 are not implemented yet (D5b/D5c): their design is the identity, so the stage passes the signal through
+  D5b (types 20-27: combs, all-passes, formant / vowel banks, phaser) ride the same machinery: a comb core owns its
+  delay lines (pre-allocated in prepare()), a type switch resets the NEW core (its line is silent and is primed with the
+  input for 64 samples like every other core), filterEnable off / mix 0 are the same bit-exact bypass, and the "open
+  low-pass" rule does not apply to them (it is limited to types 0-5).
+
+  Types >= 28 are not implemented yet (D5c): their design is the identity, so the stage passes the signal through
   unchanged while still honouring drive and mix.
 
   Safety: a non-finite or runaway (|y| >= 1e6) result replaces that sample by the dry sample and clears all filter
@@ -47,6 +52,7 @@
 #include "DSP/FilterDesign.h"
 
 #include <array>
+#include <vector>
 
 namespace warpr
 {
@@ -62,26 +68,39 @@ namespace warpr
         float mix = 1.0f;
     };
 
-    /** One stereo instance of a design: the TPT state of up to four sections per channel. */
+    /** One stereo instance of a design: the TPT state of up to 16 sections per channel, the phaser feedback sample and
+        (D5b) the comb delay lines.  The delay lines are allocated ONCE in prepare() at their maximum size (fs / 20 Hz);
+        nothing in the audio path allocates. */
     class FilterCore
     {
     public:
-        void reset() noexcept
-        {
-            for (auto& ch : ic1)
-                ch.fill (0.0);
-            for (auto& ch : ic2)
-                ch.fill (0.0);
-        }
+        /** Allocates the comb delay lines for `sampleRate` (NOT real-time safe; no-op when the size is unchanged). */
+        void prepare (double sampleRate);
 
-        void setDesign (const FilterDesign& d) noexcept { design = d; }
+        /** Clears all state.  The delay lines are only wiped when a comb actually wrote to them. */
+        void reset() noexcept;
+
+        /** Takes the design for the next process() calls.  Comb delay changes ramp linearly from the previous design's
+            delay to the new one over the next call (per-sample interpolation, no zipper). */
+        void setDesign (const FilterDesign& d) noexcept;
 
         /** Filters `n` samples of channel `ch` (0 / 1) in double precision. */
         void process (int ch, const double* in, double* out, int n) noexcept;
 
     private:
+        double runChain (std::size_t c, double x) noexcept;
+
         FilterDesign design;
         std::array<std::array<double, static_cast<std::size_t> (FilterDesign::maxSections)>, 2> ic1 {}, ic2 {};
+        std::array<double, 2> fbState {};                      // phaser: previous chain output
+
+        // comb
+        std::array<std::vector<double>, 2> line;               // y history, circular
+        std::array<int, 2> writePos {};
+        std::array<double, 2> lpState {};
+        double delayStart = 2.0, delayEnd = 2.0;
+        bool haveDelay = false;
+        bool lineDirty = false;
     };
 
     class FilterStage

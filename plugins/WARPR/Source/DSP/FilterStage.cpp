@@ -42,41 +42,210 @@ namespace warpr
     }
 
     //==========================================================================
+    void FilterCore::prepare (double sampleRate)
+    {
+        const auto length = static_cast<std::size_t> (filterdesign::combBufferLength (sampleRate));
+
+        for (auto& l : line)
+            if (l.size() != length)
+                l.assign (length, 0.0);
+
+        lineDirty = false;
+        reset();
+    }
+
+    void FilterCore::reset() noexcept
+    {
+        for (auto& ch : ic1)
+            ch.fill (0.0);
+        for (auto& ch : ic2)
+            ch.fill (0.0);
+
+        fbState.fill (0.0);
+        lpState.fill (0.0);
+        writePos.fill (0);
+        haveDelay = false;
+
+        if (lineDirty)
+        {
+            for (auto& l : line)
+                std::fill (l.begin(), l.end(), 0.0);
+
+            lineDirty = false;
+        }
+    }
+
+    void FilterCore::setDesign (const FilterDesign& d) noexcept
+    {
+        design.topo = d.topo;
+        design.numSections = d.numSections;
+        design.gain = d.gain;
+        design.fb = d.fb;
+        design.outDry = d.outDry;
+        design.outWet = d.outWet;
+        design.comb = d.comb;
+
+        for (int i = 0; i < d.numSections; ++i)
+            design.sec[static_cast<std::size_t> (i)] = d.sec[static_cast<std::size_t> (i)];
+
+        if (d.topo == FilterDesign::Topo::Comb)
+        {
+            delayStart = haveDelay ? delayEnd : d.comb.delay;
+            delayEnd = d.comb.delay;
+            haveDelay = true;
+        }
+        else
+            haveDelay = false;
+    }
+
+    double FilterCore::runChain (std::size_t c, double x) noexcept
+    {
+        const int ns = design.numSections;
+
+        for (int s = 0; s < ns; ++s)
+        {
+            const FilterSection& sc = design.sec[static_cast<std::size_t> (s)];
+            double& st1 = ic1[c][static_cast<std::size_t> (s)];
+
+            if (sc.kind == FilterSection::Kind::Svf)
+            {
+                double& st2 = ic2[c][static_cast<std::size_t> (s)];
+                const double v3 = x - st2;
+                const double v1 = sc.a1 * st1 + sc.a2 * v3;
+                const double v2 = st2 + sc.a2 * st1 + sc.a3 * v3;
+                st1 = 2.0 * v1 - st1;
+                st2 = 2.0 * v2 - st2;
+                x = sc.m0 * x + sc.m1 * v1 + sc.m2 * v2;
+            }
+            else if (sc.kind == FilterSection::Kind::OnePole)
+            {
+                const double v = (x - st1) * sc.a1;
+                const double lp = v + st1;
+                st1 = lp + v;
+                x = sc.m0 * x + sc.m2 * lp;
+            }
+        }
+
+        return x;
+    }
+
     void FilterCore::process (int ch, const double* in, double* out, int n) noexcept
     {
         const auto c = static_cast<std::size_t> (ch);
-        const int ns = design.numSections;
 
-        for (int i = 0; i < n; ++i)
+        // ---- comb: delay line + loop one-pole + (linear below 6) soft limiter
+        if (design.topo == FilterDesign::Topo::Comb)
         {
-            double x = in[i];
+            std::vector<double>& ln = line[c];
+            const int len = static_cast<int> (ln.size());
 
-            for (int s = 0; s < ns; ++s)
+            if (len < 16)                                          // never prepared: pass through
             {
-                const FilterSection& sc = design.sec[static_cast<std::size_t> (s)];
-                double& st1 = ic1[c][static_cast<std::size_t> (s)];
-
-                if (sc.kind == FilterSection::Kind::Svf)
-                {
-                    double& st2 = ic2[c][static_cast<std::size_t> (s)];
-                    const double v3 = x - st2;
-                    const double v1 = sc.a1 * st1 + sc.a2 * v3;
-                    const double v2 = st2 + sc.a2 * st1 + sc.a3 * v3;
-                    st1 = 2.0 * v1 - st1;
-                    st2 = 2.0 * v2 - st2;
-                    x = sc.m0 * x + sc.m1 * v1 + sc.m2 * v2;
-                }
-                else if (sc.kind == FilterSection::Kind::OnePole)
-                {
-                    const double v = (x - st1) * sc.a1;
-                    const double lp = v + st1;
-                    st1 = lp + v;
-                    x = sc.m0 * x + sc.m2 * lp;
-                }
+                for (int i = 0; i < n; ++i)
+                    out[i] = in[i];
+                return;
             }
 
-            out[i] = x * design.gain;
+            double* buf = ln.data();
+            const CombSpec& cs = design.comb;
+            const double maxDelay = static_cast<double> (len - 6);
+            const double invN = 1.0 / static_cast<double> (n);
+            int w = writePos[c];
+            double lp = lpState[c];
+            lineDirty = true;
+
+            for (int i = 0; i < n; ++i)
+            {
+                const double delay = std::min (std::max (delayStart + (delayEnd - delayStart) * (static_cast<double> (i + 1) * invN), 2.0), maxDelay);
+                int base = 0;
+                double lc[4];
+                filterdesign::lagrange3 (delay, base, lc);
+
+                // y[n - k] lives at (w - k) mod len;  base >= 2 so the youngest tap is y[n-1]
+                int i0 = w - (base - 1), i1 = w - base, i2 = w - base - 1, i3 = w - base - 2;
+                i0 += i0 < 0 ? len : 0;
+                i1 += i1 < 0 ? len : 0;
+                i2 += i2 < 0 ? len : 0;
+                i3 += i3 < 0 ? len : 0;
+                const double yd = lc[0] * buf[i0] + lc[1] * buf[i1] + lc[2] * buf[i2] + lc[3] * buf[i3];
+
+                lp += cs.a * (yd - lp);
+
+                const double mag = std::abs (lp);
+                constexpr double T = filterdesign::kCombSoftLimit, R = 1.5;
+                const double fbv = mag <= T ? lp : std::copysign (T + R * std::tanh ((mag - T) / R), lp);
+
+                const double y = cs.c * in[i] + cs.sign * cs.g * fbv;
+                buf[w] = y;
+                w = w + 1 == len ? 0 : w + 1;
+                out[i] = y;
+            }
+
+            writePos[c] = w;
+            lpState[c] = lp;
+            return;
         }
+
+        // ---- parallel bank
+        if (design.topo == FilterDesign::Topo::Parallel)
+        {
+            const int ns = design.numSections;
+
+            for (int i = 0; i < n; ++i)
+            {
+                const double x = in[i];
+                double sum = 0.0;
+
+                for (int s = 0; s < ns; ++s)
+                {
+                    const FilterSection& sc = design.sec[static_cast<std::size_t> (s)];
+                    double& st1 = ic1[c][static_cast<std::size_t> (s)];
+
+                    if (sc.kind == FilterSection::Kind::Svf)
+                    {
+                        double& st2 = ic2[c][static_cast<std::size_t> (s)];
+                        const double v3 = x - st2;
+                        const double v1 = sc.a1 * st1 + sc.a2 * v3;
+                        const double v2 = st2 + sc.a2 * st1 + sc.a3 * v3;
+                        st1 = 2.0 * v1 - st1;
+                        st2 = 2.0 * v2 - st2;
+                        sum += sc.m0 * x + sc.m1 * v1 + sc.m2 * v2;
+                    }
+                    else if (sc.kind == FilterSection::Kind::OnePole)
+                    {
+                        const double v = (x - st1) * sc.a1;
+                        const double lp = v + st1;
+                        st1 = lp + v;
+                        sum += sc.m0 * x + sc.m2 * lp;
+                    }
+                }
+
+                out[i] = sum * design.gain;
+            }
+
+            return;
+        }
+
+        // ---- series chain with the phaser's feedback / dry sum
+        if (! (juce::exactlyEqual (design.fb, 0.0) && juce::exactlyEqual (design.outDry, 0.0) && juce::exactlyEqual (design.outWet, 1.0)))
+        {
+            double fbPrev = fbState[c];
+
+            for (int i = 0; i < n; ++i)
+            {
+                const double x = in[i];
+                const double chain = runChain (c, x + design.fb * fbPrev);
+                fbPrev = chain;
+                out[i] = design.gain * (design.outDry * x + design.outWet * chain);
+            }
+
+            fbState[c] = fbPrev;
+            return;
+        }
+
+        // ---- plain series chain (D5a types, serial all-pass)
+        for (int i = 0; i < n; ++i)
+            out[i] = runChain (c, in[i]) * design.gain;
     }
 
     //==========================================================================
@@ -84,6 +253,10 @@ namespace warpr
     {
         sampleRate = newSampleRate;
         fadeTotal = primeSamples + std::max (1, static_cast<int> (std::lround (0.010 * newSampleRate)));
+
+        for (auto& c : cores)
+            c.prepare (newSampleRate);                // comb delay lines: the only allocation of the filter, done here
+
         reset();
     }
 

@@ -1,7 +1,10 @@
 /*
     WARPR - phase D5 test block (filters).  This file holds D5a: the standard filter family, types 0-19
     (TPT one-pole / SVF cascades, band-pass, notch, peak, shelves), the per-voice FilterStage and the response display.
-    D5b / D5c add their own sections here.
+    D5b (special linear types 20-27: combs, all-passes, formant / vowel banks, phaser) follows below the D5a sections
+    ([D5b] headings): table, comb / all-pass / formant / phaser formulas, analytic vs measured IR (magnitude AND complex),
+    measured comb teeth, stability, bypass + open-LP rule, D5a<->D5b type switching, sweeps + walk, key tracking, backend
+    display, zero allocations + determinism.  D5c adds its own sections here.
 
     Called from RunTests.cpp main():   failures += runPhaseD5Tests (full);
 
@@ -44,6 +47,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -66,6 +70,8 @@ namespace
 
     int failures = 0;
     int printedDetails = 0;
+
+    constexpr int kD5aTypes = 20;      // the standard family 0-19 (D5a loops); D5b adds 20-27 in its own sections
 
     void check (bool cond, const char* name)
     {
@@ -216,7 +222,7 @@ namespace
             if (info.implemented != (i < warpr::kNumImplementedFilterTypes))
                 ++implWrong;
 
-            const auto expectedBuild = i < 20 ? warpr::FilterBuild::D5a : (i < 28 ? warpr::FilterBuild::D5b : warpr::FilterBuild::D5c);
+            const auto expectedBuild = i < kD5aTypes ? warpr::FilterBuild::D5a : (i < 28 ? warpr::FilterBuild::D5b : warpr::FilterBuild::D5c);
             if (info.build != expectedBuild)
                 ++buildWrong;
             if (info.linear != (i < 28))
@@ -224,7 +230,7 @@ namespace
         }
 
         check (nameMismatch == 0, "all 34 table names equal choices::filterType (single source)");
-        check (implWrong == 0 && warpr::kNumImplementedFilterTypes == 20, "types 0-19 are implemented, 20-33 are not");
+        check (implWrong == 0 && warpr::kNumImplementedFilterTypes == 28, "types 0-27 are implemented (D5a + D5b), 28-33 are not (D5c)");
         check (buildWrong == 0, "build phases: 0-19 D5a, 20-27 D5b, 28-33 D5c");
         check (linearWrong == 0, "0-27 are linear, 28-33 nonlinear");
         check (std::strcmp (warpr::kFilterTypes[3].name, "LP 24") == 0 && std::strcmp (warpr::kFilterTypes[19].name, "High Shelf") == 0
@@ -364,7 +370,7 @@ namespace
 
         // unimplemented types: identity design + flat response
         int identityBad = 0;
-        for (int t = 20; t < warpr::kNumFilterTypes; ++t)
+        for (int t = warpr::kNumImplementedFilterTypes; t < warpr::kNumFilterTypes; ++t)
         {
             FilterDesign d;
             fd::make (t, 1000.0, 0.7, 0.3, fs, d);
@@ -372,7 +378,7 @@ namespace
                 || FilterResponse::magnitudeDbAt (t, 1000.0, 0.7, 0.0, 0.3, fs, 1234.0) != 0.0)
                 ++identityBad;
         }
-        check (identityBad == 0, "types 20-33: identity design and flat 0 dB response (until D5b / D5c)");
+        check (identityBad == 0, "types 28-33: identity design and flat 0 dB response (until D5c)");
     }
 
     //==========================================================================
@@ -460,7 +466,7 @@ namespace
 
         for (const double fs : fsList)
         {
-            for (int type = 0; type < warpr::kNumImplementedFilterTypes; ++type)
+            for (int type = 0; type < kD5aTypes; ++type)
             {
                 for (const double fc : cutoffs)
                 {
@@ -485,7 +491,7 @@ namespace
         if (full)
         {
             // very low cutoffs need a longer window; moderate resonance only (the ring-down must fit in 2^17 samples)
-            for (int type = 0; type < warpr::kNumImplementedFilterTypes; ++type)
+            for (int type = 0; type < kD5aTypes; ++type)
                 for (const double fc : { 40.0, 80.0 })
                     for (double res : { 0.0, 0.5 })
                     {
@@ -523,7 +529,7 @@ namespace
         double worstPeak = 0.0;
 
         for (const double fs : fsList)
-            for (int type = 0; type < warpr::kNumImplementedFilterTypes; ++type)
+            for (int type = 0; type < kD5aTypes; ++type)
                 for (const double fc : { 20.0, 1000.0, 20000.0 })
                     for (const double res : { 0.0, 0.5, 1.0 })
                         for (const double drv : { 0.0, 24.0 })
@@ -815,8 +821,8 @@ namespace
         int pairs = 0, stepBad = 0, tailBad = 0;
         double worstRatio = 0.0;
 
-        for (int a = 0; a < warpr::kNumImplementedFilterTypes; ++a)
-            for (int b = 0; b < warpr::kNumImplementedFilterTypes; ++b)
+        for (int a = 0; a < kD5aTypes; ++a)
+            for (int b = 0; b < kD5aTypes; ++b)
             {
                 if (a == b)
                     continue;
@@ -843,8 +849,8 @@ namespace
 
         // a switch into / out of an unimplemented (identity) type is just as smooth
         {
-            const auto r1 = switchPair (3, 25, fs, saw);
-            const auto r2 = switchPair (25, 3, fs, saw);
+            const auto r1 = switchPair (3, 28, fs, saw);               // 28 = Res LP (D5c, still the identity)
+            const auto r2 = switchPair (28, 3, fs, saw);
             check (r1.stepOk && r1.tailOk && r2.stepOk && r2.tailOk, "switching to / from a not-yet-implemented (pass-through) type crossfades too");
         }
 
@@ -1107,12 +1113,12 @@ namespace
                "Peak, res 1: +18 dB bell centred on the cutoff");
 
         // unimplemented type: flat
-        setParam (p, "filterType", 25.0f);
+        setParam (p, "filterType", 28.0f);
         be.computeFilterResponse (db.data(), n);
         flat = true;
         for (float v : db)
             flat = flat && v == 0.0f;
-        check (flat, "a not-yet-implemented type (Vowel) draws a flat line");
+        check (flat, "a not-yet-implemented type (Res LP, D5c) draws a flat line");
 
         // display range clamp
         setParam (p, "filterType", 5.0f);
@@ -1248,6 +1254,1237 @@ namespace
             check (bitEqual (a.l, b.l) && bitEqual (a.r, b.r) && peakOf (a.l) > 0.05, "two identical sessions with mid-note filter edits are bit-equal");
         }
     }
+
+    //==========================================================================
+    //==========================================================================
+    // D5b: special linear filters, types 20-27
+    //==========================================================================
+    //==========================================================================
+    constexpr int kD5bFirst = 20, kD5bEnd = 28;           // [first, end)
+
+    std::vector<double> logGrid (double lo, double hi, int n)
+    {
+        std::vector<double> f (ix (n));
+        for (int i = 0; i < n; ++i)
+            f[ix (i)] = lo * std::pow (hi / lo, (double) i / (double) (n - 1));
+        return f;
+    }
+
+    std::vector<double> magCurve (int type, double fc, double res, double morph, double fs, const std::vector<double>& freqs)
+    {
+        FilterDesign d;
+        fd::make (type, fc, res, morph, fs, d);
+        std::vector<double> m (freqs.size());
+        for (size_t i = 0; i < freqs.size(); ++i)
+            m[i] = std::abs (fd::response (d, freqs[i], fs));
+        return m;
+    }
+
+    size_t argMaxIn (const std::vector<double>& m, size_t lo, size_t hi)
+    {
+        size_t best = lo;
+        for (size_t i = lo; i < hi && i < m.size(); ++i)
+            if (m[i] > m[best])
+                best = i;
+        return best;
+    }
+
+    /** First index of the grid at or above `hz` (grids are ascending). */
+    size_t indexAtOrAbove (const std::vector<double>& f, double hz)
+    {
+        size_t i = 0;
+        while (i + 1 < f.size() && f[i] < hz)
+            ++i;
+        return i;
+    }
+
+    int countLocalMinima (const std::vector<double>& m, double below)
+    {
+        int n = 0;
+        for (size_t i = 1; i + 1 < m.size(); ++i)
+            if (m[i] < m[i - 1] && m[i] <= m[i + 1] && m[i] < below)
+                ++n;
+        return n;
+    }
+
+    /** Parabolic (in log magnitude) refinement of a peak on a UNIFORM log-frequency grid. */
+    double refinePeakHz (const std::vector<double>& f, const std::vector<double>& m, size_t i)
+    {
+        if (i == 0 || i + 1 >= m.size())
+            return f[i];
+
+        const double a = std::log (std::max (m[i - 1], 1.0e-300)), b = std::log (std::max (m[i], 1.0e-300)), c = std::log (std::max (m[i + 1], 1.0e-300));
+        const double den = a - 2.0 * b + c;
+        const double off = std::abs (den) < 1.0e-18 ? 0.0 : 0.5 * (a - c) / den;
+        return f[i] * std::pow (f[i + 1] / f[i], off);
+    }
+
+    //==========================================================================
+    void testD5bTable()
+    {
+        std::printf ("\n[D5b] type table\n");
+
+        bool ok = true;
+        for (int i = kD5bFirst; i < kD5bEnd; ++i)
+        {
+            const auto& info = warpr::kFilterTypes[ix (i)];
+            ok = ok && info.implemented && info.linear && info.build == warpr::FilterBuild::D5b;
+            std::printf ("        %d: %s  [%s]\n", i, info.name, info.topology);
+        }
+
+        using FF = warpr::FilterFamily;
+        const auto fam = [] (int i) { return warpr::kFilterTypes[ix (i)].family; };
+        check (ok, "types 20-27 are flagged implemented, linear, build D5b");
+        check (fam (20) == FF::Comb && fam (21) == FF::Comb && fam (22) == FF::AllPass && fam (23) == FF::AllPass
+               && fam (24) == FF::Formant && fam (25) == FF::Formant && fam (26) == FF::Formant && fam (27) == FF::AllPass,
+               "families: 20-21 comb, 22-23 / 27 all-pass, 24-26 formant");
+        check (! warpr::kFilterTypes[28].implemented && warpr::kNumImplementedFilterTypes == 28, "D5c types 28-33 stay unimplemented");
+
+        // every new type designs a non-trivial structure and is not subject to the open-LP rule
+        int trivial = 0, openRule = 0;
+        for (int t = kD5bFirst; t < kD5bEnd; ++t)
+        {
+            FilterDesign d;
+            fd::make (t, 1000.0, 0.7, 0.3, 48000.0, d);
+            if (d.topo != FilterDesign::Topo::Comb && d.numSections == 0)
+                ++trivial;
+            if (fd::isOpenLowpass (t, 20000.0, 0.0, 0.0))
+                ++openRule;
+        }
+        check (trivial == 0 && openRule == 0, "types 20-27 design real structures; the open low-pass rule never applies to them");
+    }
+
+    //==========================================================================
+    void testD5bCombFormulas()
+    {
+        std::printf ("\n[D5b] combs (20 / 21): tooth gains, tuning, damping, mapping, delay-line capacity\n");
+        constexpr double fs = 48000.0;
+        const double g = 0.97, c = std::sqrt (1.0 - g * g);
+        const double peak = c / (1.0 - g), valley = c / (1.0 + g);
+        auto mag = [&] (int type, double fc, double res, double morph, double hz) { return magAt (type, fc, res, morph, fs, hz); };
+
+        FilterDesign d;
+        fd::make (20, 1000.0, 1.0, 0.0, fs, d);
+        check (d.topo == FilterDesign::Topo::Comb && std::abs (d.comb.delay - 48.0) < 1.0e-9 && d.comb.a == 1.0 && d.comb.sign > 0.0
+               && std::abs (d.comb.g - g) < 1.0e-12 && std::abs (d.comb.c - c) < 1.0e-12,
+               "Comb +: 1 kHz @ 48 kHz -> delay exactly 48 samples, g = 0.97 res, c = sqrt(1-g^2), transparent loop at morph 0");
+
+        check (std::abs (mag (20, 1000.0, 1.0, 0.0, 1000.0) - peak) < 1.0e-6 && std::abs (mag (20, 1000.0, 1.0, 0.0, 2000.0) - peak) < 1.0e-6
+               && std::abs (mag (20, 1000.0, 1.0, 0.0, 5000.0) - peak) < 1.0e-6
+               && std::abs (mag (20, 1000.0, 1.0, 0.0, 500.0) - valley) < 1.0e-6 && std::abs (mag (20, 1000.0, 1.0, 0.0, 1500.0) - valley) < 1.0e-6,
+               "Comb +: teeth at k fc have gain c/(1-g) = 8.1, valleys midway c/(1+g) = 0.12");
+
+        check (std::abs (mag (21, 1000.0, 1.0, 0.0, 1000.0) - peak) < 1.0e-6 && std::abs (mag (21, 1000.0, 1.0, 0.0, 3000.0) - peak) < 1.0e-6
+               && std::abs (mag (21, 1000.0, 1.0, 0.0, 2000.0) - valley) < 1.0e-6 && std::abs (mag (21, 1000.0, 1.0, 0.0, 20.0) / valley - 1.0) < 3.0e-3,
+               "Comb -: teeth at the ODD multiples of fc (fc, 3 fc, ...), valleys at DC and the even multiples");
+
+        bool flat = true;
+        for (int type : { 20, 21 })
+            for (double f : { 30.0, 440.0, 1000.0, 7777.0, 19000.0 })
+                flat = flat && std::abs (mag (type, 1000.0, 0.0, 0.0, f) - 1.0) < 1.0e-12;
+        check (flat, "res 0 (no feedback): both combs are exactly flat");
+
+        // maximum over the whole band never exceeds the undamped peak (stability at the extreme feedback)
+        {
+            const auto f = logGrid (20.0, 21000.0, 6000);
+            double worst = 0.0;
+            for (int type : { 20, 21 })
+                for (double fc : { 40.0, 173.0, 1000.0, 5300.0 })
+                    for (double morph : { 0.0, 0.5, 1.0 })
+                    {
+                        const auto m = magCurve (type, fc, 1.0, morph, fs, f);
+                        worst = std::max (worst, m[argMaxIn (m, 0, m.size())]);
+                    }
+            std::printf ("        (largest |H| over fc x morph at res 1: %.4f; ideal peak %.4f)\n", worst, peak);
+            check (worst < peak * 1.01 && worst > 1.0, "res 1 (g = 0.97): the response stays bounded by c/(1-g) (Lagrange3 + damping only reduce it)");
+        }
+
+        // tuning: the tooth nearest fc sits at fc within 5 cents (loop phase delay solved incl. Lagrange3 and damping)
+        {
+            double worstCents = 0.0;
+            int bad = 0;
+
+            for (int type : { 20, 21 })
+                for (double fc : { 55.0, 110.0, 440.0, 1234.5, 3100.0 })
+                    for (double res : { 0.5, 1.0 })
+                    {
+                        const auto f = logGrid (fc * 0.97, fc * 1.03, 2001);
+                        const auto m = magCurve (type, fc, res, 0.0, fs, f);
+                        const size_t i = argMaxIn (m, 0, m.size());
+                        const double cents = 1200.0 * std::log2 (refinePeakHz (f, m, i) / fc);
+                        worstCents = std::max (worstCents, std::abs (cents));
+
+                        if (std::abs (cents) > 5.0)
+                        {
+                            ++bad;
+                            DETAIL ("        comb %d fc %.1f res %.1f: tooth %.2f cents off\n", type, fc, res, cents);
+                        }
+                    }
+
+            // damped loops pull the tooth slightly (the loop gain slopes across it): 8 cents at morph 0.5
+            for (int type : { 20, 21 })
+                for (double fc : { 110.0, 440.0 })
+                {
+                    const auto f = logGrid (fc * 0.97, fc * 1.03, 2001);
+                    const auto m = magCurve (type, fc, 1.0, 0.5, fs, f);
+                    const double cents = 1200.0 * std::log2 (refinePeakHz (f, m, argMaxIn (m, 0, m.size())) / fc);
+                    worstCents = std::max (worstCents, std::abs (cents));
+
+                    if (std::abs (cents) > 8.0)
+                    {
+                        ++bad;
+                        DETAIL ("        damped comb %d fc %.1f: tooth %.2f cents off\n", type, fc, cents);
+                    }
+                }
+
+            std::printf ("        (worst tooth offset %.3f cents)\n", worstCents);
+            check (bad == 0, "the fundamental tooth is at the cutoff within 5 cents (8 cents with loop damping), both polarities");
+        }
+
+        // damping: morph darkens the loop -> the 8th tooth loses level monotonically
+        {
+            double t8[3] = {};
+            int k = 0;
+            for (double morph : { 0.0, 0.5, 1.0 })
+            {
+                const auto f = logGrid (1568.0, 1632.0, 401);
+                const auto m = magCurve (20, 200.0, 1.0, morph, fs, f);
+                t8[k++] = m[argMaxIn (m, 0, m.size())];
+            }
+            std::printf ("        (8th tooth of a 200 Hz comb: %.3f / %.3f / %.3f at morph 0 / 0.5 / 1)\n", t8[0], t8[1], t8[2]);
+            // full damping legitimately sinks the 8th tooth toward the valley floor (~0.12 at res 1):
+            // dark means the teeth are GONE.  Measured 0.292; the floor only guards against a dead line.
+            check (t8[0] > t8[1] && t8[1] > t8[2] && t8[2] > 0.1, "loop damping: morph 0 -> 1 lowers the upper teeth monotonically (bright -> dark)");
+        }
+
+        // delay-line capacity covers every reachable delay
+        {
+            bool fits = true;
+            for (double rate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+                for (int type : { 20, 21 })
+                    for (double fc : { 1.0, 20.0, 1000.0, 20000.0, 90000.0 })
+                        for (double morph : { 0.0, 1.0 })
+                        {
+                            FilterDesign dd;
+                            fd::make (type, fc, 1.0, morph, rate, dd);
+                            fits = fits && dd.comb.delay >= 2.0 && dd.comb.delay + 2.0 <= (double) (fd::combBufferLength (rate) - 6);
+                        }
+            check (fits, "delay lines: every comb delay (20 Hz .. 0.45 fs, all fs) stays within the pre-allocated fs/20 + margin");
+        }
+    }
+
+    //==========================================================================
+    void testD5bAllPassFormulas()
+    {
+        std::printf ("\n[D5b] all-pass types (22 / 23): unit magnitude, blend, stage count, dispersion\n");
+        constexpr double fs = 48000.0;
+        const auto grid = logGrid (20.0, 21000.0, 400);
+
+        // 22: pure all-pass at both ends of the morph; (1-m) AP2 + m AP1 in between
+        bool unity = true;
+        for (double res : { 0.0, 0.5, 1.0 })
+            for (double morph : { 0.0, 1.0 })
+                for (double v : magCurve (22, 1500.0, res, morph, fs, grid))
+                    unity = unity && std::abs (v - 1.0) < 1.0e-9;
+        check (unity, "All Pass: |H| = 1 at every frequency for morph 0 (2nd order) and morph 1 (1st order)");
+        check (std::abs (magAt (22, 1500.0, 0.5, 0.5, fs, 1500.0) - std::sqrt (0.5)) < 1.0e-9
+               && std::abs (magAt (22, 1500.0, 0.5, 0.25, fs, 1500.0) - std::sqrt (0.75 * 0.75 + 0.25 * 0.25)) < 1.0e-9
+               && std::abs (magAt (22, 1500.0, 0.5, 0.5, fs, 20.0) - 1.0) < 1.0e-3,
+               "All Pass blend: |H(fc)| = sqrt((1-m)^2 + m^2) (AP2 -180 deg vs AP1 -90 deg), and 1 at DC");
+
+        // 23: unit magnitude for whole stage counts, group delay at DC = sum of 1/g_i
+        bool unity23 = true;
+        double worstTau = 0.0;
+        for (int steps : { 0, 3, 7, 14 })
+            for (double res : { 0.0, 0.6 })
+            {
+                const double morph = (double) steps / 14.0;
+                for (double v : magCurve (23, 1000.0, res, morph, fs, grid))
+                    unity23 = unity23 && std::abs (v - 1.0) < 1.0e-9;
+
+                FilterDesign d;
+                fd::make (23, 1000.0, res, morph, fs, d);
+                const double w1 = 2.0 * kPi * 5.0 / fs, w2 = 2.0 * kPi * 10.0 / fs;
+                const double tau = -(std::arg (fd::response (d, 10.0, fs)) - std::arg (fd::response (d, 5.0, fs))) / (w2 - w1);
+                double expected = 0.0;
+                for (int i = 0; i < d.numSections; ++i)
+                    expected += 1.0 / d.sec[ix (i)].g;
+
+                worstTau = std::max (worstTau, std::abs (tau / expected - 1.0));
+                if (d.numSections != 2 + steps || std::abs (tau / expected - 1.0) > 0.01)
+                    DETAIL ("        serial AP steps %d res %.1f: %d sections, group delay %.2f vs sum 1/g %.2f\n", steps, res, d.numSections, tau, expected);
+                unity23 = unity23 && d.numSections == 2 + steps;
+            }
+        std::printf ("        (worst group-delay mismatch %.4f)\n", worstTau);
+        check (unity23 && worstTau < 0.01, "Serial AP: N = 2 + round(14 morph) stages, |H| = 1, DC group delay = sum of the stage delays 1/g_i");
+
+        // dispersion grows with the stage count
+        {
+            FilterDesign a, b;
+            fd::make (23, 1000.0, 0.0, 0.0, fs, a);
+            fd::make (23, 1000.0, 0.0, 1.0, fs, b);
+            const double ta = -std::arg (fd::response (a, 50.0, fs)), tb = -std::arg (fd::response (b, 50.0, fs));      // 50 Hz: no phase wrap yet
+            check (b.numSections == 16 && a.numSections == 2 && tb > 4.0 * ta && ta > 0.0, "Serial AP: 16 stages disperse far more than 2 (phase at 50 Hz)");
+
+            FilterDesign s0, s1;
+            fd::make (23, 1000.0, 0.0, 0.5, fs, s0);
+            fd::make (23, 1000.0, 1.0, 0.5, fs, s1);
+            check (s0.sec[3].g == s0.sec[0].g && s1.sec[3].g > 2.0 * s1.sec[0].g, "Serial AP: res = spread (0 stacks every stage at fc, 1 spreads them upward)");
+        }
+    }
+
+    //==========================================================================
+    void testD5bFormantFormulas()
+    {
+        std::printf ("\n[D5b] formant types (24 / 25 / 26): peak frequencies, transposition, stepped plateaus\n");
+        constexpr double fs = 48000.0;
+        const auto grid = logGrid (100.0, 9000.0, 8000);
+
+        // Csound tenor F1 / F2 (independent copy of the table values); U's F2 is 20 dB down and sits on the F1 skirt
+        const double f1[5] = { 650.0, 400.0, 290.0, 400.0, 350.0 };
+        const double f2[5] = { 1080.0, 1700.0, 1870.0, 800.0, 600.0 };
+        const bool   hasF2[5] = { true, true, true, true, false };
+
+        int bad = 0;
+        double worst = 0.0;
+
+        for (int type : { 25, 26 })
+            for (int v = 0; v < 5; ++v)
+                for (double res : { 0.5, 0.8 })
+                {
+                    const auto m = magCurve (type, 1000.0, res, (double) v / 4.0, fs, grid);
+                    const size_t i1 = argMaxIn (m, 0, m.size());
+                    const double e1 = std::abs (refinePeakHz (grid, m, i1) / f1[v] - 1.0);
+                    worst = std::max (worst, e1);
+
+                    double e2 = 0.0;
+                    if (hasF2[v])
+                    {
+                        const size_t lo = indexAtOrAbove (grid, f2[v] * 0.9), hi = indexAtOrAbove (grid, f2[v] * 1.1);
+                        const size_t i2 = argMaxIn (m, lo, hi);
+                        e2 = (i2 == lo || i2 + 1 >= hi) ? 1.0 : std::abs (refinePeakHz (grid, m, i2) / f2[v] - 1.0);   // an edge hit = no peak
+                        worst = std::max (worst, e2);
+                    }
+
+                    if (e1 > 0.03 || e2 > 0.03)
+                    {
+                        ++bad;
+                        DETAIL ("        type %d vowel %d res %.1f: F1 off %.2f%%, F2 off %.2f%%\n", type, v, res, 100.0 * e1, 100.0 * e2);
+                    }
+                }
+        std::printf ("        (worst F1 / F2 offset %.2f%%)\n", 100.0 * worst);
+        check (bad == 0, "Vowel / Morph Formant: F1 (global peak) and F2 (local peak) of A E I O within 3% of the table, U's F1 too");
+
+        // interpolation: halfway between A and E the F1 peak is the geometric mean (log-frequency interpolation)
+        {
+            const auto m = magCurve (26, 1000.0, 0.5, 0.125, fs, grid);
+            const double fpk = refinePeakHz (grid, m, argMaxIn (m, 0, m.size()));
+            const double expected = std::sqrt (650.0 * 400.0);
+            std::printf ("        (A-E midpoint F1: %.1f Hz, geometric mean %.1f Hz)\n", fpk, expected);
+            check (std::abs (fpk / expected - 1.0) < 0.03, "Morph Formant: morph 0.125 (halfway A -> E) puts F1 at the geometric mean of the two vowels");
+        }
+
+        // transposition: cutoff 1 kHz = table, 20 kHz = +1 octave, 20 Hz = -1 octave
+        {
+            const auto wide = logGrid (60.0, 18000.0, 9000);
+            auto peakAt = [&] (double cutoff)
+            {
+                const auto m = magCurve (26, cutoff, 0.5, 0.0, fs, wide);
+                return refinePeakHz (wide, m, argMaxIn (m, 0, m.size()));
+            };
+            const double pLow = peakAt (20.0), pMid = peakAt (1000.0), pHigh = peakAt (20000.0);
+            std::printf ("        (vowel A F1 at cutoff 20 Hz / 1 kHz / 20 kHz: %.1f / %.1f / %.1f Hz)\n", pLow, pMid, pHigh);
+            check (std::abs (pLow / 325.0 - 1.0) < 0.03 && std::abs (pMid / 650.0 - 1.0) < 0.03 && std::abs (pHigh / 1300.0 - 1.0) < 0.03,
+                   "global formant transposition: cutoff 20 Hz = -1 octave, 1 kHz = 0, 20 kHz = +1 octave");
+        }
+
+        // stepped Vowel: plateaus equal the interpolated bank at the vowel positions, midpoints agree, and it never overshoots
+        {
+            int diffs = 0;
+            double worstDiff = 0.0;
+            const auto probe = logGrid (80.0, 12000.0, 300);
+
+            auto same = [&] (double morph25, double morph26)
+            {
+                const auto a = magCurve (25, 1000.0, 0.5, morph25, fs, probe);
+                const auto b = magCurve (26, 1000.0, 0.5, morph26, fs, probe);
+                double w = 0.0;
+                for (size_t i = 0; i < a.size(); ++i)
+                    w = std::max (w, std::abs (a[i] - b[i]));
+                worstDiff = std::max (worstDiff, w);
+                return w < 1.0e-12;
+            };
+
+            for (double m : { 0.0, 0.25, 0.5, 0.75, 1.0, 0.125, 0.375 })
+                diffs += same (m, m) ? 0 : 1;                       // exact vowel positions and exact midpoints
+            diffs += same (0.2, 0.25) ? 0 : 1;                      // inside the plateau of E
+            diffs += same (0.06, 0.0) ? 0 : 1;                      // inside the plateau of A
+            diffs += same (0.31, 0.25) ? 0 : 1;                     // inside the plateau of E (upper side)
+            // U's plateau spans morph >= 0.925 (plateau halfwidth is 0.075 in morph units; the 0.4-wide
+            // smoothstep window owns 0.85..0.925) - morph 0.9 sits in the transition, 0.95 on the plateau
+            diffs += same (0.95, 1.0) ? 0 : 1;                      // plateau of U
+            std::printf ("        (worst plateau mismatch %.2e)\n", worstDiff);
+            check (diffs == 0, "Vowel (stepped): plateaus around every vowel are identical to the interpolated bank; the midpoint between two vowels is the 50% blend");
+
+            // continuity: the stepped position function never jumps (largest change per 1e-3 of morph)
+            double jump = 0.0;
+            double prev = 0.0;
+            for (int i = 0; i <= 1000; ++i)
+            {
+                FilterDesign d;
+                fd::make (25, 1000.0, 0.5, (double) i / 1000.0, fs, d);
+                const double f = d.sec[0].g;                         // first formant's g tracks its frequency
+                if (i > 0)
+                    jump = std::max (jump, std::abs (f / prev - 1.0));
+                prev = f;
+            }
+            std::printf ("        (largest relative F1 change per 0.001 of morph: %.4f)\n", jump);
+            check (jump < 0.08, "Vowel (stepped): the formants glide through the short transition window (no jump in the design)");
+        }
+
+        // 24: F1 = fc, F2 = F1 x (1.5 + 2 morph), fixed third formant at 2.8 kHz
+        {
+            int badF = 0;
+            const auto wide = logGrid (60.0, 12000.0, 9000);
+
+            for (double fc : { 300.0, 800.0 })
+                for (double morph : { 0.0, 1.0 })
+                {
+                    const auto m = magCurve (24, fc, 0.5, morph, fs, wide);
+                    const double p1 = refinePeakHz (wide, m, argMaxIn (m, 0, m.size()));
+                    const double target2 = fc * (1.5 + 2.0 * morph);
+                    const size_t lo = indexAtOrAbove (wide, target2 * 0.9), hi = indexAtOrAbove (wide, target2 * 1.1);
+                    const size_t i2 = argMaxIn (m, lo, hi);
+                    const double p2 = refinePeakHz (wide, m, i2);
+                    const size_t l3 = indexAtOrAbove (wide, 2800.0 * 0.9), h3 = indexAtOrAbove (wide, 2800.0 * 1.1);
+                    const size_t i3 = argMaxIn (m, l3, h3);
+                    const double p3 = refinePeakHz (wide, m, i3);
+
+                    if (std::abs (p1 / fc - 1.0) > 0.03 || i2 == lo || i2 + 1 >= hi || std::abs (p2 / target2 - 1.0) > 0.03
+                        || i3 == l3 || i3 + 1 >= h3 || std::abs (p3 / 2800.0 - 1.0) > 0.03)
+                    {
+                        ++badF;
+                        DETAIL ("        Formant fc %.0f morph %.0f: F1 %.1f F2 %.1f (want %.1f) F3 %.1f\n", fc, morph, p1, p2, target2, p3);
+                    }
+                }
+            check (badF == 0, "Formant: peaks at F1 = fc, F2 = F1 x (1.5 + 2 morph) and the fixed F3 = 2.8 kHz (within 3%)");
+        }
+
+        // narrowness: res widens / narrows the bandwidth (-3 dB width of F1)
+        {
+            auto width = [&] (double res)
+            {
+                const auto f = logGrid (60.0, 12000.0, 12000);
+                const auto m = magCurve (26, 1000.0, res, 0.0, fs, f);
+                const size_t ip = argMaxIn (m, 0, m.size());
+                size_t a = ip, b = ip;
+                while (a > 0 && m[a] > m[ip] * 0.7071)
+                    --a;
+                while (b + 1 < m.size() && m[b] > m[ip] * 0.7071)
+                    ++b;
+                return f[b] / f[a];
+            };
+            const double w0 = width (0.1), w5 = width (0.5), w9 = width (0.9);
+            std::printf ("        (F1 -3 dB width ratio at res 0.1 / 0.5 / 0.9: %.3f / %.3f / %.3f)\n", w0, w5, w9);
+            check (w0 > w5 && w5 > w9, "res = narrowness: the formant peaks narrow monotonically with the knob");
+        }
+    }
+
+    //==========================================================================
+    void testD5bPhaserFormulas()
+    {
+        std::printf ("\n[D5b] phaser (27): notch count, positions, feedback\n");
+        constexpr double fs = 48000.0;
+        const auto grid = logGrid (20.0, 0.45 * fs, 20000);
+
+        int countBad = 0;
+        for (int k = 0; k <= 5; ++k)
+        {
+            const int stages = 2 + 2 * k;
+            const double morph = (double) k / 5.0;
+            FilterDesign d;
+            fd::make (27, 1000.0, 0.5, morph, fs, d);
+            const auto m = magCurve (27, 1000.0, 0.5, morph, fs, grid);
+            const int notches = countLocalMinima (m, 0.1);
+
+            if (d.numSections != stages || notches != stages / 2)
+            {
+                ++countBad;
+                DETAIL ("        phaser morph %.1f: %d sections (want %d), %d notches (want %d)\n", morph, d.numSections, stages, notches, stages / 2);
+            }
+        }
+        check (countBad == 0, "morph 0 .. 1 in fifths gives 2, 4, ..., 12 stages and exactly stages / 2 deep notches (res 0.5 = no feedback)");
+
+        // symmetry: the centre is a notch for 2, 6, 10 stages and a peak (+0 dB sum) for 4, 8, 12
+        {
+            bool ok = true;
+            for (int k = 0; k <= 5; ++k)
+            {
+                const double mc = magAt (27, 1000.0, 0.5, (double) k / 5.0, fs, 1000.0);
+                const bool notch = (2 + 2 * k) % 4 == 2;
+                ok = ok && (notch ? mc < 0.05 : mc > 0.99);          // the bilinear warp of the outer stages leaves a few 0.01 rad
+            }
+            check (ok, "the geometric centre fc is a notch for 2 / 6 / 10 stages and a peak for 4 / 8 / 12 (half-octave stage spacing)");
+        }
+
+        // notch spacing about one octave in the middle of the bank (12 stages)
+        {
+            const auto m = magCurve (27, 1000.0, 0.5, 1.0, fs, grid);
+            std::vector<double> pos;
+            for (size_t i = 1; i + 1 < m.size(); ++i)
+                if (m[i] < m[i - 1] && m[i] <= m[i + 1] && m[i] < 0.1)
+                    pos.push_back (grid[i]);
+
+            // stage density (and so the notch density) falls off towards both ends of the bank; the inner notches are the
+            // "one octave apart" ones (2 stages per notch, half-octave stage spacing)
+            double r23 = 0.0, r34 = 0.0;
+            if (pos.size() == 6)
+            {
+                r23 = pos[3] / pos[2];
+                r34 = pos[4] / pos[3];
+            }
+            std::printf ("        (12 stages: %d notches, inner ratios %.3f / %.3f)\n", (int) pos.size(), r23, r34);
+            check (pos.size() == 6 && r23 > 1.7 && r23 < 2.6 && r34 > 1.7 && r34 < 2.6, "12 stages: six notches, the inner ones about an octave apart");
+        }
+
+        // feedback: bipolar around res 0.5, bounded, deepens / narrows the notch structure
+        {
+            FilterDesign d0, dn, dp;
+            fd::make (27, 1000.0, 0.5, 0.4, fs, d0);
+            fd::make (27, 1000.0, 0.0, 0.4, fs, dn);
+            fd::make (27, 1000.0, 1.0, 0.4, fs, dp);
+            const auto m0 = magCurve (27, 1000.0, 0.5, 0.4, fs, grid);
+            const auto mn = magCurve (27, 1000.0, 0.0, 0.4, fs, grid);
+            const auto mp = magCurve (27, 1000.0, 1.0, 0.4, fs, grid);
+            const double max0 = m0[argMaxIn (m0, 0, m0.size())], maxN = mn[argMaxIn (mn, 0, mn.size())], maxP = mp[argMaxIn (mp, 0, mp.size())];
+            std::printf ("        (peak |H| for feedback -0.95 / 0 / +0.95: %.3f / %.3f / %.3f)\n", maxN, max0, maxP);
+            check (d0.fb == 0.0 && std::abs (dn.fb + 0.95) < 1.0e-12 && std::abs (dp.fb - 0.95) < 1.0e-12, "res 0.5 = no feedback, res 0 / 1 = -0.95 / +0.95");
+            check (maxN > 2.0 && maxN < 3.4 && maxP > 2.0 && maxP < 3.4 && max0 < 1.0 + 1.0e-9,
+                   "strong feedback adds resonant peaks (bounded: gain trim keeps |H| < 3.4), no feedback is a flat-topped notch comb");
+        }
+    }
+
+    //==========================================================================
+    // measured impulse response (through FilterStage) -> complex spectrum
+    //==========================================================================
+    struct IrSpectrum
+    {
+        std::vector<std::complex<float>> h;
+        double binHz = 0.0;
+        int size = 0, order = 0;
+        double tail = 0.0;
+    };
+
+    /** Window = constant time (>= 0.6 s) and grown (up to 2^21) until the last 1/16 of the impulse response is below 1e-6:
+        comb and phaser rings at strong feedback / low cutoff need seconds. */
+    IrSpectrum measureIr (int type, double fc, double res, double morph, double fs, int maxOrder = 21)
+    {
+        int order = 14;
+        while ((1 << order) < (int) (0.6 * fs))
+            ++order;
+
+        const FilterTargets t = mk (type, fc, res, morph);
+        std::vector<float> l;
+        double tail = 0.0;
+
+        for (;;)
+        {
+            const int size = 1 << order;
+            FilterStage st;
+            st.prepare (fs);
+            st.snap (t);
+
+            l.assign (ix (size), 0.0f);
+            std::vector<float> r (ix (size), 0.0f);
+            l[0] = r[0] = 1.0f;
+
+            for (int i = 0; i < size; i += 32)
+                st.process (l.data() + i, r.data() + i, 32, t);
+
+            tail = 0.0;
+            for (int i = size - size / 16; i < size; ++i)
+                tail = std::max (tail, (double) std::abs (l[ix (i)]));
+
+            if (tail < 1.0e-6 || order >= maxOrder)
+                break;
+
+            ++order;
+        }
+
+        const int size = 1 << order;
+        juce::dsp::FFT fft (order);
+        std::vector<std::complex<float>> in (ix (size)), out (ix (size));
+        for (int i = 0; i < size; ++i)
+            in[ix (i)] = std::complex<float> (l[ix (i)], 0.0f);
+
+        fft.perform (in.data(), out.data(), false);
+
+        IrSpectrum s;
+        s.h = std::move (out);
+        s.binHz = fs / (double) size;
+        s.size = size;
+        s.order = order;
+        s.tail = tail;
+        return s;
+    }
+
+    struct IrErrorC
+    {
+        double worstDb = 0.0, worstAbs = 0.0, worstRel = 0.0, worstHz = 0.0;
+    };
+
+    IrErrorC compareIr (const IrSpectrum& s, int type, double fc, double res, double morph, double fs)
+    {
+        const FilterTargets t = mk (type, fc, res, morph);
+        FilterDesign d;
+        fd::make (type, (double) t.cutoffHz, (double) t.res, (double) t.morph, fs, d);
+
+        const int lo = (int) std::ceil (20.0 / s.binHz), hi = (int) std::floor (0.45 * fs / s.binHz);
+        const int stride = std::max (1, (hi - lo) / 90000);
+        IrErrorC e;
+
+        for (int k = lo; k <= hi; k += stride)
+        {
+            const double f = (double) k * s.binHz;
+            const std::complex<double> ha = fd::response (d, f, fs);
+            const std::complex<double> hm ((double) s.h[ix (k)].real(), (double) s.h[ix (k)].imag());
+            const double ma = std::abs (ha), mm = std::abs (hm);
+
+            if (ma <= 0.01)
+                e.worstAbs = std::max (e.worstAbs, std::abs (mm - ma));
+            else
+            {
+                const double db = mm > 0.0 ? std::abs (20.0 * std::log10 (mm / ma)) : 200.0;
+                if (db > e.worstDb)
+                {
+                    e.worstDb = db;
+                    e.worstHz = f;
+                }
+            }
+
+            if (ma > 0.05)
+                e.worstRel = std::max (e.worstRel, std::abs (hm - ha) / ma);
+        }
+
+        return e;
+    }
+
+    void testD5bResponse (bool full)
+    {
+        std::printf ("\n[D5b] analytic response vs measured impulse-response FFT (through FilterStage), 0.5 dB gate + complex gate\n");
+
+        struct Rm { double res, morph; };
+        const std::vector<Rm> combos = full ? std::vector<Rm> { { 0, 0 }, { 0, 1 }, { 0.5, 0.35 }, { 1, 0 }, { 1, 1 } }
+                                            : std::vector<Rm> { { 0, 0 }, { 0.5, 0.35 }, { 1, 1 } };
+        const std::vector<double> fsList = full ? std::vector<double> { 44100.0, 48000.0, 96000.0, 192000.0 } : std::vector<double> { 48000.0 };
+
+        int cases = 0, bad = 0, capped = 0;
+        double overall = 0.0, overallRel = 0.0;
+        std::array<double, 8> worstPerType {};
+
+        for (const double fs : fsList)
+        {
+            const std::vector<double> cutoffs = fs > 50000.0 ? std::vector<double> { 1000.0, 15000.0 } : std::vector<double> { 250.0, 1000.0, 6000.0, 15000.0 };
+
+            for (int type = kD5bFirst; type < kD5bEnd; ++type)
+                for (const double fc : cutoffs)
+                    for (const auto& rm : combos)
+                    {
+                        const auto s = measureIr (type, fc, rm.res, rm.morph, fs);
+                        const auto e = compareIr (s, type, fc, rm.res, rm.morph, fs);
+                        ++cases;
+                        capped += s.tail > 1.0e-4 ? 1 : 0;
+                        worstPerType[ix (type - kD5bFirst)] = std::max (worstPerType[ix (type - kD5bFirst)], e.worstDb);
+                        overall = std::max (overall, e.worstDb);
+                        overallRel = std::max (overallRel, e.worstRel);
+
+                        if (e.worstDb > 0.5 || e.worstAbs > 5.0e-4 || e.worstRel > 0.06)
+                        {
+                            ++bad;
+                            DETAIL ("        FAIL type %d (%s) fs %.0f fc %.0f res %.2f morph %.2f: %.3f dB at %.0f Hz, abs %.2e, complex rel %.3f (order %d, tail %.1e)\n",
+                                    type, warpr::kFilterTypes[ix (type)].name, fs, fc, rm.res, rm.morph, e.worstDb, e.worstHz, e.worstAbs,
+                                    e.worstRel, s.order, s.tail);
+                        }
+                    }
+        }
+
+        std::printf ("        (%d cases; worst magnitude deviation per type 20..27, dB:", cases);
+        for (int i = 0; i < 8; ++i)
+            std::printf (" %d:%.3f", kD5bFirst + i, worstPerType[ix (i)]);
+        std::printf (")\n        (overall worst %.4f dB, worst complex relative error %.4f, %d windows hit the 2^21 cap)\n", overall, overallRel, capped);
+        check (bad == 0, "all 8 special linear types: stage impulse response matches the analytic response (|H| within 0.5 dB, complex within 6%)");
+    }
+
+    /** Teeth of the MEASURED comb sit at k fc (or the odd multiples for Comb -). */
+    void testD5bCombMeasured()
+    {
+        std::printf ("\n[D5b] comb tooth positions in the measured spectrum\n");
+        constexpr double fs = 48000.0;
+
+        int bad = 0;
+        double worst = 0.0;
+
+        for (int type : { 20, 21 })
+            for (double fc : { 440.0, 1234.0 })
+            {
+                const auto s = measureIr (type, fc, 1.0, 0.0, fs);
+                std::vector<double> teeth;
+
+                for (int k = 1; k <= 4; ++k)
+                {
+                    const double expected = type == 20 ? fc * k : fc * (2 * k - 1);
+                    const int b0 = (int) std::floor (expected * 0.98 / s.binHz), b1 = (int) std::ceil (expected * 1.02 / s.binHz);
+                    int best = b0;
+                    for (int b = b0; b <= b1; ++b)
+                        if (std::abs (s.h[ix (b)]) > std::abs (s.h[ix (best)]))
+                            best = b;
+
+                    const double a = std::abs (s.h[ix (best - 1)]), m = std::abs (s.h[ix (best)]), c = std::abs (s.h[ix (best + 1)]);
+                    const double den = a - 2.0 * m + c;
+                    const double off = std::abs (den) < 1.0e-12 ? 0.0 : 0.5 * (a - c) / den;
+                    const double pos = ((double) best + off) * s.binHz;
+                    teeth.push_back (pos);
+                    const double err = std::abs (pos / expected - 1.0);
+                    worst = std::max (worst, err);
+
+                    if (err > 0.004)
+                    {
+                        ++bad;
+                        DETAIL ("        comb %d fc %.0f tooth %d: %.2f Hz (expected %.2f)\n", type, fc, k, pos, expected);
+                    }
+                }
+
+                // spacing: consecutive teeth are fc apart (Comb +) / 2 fc apart (Comb -)
+                const double spacing = (teeth[3] - teeth[0]) / 3.0;
+                const double want = type == 20 ? fc : 2.0 * fc;
+                if (std::abs (spacing / want - 1.0) > 0.004)
+                {
+                    ++bad;
+                    DETAIL ("        comb %d fc %.0f: tooth spacing %.2f Hz (expected %.2f)\n", type, fc, spacing, want);
+                }
+            }
+
+        std::printf ("        (worst tooth position error %.3f%%)\n", 100.0 * worst);
+        check (bad == 0, "measured teeth: Comb + at k fc, Comb - at the odd multiples, spacing = fc / 2 fc, all within 0.4% (~7 cents)");
+    }
+
+    //==========================================================================
+    void testD5bStability (bool full)
+    {
+        std::printf ("\n[D5b] stability sweep (cutoff x res x drive x morph x fs, types 20-27)\n");
+
+        const std::vector<double> fsList = full ? std::vector<double> { 44100.0, 48000.0, 96000.0, 192000.0 } : std::vector<double> { 48000.0 };
+        const int len = full ? 24000 : 6000;
+        const auto input = makeNoise (len, 0.25f, 4243);
+
+        int runs = 0, nonFinite = 0, tooLoud = 0;
+        double worstPeak = 0.0;
+
+        for (const double fs : fsList)
+            for (int type = kD5bFirst; type < kD5bEnd; ++type)
+                for (const double fc : { 20.0, 1000.0, 20000.0 })
+                    for (const double res : { 0.0, 0.5, 1.0 })
+                        for (const double drv : { 0.0, 24.0 })
+                            for (const double morph : { 0.0, 1.0 })
+                            {
+                                const auto y = runStageConst (fs, mk (type, fc, res, morph, drv), input);
+                                ++runs;
+
+                                if (! allFinite (y))
+                                {
+                                    ++nonFinite;
+                                    DETAIL ("        non-finite: type %d fs %.0f fc %.0f res %.1f drive %.0f morph %.0f\n", type, fs, fc, res, drv, morph);
+                                    continue;
+                                }
+
+                                const double pk = peakOf (y);
+                                worstPeak = std::max (worstPeak, pk);
+
+                                if (pk >= 8.0)
+                                {
+                                    ++tooLoud;
+                                    DETAIL ("        |y| = %.2f: type %d fs %.0f fc %.0f res %.1f drive %.0f morph %.0f\n", pk, type, fs, fc, res, drv, morph);
+                                }
+                            }
+
+        std::printf ("        (%d runs, noise at -12 dBFS, worst peak %.3f)\n", runs, worstPeak);
+        check (nonFinite == 0, "no NaN / inf anywhere in the sweep (comb feedback 0.97, phaser feedback +-0.95, 4x-narrow formants)");
+        check (tooLoud == 0, "|y| < 8 everywhere");
+
+        // a long, loud, tonal burst at the extreme feedback: the in-loop limiter keeps the comb bounded
+        {
+            const auto tone = makeSine (48000, 1000.0, 48000.0, 0.9f);               // exactly on a tooth of the 1 kHz comb
+            const auto y20 = runStageConst (48000.0, mk (20, 1000.0, 1.0, 0.0), tone);
+            const auto y21 = runStageConst (48000.0, mk (21, 1000.0, 1.0, 0.0), tone);
+            std::printf ("        (0.9 tone on a g = 0.97 tooth: peak %.3f / %.3f)\n", peakOf (y20), peakOf (y21));
+            check (allFinite (y20) && allFinite (y21) && peakOf (y20) < 9.0 && peakOf (y21) < 9.0,
+                   "resonating a loud tone at feedback 0.97: finite and held below the in-loop limiter's ceiling (7.5 + input)");
+        }
+    }
+
+    //==========================================================================
+    void testD5bBypass()
+    {
+        std::printf ("\n[D5b] bypass nulls and the open-LP rule (types 20-27)\n");
+        constexpr double fs = 48000.0;
+        const auto noise = makeNoise (9600, 0.5f, 6);
+        const auto smooth = makeMix (9600, fs);
+
+        int offBad = 0, mixBad = 0, openBad = 0, rampBad = 0;
+
+        for (int type = kD5bFirst; type < kD5bEnd; ++type)
+        {
+            {
+                FilterStage st;
+                st.prepare (fs);
+                const FilterTargets wild = mk (type, 120.0, 1.0, 1.0, 24.0, 1.0, false);        // enable OFF
+                st.snap (wild);
+                std::vector<float> l = noise, r = noise;
+                for (size_t i = 0; i < l.size(); i += 32)
+                    st.process (l.data() + i, r.data() + i, 32, wild);
+                if (! (bitEqual (l, noise) && bitEqual (r, noise) && st.isParked()))
+                    ++offBad;
+            }
+            {
+                FilterStage st;
+                st.prepare (fs);
+                const FilterTargets zero = mk (type, 300.0, 1.0, 0.5, 12.0, 0.0, true);         // mix 0
+                st.snap (zero);
+                std::vector<float> l = noise, r = noise;
+                for (size_t i = 0; i < l.size(); i += 32)
+                    st.process (l.data() + i, r.data() + i, 32, zero);
+                if (! (bitEqual (l, noise) && bitEqual (r, noise)))
+                    ++mixBad;
+            }
+            {
+                // the open-LP rule must NOT apply: cutoff 20 kHz, res 0, drive 0, enabled -> the stage is live (not parked)
+                FilterStage st;
+                st.prepare (fs);
+                const FilterTargets open = mk (type, 20000.0, 0.0, 0.0, 0.0, 1.0, true);
+                st.snap (open);
+                std::vector<float> l = noise, r = noise;
+                for (size_t i = 0; i < l.size(); i += 32)
+                    st.process (l.data() + i, r.data() + i, 32, open);
+                if (st.isParked())
+                    ++openBad;
+            }
+            {
+                // enable toggled mid-run: 5 ms ramp, then bit-exact again
+                const FilterTargets on = mk (type, 800.0, 0.5, 0.4);
+                const int offAt = 160;
+                const auto y = runStage (fs, on, smooth, [&] (int ci, FilterTargets& t) { if (ci >= offAt) t.enable = false; });
+                bool tailExact = true;
+                for (size_t i = (size_t) offAt * 32 + 256; i < smooth.size(); ++i)
+                    tailExact = tailExact && y[i] == smooth[i];
+                if (! tailExact)
+                    ++rampBad;
+            }
+        }
+
+        check (offBad == 0, "filterEnable off: bit-identical output and a parked stage for every type 20-27");
+        check (mixBad == 0, "filterMix 0: bit-identical output for every type 20-27");
+        check (openBad == 0, "the open low-pass rule does not apply: a comb / all-pass / formant / phaser at 20 kHz, res 0 stays live");
+        check (rampBad == 0, "disabling mid-note ramps over 5 ms and is bit-exact afterwards (delay lines are parked and wiped)");
+
+        // re-enabling after a parked period starts from a clean (wiped) comb: output equals a fresh stage
+        {
+            const FilterTargets on = mk (20, 700.0, 0.9, 0.2);
+            const auto ref = runStageConst (fs, on, noise);
+            std::vector<float> l = noise, r = noise;
+            FilterStage st;
+            st.prepare (fs);
+            FilterTargets t = on;
+            st.snap (t);
+            // run enabled (fills the delay line), then park, then re-enable on the same input
+            for (size_t i = 0; i < 3200; i += 32)
+                st.process (l.data() + i, r.data() + i, 32, t);
+            t.enable = false;
+            for (size_t i = 3200; i < 6400; i += 32)
+                st.process (l.data() + i, r.data() + i, 32, t);
+            const bool parked = st.isParked();
+            t.enable = true;
+            std::vector<float> a (noise.begin(), noise.begin() + 3200), b = a;
+            for (size_t i = 0; i < a.size(); i += 32)
+                st.process (a.data() + i, b.data() + i, 32, t);
+            // the first 5 ms ramp in; afterwards the output is determined by the (clean) state: compare the tail to the fresh run's tail
+            double worst = 0.0;
+            for (size_t i = 2000; i < a.size(); ++i)
+                worst = std::max (worst, (double) std::abs (a[i] - ref[i]));
+            std::printf ("        (re-enabled comb vs a fresh comb after 2000 samples: %.2e)\n", worst);
+            check (parked && worst < 1.0e-3, "a parked comb forgets its history: after re-enable it matches a fresh run (delay line wiped)");
+        }
+    }
+
+    //==========================================================================
+    void testD5bSwitching()
+    {
+        std::printf ("\n[D5b] type-switch crossfade, D5a <-> D5b and D5b <-> D5b (DiscreteSwitchFade, 10 ms + 64 samples priming)\n");
+        constexpr double fs = 48000.0;
+        const auto sig = makeMix (12000, fs);
+
+        int pairs = 0, stepBad = 0, tailBad = 0;
+        double worstRatio = 0.0;
+
+        for (int a = 0; a < kD5bEnd; ++a)
+            for (int b = 0; b < kD5bEnd; ++b)
+            {
+                if (a == b || (a < kD5aTypes && b < kD5aTypes))
+                    continue;                                       // D5a pairs are covered by the D5a section
+
+                const auto r = switchPair (a, b, fs, sig);
+                ++pairs;
+                worstRatio = std::max (worstRatio, r.step / std::max (r.bound, 1.0e-9));
+
+                if (! r.stepOk)
+                {
+                    ++stepBad;
+                    DETAIL ("        step: %d -> %d: max step %.5f > bound %.5f\n", a, b, r.step, r.bound);
+                }
+                if (! r.tailOk)
+                {
+                    ++tailBad;
+                    DETAIL ("        tail: %d -> %d: |switched - new| = %.5f\n", a, b, r.tail);
+                }
+            }
+
+        std::printf ("        (%d transitions; worst step / bound = %.3f)\n", pairs, worstRatio);
+        check (stepBad == 0, "every transition into / out of / among types 20-27: max step <= natural step + 2 x difference / 480 samples");
+        check (tailBad == 0, "every transition ends on the new type (|switched - new| < 2e-3 after the fade; comb / phaser memory has died away)");
+
+        // a switch from a running comb to another comb: the old line keeps ringing through the fade, the new line starts silent
+        {
+            const auto sq = makeSaw (12000, 110.0, fs, 0.4f);
+            const auto r1 = switchPair (20, 21, fs, sq);
+            const auto r2 = switchPair (21, 20, fs, sq);
+            check (r1.stepOk && r1.tailOk && r2.stepOk && r2.tailOk, "Comb + <-> Comb - on a saw: click-free");
+        }
+    }
+
+    //==========================================================================
+    void testD5bSweepsAndWalk (bool full)
+    {
+        std::printf ("\n[D5b] comb cutoff sweep (per-sample delay interpolation) and random modulation walk\n");
+        constexpr double fs = 48000.0;
+        const auto sine = makeSine (19200, 1000.0, fs, 0.25f);
+        const int sweepChunks = 9600 / 32;
+        const double a = std::log (400.0), b = std::log (1600.0);
+
+        for (int type : { 20, 21 })
+        {
+            const auto up = runStage (fs, mk (type, 400.0, 0.5), sine, [&] (int ci, FilterTargets& t)
+            {
+                t.cutoffHz = (float) std::exp (a + (b - a) * std::min (1.0, (double) ci / (double) sweepChunks));
+            });
+            const auto down = runStage (fs, mk (type, 1600.0, 0.5), sine, [&] (int ci, FilterTargets& t)
+            {
+                t.cutoffHz = (float) std::exp (b + (a - b) * std::min (1.0, (double) ci / (double) sweepChunks));
+            });
+
+            const double su = maxStepIn (up, 400, up.size()), sd = maxStepIn (down, 400, down.size());
+            std::printf ("        (comb %d: max step up %.5f, down %.5f, peak %.3f / %.3f)\n", type, su, sd, peakOf (up), peakOf (down));
+            check (allFinite (up) && allFinite (down) && su < 0.10 && sd < 0.10, "swept comb: finite and no sample step above 0.10 (a 1 kHz tone at 0.25 through g = 0.49 steps at most ~0.06)");
+        }
+
+        const int chunks = full ? 15000 : 3000;
+        juce::Random rng (123);
+        FilterStage st;
+        st.prepare (fs);
+        FilterTargets t = mk (20, 1000.0);
+        st.snap (t);
+
+        std::vector<float> l (32), r (32);
+        bool finite = true;
+        double peak = 0.0;
+
+        for (int c = 0; c < chunks; ++c)
+        {
+            if (rng.nextInt (25) == 0)
+                t.type = kD5bFirst + rng.nextInt (kD5bEnd - kD5bFirst);
+
+            t.cutoffHz = (float) (20.0 * std::pow (1000.0, (double) rng.nextFloat()));
+            t.res = rng.nextFloat();
+            t.morph = rng.nextFloat();
+            t.driveDb = rng.nextInt (3) == 0 ? 24.0f * rng.nextFloat() : 0.0f;
+            t.mix = rng.nextFloat() > 0.2f ? 1.0f : rng.nextFloat();
+            t.enable = rng.nextInt (200) != 0;
+
+            for (size_t i = 0; i < 32; ++i)
+                l[i] = r[i] = 0.3f * (rng.nextFloat() * 2.0f - 1.0f);
+
+            st.process (l.data(), r.data(), 32, t);
+
+            for (size_t i = 0; i < 32; ++i)
+            {
+                finite = finite && std::isfinite (l[i]) && std::isfinite (r[i]);
+                peak = std::max ({ peak, (double) std::abs (l[i]), (double) std::abs (r[i]) });
+            }
+        }
+
+        std::printf ("        (%d chunks of fully random cutoff / res / morph / drive / mix / type 20-27, peak %.3f)\n", chunks, peak);
+        check (finite, "random modulation walk over types 20-27: no NaN / inf");
+        check (peak < 64.0, "random modulation walk over types 20-27: output below the voice guard (|y| < 64)");
+    }
+
+    //==========================================================================
+    double combTrackRms (int note, float keyTrack, float cutoff)
+    {
+        PluginProcessor p;
+        prepSustained (p);
+        setParam (p, "ampSustain", 0.4f);
+        setParam (p, "filterType", 20.0f);                         // Comb +
+        setParam (p, "filterCutoff", cutoff);
+        setParam (p, "filterResonance", 0.5f);
+        setParam (p, "filterKeyTrack", keyTrack);
+        const auto r = renderBlocks (p, 48000.0, 200, 256, note, nullptr);
+        return tailRms (r.l, 19200);
+    }
+
+    void testD5bKeyTrack()
+    {
+        std::printf ("\n[D5b] comb key tracking through the voice\n");
+
+        const double c4 = 261.6256f;
+        // key 1: the comb follows the note (cutoff anchored at note 60), so G4 (67) and C5 (72) both sit on the teeth
+        const double tuned67 = combTrackRms (67, 1.0f, (float) c4);
+        const double free67 = combTrackRms (67, 0.0f, (float) c4);               // fixed 261.6 Hz comb vs a 392 Hz saw: every other harmonic misses
+        const double t60 = combTrackRms (60, 1.0f, (float) c4), t72 = combTrackRms (72, 1.0f, (float) c4);
+        const double db = 20.0 * std::log10 (tuned67 / free67);
+        std::printf ("        (note 67: tuned %.4f vs fixed comb %.4f = %.2f dB; tuned note 60 %.4f / note 72 %.4f)\n", tuned67, free67, db, t60, t72);
+        check (tuned67 > 0.02 && db > 1.2, "key track 1: the comb tuned to the played note (every harmonic on a tooth) is louder than the same comb left at 261.6 Hz");
+        check (std::abs (t72 / t60 - 1.0) < 0.06, "key track 1: note 72 and note 60 both sit on the teeth -> the same level (the comb follows the pitch one-to-one)");
+
+        // analytic: key-tracked cutoff for the voice is the comb fundamental
+        FilterDesign d;
+        fd::make (20, fd::keyTrackedCutoff (c4, 1.0, 67.0), 1.0, 0.0, 48000.0, d);
+        const double f0 = 48000.0 / d.comb.delay;
+        check (std::abs (1200.0 * std::log2 (f0 / (440.0 * std::exp2 ((67.0 - 69.0) / 12.0)))) < 5.0,
+               "key track 1 at note 67: the comb's loop period equals the note's period within 5 cents");
+    }
+
+    //==========================================================================
+    void testD5bBackend()
+    {
+        std::printf ("\n[D5b] backend: computeFilterResponse for the special linear types\n");
+        constexpr int n = 256;
+
+        PluginProcessor p;
+        auto& be = p.getBackendImpl();
+        be.setSampleRate (48000.0);
+
+        std::array<float, n> db {};
+        auto freq = [] (int i) { return 20.0 * std::pow (1000.0, (double) i / (double) (n - 1)); };
+
+        auto expectEqual = [&] (int type, double cutoff, double res, double morph)
+        {
+            double worst = 0.0;
+            for (int i = 0; i < n; ++i)
+                worst = std::max (worst, std::abs ((double) db[ix (i)] - FilterResponse::magnitudeDbAt (type, cutoff, res, 0.0, morph, 48000.0, freq (i))));
+            return worst < 0.01;
+        };
+
+        // comb: teeth
+        setParam (p, "filterType", 20.0f);
+        setParam (p, "filterCutoff", 1000.0f);
+        setParam (p, "filterResonance", 0.4f);                     // g = 0.39: teeth ~10% wide, resolved by the 256-point grid
+        setParam (p, "filterMorph", 0.0f);
+        be.computeFilterResponse (db.data(), n);
+        const float mx = *std::max_element (db.begin(), db.end()), mn = *std::min_element (db.begin(), db.end());
+        std::printf ("        (Comb +, 1 kHz, res 0.4: %.1f .. %.1f dB over the 256 points; ideal +-3.55 dB)\n", (double) mn, (double) mx);
+        check (expectEqual (20, 1000.0, 0.4, 0.0) && mx > 2.5 && mn < -2.5, "Comb +: 256 points equal FilterResponse and show the teeth (about +3.5 / -3.5 dB)");
+
+        // formant: A vowel peak
+        setParam (p, "filterType", 26.0f);
+        setParam (p, "filterResonance", 0.5f);
+        be.computeFilterResponse (db.data(), n);
+        int pk = 0;
+        for (int i = 0; i < n; ++i)
+            if (db[ix (i)] > db[ix (pk)])
+                pk = i;
+        check (expectEqual (26, 1000.0, 0.5, 0.0) && std::abs (freq (pk) / 650.0 - 1.0) < 0.06 && db[ix (pk)] > -1.0 && db[ix (pk)] < 6.0,
+               "Morph Formant, vowel A: the drawn peak sits at F1 = 650 Hz at about 0 dB");
+
+        // phaser: notches
+        setParam (p, "filterType", 27.0f);
+        setParam (p, "filterResonance", 0.5f);
+        setParam (p, "filterMorph", 0.2f);
+        be.computeFilterResponse (db.data(), n);
+        const float pmin = *std::min_element (db.begin(), db.end());
+        check (expectEqual (27, 1000.0, 0.5, 0.2) && pmin < -10.0, "Phaser (4 stages): the drawn curve carries deep notches");
+
+        // all-pass: a flat line (magnitude is 1; the effect is the phase, audible through filterMix)
+        setParam (p, "filterType", 23.0f);
+        setParam (p, "filterMorph", 0.5f);
+        be.computeFilterResponse (db.data(), n);
+        bool flat = true;
+        for (float v : db)
+            flat = flat && std::abs (v) < 0.01f;
+        check (flat, "Serial AP: |H| = 1 -> a flat 0 dB line");
+
+        // the other new types respond too: not flat, equal to FilterResponse, inside the display range
+        bool allOk = true;
+        for (int type : { 21, 22, 24, 25, 27 })
+        {
+            setParam (p, "filterType", (float) type);
+            setParam (p, "filterCutoff", 2000.0f);
+            setParam (p, "filterResonance", 0.7f);
+            setParam (p, "filterMorph", 0.3f);
+            be.computeFilterResponse (db.data(), n);
+            bool inRange = true;
+            for (float v : db)
+                inRange = inRange && std::isfinite (v) && v >= -48.0f && v <= 24.0f;
+            allOk = allOk && inRange && expectEqual (type, 2000.0, 0.7, 0.3);
+        }
+        check (allOk, "types 21 / 22 / 24 / 25 / 27: backend curve equals FilterResponse, finite, inside [-48, +24] dB");
+
+        // timing (comb needs complex exponentials per point)
+        {
+            setParam (p, "filterType", 20.0f);
+            setParam (p, "filterCutoff", 200.0f);
+            setParam (p, "filterResonance", 0.9f);
+            double best = 1.0e9;
+            for (int rep = 0; rep < 50; ++rep)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                be.computeFilterResponse (db.data(), n);
+                const auto t1 = std::chrono::steady_clock::now();
+                best = std::min (best, std::chrono::duration<double, std::milli> (t1 - t0).count());
+            }
+            std::printf ("        (computeFilterResponse, 256 points, comb: best of 50 = %.3f ms)\n", best);
+            check (best < 1.0, "computeFilterResponse returns 256 comb points in < 1 ms");
+        }
+    }
+
+    //==========================================================================
+    void testD5bProcessor()
+    {
+        std::printf ("\n[D5b] allocations, determinism, processor-level nulls\n");
+        constexpr double fs = 48000.0;
+
+        // class level: delay lines are allocated in prepare(); nothing allocates while combs run and change type
+        {
+            FilterStage st;
+            st.prepare (fs);
+            FilterTargets t = mk (20, 400.0, 0.9, 0.3);
+            st.snap (t);
+            std::vector<float> l (32, 0.1f), r (32, 0.1f);
+            juce::Random rng (7);
+
+            std::size_t allocations = 0;
+            {
+                warpr::tests::ScopedAllocCount counter;
+                for (int round = 0; round < 400; ++round)
+                {
+                    if (round % 7 == 0)
+                        t.type = kD5bFirst + (round / 7) % 8;
+                    t.cutoffHz = 50.0f + 4000.0f * rng.nextFloat();
+                    t.res = rng.nextFloat();
+                    t.morph = rng.nextFloat();
+                    for (size_t i = 0; i < 32; ++i)
+                        l[i] = r[i] = 0.2f * (rng.nextFloat() * 2.0f - 1.0f);
+                    st.process (l.data(), r.data(), 32, t);
+                }
+                allocations = counter.count();
+            }
+            check (allocations == 0, "FilterStage: zero allocations while running and switching all of types 20-27 (400 chunks)");
+        }
+
+        // processor level
+        {
+            PluginProcessor p;
+            prepSustained (p);
+            setParam (p, "unisonVoices", 4.0f);
+            setParam (p, "filterType", 20.0f);
+            setParam (p, "filterCutoff", 400.0f);
+            setParam (p, "filterResonance", 0.9f);
+            setParam (p, "filterDrive", 6.0f);
+            p.setPlayConfigDetails (0, 2, fs, 256);
+            p.prepareToPlay (fs, 256);
+
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer on;
+            on.addEvent (juce::MidiMessage::noteOn (1, 52, 0.9f), 0);
+            on.addEvent (juce::MidiMessage::noteOn (1, 59, 0.9f), 0);
+            p.processBlock (buf, on);
+            juce::MidiBuffer none;
+
+            std::size_t allocations = 0;
+            bool sounding = false;
+            for (int round = 0; round < 16; ++round)
+            {
+                setParam (p, "filterType", (float) (kD5bFirst + round % 8));        // allocates (APVTS): uncounted
+                setParam (p, "filterCutoff", 200.0f + 900.0f * (float) (round % 4));
+                setParam (p, "filterMorph", 0.15f * (float) (round % 7));
+
+                warpr::tests::ScopedAllocCount counter;
+                for (int i = 0; i < 6; ++i)
+                {
+                    p.processBlock (buf, none);
+                    sounding = sounding || p.getSynth().getNumActiveVoices() > 0;
+                }
+                allocations += counter.count();
+            }
+
+            check (sounding, "the counted window contained sounding voices");
+            check (allocations == 0, "processBlock performs zero allocations with active combs / formants / phasers (2 voices x unison 4, 16 type changes)");
+            p.releaseResources();
+        }
+
+        // determinism
+        {
+            auto run = [&]
+            {
+                PluginProcessor p;
+                prepSustained (p);
+                setParam (p, "unisonVoices", 3.0f);
+                setParam (p, "filterType", 20.0f);
+                setParam (p, "filterCutoff", 330.0f);
+                setParam (p, "filterResonance", 0.8f);
+                setParam (p, "filterMorph", 0.3f);
+                return renderBlocks (p, fs, 80, 256, 50, [&p] (int b)
+                {
+                    if (b == 15) setParam (p, "filterType", 26.0f);
+                    if (b == 30) setParam (p, "filterType", 27.0f);
+                    if (b == 45) setParam (p, "filterType", 21.0f);
+                    if (b == 55) setParam (p, "filterCutoff", 2500.0f);
+                    if (b == 65) setParam (p, "filterType", 23.0f);
+                });
+            };
+
+            const auto a = run(), b = run();
+            check (bitEqual (a.l, b.l) && bitEqual (a.r, b.r) && peakOf (a.l) > 0.05, "two identical sessions with mid-note changes among the D5b types are bit-equal");
+        }
+
+        // processor-level nulls: comb with mix 0 / filterEnable off equal the default patch exactly
+        {
+            auto make = [&] (const std::function<void (PluginProcessor&)>& cfg)
+            {
+                PluginProcessor p;
+                prepSustained (p);
+                cfg (p);
+                return renderBlocks (p, fs, 40, 256, 48, nullptr);
+            };
+
+            const auto defaultR = make ([] (PluginProcessor&) {});
+            const auto mixZero = make ([] (PluginProcessor& p)
+            {
+                setParam (p, "filterType", 20.0f); setParam (p, "filterCutoff", 200.0f); setParam (p, "filterResonance", 1.0f); setParam (p, "filterMix", 0.0f);
+            });
+            const auto offComb = make ([] (PluginProcessor& p)
+            {
+                setParam (p, "filterType", 27.0f); setParam (p, "filterEnable", 0.0f); setParam (p, "filterDrive", 24.0f);
+            });
+            const auto active = make ([] (PluginProcessor& p)
+            {
+                setParam (p, "filterType", 21.0f); setParam (p, "filterCutoff", 130.0f); setParam (p, "filterResonance", 0.8f);
+            });
+
+            check (bitEqual (defaultR.l, mixZero.l) && bitEqual (defaultR.r, mixZero.r), "processor: Comb + with filterMix 0 is bit-identical to the default patch");
+            check (bitEqual (defaultR.l, offComb.l) && bitEqual (defaultR.r, offComb.r), "processor: Phaser with filterEnable off is bit-identical to the default patch");
+            const double nl = nullDb (defaultR.l, active.l);
+            std::printf ("        (Comb - @ 130 Hz, res 0.8 vs bypass: null %.1f dB)\n", nl);
+            check (nl > -20.0 && allFinite (active.l) && allFinite (active.r), "processor: an active Comb - really changes the sound");
+        }
+    }
 }
 
 JUCE_END_IGNORE_WARNINGS_GCC_LIKE
@@ -1269,6 +2506,23 @@ int runPhaseD5Tests (bool full)
     testKeyTrack();
     testBackend();
     testProcessor();
+
+    std::printf ("\n=== Phase D5b: special linear filters (types 20-27: combs, all-passes, formants, phaser) (%s) ===\n", full ? "full" : "quick");
+
+    testD5bTable();
+    testD5bCombFormulas();
+    testD5bAllPassFormulas();
+    testD5bFormantFormulas();
+    testD5bPhaserFormulas();
+    testD5bResponse (full);
+    testD5bCombMeasured();
+    testD5bStability (full);
+    testD5bBypass();
+    testD5bSwitching();
+    testD5bSweepsAndWalk (full);
+    testD5bKeyTrack();
+    testD5bBackend();
+    testD5bProcessor();
 
     return failures;
 }

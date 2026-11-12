@@ -7,7 +7,7 @@
 
       family       the shared building-block family (architecture "F-xxx" codes)
       build        the phase that implements it: D5a standard 0-19, D5b special linear 20-27, D5c nonlinear 28-33
-      implemented  true  : real DSP exists (D5a: indices 0-19)
+      implemented  true  : real DSP exists (D5a: indices 0-19, D5b: 20-27)
                    false : NOT YET IMPLEMENTED.  STATIC MAPPING: the type is the IDENTITY (wet = dry, bit-exact)
                            and its analytic response is a flat 0 dB line until its phase fills it in.  Selecting
                            such a type is safe and testable; no fake DSP stands in for it (same rule as WarpModeTable).
@@ -54,7 +54,7 @@ namespace warpr
     };
 
     inline constexpr int kNumFilterTypes            = 34;
-    inline constexpr int kNumImplementedFilterTypes = 20;     // D5a: indices 0-19
+    inline constexpr int kNumImplementedFilterTypes = 28;     // D5a: indices 0-19, D5b: 20-27 (D5c: 28-33 still identity)
     inline constexpr int kNumLowpassTypes           = 6;      // indices 0-5 (LP 6 .. LP 48)
 
     namespace detail
@@ -62,7 +62,7 @@ namespace warpr
         constexpr FilterTypeInfo frow (int index, FilterFamily family, FilterBuild build, bool linear,
                                        const char* topology, const char* res, const char* morph)
         {
-            return FilterTypeInfo { choices::filterType[index], family, build, build == FilterBuild::D5a, linear,
+            return FilterTypeInfo { choices::filterType[index], family, build, build != FilterBuild::D5c, linear,
                                     topology, res, morph };
         }
 
@@ -94,14 +94,14 @@ namespace warpr
         detail::frow (19, detail::FF::Svf,     detail::FB::D5a, true, "TPT high shelf",                        "bipolar gain +-18 dB (0.5 = 0 dB)", "slope (Q 0.5..2)"),
 
         // ---- SPECIAL linear (20-27): D5b -----------------------------------------------------------------
-        detail::frow (20, detail::FF::Comb,    detail::FB::D5b, true, "positive-feedback comb",                "feedback", "loop damping"),
-        detail::frow (21, detail::FF::Comb,    detail::FB::D5b, true, "negative-feedback comb",                "feedback", "loop damping"),
-        detail::frow (22, detail::FF::AllPass, detail::FB::D5b, true, "2nd-order all-pass",                    "Q", "blend to 1st order"),
-        detail::frow (23, detail::FF::AllPass, detail::FB::D5b, true, "serial 1st-order all-pass chain",       "spread", "stage count"),
-        detail::frow (24, detail::FF::Formant, detail::FB::D5b, true, "2+1 formant bank",                      "narrowness", "F2 ratio"),
-        detail::frow (25, detail::FF::Formant, detail::FB::D5b, true, "5-formant vowel bank (stepped)",        "narrowness", "vowel"),
-        detail::frow (26, detail::FF::Formant, detail::FB::D5b, true, "5-formant vowel bank (interpolated)",   "narrowness", "vowel"),
-        detail::frow (27, detail::FF::AllPass, detail::FB::D5b, true, "all-pass phaser",                       "feedback (bipolar)", "stage count"),
+        detail::frow (20, detail::FF::Comb,    detail::FB::D5b, true, "positive-feedback comb, Lagrange3 delay, loop one-pole",  "feedback g = 0.97 res", "loop damping (bright -> dark)"),
+        detail::frow (21, detail::FF::Comb,    detail::FB::D5b, true, "negative-feedback comb (teeth at odd multiples of fc)", "feedback g = 0.97 res", "loop damping (bright -> dark)"),
+        detail::frow (22, detail::FF::AllPass, detail::FB::D5b, true, "2nd-order TPT all-pass blended with a 1st-order one", "Q 0.5..20", "blend to 1st order"),
+        detail::frow (23, detail::FF::AllPass, detail::FB::D5b, true, "serial 1st-order all-pass chain, stage i at fc 2^(i s)", "spread s = 0.5 res octaves", "stage count 2..16"),
+        detail::frow (24, detail::FF::Formant, detail::FB::D5b, true, "3 parallel band-passes: F1 = fc, F2 = F1 x ratio, fixed F3", "narrowness (Q x 1/4..4)", "F2 ratio 1.5..3.5"),
+        detail::frow (25, detail::FF::Formant, detail::FB::D5b, true, "5-formant vowel bank A-E-I-O-U (stepped)",        "narrowness (bandwidth x 4..1/4)", "vowel (plateaus)"),
+        detail::frow (26, detail::FF::Formant, detail::FB::D5b, true, "5-formant vowel bank A-E-I-O-U (interpolated)",   "narrowness (bandwidth x 4..1/4)", "vowel (continuous)"),
+        detail::frow (27, detail::FF::AllPass, detail::FB::D5b, true, "all-pass chain + dry sum with one-sample feedback",  "feedback -0.95..+0.95 (0.5 = 0)", "stage count 2..12"),
 
         // ---- NONLINEAR (28-33): D5c -----------------------------------------------------------------------
         detail::frow (28, detail::FF::Ladder,     detail::FB::D5c, false, "4-pole ladder low-pass",          "resonance", "pole blend"),
