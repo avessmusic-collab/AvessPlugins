@@ -1108,9 +1108,9 @@ function orgField(nx, ny, nz, layer) {
   const w1 = Math.pow(0.5 + 0.5*Math.sin(T*0.050 + 2.09 + layer*2.4), 3);
   const w2 = Math.pow(0.5 + 0.5*Math.sin(T*0.050 + 4.19 + layer*2.4), 3);
   let d = (w0*f0 + w1*f1 + w2*f2)/(w0 + w1 + w2 + 1e-6);
-  d *= 0.55 + 0.55*V.en;                                       // consistent body, sound deepens it
-  d += V.low*0.32*Math.sin(2.0*d1 + s*T*0.8) + V.high*0.20*Math.sin(5.2*d3 + s*T*2.6);
-  d += V.harsh*0.28*Math.sin(3.4*d2 + s*T*2.1 + 1.0);          // harshness stirs extra motion in
+  d *= 0.55 + 0.40*V.en;                                       // consistent body, sound deepens it (tight)
+  d += V.low*0.24*Math.sin(2.0*d1 + s*T*0.8) + V.high*0.16*Math.sin(5.2*d3 + s*T*2.6);
+  d += V.harsh*0.20*Math.sin(3.4*d2 + s*T*2.1 + 1.0);          // harshness stirs extra motion in
   d *= 1 - calmV;                                              // full calm = perfectly spherical
   for (const m of wob)                                         // zero-g slosh: ringing droplet modes
     d += m.amp*(1 - calmV)*Math.sin(m.l*(nx*NU[m.k][0] + ny*NU[m.k][1] + nz*NU[m.k][2])*2.6 + m.ph);
@@ -1132,7 +1132,7 @@ function orgField(nx, ny, nz, layer) {
   // the pitch, the thinner the pressed spot.  V.dom is the dominant frequency (log 40 Hz..8 kHz
   // -> 0..1), so the zone half-width runs ~1.25 rad (bass floods a hemisphere) down to ~0.16 rad.
   const pw = 1.25 - 1.09*clamp(V.dom, 0, 1);
-  const pAmp = (0.45*V.en + 0.30*V.low + 0.20*V.high)*(1 - calmV);
+  const pAmp = (0.38*V.en + 0.26*V.low + 0.17*V.high)*(1 - calmV);
   if (pAmp > 0.02) for (let k = 0; k < 3; k++) {
     const c = nx*RNPATCH[k][0] + ny*RNPATCH[k][1] + nz*RNPATCH[k][2];
     const ang = Math.acos(clamp(c, -1, 1));
@@ -1153,7 +1153,7 @@ function orgField(nx, ny, nz, layer) {
     const ang = Math.acos(clamp(c, -1, 1));
     d += tr*Math.sin(T*(5.5 + k*1.3) + k*2.0 + ang*14)*Math.exp(-ang*ang/0.09);
   }
-  return clamp(d, -1.5, 1.9);
+  return clamp(d, -1.3, 1.6);
 }
 
 const NTH = 60, NPH = 88, NLV = 30, NBK = 7;
@@ -1245,10 +1245,10 @@ function orgBody(layer, baseR, rotMul, ampMul, alphaMul, paths, extRef, reuseFie
 
 function drawOrg() {
   const w = co.width, h = co.height;
-  for (const k of ["low", "high", "rms", "theta", "r", "dom", "sharp"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .45 : .10);
+  for (const k of ["low", "high", "rms", "theta", "r", "dom", "sharp"]) V[k] += (VT[k] - V[k]) * (VT[k] > V[k] ? .28 : .10);
   V.en = clamp(V.rms*3, 0, 1);
   const hT = V.rms > 0 ? clamp((0.9*V.sharp + 0.6*V.high)*(0.35 + 0.65*Math.min(1, V.rms*2)), 0, 1) : 0;
-  V.harsh = (V.harsh || 0) + (hT - (V.harsh || 0))*(hT > (V.harsh || 0) ? 0.45 : 0.08);
+  V.harsh = (V.harsh || 0) + (hT - (V.harsh || 0))*(hT > (V.harsh || 0) ? 0.28 : 0.08);
   if (orgClear) { ox.fillStyle = "#050505"; ox.fillRect(0, 0, w, h); orgClear = false; }
 
   // motion echoes: fade instead of clear - louder/harsher = longer trails, silence settles crisp
@@ -1277,8 +1277,8 @@ function drawOrg() {
   else           zoomFit = Math.min(1, zoomFit + (1 - zoomFit)*0.02);
 
   // advance: harsh sound whips the motion; the exchange and its axis creep on
-  T += 0.016*(0.25 + 1.7*V.en + 1.6*V.harsh) + 0.025*nSwap.eI;
-  rotY3 += 0.0022 + 0.009*V.en + 0.012*V.harsh;
+  T += 0.016*(0.25 + 1.05*V.en + 0.95*V.harsh) + 0.018*nSwap.eI;
+  rotY3 += 0.0022 + 0.006*V.en + 0.008*V.harsh;
   nSwap.P = (nSwap.P + 0.016*(0.012*(1 - 0.85*calmV) + 0.055*V.en)) % 2;
   nSwap.axis = rot3(nSwap.axis, nSwap.ax2, 0.0016 + 0.004*V.en);
   RNPATCH = NPATCH.map((v, i) => rot3(v, NPAX[i], T*(0.12 + 0.05*i)));
@@ -1294,8 +1294,8 @@ function drawOrg() {
   if (calmV > 0.99) calmV = 1;                                 // no sound -> a perfect sphere within ~2 s
   ripples.forEach(r => r.age += 0.03); ripples = ripples.filter(r => r.age < 3);
   for (const m of wob) {                                       // droplet modes: feed, ring, decay
-    m.amp = Math.min(0.45, m.amp + V.en*0.0035);
-    m.amp *= 0.988;                                            // ~4 s ring-down, water-like
+    m.amp = Math.min(0.34, m.amp + V.en*0.0028);
+    m.amp *= 0.985;                                            // ~3 s ring-down, water-like
     m.ph += m.f*0.016*(0.6 + 0.8*V.en);
   }
 
