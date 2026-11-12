@@ -150,6 +150,10 @@
   .lfopt{fill:#111;stroke:#FFF;stroke-width:1.6;cursor:grab}
   .lfoc{fill:#0A0A0A;stroke:rgba(255,255,255,.55);stroke-width:1.2;cursor:ns-resize}
   #sampleName{max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dropOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(5,5,5,.82);z-index:99;pointer-events:none}
+#dropOverlay.show{display:flex}
+#dropOverlay span{border:1px dashed #777;padding:26px 60px;font-size:22px;letter-spacing:.35em;color:#fff}
 </style>
 </head>
 <body>
@@ -425,8 +429,50 @@ const NF = {
   openSettings:     nat("warpr_openSettings"),
   requestSample:    nat("warpr_requestSample"),     // () -> re-emit warprSample
   requestFilterResponse: nat("warpr_requestFilterResponse"),
-  midiNote:         nat("warpr_midiNote")           // (note 0-127, velocity, on) -> synth MIDI stream
+  midiNote:         nat("warpr_midiNote"),          // (note 0-127, velocity, on) -> synth MIDI stream
+  dropBegin:        nat("warpr_dropBegin"),         // (filename) start a drag-and-drop transfer
+  dropChunk:        nat("warpr_dropChunk"),         // (base64) one chunk of the dropped file
+  dropEnd:          nat("warpr_dropEnd")            // () finish -> temp file -> sample loader
 };
+
+/* =====================================================================
+   DRAG & DROP SAMPLE LOADING
+   WKWebView hands us the dropped file's BYTES (never its path), so the
+   file is streamed to C++ in 1 MB base64 chunks and loaded from a temp
+   copy.  The waveform updates through the normal warprSample event.
+   ===================================================================== */
+const dropOverlay = document.createElement("div");
+dropOverlay.id = "dropOverlay";
+dropOverlay.innerHTML = '<span>DROP SAMPLE</span>';
+document.body.appendChild(dropOverlay);
+let dragDepth = 0;
+const dropHide = () => { dragDepth = 0; dropOverlay.classList.remove("show"); };
+window.addEventListener("dragenter", e => { e.preventDefault(); if (++dragDepth === 1) dropOverlay.classList.add("show"); });
+window.addEventListener("dragover",  e => { e.preventDefault(); });
+window.addEventListener("dragleave", e => { e.preventDefault(); if (--dragDepth <= 0) dropHide(); });
+window.addEventListener("drop", async e => {
+  e.preventDefault(); dropHide();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!f || !/\.(wav|aif|aiff|aifc|flac|mp3|ogg|m4a|caf|wv)$/i.test(f.name)) return;
+  dropOverlay.querySelector("span").textContent = "LOADING…";
+  dropOverlay.classList.add("show");
+  try {
+    const buf = new Uint8Array(await f.arrayBuffer());
+    await NF.dropBegin(f.name);
+    const CH = 1 << 20;                                       // 1 MB per bridge call
+    for (let o = 0; o < buf.length; o += CH) {
+      const part = buf.subarray(o, Math.min(buf.length, o + CH));
+      let s = "";
+      for (let i = 0; i < part.length; i += 0x8000)
+        s += String.fromCharCode.apply(null, part.subarray(i, i + 0x8000));
+      await NF.dropChunk(btoa(s));
+    }
+    await NF.dropEnd();
+  } finally {
+    dropOverlay.classList.remove("show");
+    dropOverlay.querySelector("span").textContent = "DROP SAMPLE";
+  }
+});
 
 /* =====================================================================
    QWERTY MIDI KEYBOARD

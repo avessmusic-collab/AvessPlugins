@@ -263,6 +263,39 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
             if (a.size() >= 3)
                 audioProcessor.queueKeyboardNote ((int) a[0], (int) a[1], (bool) a[2]);
             done ({});
+        })
+        .withNativeFunction ("warpr_dropBegin", [this] (const Args& a, Done done)
+        {
+            dropName = a.size() > 0 ? a[0].toString() : juce::String();
+            dropStream = std::make_unique<juce::MemoryOutputStream>();
+            done ({});
+        })
+        .withNativeFunction ("warpr_dropChunk", [this] (const Args& a, Done done)
+        {
+            if (dropStream != nullptr && a.size() > 0)
+                juce::Base64::convertFromBase64 (*dropStream, a[0].toString());
+            done ({});
+        })
+        .withNativeFunction ("warpr_dropEnd", [this, be] (const Args&, Done done)
+        {
+            if (dropStream != nullptr && dropStream->getDataSize() > 0)
+            {
+                const auto name = juce::File::createLegalFileName (dropName.isEmpty() ? "dropped.wav" : dropName);
+                auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                .getChildFile ("WARPR").getChildFile (name);
+                file.getParentDirectory().createDirectory();
+                file.deleteFile();
+
+                if (auto out = file.createOutputStream())
+                {
+                    out->write (dropStream->getData(), dropStream->getDataSize());
+                    out->flush();
+                    be().loadSampleFile (file);
+                }
+            }
+
+            dropStream = nullptr;
+            done ({});
         });
 }
 

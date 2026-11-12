@@ -78,6 +78,11 @@ private:
 
     PluginProcessor& audioProcessor;
 
+    // WebView drag & drop: WKWebView swallows OS file drops before JUCE sees them, so the page
+    // catches the drop and streams the file's bytes over the bridge (dropBegin/Chunk/End).
+    std::unique_ptr<juce::MemoryOutputStream> dropStream;
+    juce::String dropName;
+
     // ========================================================================
     // CRITICAL MEMBER DECLARATION ORDER:  Relays -> WebView -> Attachments
     // Attachments are destroyed first (they talk to the WebView), then the
