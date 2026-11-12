@@ -137,6 +137,11 @@
     height:calc(var(--lvl,0) * 100%);background:linear-gradient(0deg,#777,#FFF)}
   .vdiv{width:1px;align-self:stretch;background:#000;box-shadow:1px 0 0 rgba(255,255,255,.06);margin:4px 0}
   .hint{font-size:8px;letter-spacing:.12em;color:var(--tx3)}
+  /* sampler-style drag-value controls (label over value, drag vertically) */
+  .wavebar{display:flex;gap:18px;align-items:flex-end;padding:0 2px}
+  .tv{display:flex;flex-direction:column;gap:3px;cursor:ns-resize;user-select:none;-webkit-user-select:none;min-width:46px;touch-action:none}
+  .tv .tl{font-size:8px;font-weight:600;letter-spacing:.12em;color:var(--tx2)}
+  .tv .tn{font-size:11px;font-weight:500;font-variant-numeric:tabular-nums;color:#EFEFEF}
   .pt{fill:#111;stroke:#E8E8E8;stroke-width:1.3;cursor:grab}
   .grid line{stroke:#1E1E1E;stroke-width:1}
   #stage{position:relative;flex:1;min-height:0}
@@ -187,11 +192,12 @@
 
           <!-- sample waveform: DATA HOOK onSample() (peaks) + onViz() (voice playheads) -->
           <div class="screen" style="min-height:96px;flex:1"><canvas id="cvSample"></canvas>
-            <span class="micro" id="adsrLabel" style="position:absolute;top:3px;left:7px;z-index:2"></span>
           </div>
           <div id="classicRow" class="row" style="align-items:flex-end;justify-content:space-between">
-            <span class="k sm" data-p="sampleStart" data-l="START" data-f="pct1"></span>
-            <span class="k sm" data-p="sampleEnd" data-l="END" data-f="pct1"></span>
+            <div class="wavebar">
+              <span class="tv" data-tv="sampleStart" data-l="START" data-f="pct1"></span>
+              <span class="tv" data-tv="sampleEnd" data-l="END" data-f="pct1"></span>
+            </div>
             <div class="vdiv"></div>
             <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
               <span class="lbl">TUNE</span>
@@ -234,7 +240,7 @@
           <div class="sub">
             <span class="name">ENVELOPE</span>
             <div class="spacer"></div>
-            <span class="hint">CURVE ON WAVEFORM &uarr;</span>
+            <span class="hint">AMP ADSR</span>
           </div>
           <div class="row" style="justify-content:space-evenly;align-items:flex-end;padding-bottom:2px">
             <span class="k md" data-p="ampAttack" data-l="A" data-f="ms"></span>
@@ -680,6 +686,37 @@ $$(".k").forEach(el => {
   else k.bind(null, el.dataset.l);
 });
 
+/* sampler-style drag-value text controls (.tv): same gestures as knobs, rendered as label + number */
+$$("[data-tv]").forEach(el => {
+  const pid = el.dataset.tv, fmt = F[el.dataset.f] || F.pct;
+  el.innerHTML = `<span class="tl">${el.dataset.l || ""}</span><span class="tn"></span>`;
+  const tn = el.querySelector(".tn"), st = sliderOf(pid);
+  const upd = () => { tn.textContent = fmt(st.getScaledValue(), st); };
+  watch(pid, "s", upd); upd();
+  let drag = null;
+  el.addEventListener("pointerdown", e => {
+    if (e.button !== 0) return;
+    drag = { y: e.clientY, n: st.getNormalisedValue() };
+    st.sliderDragStarted(); el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const dy = (drag.y - e.clientY) / SCALE;
+    drag.y = e.clientY;
+    drag.n = clamp(drag.n + dy * (e.shiftKey ? 0.0006 : 0.005), 0, 1);
+    st.setNormalisedValue(drag.n);
+  });
+  const end = () => { if (drag) { st.sliderDragEnded(); drag = null; } };
+  el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+  el.addEventListener("dblclick", () => {
+    if (DEF[pid] !== undefined) setSliderGesture(pid, toNorm(st, DEF[pid]));
+  });
+  el.addEventListener("wheel", e => {
+    e.preventDefault();
+    setSliderGesture(pid, st.getNormalisedValue() + (e.shiftKey ? 0.004 : 0.02) * (e.deltaY < 0 ? 1 : -1));
+  }, { passive: false });
+});
+
 /* ---- toggles / segments / selects / steppers ---- */
 $$("[data-tog]").forEach(el => {
   const pid = el.dataset.tog, st = toggleOf(pid);
@@ -844,22 +881,16 @@ cs.addEventListener("wheel", e => {
 }, { passive: false });
 cs.addEventListener("dblclick", () => { WF.off = 0; WF.span = 1; rpCache = null; drawSample(); });
 
-/* Envelope overlay zones (fraction of view width).  Shape is a graphical map of the 4 ADSR params:
-   attack zone 0..0.25, decay zone 0.25..0.50, sustain hold fixed to 0.70, release zone 0.70..1.00. */
-const Z = { aw: 0.25, dx: 0.25, dw: 0.25, hold: 0.70, rx: 0.70, rw: 0.30 };
-function envPts() {
-  const a = nrm("ampAttack"), d = nrm("ampDecay"), s = nrm("ampSustain"), r = nrm("ampRelease");
-  return { xa: Z.aw*a, xd: Z.dx + Z.dw*d, s, se: Z.hold, re: Z.rx + Z.rw*r };
-}
-function envF(t, E) {
-  if (t < E.xa) return t / Math.max(E.xa, 0.001);
-  if (t < E.xd) return 1 - (1 - E.s) * ((t - E.xa) / Math.max(E.xd - E.xa, 0.001));
-  if (t < E.se) return E.s;
-  if (t < E.re) return E.s * (1 - (t - E.se) / Math.max(E.re - E.se, 0.001));
-  return 0;
+/* time-ruler label: m:ss or m:ss.mmm, sampler style */
+function fmtTime(s) {
+  const m = Math.floor(s / 60);
+  let sec = Math.floor(s - m * 60), ms = Math.round((s - m * 60 - sec) * 1000);
+  if (ms === 1000) { ms = 0; sec += 1; }
+  const base = `${m}:${String(sec).padStart(2, "0")}`;
+  return ms ? `${base}.${String(ms).padStart(3, "0")}` : base;
 }
 function drawSample() {
-  const x = cs.getContext("2d"), w = cs.width, h = cs.height, E = envPts();
+  const x = cs.getContext("2d"), w = cs.width, h = cs.height;
   x.clearRect(0, 0, w, h);
   const P = { start: nrm("sampleStart"), end: nrm("sampleEnd") };
   const zoomed = WF.span < 0.999;
@@ -896,25 +927,33 @@ function drawSample() {
     }
     x.fill();
   }
-  if (!zoomed) {                                          // ADSR overlay is a full-view graphical map
-    const envY = t => h/2 - envF(t, E)*h*.42;
-    /* dark under-stroke then white stroke, so the curve reads over the solid white wave AND the black background */
-    x.lineJoin = "round";
-    x.strokeStyle = "rgba(0,0,0,.75)"; x.lineWidth = 4; x.beginPath();
-    for (let i = 0; i <= 300; i++) { const t = i/300; i ? x.lineTo(t*w, envY(t)) : x.moveTo(t*w, envY(t)); }
-    x.stroke();
-    x.strokeStyle = "rgba(255,255,255,.95)"; x.lineWidth = 2; x.beginPath();
-    for (let i = 0; i <= 300; i++) { const t = i/300; i ? x.lineTo(t*w, envY(t)) : x.moveTo(t*w, envY(t)); }
-    x.stroke();
-  }
   const sx = clamp(a2x(P.start), 0, w), ex = clamp(a2x(P.end), 0, w);
   x.fillStyle = "rgba(0,0,0,.55)"; x.fillRect(0, 0, sx, h); x.fillRect(ex, 0, w - ex, h);
-  [P.start, P.end].forEach(t => {
-    const px = a2x(t);
+  /* time ruler along the lower part of the wave (sampler style), adapting to the zoom */
+  if (sInfo && sInfo.numSamples > 0 && sInfo.sampleRate > 0) {
+    const dur = sInfo.numSamples / sInfo.sampleRate;
+    const t0 = WF.off * dur, t1 = (WF.off + WF.span) * dur;
+    let step = (t1 - t0) * 110 / w;                        // ~110 px between labels, rounded to 1/2/5
+    const mag = Math.pow(10, Math.floor(Math.log10(step)));
+    step = step / mag <= 1 ? mag : step / mag <= 2 ? 2 * mag : step / mag <= 5 ? 5 * mag : 10 * mag;
+    x.font = "9px 'Inter','Helvetica Neue',sans-serif"; x.textAlign = "left";
+    for (let t = Math.ceil(t0 / step) * step; t <= t1 + 1e-9; t += step) {
+      const px = Math.round((t / dur - WF.off) / WF.span * w) + .5;
+      x.strokeStyle = "rgba(255,255,255,.25)"; x.lineWidth = 1;
+      x.beginPath(); x.moveTo(px, h - 16); x.lineTo(px, h); x.stroke();
+      x.fillStyle = "rgba(255,255,255,.40)";
+      x.fillText(fmtTime(t), px + 4, h - 6);
+    }
+  }
+  /* start / end markers: full-height line + a top flag pointing into the active region */
+  [["start", 1], ["end", -1]].forEach(([k, d]) => {
+    const px = a2x(P[k]);
     if (px < -14 || px > w + 14) return;
     x.fillStyle = "rgba(0,0,0,.7)"; x.fillRect(px - 2, 0, 4, h);         // dark edge so the line reads on the wave
-    x.fillStyle = "rgba(255,255,255,.9)"; x.fillRect(px - 1, 0, 2, h);
-    x.fillRect(px - 7, 0, 14, 10); x.fillStyle = "#000"; x.fillRect(px - 5, 2, 10, 6);
+    x.fillStyle = "rgba(255,255,255,.95)"; x.fillRect(px - 1, 0, 2, h);
+    x.beginPath();
+    x.moveTo(px, 0); x.lineTo(px + 12 * d, 0); x.lineTo(px, 13); x.closePath();
+    x.fill();
   });
   grains.forEach(g => {                                   // grain cloud (GRANULAR): one short stroke per live grain,
     const px = a2x(g.pos), lv = clamp(g.level, 0, 1);     // height + brightness follow the grain's window amplitude
@@ -930,15 +969,8 @@ function drawSample() {
     if (px < -8 || px > w + 8) return;
     x.fillStyle = `rgba(0,0,0,${(0.30 + 0.35*lv).toFixed(2)})`;          // dark edge over the wave
     x.fillRect(px - 2, 0, 4, h);
-    x.fillStyle = `rgba(255,255,255,${(0.45 + 0.55*lv).toFixed(2)})`;    // crisp progress line
+    x.fillStyle = `rgba(255,255,255,${(0.45 + 0.55*lv).toFixed(2)})`;    // crisp progress line (sampler style: a bare line)
     x.fillRect(px - 1, 0, 2, h);
-    x.beginPath();                                                       // cap riding along the top edge
-    x.moveTo(px - 5, 0); x.lineTo(px + 5, 0); x.lineTo(px, 9); x.closePath();
-    x.fill();
-  });
-  if (!zoomed) envHandles(E).forEach(hd => {
-    const px = Math.min(hd.x*w, w - 7), py = h/2 - hd.y*h*.42;
-    x.beginPath(); x.arc(px, py, 7, 0, 7); x.fillStyle = "#101010"; x.fill(); x.lineWidth = 2; x.strokeStyle = "#FFF"; x.stroke();
   });
   if (zoomed) {                                           // minimap strip + zoom factor
     x.fillStyle = "rgba(255,255,255,.12)"; x.fillRect(0, 0, w, 4);
@@ -948,11 +980,6 @@ function drawSample() {
     x.textAlign = "right"; x.fillText("×" + (z < 10 ? z.toFixed(1) : Math.round(z)), w - 6, 16);
     x.textAlign = "left";
   }
-  $("#adsrLabel").textContent =
-    `A ${F.ms(scl("ampAttack"))} · D ${F.ms(scl("ampDecay"))} · S ${F.pct(scl("ampSustain"))} · R ${F.ms(scl("ampRelease"))}`;
-}
-function envHandles(E) {
-  return [{ id: "a", x: E.xa, y: 1 }, { id: "d", x: E.xd, y: E.s }, { id: "se", x: E.se, y: E.s }, { id: "re", x: E.re, y: 0 }];
 }
 let envDrag = null;
 const csXY = e => { const r = cs.getBoundingClientRect(); return { x: clamp((e.clientX - r.left)/r.width, 0, 1), y: (e.clientY - r.top)/r.height }; };
@@ -964,26 +991,17 @@ cs.addEventListener("pointerdown", e => {
   const ax = WF.off + p.x * WF.span;                       // absolute sample fraction under the cursor
   let kind = null;
   if (Math.abs(ax - S) < 0.02 * WF.span) kind = "ps"; else if (Math.abs(ax - En) < 0.02 * WF.span) kind = "pe";
-  else if (WF.span >= 0.999) {                             // env handles live on the full view only
-    const E = envPts(); let bd = 1e9;
-    envHandles(E).forEach(hd => { const d = Math.hypot(p.x - hd.x, (p.y - (.5 - hd.y*.42))*.6); if (d < bd) { bd = d; kind = hd.id; } });
-    if (bd >= 0.08) kind = null;
-  }
   if (!kind) return;
-  const ids = { ps: ["sampleStart"], pe: ["sampleEnd"], a: ["ampAttack"], d: ["ampDecay", "ampSustain"], se: ["ampSustain"], re: ["ampRelease"] }[kind];
+  const ids = { ps: ["sampleStart"], pe: ["sampleEnd"] }[kind];
   envDrag = { kind, ids }; gestureBegin(ids); cs.setPointerCapture(e.pointerId);
 });
 cs.addEventListener("pointermove", e => {
   if (!envDrag) return;
-  const p = csXY(e), lvl = clamp((.5 - p.y)/.42, 0, 1), k = envDrag.kind;
+  const p = csXY(e), k = envDrag.kind;
   const ax = clamp(WF.off + p.x * WF.span, 0, 1);          // markers drag in absolute positions (zoom = precision)
   const set = (id, n) => sliderOf(id).setNormalisedValue(clamp(n, 0, 1));
   if (k === "ps") set("sampleStart", Math.min(ax, nrm("sampleEnd") - 0.01));
   if (k === "pe") set("sampleEnd", Math.max(ax, nrm("sampleStart") + 0.01));
-  if (k === "a")  set("ampAttack", p.x / Z.aw);
-  if (k === "d")  { set("ampDecay", (p.x - Z.dx) / Z.dw); set("ampSustain", lvl); }
-  if (k === "se") set("ampSustain", lvl);                          // sustain-end x is fixed in production
-  if (k === "re") set("ampRelease", (p.x - Z.rx) / Z.rw);
 });
 const envEnd = () => { if (envDrag) { gestureEnd(envDrag.ids); envDrag = null; } };
 cs.addEventListener("pointerup", envEnd); cs.addEventListener("pointercancel", envEnd);
