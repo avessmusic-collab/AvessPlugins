@@ -135,10 +135,10 @@ namespace warpr::choices
     XC (shaperSymmetry,     "Shaper Symmetry",     0, shaperSymmetry,    true) \
     XF (shaperMix,          "Shaper Mix",   0.0f, 1.0f, 0.0f, 0.0f, 1.0f, "") \
     /* ---------------------------------------------------------------- Envelope (4) */ \
-    XF (ampAttack,  "Amp Attack",  0.1f, 10000.0f, 0.0f,  50.0f,   4.0f, "ms") \
+    XF (ampAttack,  "Amp Attack",  0.1f, 10000.0f, 0.0f,  50.0f,   1.0f, "ms") \
     XF (ampDecay,   "Amp Decay",   1.0f, 10000.0f, 0.0f, 300.0f, 180.0f, "ms") \
-    XF (ampSustain, "Amp Sustain", 0.0f,     1.0f, 0.0f,   0.0f,   0.7f, "") \
-    XF (ampRelease, "Amp Release", 1.0f, 20000.0f, 0.0f, 400.0f, 240.0f, "ms") \
+    XF (ampSustain, "Amp Sustain", 0.0f,     1.0f, 0.0f,   0.0f,   1.0f, "") \
+    XF (ampRelease, "Amp Release", 1.0f, 20000.0f, 0.0f, 400.0f,  50.0f, "ms") \
     /* ---------------------------------------------------------------- Filter (8) */ \
     XB (filterEnable,    "Filter Enable", true) \
     XC (filterType,      "Filter Type",   3, filterType, true) \

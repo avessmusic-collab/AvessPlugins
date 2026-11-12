@@ -448,7 +448,11 @@ document.body.appendChild(dropOverlay);
 let dragDepth = 0;
 const dropHide = () => { dragDepth = 0; dropOverlay.classList.remove("show"); };
 window.addEventListener("dragenter", e => { e.preventDefault(); if (++dragDepth === 1) dropOverlay.classList.add("show"); });
-window.addEventListener("dragover",  e => { e.preventDefault(); });
+window.addEventListener("dragover",  e => {
+  e.preventDefault();
+  // WebKit withholds the dropped files unless the dragover declares it will accept a copy
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+});
 window.addEventListener("dragleave", e => { e.preventDefault(); if (--dragDepth <= 0) dropHide(); });
 window.addEventListener("drop", async e => {
   e.preventDefault(); dropHide();
@@ -516,7 +520,7 @@ const DEF = {
   grainPosition:0, grainScan:0, grainScanDist:0, grainSize:80, grainShape:.5, grainVariation:0, grainSpread:0,
   grainReverse:0, grainDensity:8,
   warpAmount:0, warpParamA:.5, warpParamB:0, modOscRatio:1, warpMix:1,
-  shaperMorph:0, shaperMix:1, ampAttack:4, ampDecay:180, ampSustain:.7, ampRelease:240,
+  shaperMorph:0, shaperMix:1, ampAttack:1, ampDecay:180, ampSustain:1, ampRelease:50,
   filterCutoff:20000, filterResonance:0, filterDrive:0, filterMorph:0, filterKeyTrack:0, filterMix:1,
   polyphony:16, unisonVoices:1, unisonDetune:12, unisonSpread:.5, glideTime:0, masterGain:0
 };
@@ -1004,6 +1008,15 @@ function orgField(nx, ny, nz, layer) {
     const c = nx*rp.u[0] + ny*rp.u[1] + nz*rp.u[2];
     const ang = Math.acos(clamp(c, -1, 1));
     d += rp.str*Math.exp(-rp.age*1.6)*0.4*Math.sin(6*ang - rp.age*5)*Math.exp(-ang*ang/1.0);
+  }
+  // SURFACE WAVES: two rolling wave trains sweep the whole surface from drifting origins,
+  // interfering where they cross - continuous waves (energy sets height, harshness sets speed)
+  const wAmp = 0.16 + 0.38*V.low + 0.22*V.en;
+  if (wAmp > 0.05) {
+    const a0 = Math.acos(clamp(nx*RNPATCH[0][0] + ny*RNPATCH[0][1] + nz*RNPATCH[0][2], -1, 1));
+    const a1 = Math.acos(clamp(nx*RNPATCH[2][0] + ny*RNPATCH[2][1] + nz*RNPATCH[2][2], -1, 1));
+    const wSpd = 1.6 + 2.6*V.harsh + 1.2*V.en;
+    d += wAmp*(0.6*Math.sin(a0*7 - T*wSpd) + 0.4*Math.sin(a1*9 - T*wSpd*0.8 + 2.0));
   }
   const tr = (0.14 + 0.5*V.high + 0.25*V.en)*(1 + 1.8*V.harsh);   // tremor patches: fast local flutter
   for (let k = 0; k < 4; k++) {
