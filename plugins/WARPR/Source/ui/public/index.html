@@ -1033,6 +1033,17 @@ function orgField(nx, ny, nz, layer) {
     const wSpd = 1.6 + 2.6*V.harsh + 1.2*V.en;
     d += wAmp*(0.6*Math.sin(a0*7 - T*wSpd) + 0.4*Math.sin(a1*9 - T*wSpd*0.8 + 2.0));
   }
+  // PITCH FOOTPRINT: the lower the played frequency, the WIDER the area it swells; the higher
+  // the pitch, the thinner the pressed spot.  V.dom is the dominant frequency (log 40 Hz..8 kHz
+  // -> 0..1), so the zone half-width runs ~1.25 rad (bass floods a hemisphere) down to ~0.16 rad.
+  const pw = 1.25 - 1.09*clamp(V.dom, 0, 1);
+  const pAmp = (0.45*V.en + 0.30*V.low + 0.20*V.high)*(1 - calmV);
+  if (pAmp > 0.02) for (let k = 0; k < 3; k++) {
+    const c = nx*RNPATCH[k][0] + ny*RNPATCH[k][1] + nz*RNPATCH[k][2];
+    const ang = Math.acos(clamp(c, -1, 1));
+    if (ang > pw*3) continue;
+    d += pAmp*(0.95 - 0.22*k)*Math.sin(T*(1.1 + k*0.4) + k*2.1)*Math.exp(-(ang*ang)/(pw*pw));
+  }
   const tr = (0.10 + 0.5*V.high + 0.25*V.en)*(1 + 1.8*V.harsh)*(1 - calmV);   // tremors die first in calm
   for (let k = 0; k < 4; k++) {
     const c = nx*RNPATCH[k][0] + ny*RNPATCH[k][1] + nz*RNPATCH[k][2];
