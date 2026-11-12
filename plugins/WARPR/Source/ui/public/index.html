@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WARPR</title>
+<title>VOID</title>
 <!--
   WARPR v9 - PRODUCTION WebView UI  (copy to Source/ui/public/index.html)
   Source of truth for look/behaviour: v9-ui-test.html.  Binding contract: parameter-spec.md.
@@ -161,7 +161,7 @@
 
   <!-- HEADER -->
   <div id="hdr">
-    <div class="title">WARPR</div><div class="wt">WORKING TITLE</div>
+    <div class="title">VOID</div><div class="wt"></div>
     <div class="spacer"></div>
     <button class="btn" id="btnPrev">&#9664;</button><div id="presetName">Init</div><button class="btn" id="btnNext">&#9654;</button>
     <button class="btn solid" id="btnSave">SAVE</button><button class="btn" id="btnLoad">LOAD</button>
@@ -391,7 +391,7 @@ window.addEventListener("error", e => console.error("JS error:", e.message, e.fi
 window.addEventListener("unhandledrejection", e => console.error("Unhandled rejection:", e.reason));
 
 if (!window.__JUCE__) {
-  document.body.innerHTML = '<div style="color:#fff;font:12px sans-serif;padding:20px">WARPR: JUCE backend not connected</div>';
+  document.body.innerHTML = '<div style="color:#fff;font:12px sans-serif;padding:20px">VOID: JUCE backend not connected</div>';
   throw new Error("JUCE backend not connected");
 }
 
@@ -840,11 +840,36 @@ function drawSample() {
       if (y1 - y0 < 1.5) { const c = (y0 + y1) / 2; y0 = c - .75; y1 = c + .75; }
       x.moveTo(i + .5, y0); x.lineTo(i + .5, y1);
     };
-    x.strokeStyle = "rgba(255,255,255,.14)"; x.lineWidth = 1; x.beginPath();
-    for (let i = 0; i < w; i++) { const [mn, mx] = col(i); seg(i, mn, mx); }
+    /* multi-layer rendering: silhouette, envelope-shaped outline, smoothed mid band, bright core,
+       and transient hairlines - all from the same real peak data, layered by brightness */
+    const mns = new Float32Array(w), mxs = new Float32Array(w), amp = new Float32Array(w);
+    for (let i = 0; i < w; i++) { const [mn, mx] = col(i); mns[i] = mn; mxs[i] = mx; amp[i] = Math.max(mx, -mn); }
+    const box = (src, r) => {
+      const out = new Float32Array(w);
+      for (let i = 0; i < w; i++) {
+        let s2 = 0, n2 = 0;
+        for (let j = Math.max(0, i - r); j <= Math.min(w - 1, i + r); j++) { s2 += src[j]; n2++; }
+        out[i] = s2 / n2;
+      }
+      return out;
+    };
+    const sm1 = box(amp, 3), sm2 = box(amp, 10);
+    x.lineWidth = 1;
+    x.strokeStyle = "rgba(255,255,255,.10)"; x.beginPath();                 // raw silhouette
+    for (let i = 0; i < w; i++) seg(i, mns[i], mxs[i]);
     x.stroke();
-    x.strokeStyle = "#FFF"; x.lineWidth = 1; x.beginPath();
-    for (let i = 0; i < w; i++) { const [mn, mx] = col(i), e = envF(i / w, E); seg(i, mn*e, mx*e); }
+    x.strokeStyle = "rgba(255,255,255,.40)"; x.beginPath();                 // envelope-shaped outline
+    for (let i = 0; i < w; i++) { const e = envF(i / w, E); seg(i, mns[i]*e, mxs[i]*e); }
+    x.stroke();
+    x.strokeStyle = "rgba(255,255,255,.55)"; x.beginPath();                 // smoothed mid band
+    for (let i = 0; i < w; i++) { const e = envF(i / w, E), a = sm1[i]*0.68*e; seg(i, -a, a); }
+    x.stroke();
+    x.strokeStyle = "rgba(255,255,255,.95)"; x.beginPath();                 // bright core
+    for (let i = 0; i < w; i++) { const e = envF(i / w, E), a = sm2[i]*0.36*e; seg(i, -a, a); }
+    x.stroke();
+    x.strokeStyle = "rgba(255,255,255,.22)"; x.beginPath();                 // transient hairlines
+    for (let i = 2; i < w; i++)
+      if (amp[i] - Math.max(amp[i-1], amp[i-2]) > 0.12) { x.moveTo(i + .5, h*0.08); x.lineTo(i + .5, h*0.92); }
     x.stroke();
   }
   const envY = t => h/2 - envF(t, E)*h*.42;

@@ -3,7 +3,7 @@
   ==============================================================================
    PluginIdentity.h - the ONE header holding every product-name-dependent string.
 
-   WARPR is a WORKING TITLE ("pending final name").  To rename the product:
+   Product name: VOID (A21 resolved 2026-11-12; folder/targets keep the WARPR codename).  To rename:
      1. change the strings in the "RENAMEABLE" block below,
      2. change PRODUCT_NAME in CMakeLists.txt (and the plugin folder if desired),
      3. uninstall the old bundles FIRST (juce8-critical-patterns #14).
@@ -22,17 +22,17 @@
 namespace warpr::identity
 {
     // ------------------------------------------------------------------ RENAMEABLE
-    inline constexpr const char* productName       = "WARPR";                 // pending final name
+    inline constexpr const char* productName       = "VOID";                  // final name (A21 resolved 2026-11-12)
     inline constexpr const char* companyName       = "VST Factory";
     inline constexpr const char* companyDirName    = "VST Factory";           // <userApplicationData>/<this>/<product>/Presets
-    inline constexpr const char* presetExtension   = ".warpr";
+    inline constexpr const char* presetExtension   = ".void";
     inline constexpr const char* presetDirName     = "Presets";
-    inline constexpr const char* webView2DataDir   = "WARPR-WebView2";        // writable WebView2 user-data folder (Windows)
-    inline constexpr const char* resourceLogPrefix = "WARPR";
+    inline constexpr const char* webView2DataDir   = "VOID-WebView2";        // writable WebView2 user-data folder (Windows)
+    inline constexpr const char* resourceLogPrefix = "VOID";
 
     // Documentation mirror of the CMake identity (CMakeLists.txt is authoritative).
-    inline constexpr const char* pluginCode        = "Wrpr";                  // pending final name (A21)
-    inline constexpr const char* manufacturerCode  = "Vstf";                  // pending final name (A21)
+    inline constexpr const char* pluginCode        = "Void";                  // final (A21 resolved: VOID)
+    inline constexpr const char* manufacturerCode  = "Vstf";                  // final (A21 resolved)
 
     // ------------------------------------------------------------------ FROZEN (state wire format)
     inline constexpr const char* apvtsStateId      = "Parameters";            // APVTS ValueTree root type

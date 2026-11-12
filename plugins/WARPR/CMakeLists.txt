@@ -12,7 +12,7 @@ cmake_minimum_required(VERSION 3.15)
 # JUCE_WEB_BROWSER=1, #9 NEEDS_WEB_BROWSER, #13 check_native_interop.js embedded,
 # #22 IS_SYNTH.
 #
-# PLUGIN_CODE / PLUGIN_MANUFACTURER_CODE: "Wrpr" / "Vstf" are a WORKING DECISION
+# PLUGIN_CODE / PLUGIN_MANUFACTURER_CODE: "Void" / "Vstf" are FINAL (A21 resolved)
 # (architecture A21), pending the final product name. They MUST be settled before the
 # first public build: changing them later orphans saved DAW projects. Product-name
 # strings used by C++ live in Source/PluginIdentity.h - keep PRODUCT_NAME below in sync.
@@ -29,9 +29,9 @@ juce_add_plugin(WARPR
     VERSION 1.0.0
     COMPANY_NAME "VST Factory"
     PLUGIN_MANUFACTURER_CODE Vstf
-    PLUGIN_CODE Wrpr
+    PLUGIN_CODE Void
     FORMATS ${WARPR_FORMATS}
-    PRODUCT_NAME "WARPR"
+    PRODUCT_NAME "VOID"
     IS_SYNTH TRUE                 # instrument: MIDI in, stereo audio out (pattern #22)
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
