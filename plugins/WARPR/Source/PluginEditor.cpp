@@ -256,7 +256,14 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
         })
         .withNativeFunction ("warpr_presetSave",   [be] (const Args&, Done done) { be().presetSaveDialog(); done ({}); })
         .withNativeFunction ("warpr_presetLoad",   [be] (const Args&, Done done) { be().presetLoadDialog(); done ({}); })
-        .withNativeFunction ("warpr_openSettings", [be] (const Args&, Done done) { be().openSettings();     done ({}); });
+        .withNativeFunction ("warpr_openSettings", [be] (const Args&, Done done) { be().openSettings();     done ({}); })
+        .withNativeFunction ("warpr_midiNote", [this] (const Args& a, Done done)
+        {
+            // QWERTY keyboard: (note, velocity, on) -> wait-free queue -> processBlock's MIDI stream
+            if (a.size() >= 3)
+                audioProcessor.queueKeyboardNote ((int) a[0], (int) a[1], (bool) a[2]);
+            done ({});
+        });
 }
 
 //==============================================================================

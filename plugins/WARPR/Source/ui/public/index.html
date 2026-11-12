@@ -424,8 +424,38 @@ const NF = {
   presetLoad:       nat("warpr_presetLoad"),
   openSettings:     nat("warpr_openSettings"),
   requestSample:    nat("warpr_requestSample"),     // () -> re-emit warprSample
-  requestFilterResponse: nat("warpr_requestFilterResponse")
+  requestFilterResponse: nat("warpr_requestFilterResponse"),
+  midiNote:         nat("warpr_midiNote")           // (note 0-127, velocity, on) -> synth MIDI stream
 };
+
+/* =====================================================================
+   QWERTY MIDI KEYBOARD
+   A S D F G H J K L = white keys from middle C, W E T Y U O P = sharps,
+   Z / X = octave down / up.  Keys repeat-guarded; blur releases all.
+   ===================================================================== */
+const KEYNOTES = { a:0, w:1, s:2, e:3, d:4, f:5, t:6, g:7, y:8, h:9, u:10, j:11,
+                   k:12, o:13, l:14, p:15, ";":16 };
+let kbOct = 0;
+const kbHeld = new Map();
+addEventListener("keydown", e => {
+  if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  const k = e.key.toLowerCase();
+  if (k === "z") { kbOct = Math.max(-3, kbOct - 1); return; }
+  if (k === "x") { kbOct = Math.min( 3, kbOct + 1); return; }
+  const off = KEYNOTES[k];
+  if (off === undefined || kbHeld.has(k)) return;
+  const note = 60 + 12*kbOct + off;
+  if (note < 0 || note > 127) return;
+  kbHeld.set(k, note);
+  NF.midiNote(note, 100, true);
+});
+addEventListener("keyup", e => {
+  const k = e.key.toLowerCase(), note = kbHeld.get(k);
+  if (note !== undefined) { kbHeld.delete(k); NF.midiNote(note, 0, false); }
+});
+addEventListener("blur", () => { kbHeld.forEach(n => NF.midiNote(n, 0, false)); kbHeld.clear(); });
 
 /* =====================================================================
    PARAMETER LAYER

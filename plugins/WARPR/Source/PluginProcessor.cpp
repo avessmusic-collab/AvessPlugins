@@ -71,6 +71,25 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     paramSnapshot.read (paramBlock);
     synth.setBlockParams (paramBlock);
 
+    // QWERTY keyboard notes queued by the UI (wait-free drain; MidiBuffer keeps events sorted)
+    {
+        int s1, n1, s2, n2;
+        kbdFifo.prepareToRead (kbdFifo.getNumReady(), s1, n1, s2, n2);
+        auto emit = [this, &midiMessages] (int start, int num)
+        {
+            for (int i = 0; i < num; ++i)
+            {
+                const KbdEvent& e = kbdEvents[(size_t) (start + i)];
+                midiMessages.addEvent (e.on ? juce::MidiMessage::noteOn  (1, (int) e.note, e.vel)
+                                            : juce::MidiMessage::noteOff (1, (int) e.note), 0);
+            }
+        };
+        emit (s1, n1);
+        emit (s2, n2);
+        if (n1 + n2 > 0)
+            kbdFifo.finishedRead (n1 + n2);
+    }
+
     float* left = buffer.getWritePointer (0);
     float* right = buffer.getWritePointer (1);
 
@@ -79,6 +98,20 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     vizAnalyzer.process (left, right, numSamples, backend.vizFifo(), &synth);      // wait-free, no allocation
 
     activeVoices.store (synth.getNumActiveVoices(), std::memory_order_relaxed);
+}
+
+void PluginProcessor::queueKeyboardNote (int midiNote, int velocity, bool noteOn) noexcept
+{
+    int s1, n1, s2, n2;
+    kbdFifo.prepareToWrite (1, s1, n1, s2, n2);
+
+    if (n1 > 0)
+    {
+        kbdEvents[(size_t) s1] = { (uint8_t) juce::jlimit (0, 127, midiNote),
+                                   (uint8_t) juce::jlimit (1, 127, velocity),
+                                   noteOn };
+        kbdFifo.finishedWrite (1);
+    }
 }
 
 //==============================================================================

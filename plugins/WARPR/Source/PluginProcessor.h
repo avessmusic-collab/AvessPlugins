@@ -84,7 +84,15 @@ public:
     /** Voices still sounding at the end of the last block (ghost fades included). */
     int getNumActiveVoices() const noexcept { return activeVoices.load (std::memory_order_relaxed); }
 
+    /** QWERTY keyboard in the UI: queues a note event from the message thread; processBlock drains
+        the queue wait-free into the block's MIDI stream (timestamped at sample 0). */
+    void queueKeyboardNote (int midiNote, int velocity, bool noteOn) noexcept;
+
 private:
+    struct KbdEvent { uint8_t note = 0, vel = 0; bool on = false; };
+    juce::AbstractFifo kbdFifo { 128 };
+    std::array<KbdEvent, 128> kbdEvents {};
+
     /** Drains the retire list on the message thread even when no editor is open. */
     struct RetireDrainTimer : private juce::Timer
     {
