@@ -7,13 +7,12 @@
 
       family       the shared building-block family (architecture "F-xxx" codes)
       build        the phase that implements it: D5a standard 0-19, D5b special linear 20-27, D5c nonlinear 28-33
-      implemented  true  : real DSP exists (D5a: indices 0-19, D5b: 20-27)
-                   false : NOT YET IMPLEMENTED.  STATIC MAPPING: the type is the IDENTITY (wet = dry, bit-exact)
-                           and its analytic response is a flat 0 dB line until its phase fills it in.  Selecting
-                           such a type is safe and testable; no fake DSP stands in for it (same rule as WarpModeTable).
+      implemented  true  : real DSP exists (D5a: indices 0-19, D5b: 20-27, D5c: 28-33 - all 34 types now)
+                   false : would mean NOT YET IMPLEMENTED (identity, flat 0 dB); no row uses it any more.
       linear       the type is a linear time-invariant system for a fixed parameter set, so FilterResponse is exact.
-                   Nonlinear types (28-33, plus Comb/S&H/Ring Mod which are not LTI-exact in the display sense) get a
-                   small-signal response in their own phase.
+                   Nonlinear types (28-33) get the small-signal (linearised) response, see FilterResponse.
+      aliasByDesign  aliasing is the effect (S&H): alias gates skip the row.
+      localOversampling  the nonlinear core runs at 2 fs between a half-band pair (28-31, 33); S&H runs at the base rate.
       resRole/morphRole  what the RES / MORPH knobs do ("-" = no effect), shared with the GUI later.
 
   Namespace-level constexpr data: no static initialisation order issues, no allocation.
@@ -51,19 +50,22 @@ namespace warpr
         const char*  topology;
         const char*  resRole;
         const char*  morphRole;
+        bool         aliasByDesign = false;      // D5c: aliasing IS the effect (S&H); the alias gates skip these rows
+        bool         localOversampling = false;  // D5c: the nonlinear core runs at 2x behind a half-band pair
     };
 
     inline constexpr int kNumFilterTypes            = 34;
-    inline constexpr int kNumImplementedFilterTypes = 28;     // D5a: indices 0-19, D5b: 20-27 (D5c: 28-33 still identity)
+    inline constexpr int kNumImplementedFilterTypes = 34;     // D5a: 0-19, D5b: 20-27, D5c: 28-33 (all implemented)
     inline constexpr int kNumLowpassTypes           = 6;      // indices 0-5 (LP 6 .. LP 48)
 
     namespace detail
     {
         constexpr FilterTypeInfo frow (int index, FilterFamily family, FilterBuild build, bool linear,
-                                       const char* topology, const char* res, const char* morph)
+                                       const char* topology, const char* res, const char* morph,
+                                       bool aliasByDesign = false, bool localOs = false)
         {
-            return FilterTypeInfo { choices::filterType[index], family, build, build != FilterBuild::D5c, linear,
-                                    topology, res, morph };
+            return FilterTypeInfo { choices::filterType[index], family, build, true, linear,
+                                    topology, res, morph, aliasByDesign, localOs };
         }
 
         using FF = FilterFamily;
@@ -104,12 +106,19 @@ namespace warpr
         detail::frow (27, detail::FF::AllPass, detail::FB::D5b, true, "all-pass chain + dry sum with one-sample feedback",  "feedback -0.95..+0.95 (0.5 = 0)", "stage count 2..12"),
 
         // ---- NONLINEAR (28-33): D5c -----------------------------------------------------------------------
-        detail::frow (28, detail::FF::Ladder,     detail::FB::D5c, false, "4-pole ladder low-pass",          "resonance", "pole blend"),
-        detail::frow (29, detail::FF::Ladder,     detail::FB::D5c, false, "4-pole ladder high-pass",         "resonance", "pole blend"),
-        detail::frow (30, detail::FF::Ladder,     detail::FB::D5c, false, "driven ladder low-pass",          "resonance", "in-loop distortion"),
-        detail::frow (31, detail::FF::Scream,     detail::FB::D5c, false, "resonant BP with clipped feedback", "resonance", "scream amount"),
-        detail::frow (32, detail::FF::SampleHold, detail::FB::D5c, false, "pre-LP + sample & hold",          "pre-LP", "hold <-> interpolate"),
-        detail::frow (33, detail::FF::RingMod,    detail::FB::D5c, false, "carrier multiplier",              "product LP", "AM <-> RM")
+        // Local 2x: the core runs at 2 fs between a polyphase half-band interpolator and decimator (FilterNonlinear.h).
+        detail::frow (28, detail::FF::Ladder,     detail::FB::D5c, false, "4-stage TPT ladder low-pass, saturator per stage, local 2x",
+                      "feedback k = 4.2 res (self-oscillates above res 0.95)", "tap blend 2-pole (0) <-> 4-pole (1)", false, true),
+        detail::frow (29, detail::FF::Ladder,     detail::FB::D5c, false, "4-stage TPT ladder high-pass, taps (1,-4,6,-4,1), local 2x",
+                      "feedback k = 4.2 res (self-oscillates above res 0.95)", "tap blend 2-pole (0) <-> 4-pole (1)", false, true),
+        detail::frow (30, detail::FF::Ladder,     detail::FB::D5c, false, "4-pole ladder low-pass, drive-coupled in-loop saturation, local 2x",
+                      "feedback k = 4.2 res", "in-loop distortion (saturation knee 1 -> 1/16)", false, true),
+        detail::frow (31, detail::FF::Scream,     detail::FB::D5c, false, "peak-normalised SVF band-pass, 0-40 dB input gain, asymmetric clip, clipped feedback, local 2x",
+                      "Q 0.7 .. 28", "scream (input gain 0..40 dB and feedback 0..0.95 together)", false, true),
+        detail::frow (32, detail::FF::SampleHold, detail::FB::D5c, false, "2 x one-pole pre-LP, sample & hold at fc, base rate",
+                      "anti-alias pre-LP (open -> 0.4 x hold rate)", "hold (0) <-> linear interpolation (1)", true, false),
+        detail::frow (33, detail::FF::RingMod,    detail::FB::D5c, false, "carrier multiplier + 2 x one-pole product LP, local 2x",
+                      "product LP (open -> max (fc/2, 40 Hz))", "AM (0, unipolar carrier) <-> RM (1, bipolar)", false, true)
     }};
 
     constexpr const FilterTypeInfo& filterTypeInfo (int index) noexcept

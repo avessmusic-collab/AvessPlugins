@@ -47,7 +47,7 @@
 | SPECTR (formerly PRISM) | 📦 Installed | 1.0.0 | Audio Effect (Multi-Source Analyzer/Visualizer) | 2026-11-03 |
 | CHOPLINE | 🚧 Phase 5 | - | Synth (Vocal Chop/Warp/Glitch Instrument) | 2026-10-29 |
 | TENSION | 📦 Installed | 1.0.0 | Audio Effect (One-Knob Cinematic Riser) | 2026-11-03 |
-| VOID (dir: plugins/WARPR) | 🚧 Stage 2 (through D5b) | 1.0.0 | Synth (Sample-Warp Instrument) | 2026-11-11 |
+| VOID (dir: plugins/WARPR) | 🚧 Stage 2 (through D5c — filter engine complete, pluginval ✓) | 1.0.0 | Synth (Sample-Warp Instrument) | 2026-11-11 |
 
 **For detailed plugin information (lifecycle timeline, known issues, parameters, etc.), see:**
 `plugins/[PluginName]/NOTES.md`

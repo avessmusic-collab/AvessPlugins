@@ -62,9 +62,48 @@ namespace warpr
         double c = 1.0;                          // input gain sqrt (1 - g^2): white noise keeps its level
     };
 
+    /** Nonlinear cores (D5c, types 28-33).  All coefficients are for the CORE rate  fsCore = rateFactor * fs  (2 fs behind
+        the local half-band pair, or fs for the base-rate S&H).  Fields not used by a kind keep their defaults.
+
+          Ladder       4 TPT one-poles, saturator before every stage, global feedback k.  G = g / (1 + g), g = tan (pi fc / fsCore).
+                       LP: out = (1 - tapBlend) y2 + tapBlend y4;  HP: same blend of (u - 2 y1 + y2) and (u - 4 y1 + 6 y2 - 4 y3 + y4).
+                       Saturators are normalised (sat (L a) / L): unity small-signal gain, knee at 1/L, L = loopScale.
+          Scream       sec[0] = peak-normalised TPT SVF band-pass at fsCore;  u = clipAsym (inGain x) + fbAmount clipAsym (y[n-1]).
+          SampleHold   sec[0], sec[1] = pre-LP one-poles (base rate);  holdStep = hold rate / fs;  interp = hold <-> linear.
+          RingMod      carrier phase step per CORE sample, AM <-> RM blend, product LP = two one-poles of coefficient smoothG. */
+    struct NonlinearSpec
+    {
+        enum class Kind : unsigned char { None, Ladder, Scream, SampleHold, RingMod };
+
+        Kind   kind = Kind::None;
+        bool   os2x = true;                      // local 2x oversampling on (false = the core runs at the base rate)
+        double rateFactor = 2.0;                 // fsCore / fs
+
+        // Ladder
+        bool   highpass = false;
+        double g = 0.0, bigG = 0.0;              // tan (pi fc / fsCore), g / (1 + g)
+        double k = 0.0;                          // global feedback 4.2 res
+        double comp = 1.0;                       // input compensation  1 + k / 2  (LP) or 1 (HP)
+        double tapBlend = 0.0;                   // 0 = 2-pole taps, 1 = 4-pole taps
+        double loopScale = 1.0;                  // L: saturator knee at 1 / L
+
+        // Scream
+        double inGain = 1.0;                     // linear input gain (0..40 dB x drive)
+        double fbAmount = 0.0;                   // 0 .. 0.95
+
+        // Sample & hold
+        double holdStep = 0.5;                   // hold rate / sample rate (cycles per sample)
+        double interp = 0.0;                     // 0 = zero-order hold, 1 = linear interpolation between held values
+
+        // Ring mod
+        double carrierStep = 0.0;                // carrier cycles per core sample
+        double carrierMorph = 1.0;               // 0 = AM (unipolar carrier), 1 = RM (bipolar carrier)
+        double smoothG = 1.0;                    // product LP coefficient G = g / (1 + g) of each of the two one-poles
+    };
+
     struct FilterDesign
     {
-        enum class Topo : unsigned char { Series, Parallel, Comb };
+        enum class Topo : unsigned char { Series, Parallel, Comb, Nonlinear };
 
         static constexpr int maxSections = 16;
 
@@ -75,6 +114,7 @@ namespace warpr
         double fb = 0.0;                         // Series: feedback of the previous chain output into the chain input
         double outDry = 0.0, outWet = 1.0;       // Series: y = gain (outDry x + outWet chain)
         CombSpec comb;                           // Comb
+        NonlinearSpec nl;                        // Nonlinear
     };
 
     namespace filterdesign
@@ -104,8 +144,12 @@ namespace warpr
         /** True when the "open low-pass" convention (file header) applies (low-pass types 0-5 only). */
         bool isOpenLowpass (int type, double cutoffHz, double res, double driveDb) noexcept;
 
-        /** Fills `out` for types 0-27; any other index gives the identity design (numSections 0, gain 1). */
-        void make (int type, double cutoffHz, double res, double morph, double fs, FilterDesign& out) noexcept;
+        /** Fills `out` for types 0-33; any other index gives the identity design (numSections 0, gain 1).
+            `driveDb` only matters for the nonlinear types 28-31 (it scales the in-loop saturation; the small-signal response
+            never depends on it).  `localOversampling` = false builds the nonlinear types for a base-rate core (tests only:
+            the 2x on / off alias comparison). */
+        void make (int type, double cutoffHz, double res, double morph, double fs, FilterDesign& out,
+                   double driveDb = 0.0, bool localOversampling = true) noexcept;
 
         /** Complex frequency response of a design at `hz`. */
         std::complex<double> response (const FilterDesign& d, double hz, double fs) noexcept;
@@ -127,9 +171,17 @@ namespace warpr
     }
 
     //==========================================================================
-    /** Magnitude response for the editor's response display.  Exact for every linear type (0-27); unimplemented types
-        (D5c) and the "open low-pass" case return a flat 0 dB.  Drive does not change the small-signal response (the
-        saturator is normalised to unity small-signal gain); mix is not part of the drawn curve.  Results are clamped to
+    /** Magnitude response for the editor's response display.  Exact for every linear type (0-27); for the nonlinear types
+        28-33 it is the SMALL-SIGNAL (linearised) response:
+            28 / 29 / 30  ladder closed loop with every saturator at unit slope (feedback k clamped to 3.98 so a
+                          self-oscillating setting draws the tall peak instead of an unstable pole), evaluated at the 2x core rate
+            31            the open-loop peak-normalised band-pass (the clipped feedback and the input gain are large-signal
+                          effects)
+            32            the two-pole pre-LP (the hold itself is not LTI)
+            33            flat 0 dB (a carrier multiplier has no magnitude response; the cutoff guide marks the carrier)
+        The half-band pair of the 2x types droops < 0.2 dB below 0.4 fs and more above: not drawn.
+        The "open low-pass" case returns a flat 0 dB.  Drive does not change the small-signal response (the saturators
+        are normalised to unity small-signal gain); mix is not part of the drawn curve.  Results are clamped to
         [-48, +24] dB (the display range). */
     struct FilterResponse
     {

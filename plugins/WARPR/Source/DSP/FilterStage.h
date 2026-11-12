@@ -39,8 +39,13 @@
   input for 64 samples like every other core), filterEnable off / mix 0 are the same bit-exact bypass, and the "open
   low-pass" rule does not apply to them (it is limited to types 0-5).
 
-  Types >= 28 are not implemented yet (D5c): their design is the identity, so the stage passes the signal through
-  unchanged while still honouring drive and mix.
+  D5c (types 28-33: ladders, Dist LP, Scream, S&H, Ring Mod) ride the same machinery.  A nonlinear core runs its kernel
+  per sample in double; the five 2x types sit between a polyphase half-band interpolator and decimator
+  (FilterNonlinear.h) with all buffers on the stack, so the antialiasing is LOCAL to the filter and the voice's global
+  oversampling is untouched.  S&H runs at the base rate (aliasing is the effect).  `drive` additionally scales the
+  in-loop saturation of types 28-31 (the shared input saturator above already limits peaks to 1/P, the core's
+  normalised saturators then see a signal of order 1 - tanh (P x) overall).  The new core of a type switch starts with
+  cleared ladder / hold / carrier state and half-band memory and is input-primed like every other core.
 
   Safety: a non-finite or runaway (|y| >= 1e6) result replaces that sample by the dry sample and clears all filter
   state; a stable TPT filter never triggers it, it only guards against a poisoned input.
@@ -50,6 +55,7 @@
 
 #include "DSP/DiscreteSwitchFade.h"
 #include "DSP/FilterDesign.h"
+#include "DSP/FilterNonlinear.h"
 
 #include <array>
 #include <vector>
@@ -74,6 +80,8 @@ namespace warpr
     class FilterCore
     {
     public:
+        FilterCore();
+
         /** Allocates the comb delay lines for `sampleRate` (NOT real-time safe; no-op when the size is unchanged). */
         void prepare (double sampleRate);
 
@@ -88,7 +96,27 @@ namespace warpr
         void process (int ch, const double* in, double* out, int n) noexcept;
 
     private:
+        /** Per-channel state of the nonlinear kernels (D5c). */
+        struct NlState
+        {
+            std::array<double, 4> s {};                        // ladder stage states; S&H / ring-mod LP use s[0], s[1]
+            std::array<double, 4> m { { 1.0, 1.0, 1.0, 1.0 } };    // ladder secant gains of the previous sample
+            double ic1 = 0.0, ic2 = 0.0;                       // scream SVF integrators
+            double fb = 0.0;                                   // scream: clipped previous output
+            double phase = 1.0;                                // S&H hold clock (1 = strobe on the first sample) / carrier phase
+            double held = 0.0, prev = 0.0;                     // S&H
+            bool   primed = false;
+
+            void reset() noexcept { *this = NlState {}; }
+        };
+
         double runChain (std::size_t c, double x) noexcept;
+        void   processNonlinear (std::size_t c, const double* in, double* out, int n) noexcept;
+        void   runKernel (std::size_t c, double* buf, int n) noexcept;
+
+        std::array<NlState, 2> nls;
+        std::array<nonlin::HalfbandStateD, 2> hbUp, hbDown;
+        nonlin::HalfbandD hb;
 
         FilterDesign design;
         std::array<std::array<double, static_cast<std::size_t> (FilterDesign::maxSections)>, 2> ic1 {}, ic2 {};

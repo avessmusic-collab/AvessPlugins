@@ -4,7 +4,11 @@
     D5b (special linear types 20-27: combs, all-passes, formant / vowel banks, phaser) follows below the D5a sections
     ([D5b] headings): table, comb / all-pass / formant / phaser formulas, analytic vs measured IR (magnitude AND complex),
     measured comb teeth, stability, bypass + open-LP rule, D5a<->D5b type switching, sweeps + walk, key tracking, backend
-    display, zero allocations + determinism.  D5c adds its own sections here.
+    display, zero allocations + determinism.  D5c (nonlinear types 28-33: Res LP / Res HP / Dist LP / Scream / S&H /
+    Ring Mod, local 2x) follows below the D5b sections ([D5c] headings): table, small-signal formulas, measured tiny-signal
+    impulse response vs analytic, ladder self-oscillation, character (hold rate, ring-mod lines, AM/RM, carrier continuity),
+    alias comparison local 2x on vs off, stability torture, bypass + L/R symmetry, 366 type-switch transitions, sweeps + walk,
+    backend display, zero allocations (half-band buffers) + determinism.
 
     Called from RunTests.cpp main():   failures += runPhaseD5Tests (full);
 
@@ -230,7 +234,7 @@ namespace
         }
 
         check (nameMismatch == 0, "all 34 table names equal choices::filterType (single source)");
-        check (implWrong == 0 && warpr::kNumImplementedFilterTypes == 28, "types 0-27 are implemented (D5a + D5b), 28-33 are not (D5c)");
+        check (implWrong == 0 && warpr::kNumImplementedFilterTypes == 34, "all 34 types are implemented (D5a 0-19, D5b 20-27, D5c 28-33)");
         check (buildWrong == 0, "build phases: 0-19 D5a, 20-27 D5b, 28-33 D5c");
         check (linearWrong == 0, "0-27 are linear, 28-33 nonlinear");
         check (std::strcmp (warpr::kFilterTypes[3].name, "LP 24") == 0 && std::strcmp (warpr::kFilterTypes[19].name, "High Shelf") == 0
@@ -368,9 +372,9 @@ namespace
                && ! fd::isOpenLowpass (6, 20000.0, 0.0, 0.0) && ! fd::isOpenLowpass (17, 20000.0, 0.0, 0.0),
                "open low-pass: LP types at >= 19999.5 Hz with res < 0.01 and drive < 0.01 dB only");
 
-        // unimplemented types: identity design + flat response
+        // out-of-range indices: identity design + flat response
         int identityBad = 0;
-        for (int t = warpr::kNumImplementedFilterTypes; t < warpr::kNumFilterTypes; ++t)
+        for (int t : { -1, warpr::kNumFilterTypes, 99 })
         {
             FilterDesign d;
             fd::make (t, 1000.0, 0.7, 0.3, fs, d);
@@ -378,7 +382,7 @@ namespace
                 || FilterResponse::magnitudeDbAt (t, 1000.0, 0.7, 0.0, 0.3, fs, 1234.0) != 0.0)
                 ++identityBad;
         }
-        check (identityBad == 0, "types 28-33: identity design and flat 0 dB response (until D5c)");
+        check (identityBad == 0, "out-of-range type indices: identity design and flat 0 dB response");
     }
 
     //==========================================================================
@@ -847,12 +851,7 @@ namespace
         check (stepBad == 0, "every transition: max step <= natural step + 2 x difference / 480 samples (click-free)");
         check (tailBad == 0, "every transition ends on the new type (|switched - new| < 2e-3 after the fade)");
 
-        // a switch into / out of an unimplemented (identity) type is just as smooth
-        {
-            const auto r1 = switchPair (3, 28, fs, saw);               // 28 = Res LP (D5c, still the identity)
-            const auto r2 = switchPair (28, 3, fs, saw);
-            check (r1.stepOk && r1.tailOk && r2.stepOk && r2.tailOk, "switching to / from a not-yet-implemented (pass-through) type crossfades too");
-        }
+        // (switches into / out of the nonlinear types 28-33 are covered by the [D5c] switching section)
 
         // stage bookkeeping: fade length, and no fade when the type does not change
         {
@@ -1112,13 +1111,13 @@ namespace
         check (db[ix (peakIdx)] > 17.5f && db[ix (peakIdx)] < 18.3f && std::abs (freq (peakIdx) / 2000.0 - 1.0) < 0.05,
                "Peak, res 1: +18 dB bell centred on the cutoff");
 
-        // unimplemented type: flat
+        // nonlinear type (D5c): the small-signal curve, not a flat line
         setParam (p, "filterType", 28.0f);
         be.computeFilterResponse (db.data(), n);
         flat = true;
         for (float v : db)
             flat = flat && v == 0.0f;
-        check (flat, "a not-yet-implemented type (Res LP, D5c) draws a flat line");
+        check (! flat, "Res LP (D5c, small-signal ladder response) draws a real curve");
 
         // display range clamp
         setParam (p, "filterType", 5.0f);
@@ -1338,7 +1337,7 @@ namespace
         check (fam (20) == FF::Comb && fam (21) == FF::Comb && fam (22) == FF::AllPass && fam (23) == FF::AllPass
                && fam (24) == FF::Formant && fam (25) == FF::Formant && fam (26) == FF::Formant && fam (27) == FF::AllPass,
                "families: 20-21 comb, 22-23 / 27 all-pass, 24-26 formant");
-        check (! warpr::kFilterTypes[28].implemented && warpr::kNumImplementedFilterTypes == 28, "D5c types 28-33 stay unimplemented");
+        check (warpr::kFilterTypes[28].implemented && warpr::kNumImplementedFilterTypes == 34, "D5c has filled types 28-33 (34 implemented in total)");
 
         // every new type designs a non-trivial structure and is not subject to the open-LP rule
         int trivial = 0, openRule = 0;
@@ -2485,6 +2484,1095 @@ namespace
             check (nl > -20.0 && allFinite (active.l) && allFinite (active.r), "processor: an active Comb - really changes the sound");
         }
     }
+
+    //==========================================================================
+    //==========================================================================
+    // D5c: nonlinear filters, types 28-33 (Res LP, Res HP, Dist LP, Scream, S&H, Ring Mod)
+    //==========================================================================
+    //==========================================================================
+    constexpr int kD5cFirst = 28, kD5cEnd = 34;                  // [first, end)
+    constexpr double kNlBandFrac = 0.38;                         // measured-vs-analytic band edge (x fs): the half-band pair droops < 0.2 dB below 0.4 fs
+
+    /** Amplitude of the sinusoid at exactly `hz` in the last `n` samples: a Hann-windowed single-frequency DFT, which is
+        exact for a line AT that frequency whatever its bin alignment. */
+    double lineAmp (const std::vector<float>& y, double fs, double hz, size_t n = 32768)
+    {
+        n = std::min (n, y.size());
+        const size_t off = y.size() - n;
+        double re = 0.0, im = 0.0, ws = 0.0;
+
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double w = 0.5 - 0.5 * std::cos (2.0 * kPi * (double) i / (double) n);
+            const double ph = 2.0 * kPi * hz * (double) (off + i) / fs;
+            re += w * (double) y[off + i] * std::cos (ph);
+            im += w * (double) y[off + i] * std::sin (ph);
+            ws += w;
+        }
+
+        return 2.0 * std::sqrt (re * re + im * im) / ws;
+    }
+
+    std::vector<float> makeSquare (int n, double hz, double fs, float amp)
+    {
+        std::vector<float> v (ix (n));
+        double phase = 0.0;
+        for (int i = 0; i < n; ++i)
+        {
+            v[ix (i)] = phase < 0.5 ? amp : -amp;
+            phase += hz / fs;
+            phase -= std::floor (phase);
+        }
+        return v;
+    }
+
+    double rmsOf (const std::vector<float>& v, size_t from, size_t to)
+    {
+        double s = 0.0;
+        for (size_t i = from; i < to && i < v.size(); ++i)
+            s += (double) v[i] * (double) v[i];
+        return std::sqrt (s / (double) std::max<size_t> (1, to - from));
+    }
+
+    /** A bare FilterCore (no stage, no drive stage, no fade) run over `in` in 32-sample chunks. */
+    std::vector<float> runCoreDirect (const FilterDesign& d, const std::vector<float>& in)
+    {
+        warpr::FilterCore core;
+        core.setDesign (d);
+
+        std::vector<double> x (in.begin(), in.end()), y (in.size(), 0.0);
+        for (size_t i = 0; i < x.size(); i += 32)
+        {
+            const int n = (int) std::min<size_t> (32, x.size() - i);
+            core.process (0, x.data() + i, y.data() + i, n);
+        }
+
+        std::vector<float> out (y.size());
+        for (size_t i = 0; i < y.size(); ++i)
+            out[i] = (float) y[i];
+        return out;
+    }
+
+    //==========================================================================
+    void testD5cTable()
+    {
+        std::printf ("\n[D5c] type table\n");
+
+        bool ok = true;
+        for (int i = kD5cFirst; i < kD5cEnd; ++i)
+        {
+            const auto& info = warpr::kFilterTypes[ix (i)];
+            ok = ok && info.implemented && ! info.linear && info.build == warpr::FilterBuild::D5c;
+            std::printf ("        %d: %s  [%s]%s%s\n", i, info.name, info.topology,
+                         info.localOversampling ? "  (local 2x)" : "", info.aliasByDesign ? "  (aliasByDesign)" : "");
+        }
+
+        using FF = warpr::FilterFamily;
+        const auto fam = [] (int i) { return warpr::kFilterTypes[ix (i)].family; };
+        check (ok && warpr::kNumImplementedFilterTypes == 34, "types 28-33 are implemented, nonlinear (not LTI), build D5c; all 34 types implemented");
+        check (fam (28) == FF::Ladder && fam (29) == FF::Ladder && fam (30) == FF::Ladder && fam (31) == FF::Scream
+               && fam (32) == FF::SampleHold && fam (33) == FF::RingMod, "families: 28-30 ladder, 31 scream, 32 S&H, 33 ring mod");
+        check (std::strcmp (warpr::kFilterTypes[28].name, "Res LP") == 0 && std::strcmp (warpr::kFilterTypes[29].name, "Res HP") == 0
+               && std::strcmp (warpr::kFilterTypes[30].name, "Dist LP") == 0 && std::strcmp (warpr::kFilterTypes[31].name, "Scream") == 0
+               && std::strcmp (warpr::kFilterTypes[32].name, "S&H") == 0 && std::strcmp (warpr::kFilterTypes[33].name, "Ring Mod") == 0,
+               "names (from the spec's choice list): Res LP, Res HP, Dist LP, Scream, S&H, Ring Mod");
+
+        bool flagsOk = true;
+        for (int i = 0; i < warpr::kNumFilterTypes; ++i)
+        {
+            const auto& info = warpr::kFilterTypes[ix (i)];
+            const bool wantOs = i == 28 || i == 29 || i == 30 || i == 31 || i == 33;
+            flagsOk = flagsOk && info.localOversampling == wantOs && info.aliasByDesign == (i == 32);
+        }
+        check (flagsOk, "local 2x on 28 / 29 / 30 / 31 / 33, aliasByDesign only on S&H (32); no linear type carries either flag");
+
+        using K = warpr::NonlinearSpec::Kind;
+        const K kinds[6] = { K::Ladder, K::Ladder, K::Ladder, K::Scream, K::SampleHold, K::RingMod };
+        const bool wantOs[6] = { true, true, true, true, false, true };
+        int bad = 0;
+
+        for (int t = kD5cFirst; t < kD5cEnd; ++t)
+        {
+            FilterDesign d, dOff;
+            fd::make (t, 1000.0, 0.5, 0.5, 48000.0, d);
+            fd::make (t, 1000.0, 0.5, 0.5, 48000.0, dOff, 0.0, false);
+            const auto k = ix (t - kD5cFirst);
+
+            if (d.topo != FilterDesign::Topo::Nonlinear || d.nl.kind != kinds[k] || d.nl.os2x != wantOs[k] || dOff.nl.os2x
+                || fd::isOpenLowpass (t, 20000.0, 0.0, 0.0))
+                ++bad;
+        }
+        check (bad == 0, "designs are Topo::Nonlinear with the right kind; localOversampling = false builds the base-rate core; the open-LP rule never applies");
+    }
+
+    //==========================================================================
+    void testD5cFormulas()
+    {
+        std::printf ("\n[D5c] small-signal response formulas (ladder closed loop, scream band-pass, S&H pre-LP, ring mod)\n");
+        constexpr double fs = 48000.0;
+        auto mag = [&] (int type, double fc, double res, double morph, double hz) { return magAt (type, fc, res, morph, fs, hz); };
+
+        // ---- ladder low-pass: four equal poles; cutoff = the pole frequency
+        check (std::abs (mag (28, 1000.0, 0.0, 1.0, 1000.0) - 0.25) < 1.0e-9 && std::abs (mag (28, 1000.0, 0.0, 0.0, 1000.0) - 0.5) < 1.0e-9,
+               "Res LP, res 0: |H(fc)| = 1/4 with the 4-pole taps (morph 1) and 1/2 with the 2-pole taps (morph 0)");
+
+        const double k5 = 4.2 * 0.5;
+        check (std::abs (mag (28, 1000.0, 0.5, 1.0, 10.0) - (1.0 + 0.5 * k5) / (1.0 + k5)) < 2.0e-3,
+               "Res LP: DC gain = (1 + k/2) / (1 + k), k = 4.2 res (the bass loss of the feedback, half compensated)");
+
+        {
+            const double k = 4.2 * 0.9, comp = 1.0 + 0.5 * k;
+            const double expected = comp * 0.25 / (1.0 - k / 4.0);          // loop phase -180 deg, |H1^4| = 1/4 at fc
+            const double got = mag (28, 1000.0, 0.9, 1.0, 1000.0);
+            std::printf ("        (res 0.9: |H(fc)| = %.4f, expected %.4f)\n", got, expected);
+            check (std::abs (got / expected - 1.0) < 1.0e-5, "Res LP, res 0.9: resonance peak at fc = comp x 0.25 / (1 - k/4)");
+        }
+
+        // ---- ladder high-pass
+        check (std::abs (mag (29, 1000.0, 0.0, 1.0, 1000.0) - 0.25) < 1.0e-9 && std::abs (mag (29, 1000.0, 0.0, 0.0, 1000.0) - 0.5) < 1.0e-9,
+               "Res HP, res 0: |H(fc)| = 1/4 (4-pole taps 1,-4,6,-4,1) and 1/2 (2-pole taps)");
+        check (mag (29, 1000.0, 0.0, 1.0, 10.0) < 1.0e-6 && std::abs (mag (29, 1000.0, 0.0, 1.0, 20000.0) - 1.0) < 0.01,
+               "Res HP: blocks DC, passes the top of the band at unity");
+        {
+            const double slope = dbOf (mag (29, 1000.0, 0.0, 1.0, 100.0)) - dbOf (mag (29, 1000.0, 0.0, 1.0, 50.0));
+            std::printf ("        (Res HP 4-pole slope 50 -> 100 Hz: %.2f dB/oct)\n", slope);
+            check (std::abs (slope - 24.08) < 0.5, "Res HP, 4-pole taps: 24 dB/oct");
+        }
+
+        // ---- Dist LP: morph (the in-loop distortion) never moves the small-signal curve; it equals the 4-pole Res LP
+        {
+            bool same = true;
+            for (double f : { 100.0, 800.0, 1000.0, 1300.0, 5000.0, 15000.0 })
+                same = same && std::abs (mag (30, 1000.0, 0.5, 0.0, f) - mag (30, 1000.0, 0.5, 1.0, f)) < 1.0e-12
+                            && std::abs (mag (30, 1000.0, 0.5, 0.3, f) - mag (28, 1000.0, 0.5, 1.0, f)) < 1.0e-12;
+            check (same, "Dist LP: small-signal response = 4-pole Res LP whatever the morph (the distortion is a large-signal effect)");
+        }
+
+        // ---- Scream: the peak-normalised band-pass
+        check (std::abs (mag (31, 1000.0, 0.5, 0.7, 1000.0) - 1.0) < 1.0e-9 && std::abs (mag (31, 1000.0, 0.0, 0.0, 1000.0) - 1.0) < 1.0e-9,
+               "Scream: 0 dB peak at fc at any res / morph (peak-normalised band-pass)");
+        check (mag (31, 1000.0, 1.0, 0.0, 1200.0) < 0.2 && mag (31, 1000.0, 0.0, 0.0, 1200.0) > 0.8
+               && std::abs (mag (31, 1000.0, 0.5, 0.0, 800.0) - mag (31, 1000.0, 0.5, 1.0, 800.0)) < 1.0e-12,
+               "Scream: res narrows the band (Q 0.7 .. 28); morph (scream amount) does not change the drawn curve");
+
+        // ---- S&H: the pre-LP
+        check (std::abs (mag (32, 1000.0, 1.0, 0.0, 400.0) - 0.5) < 1.0e-9 && std::abs (mag (32, 1000.0, 0.0, 0.0, 10000.0) - 1.0) < 0.01,
+               "S&H: res 1 puts two poles at 0.4 x the hold rate (|H| = 1/2 there), res 0 leaves the pre-LP open");
+
+        // ---- Ring mod: no magnitude response
+        {
+            bool flat = true;
+            for (double f : { 30.0, 440.0, 5000.0, 19000.0 })
+                flat = flat && mag (33, 3000.0, 0.7, 0.4, f) == 1.0 && FilterResponse::magnitudeDbAt (33, 3000.0, 0.7, 0.0, 0.4, fs, f) == 0.0;
+            check (flat, "Ring Mod: flat 0 dB display (the cutoff guide marks the carrier)");
+        }
+
+        // ---- drive never changes the drawn curve
+        {
+            bool same = true;
+            for (int t = kD5cFirst; t < kD5cEnd; ++t)
+                for (double f : { 200.0, 2000.0, 9000.0 })
+                    same = same && FilterResponse::magnitudeDbAt (t, 2000.0, 0.6, 0.0, 0.4, fs, f) == FilterResponse::magnitudeDbAt (t, 2000.0, 0.6, 24.0, 0.4, fs, f);
+            check (same, "FilterResponse for 28-33 is independent of the drive (normalised saturators: unity small-signal gain)");
+        }
+    }
+
+    //==========================================================================
+    // measured small-signal impulse response (through FilterStage) vs the analytic curve
+    //==========================================================================
+    struct IrScaled
+    {
+        std::vector<std::complex<float>> h;
+        double binHz = 0.0, tail = 0.0;
+        int order = 0;
+    };
+
+    /** Impulse of amplitude `amp` (small: the saturators then act as their unit slope) -> FFT, divided by `amp`.  The window
+        is constant time (>= 0.6 s) and grows until the last 1/16 of the response is below 1e-5 x amp. */
+    IrScaled measureIrScaled (int type, double fc, double res, double morph, double fs, float amp, int maxOrder = 20)
+    {
+        int order = 14;
+        while ((1 << order) < (int) (0.6 * fs))
+            ++order;
+
+        const FilterTargets t = mk (type, fc, res, morph);
+        std::vector<float> l;
+        double tail = 0.0;
+
+        for (;;)
+        {
+            const int size = 1 << order;
+            FilterStage st;
+            st.prepare (fs);
+            st.snap (t);
+
+            l.assign (ix (size), 0.0f);
+            std::vector<float> r (ix (size), 0.0f);
+            l[0] = r[0] = amp;
+
+            for (int i = 0; i < size; i += 32)
+                st.process (l.data() + i, r.data() + i, 32, t);
+
+            tail = 0.0;
+            for (int i = size - size / 16; i < size; ++i)
+                tail = std::max (tail, (double) std::abs (l[ix (i)]));
+            tail /= (double) amp;
+
+            if (tail < 1.0e-5 || order >= maxOrder)
+                break;
+
+            ++order;
+        }
+
+        const int size = 1 << order;
+        juce::dsp::FFT fft (order);
+        std::vector<std::complex<float>> in (ix (size)), out (ix (size));
+        for (int i = 0; i < size; ++i)
+            in[ix (i)] = std::complex<float> (l[ix (i)], 0.0f);
+
+        fft.perform (in.data(), out.data(), false);
+
+        IrScaled s;
+        for (auto& v : out)
+            v /= amp;
+        s.h = std::move (out);
+        s.binHz = fs / (double) size;
+        s.order = order;
+        s.tail = tail;
+        return s;
+    }
+
+    struct NlIrError
+    {
+        double worstDb = 0.0, worstAbs = 0.0, worstHz = 0.0;
+    };
+
+    template <class H>
+    NlIrError compareNl (const IrScaled& s, double fs, H&& analytic)
+    {
+        const int lo = (int) std::ceil (20.0 / s.binHz), hi = (int) std::floor (kNlBandFrac * fs / s.binHz);
+        const int stride = std::max (1, (hi - lo) / 60000);
+        NlIrError e;
+
+        for (int k = lo; k <= hi; k += stride)
+        {
+            const double f = (double) k * s.binHz;
+            const double ma = std::abs (analytic (f));
+            const double mm = (double) std::abs (s.h[ix (k)]);
+
+            if (ma <= 0.01)
+                e.worstAbs = std::max (e.worstAbs, std::abs (mm - ma));
+            else
+            {
+                const double db = mm > 0.0 ? std::abs (20.0 * std::log10 (mm / ma)) : 200.0;
+                if (db > e.worstDb)
+                {
+                    e.worstDb = db;
+                    e.worstHz = f;
+                }
+            }
+        }
+
+        return e;
+    }
+
+    void testD5cResponse (bool full)
+    {
+        std::printf ("\n[D5c] small-signal response: measured impulse response (amplitude 1e-4, through FilterStage incl. the local 2x) vs analytic, 0.5 dB gate\n");
+
+        struct Rm { double res, morph; };
+        const std::vector<Rm> combos = full ? std::vector<Rm> { { 0, 0 }, { 0, 1 }, { 0.5, 0.6 }, { 0.9, 0 }, { 0.9, 1 } }
+                                            : std::vector<Rm> { { 0, 1 }, { 0.5, 0.6 }, { 0.9, 0 } };
+        const std::vector<double> fsList = full ? std::vector<double> { 44100.0, 48000.0, 96000.0, 192000.0 } : std::vector<double> { 48000.0 };
+        const std::vector<double> cutoffs { 250.0, 1000.0, 6000.0 };
+
+        int cases = 0, bad = 0;
+        std::array<double, 4> worstPerType {};
+
+        for (const double fs : fsList)
+            for (int type = 28; type <= 31; ++type)
+                for (const double fc : cutoffs)
+                    for (const auto& rm : combos)
+                    {
+                        // Scream: the open-loop band-pass is the small-signal response only without gain / feedback (morph 0)
+                        const double morph = type == 31 ? 0.0 : rm.morph;
+                        const FilterTargets t = mk (type, fc, rm.res, morph);
+                        FilterDesign d;
+                        fd::make (type, (double) t.cutoffHz, (double) t.res, (double) t.morph, fs, d);
+
+                        const auto s = measureIrScaled (type, fc, rm.res, morph, fs, 1.0e-4f);
+                        const auto e = compareNl (s, fs, [&] (double hz) { return fd::response (d, hz, fs); });
+                        ++cases;
+                        worstPerType[ix (type - 28)] = std::max (worstPerType[ix (type - 28)], e.worstDb);
+
+                        if (e.worstDb > 0.5 || e.worstAbs > 5.0e-4)
+                        {
+                            ++bad;
+                            DETAIL ("        FAIL type %d (%s) fs %.0f fc %.0f res %.2f morph %.2f: %.3f dB at %.0f Hz, abs %.2e (order %d, tail %.1e)\n",
+                                    type, warpr::kFilterTypes[ix (type)].name, fs, fc, rm.res, morph, e.worstDb, e.worstHz, e.worstAbs, s.order, s.tail);
+                        }
+                    }
+
+        std::printf ("        (%d cases; worst deviation per type 28..31, dB: %.3f %.3f %.3f %.3f)\n", cases,
+                     worstPerType[0], worstPerType[1], worstPerType[2], worstPerType[3]);
+        check (bad == 0, "Res LP / Res HP / Dist LP / Scream (morph 0): measured small-signal response matches the analytic curve within 0.5 dB (20 Hz .. 0.38 fs)");
+
+        // Scream with gain and feedback: tiny signals see  H = inGain Hbp / (1 - fb z^-1 Hbp)  at the 2x core rate
+        {
+            constexpr double fs = 48000.0;
+            int closedBad = 0;
+            double worst = 0.0;
+
+            for (const double morph : { 0.3, 0.8 })
+                for (const double res : { 0.2, 0.5 })
+                {
+                    const FilterTargets t = mk (31, 1000.0, res, morph);
+                    FilterDesign d;
+                    fd::make (31, (double) t.cutoffHz, (double) t.res, (double) t.morph, fs, d);
+                    const double inGain = std::pow (10.0, 2.0 * (double) t.morph), fb = 0.95 * (double) t.morph;
+
+                    const auto s = measureIrScaled (31, 1000.0, res, morph, fs, 1.0e-6f);
+                    const auto e = compareNl (s, fs, [&] (double hz)
+                    {
+                        const std::complex<double> hbp = fd::response (d, hz, fs);
+                        const std::complex<double> zInv = std::polar (1.0, -2.0 * kPi * hz / (2.0 * fs));
+                        return inGain * hbp / (1.0 - fb * zInv * hbp);
+                    });
+                    worst = std::max (worst, e.worstDb);
+
+                    if (e.worstDb > 0.5 || e.worstAbs > 5.0e-3)
+                    {
+                        ++closedBad;
+                        DETAIL ("        FAIL scream closed loop res %.1f morph %.1f: %.3f dB at %.0f Hz, abs %.2e\n", res, morph, e.worstDb, e.worstHz, e.worstAbs);
+                    }
+                }
+
+            std::printf ("        (Scream with input gain + clipped feedback, tiny signal: worst deviation %.3f dB)\n", worst);
+            check (closedBad == 0, "Scream morph > 0, tiny signals: H = inGain Hbp / (1 - fb z^-1 Hbp) (the unit-delay feedback and the gain behave as designed)");
+        }
+    }
+
+    //==========================================================================
+    void testD5cSelfOscillation()
+    {
+        std::printf ("\n[D5c] ladder self-oscillation stays bounded at the oscillation frequency; below the threshold it decays\n");
+        constexpr double fs = 48000.0;
+        std::vector<float> kick (96000, 0.0f);
+        kick[0] = 0.1f;
+
+        for (int type : { 28, 29 })
+        {
+            const auto y = runStageConst (fs, mk (type, 1000.0, 1.0, 1.0), kick);
+            const double r1 = rmsOf (y, 48000, 72000), r2 = rmsOf (y, 72000, 96000);
+
+            int crossings = 0;
+            for (size_t i = 72001; i < 96000; ++i)
+                if ((y[i - 1] < 0.0f) != (y[i] < 0.0f))
+                    ++crossings;
+            const double freq = (double) crossings / (2.0 * 0.5);
+
+            std::printf ("        (%s, res 1: RMS %.4f -> %.4f, peak %.3f, oscillation %.1f Hz)\n", warpr::kFilterTypes[ix (type)].name, r1, r2, peakOf (y), freq);
+            check (allFinite (y) && r2 > 0.02 && r2 < 4.0 && r2 / r1 > 0.9 && r2 / r1 < 1.1 && peakOf (y) < 8.0,
+                   "res 1: the ladder self-oscillates with a steady, bounded amplitude");
+            check (std::abs (freq / 1000.0 - 1.0) < 0.08, "res 1: the oscillation sits at the cutoff within 8%");
+
+            const auto d = runStageConst (fs, mk (type, 1000.0, 0.8, 1.0), kick);
+            check (rmsOf (d, 72000, 96000) < 1.0e-5, "res 0.8 (below the 0.95 threshold): the ring dies away");
+        }
+    }
+
+    //==========================================================================
+    void testD5cCharacter()
+    {
+        std::printf ("\n[D5c] character: S&H hold rate, interpolation, ring-mod lines (RM / AM), product LP, carrier continuity, scream bound\n");
+        constexpr double fs = 48000.0;
+
+        // ---- S&H: the output changes exactly fc times per second
+        {
+            const auto sine = makeSine (60000, 100.0, fs, 0.5f);
+            int bad = 0;
+
+            for (const double fh : { 777.0, 2000.0, 5000.0 })
+            {
+                const auto y = runStageConst (fs, mk (32, fh, 0.0, 0.0), sine);
+                int changes = 0;
+                for (size_t i = 6000; i < 54000; ++i)                      // exactly one second
+                    if (y[i] != y[i - 1])
+                        ++changes;
+
+                std::printf ("        (S&H hold rate %.0f Hz: %d value changes in 1 s)\n", fh, changes);
+                if (std::abs ((double) changes - fh) > std::max (2.0, 0.005 * fh))
+                    ++bad;
+            }
+            check (bad == 0, "S&H: the output steps exactly fc times per second (hold rate = cutoff)");
+
+            const auto held = runStageConst (fs, mk (32, 2000.0, 0.0, 0.0), sine);
+            const auto lerped = runStageConst (fs, mk (32, 2000.0, 0.0, 1.0), sine);
+            const double stepHold = maxStepIn (held, 6000, 54000), stepLerp = maxStepIn (lerped, 6000, 54000);
+            std::printf ("        (S&H 2 kHz: largest step hold %.4f, interpolated %.4f)\n", stepHold, stepLerp);
+            check (stepLerp < 0.25 * stepHold && stepHold > 0.05, "S&H morph 1 interpolates between the held values (no steps), morph 0 holds");
+
+            // the pre-LP (res) removes content above the hold Nyquist: a 9 kHz sine held at 4 kHz is much quieter with res 1
+            const auto hi = makeSine (24000, 9000.0, fs, 0.5f);
+            const double open = rmsOf (runStageConst (fs, mk (32, 4000.0, 0.0, 0.0), hi), 4800, 24000);
+            const double closed = rmsOf (runStageConst (fs, mk (32, 4000.0, 1.0, 0.0), hi), 4800, 24000);
+            std::printf ("        (9 kHz sine held at 4 kHz: RMS %.4f with the pre-LP open, %.4f with res 1)\n", open, closed);
+            check (closed < 0.3 * open, "S&H res = anti-alias pre-LP: res 1 cuts content above the hold Nyquist");
+        }
+
+        // ---- Ring mod: carrier line math
+        {
+            const auto sine = makeSine (65536, 1000.0, fs, 0.5f);
+            const auto rm = runStageConst (fs, mk (33, 5000.0, 0.0, 1.0), sine);
+            const double d4 = lineAmp (rm, fs, 4000.0), s6 = lineAmp (rm, fs, 6000.0), f1 = lineAmp (rm, fs, 1000.0), c5 = lineAmp (rm, fs, 5000.0);
+            std::printf ("        (RM, 1 kHz x 5 kHz carrier: lines 4k %.4f, 6k %.4f; input 1k %.5f, carrier 5k %.5f)\n", d4, s6, f1, c5);
+            check (std::abs (d4 / 0.25 - 1.0) < 0.03 && std::abs (s6 / 0.25 - 1.0) < 0.03 && f1 < 1.0e-3 && c5 < 1.0e-3,
+                   "Ring Mod morph 1 (RM): sum and difference lines at fc +- f (0.25 each), input and carrier cancelled");
+
+            const auto am = runStageConst (fs, mk (33, 5000.0, 0.0, 0.0), sine);
+            const double a1 = lineAmp (am, fs, 1000.0), a4 = lineAmp (am, fs, 4000.0), a6 = lineAmp (am, fs, 6000.0), a5 = lineAmp (am, fs, 5000.0);
+            std::printf ("        (AM: input 1k %.4f, sidebands 4k %.4f, 6k %.4f, carrier 5k %.5f)\n", a1, a4, a6, a5);
+            check (std::abs (a1 / 0.25 - 1.0) < 0.03 && std::abs (a4 / 0.125 - 1.0) < 0.03 && std::abs (a6 / 0.125 - 1.0) < 0.03 && a5 < 1.0e-3,
+                   "Ring Mod morph 0 (AM, unipolar carrier): the input survives at half level, sidebands at a quarter, no carrier line");
+
+            const auto smooth = runStageConst (fs, mk (33, 5000.0, 1.0, 1.0), sine);
+            const double m4 = lineAmp (smooth, fs, 4000.0), m6 = lineAmp (smooth, fs, 6000.0);
+            std::printf ("        (RM with the product LP closed (res 1): 4k %.4f, 6k %.4f)\n", m4, m6);
+            check (m6 < 0.8 * m4 && m4 < 0.2, "Ring Mod res = smoothing LP of the product: res 1 pulls the upper sideband down");
+        }
+
+        // ---- Ring mod: phase-continuous carrier while the cutoff sweeps
+        {
+            const auto sine = makeSine (19200, 1000.0, fs, 0.5f);
+            const int sweepChunks = 4800 / 32;
+            const double a = std::log (1000.0), b = std::log (4000.0);
+            const auto y = runStage (fs, mk (33, 1000.0, 0.0, 1.0), sine, [&] (int ci, FilterTargets& t)
+            {
+                t.cutoffHz = (float) std::exp (a + (b - a) * std::min (1.0, (double) ci / (double) sweepChunks));
+            });
+            const double step = maxStepIn (y, 400, y.size());
+            std::printf ("        (RM carrier sweep 1 -> 4 kHz: max step %.4f, product slope bound %.4f)\n", step, 0.5 * 2.0 * kPi * 5000.0 / fs);
+            check (allFinite (y) && step < 0.45, "Ring Mod: the carrier is phase continuous across a fast cutoff sweep (no steps)");
+        }
+
+        // ---- Scream: bounded and DC free under a loud tone at the cutoff
+        {
+            const auto tone = makeSine (48000, 1000.0, fs, 0.9f);
+            bool ok = true;
+            double worstMean = 0.0, worstPeak = 0.0;
+
+            for (const double morph : { 0.0, 0.5, 1.0 })
+                for (const double res : { 0.0, 0.5, 1.0 })
+                {
+                    const auto y = runStageConst (fs, mk (31, 1000.0, res, morph, 12.0), tone);
+                    double mean = 0.0;
+                    for (size_t i = 24000; i < 48000; ++i)
+                        mean += (double) y[i];
+                    mean /= 24000.0;
+                    worstMean = std::max (worstMean, std::abs (mean));
+                    worstPeak = std::max (worstPeak, peakOf (y));
+                    ok = ok && allFinite (y);
+                }
+            std::printf ("        (Scream, 0.9 tone at fc, drive 12 dB, all morph x res: worst peak %.3f, worst |mean| %.5f)\n", worstPeak, worstMean);
+            check (ok && worstPeak < 8.0 && worstMean < 0.02, "Scream: bounded (< 8) and free of DC offset although the clip is asymmetric (a band-pass has no DC gain)");
+        }
+
+        // ---- drive: unity small-signal through the ladders, more harmonics when loud
+        {
+            const auto quiet = makeSine (14400, 1000.0, fs, 0.0001f);
+            bool unity = true;
+            double worst = 0.0;
+
+            for (int type : { 28, 29, 30 })
+            {
+                const double r0 = rmsOf (runStageConst (fs, mk (type, 4000.0, 0.4, 1.0, 0.0), quiet), 9600, 14400);
+                const double r24 = rmsOf (runStageConst (fs, mk (type, 4000.0, 0.4, 1.0, 24.0), quiet), 9600, 14400);
+                worst = std::max (worst, std::abs (r24 / r0 - 1.0));
+                unity = unity && std::abs (r24 / r0 - 1.0) < 0.02;
+            }
+            std::printf ("        (ladders, 1 kHz at -80 dBFS: drive 24 dB vs 0 dB level change %.4f)\n", worst);
+            check (unity, "ladders: drive 0 -> 24 dB leaves the small-signal level unchanged (normalised saturators)");
+
+            const auto loud = makeSine (48000, 200.0, fs, 0.8f);
+            const auto y0 = runStageConst (fs, mk (28, 4000.0, 0.2, 1.0, 0.0), loud);
+            const auto y24 = runStageConst (fs, mk (28, 4000.0, 0.2, 1.0, 24.0), loud);
+            // relative to the fundamental: the shared input saturator limits the driven signal to 1/P, so absolute levels fall
+            const double r0 = lineAmp (y0, fs, 600.0) / std::max (lineAmp (y0, fs, 200.0), 1.0e-9);
+            const double r24 = lineAmp (y24, fs, 600.0) / std::max (lineAmp (y24, fs, 200.0), 1.0e-9);
+            std::printf ("        (Res LP, 0.8 sine at 200 Hz: 3rd / 1st harmonic %.4f at 0 dB drive, %.4f at 24 dB)\n", r0, r24);
+            check (r24 > 1.5 * r0 && allFinite (y24), "ladder: drive pushes the loop into saturation (relative 3rd harmonic clearly up)");
+        }
+    }
+
+    //==========================================================================
+    void testD5cAlias()
+    {
+        std::printf ("\n[D5c] aliasing: local 2x on vs off (core-level), sine at the T2 operating points 1.1 / 3.3 / 8.7 kHz, 0.8 amplitude\n");
+        constexpr double fs = 48000.0;
+        constexpr int order = 15;
+        const int total = (1 << order) + 8192;
+        auto bin = [&] (double hz) { return fs * std::round (hz / fs * (double) (1 << order)) / (double) (1 << order); };
+
+        struct Case { int type; double fc, res, morph, drive; const char* label; };
+        const Case cases[] = {
+            { 28, 16000.0, 0.3, 1.0, 18.0, "Res LP  (fc 16k, res 0.3, drive 18 dB)" },
+            { 30, 16000.0, 0.2, 0.8, 12.0, "Dist LP (fc 16k, res 0.2, morph 0.8, drive 12 dB)" },
+            { 31, 0.0,     0.3, 0.6, 0.0,  "Scream  (fc = f0, res 0.3, morph 0.6)" }
+        };
+
+        int gateBad = 0;
+
+        for (const auto& c : cases)
+        {
+            for (const double f0Nominal : { 1100.0, 3300.0, 8700.0 })
+            {
+                const double f0 = bin (f0Nominal);
+                const auto sine = makeSine (total, f0, fs, 0.8f);
+                const double fc = c.fc > 0.0 ? c.fc : f0;
+
+                FilterDesign on, off;
+                fd::make (c.type, fc, c.res, c.morph, fs, on, c.drive, true);
+                fd::make (c.type, fc, c.res, c.morph, fs, off, c.drive, false);
+                const auto yOn = runCoreDirect (on, sine), yOff = runCoreDirect (off, sine);
+
+                const double aOn = warpr::tests::aliasDb (yOn.data(), (int) yOn.size(), fs, f0, order);
+                const double aOff = warpr::tests::aliasDb (yOff.data(), (int) yOff.size(), fs, f0, order);
+                const double gain = aOff - aOn;
+                std::printf ("        %s  f0 %6.0f Hz: alias %7.1f dB (2x) vs %7.1f dB (base rate)  improvement %5.1f dB\n", c.label, f0, aOn, aOff, gain);
+
+                if (! (allFinite (yOn) && allFinite (yOff)))
+                    ++gateBad;
+
+                // gates for the ladders; Scream is printed only (its band-pass skirt shapes the folded energy unpredictably)
+                if (c.type != 31)
+                {
+                    const double need = f0Nominal > 3000.0 ? 3.0 : -0.5;
+                    if (gain < need)
+                    {
+                        ++gateBad;
+                        DETAIL ("        GATE: %s f0 %.0f: improvement %.1f dB < %.1f dB\n", c.label, f0, gain, need);
+                    }
+                }
+            }
+        }
+        check (gateBad == 0, "ladders: the local 2x lowers the in-band alias level by >= 3 dB at 3.3 / 8.7 kHz and never worsens it at 1.1 kHz");
+
+        // ---- Ring mod: the sum line of 15 kHz x 14 kHz is at 29 kHz, i.e. an alias at 19 kHz without oversampling, removed with it
+        {
+            const auto sine = makeSine (65536, 15000.0, fs, 0.5f);
+            FilterDesign on, off;
+            fd::make (33, 14000.0, 0.0, 1.0, fs, on, 0.0, true);
+            fd::make (33, 14000.0, 0.0, 1.0, fs, off, 0.0, false);
+            const auto yOn = runCoreDirect (on, sine), yOff = runCoreDirect (off, sine);
+            const double wanted = lineAmp (yOn, fs, 1000.0), aliasOn = lineAmp (yOn, fs, 19000.0), aliasOff = lineAmp (yOff, fs, 19000.0);
+            std::printf ("        (Ring Mod 15 kHz x 14 kHz carrier: difference line 1 kHz %.4f; alias line at 19 kHz %.2e with 2x vs %.4f without)\n", wanted, aliasOn, aliasOff);
+            check (aliasOff > 0.2 && aliasOn < 1.0e-3 && std::abs (wanted / 0.25 - 1.0) < 0.03,
+                   "Ring Mod: the folded sum line (0.25 without the local 2x) is removed by it (< 1e-3) while the difference line is untouched");
+        }
+
+        // ---- S&H: aliasing is the effect (aliasByDesign): printed, never gated
+        {
+            const double f0 = bin (3300.0);
+            const auto sine = makeSine (total, f0, fs, 0.8f);
+            const auto y = runStageConst (fs, mk (32, 5000.0, 0.0, 0.0), sine);
+            std::printf ("        (S&H hold 5 kHz on a %.0f Hz sine: alias level %.1f dB - intended, flagged aliasByDesign)\n",
+                         f0, warpr::tests::aliasDb (y.data(), (int) y.size(), fs, f0, order));
+            check (warpr::kFilterTypes[32].aliasByDesign && ! warpr::kFilterTypes[32].localOversampling, "S&H runs at the base rate and is flagged aliasByDesign");
+        }
+    }
+
+    //==========================================================================
+    void testD5cStability (bool full)
+    {
+        std::printf ("\n[D5c] stability torture (cutoff x res x drive x morph x fs, types 28-33; noise and a hot square)\n");
+
+        const std::vector<double> fsList = full ? std::vector<double> { 44100.0, 48000.0, 96000.0, 192000.0 } : std::vector<double> { 48000.0 };
+        const int len = full ? 24000 : 6000;
+        const auto noise = makeNoise (len, 0.25f, 4244);
+        const auto hot = makeSquare (len, 220.0, 48000.0, 0.95f);
+
+        int runs = 0, nonFinite = 0, tooLoud = 0;
+        double worstPeak = 0.0;
+        int worstType = -1;
+
+        for (const double fs : fsList)
+            for (int type = kD5cFirst; type < kD5cEnd; ++type)
+                for (const double fc : { 20.0, 1000.0, 20000.0 })
+                    for (const double res : { 0.0, 0.5, 1.0 })
+                        for (const double drv : { 0.0, 24.0 })
+                            for (const double morph : { 0.0, 0.5, 1.0 })
+                                for (const auto* sig : { &noise, &hot })
+                                {
+                                    const auto y = runStageConst (fs, mk (type, fc, res, morph, drv), *sig);
+                                    ++runs;
+
+                                    if (! allFinite (y))
+                                    {
+                                        ++nonFinite;
+                                        DETAIL ("        non-finite: type %d fs %.0f fc %.0f res %.1f drive %.0f morph %.1f\n", type, fs, fc, res, drv, morph);
+                                        continue;
+                                    }
+
+                                    const double pk = peakOf (y);
+                                    if (pk > worstPeak)
+                                    {
+                                        worstPeak = pk;
+                                        worstType = type;
+                                    }
+
+                                    if (pk >= 8.0)
+                                    {
+                                        ++tooLoud;
+                                        DETAIL ("        |y| = %.2f: type %d fs %.0f fc %.0f res %.1f drive %.0f morph %.1f\n", pk, type, fs, fc, res, drv, morph);
+                                    }
+                                }
+
+        std::printf ("        (%d runs, noise at -12 dBFS and a 0.95 square, worst peak %.3f (type %d))\n", runs, worstPeak, worstType);
+        check (nonFinite == 0, "no NaN / inf anywhere in the sweep (self-oscillating ladders, 40 dB scream gain, 192 kHz, 20 Hz and 20 kHz cutoffs)");
+        check (tooLoud == 0, "|y| < 8 everywhere (the saturators and the small-gain feedback of Scream bound every type)");
+    }
+
+    //==========================================================================
+    void testD5cBypass()
+    {
+        std::printf ("\n[D5c] bypass nulls, open-LP rule, L/R symmetry (types 28-33)\n");
+        constexpr double fs = 48000.0;
+        const auto noise = makeNoise (9600, 0.5f, 7);
+        const auto smooth = makeMix (9600, fs);
+
+        int offBad = 0, mixBad = 0, openBad = 0, rampBad = 0, asym = 0;
+
+        for (int type = kD5cFirst; type < kD5cEnd; ++type)
+        {
+            {
+                FilterStage st;
+                st.prepare (fs);
+                const FilterTargets wild = mk (type, 120.0, 1.0, 1.0, 24.0, 1.0, false);          // enable OFF
+                st.snap (wild);
+                std::vector<float> l = noise, r = noise;
+                for (size_t i = 0; i < l.size(); i += 32)
+                    st.process (l.data() + i, r.data() + i, 32, wild);
+                if (! (bitEqual (l, noise) && bitEqual (r, noise) && st.isParked()))
+                    ++offBad;
+            }
+            {
+                FilterStage st;
+                st.prepare (fs);
+                const FilterTargets zero = mk (type, 300.0, 1.0, 0.5, 12.0, 0.0, true);           // mix 0
+                st.snap (zero);
+                std::vector<float> l = noise, r = noise;
+                for (size_t i = 0; i < l.size(); i += 32)
+                    st.process (l.data() + i, r.data() + i, 32, zero);
+                if (! (bitEqual (l, noise) && bitEqual (r, noise)))
+                    ++mixBad;
+            }
+            {
+                FilterStage st;
+                st.prepare (fs);
+                const FilterTargets open = mk (type, 20000.0, 0.0, 0.0, 0.0, 1.0, true);
+                st.snap (open);
+                std::vector<float> l = noise, r = noise;
+                for (size_t i = 0; i < l.size(); i += 32)
+                    st.process (l.data() + i, r.data() + i, 32, open);
+                if (st.isParked())
+                    ++openBad;
+            }
+            {
+                const FilterTargets on = mk (type, 800.0, 0.5, 0.4);
+                const int offAt = 160;
+                const auto y = runStage (fs, on, smooth, [&] (int ci, FilterTargets& t) { if (ci >= offAt) t.enable = false; });
+                bool tailExact = true;
+                for (size_t i = (size_t) offAt * 32 + 256; i < smooth.size(); ++i)
+                    tailExact = tailExact && y[i] == smooth[i];
+                if (! tailExact)
+                    ++rampBad;
+            }
+            {
+                std::vector<float> r;
+                const int other = kD5cFirst + (type - kD5cFirst + 1) % (kD5cEnd - kD5cFirst);
+                const auto l = runStage (fs, mk (type, 900.0, 0.4, 0.3, 6.0), noise,
+                                         [other] (int ci, FilterTargets& t) { if (ci == 100) t.type = other; }, &r);
+                if (! bitEqual (l, r))
+                    ++asym;
+            }
+        }
+
+        check (offBad == 0, "filterEnable off: bit-identical output and a parked stage for every type 28-33");
+        check (mixBad == 0, "filterMix 0: bit-identical output for every type 28-33");
+        check (openBad == 0, "the open low-pass rule does not apply: a ladder / scream / S&H / ring mod at 20 kHz, res 0 stays live");
+        check (rampBad == 0, "disabling mid-note ramps over 5 ms and is bit-exact afterwards (ladder, hold and half-band memory are parked)");
+        check (asym == 0, "identical L / R input gives bit-identical L / R output (incl. drive and a mid-run switch to the next nonlinear type)");
+
+        // re-enabling after a parked period starts clean: equals a fresh stage once the ramp is over
+        {
+            const FilterTargets on = mk (30, 700.0, 0.5, 0.5, 6.0);          // res 0.5: the ring (~1.5 ms/e-fold) is gone well before sample 2000
+            const auto ref = runStageConst (fs, on, noise);
+            std::vector<float> l = noise, r = noise;
+            FilterStage st;
+            st.prepare (fs);
+            FilterTargets t = on;
+            st.snap (t);
+            for (size_t i = 0; i < 3200; i += 32)
+                st.process (l.data() + i, r.data() + i, 32, t);
+            t.enable = false;
+            for (size_t i = 3200; i < 6400; i += 32)
+                st.process (l.data() + i, r.data() + i, 32, t);
+            const bool parked = st.isParked();
+            t.enable = true;
+            std::vector<float> a (noise.begin(), noise.begin() + 3200), b = a;
+            for (size_t i = 0; i < a.size(); i += 32)
+                st.process (a.data() + i, b.data() + i, 32, t);
+            double worst = 0.0;
+            for (size_t i = 2000; i < a.size(); ++i)
+                worst = std::max (worst, (double) std::abs (a[i] - ref[i]));
+            std::printf ("        (re-enabled Dist LP vs a fresh one after 2000 samples: %.2e)\n", worst);
+            check (parked && worst < 2.0e-3, "a parked nonlinear core forgets its history: after re-enable it matches a fresh run");
+        }
+    }
+
+    //==========================================================================
+    void testD5cSwitching()
+    {
+        std::printf ("\n[D5c] type-switch crossfade into / out of / among types 28-33 (DiscreteSwitchFade, 10 ms + 64 samples priming)\n");
+        constexpr double fs = 48000.0;
+        const auto sig = makeMix (12000, fs);
+
+        int pairs = 0, stepBad = 0, tailBad = 0;
+        double worstRatio = 0.0;
+
+        for (int a = 0; a < kD5cEnd; ++a)
+            for (int b = 0; b < kD5cEnd; ++b)
+            {
+                if (a == b || (a < kD5cFirst && b < kD5cFirst))
+                    continue;                                       // pairs among the linear types are covered by D5a / D5b
+
+                const auto r = switchPair (a, b, fs, sig);
+                ++pairs;
+
+                // S&H strobes fall at different instants in the reference and in the switched render: a little slack
+                const double slack = (a == 32 || b == 32) ? 1.5 : 1.0;
+                const bool stepOk = r.step <= r.bound * slack;
+                worstRatio = std::max (worstRatio, r.step / std::max (r.bound * slack, 1.0e-9));
+
+                if (! stepOk)
+                {
+                    ++stepBad;
+                    DETAIL ("        step: %d -> %d: max step %.5f > bound %.5f\n", a, b, r.step, r.bound * slack);
+                }
+
+                // S&H and Ring Mod keep time-dependent state (hold clock, carrier phase): the switched core starts at phase 0,
+                // the reference run is already mid-cycle, so only the level (RMS) is compared for those targets
+                if (b < 32 && ! r.tailOk)
+                {
+                    ++tailBad;
+                    DETAIL ("        tail: %d -> %d: |switched - new| = %.5f\n", a, b, r.tail);
+                }
+            }
+
+        std::printf ("        (%d transitions; worst step / bound = %.3f)\n", pairs, worstRatio);
+        check (stepBad == 0, "every transition: max step <= natural step + 2 x difference / 480 samples (S&H pairs 1.5x) - click-free");
+        check (tailBad == 0, "every transition into Res LP / Res HP / Dist LP / Scream and the linear types ends on the new type (< 2e-3)");
+
+        int levelBad = 0;
+        double worstLevel = 0.0;
+        for (int src : { 3, 20, 28, 31 })
+            for (int dst : { 32, 33 })
+            {
+                const FilterTargets ta = mk (src, 1200.0, 0.3, 0.2), tb = mk (dst, 1200.0, 0.3, 0.2);
+                const auto yb = runStageConst (fs, tb, sig);
+                const auto ysw = runStage (fs, ta, sig, [dst] (int ci, FilterTargets& t) { if (ci * 32 >= 187 * 32) t.type = dst; });
+                const double rb = rmsOf (yb, 8000, 12000), rs = rmsOf (ysw, 8000, 12000);
+                const double rel = std::abs (rs / std::max (rb, 1.0e-9) - 1.0);
+                worstLevel = std::max (worstLevel, rel);
+                if (rel > 0.15 || ! allFinite (ysw))
+                {
+                    ++levelBad;
+                    DETAIL ("        level: %d -> %d: RMS %.4f vs %.4f\n", src, dst, rs, rb);
+                }
+            }
+        std::printf ("        (switches into S&H / Ring Mod: worst RMS difference %.3f)\n", worstLevel);
+        check (levelBad == 0, "switches into S&H / Ring Mod settle to the same level as a fresh run (RMS within 15%)");
+    }
+
+    //==========================================================================
+    void testD5cSweepsAndWalk (bool full)
+    {
+        std::printf ("\n[D5c] ladder cutoff sweep and random modulation walk over types 28-33\n");
+        constexpr double fs = 48000.0;
+
+        {
+            const auto sine = makeSine (19200, 1000.0, fs, 0.25f);
+            const int sweepChunks = 9600 / 32;
+            const double a = std::log (400.0), b = std::log (4000.0);
+            double worst = 0.0;
+            bool finite = true;
+
+            for (int type : { 28, 29, 30 })
+            {
+                const auto up = runStage (fs, mk (type, 400.0, 0.5, 1.0), sine, [&] (int ci, FilterTargets& t)
+                {
+                    t.cutoffHz = (float) std::exp (a + (b - a) * std::min (1.0, (double) ci / (double) sweepChunks));
+                });
+                const auto down = runStage (fs, mk (type, 4000.0, 0.5, 1.0), sine, [&] (int ci, FilterTargets& t)
+                {
+                    t.cutoffHz = (float) std::exp (b + (a - b) * std::min (1.0, (double) ci / (double) sweepChunks));
+                });
+                worst = std::max ({ worst, maxStepIn (up, 400, up.size()), maxStepIn (down, 400, down.size()) });
+                finite = finite && allFinite (up) && allFinite (down);
+            }
+            std::printf ("        (ladder sweeps 400 <-> 4000 Hz through a 1 kHz tone: largest sample step %.4f)\n", worst);
+            check (finite && worst < 0.2, "swept ladders: finite and no sample step above 0.2 (the tone itself steps 0.033 at most)");
+        }
+
+        const int chunks = full ? 15000 : 3000;
+        juce::Random rng (321);
+        FilterStage st;
+        st.prepare (fs);
+        FilterTargets t = mk (28, 1000.0);
+        st.snap (t);
+
+        std::vector<float> l (32), r (32);
+        bool finite = true;
+        double peak = 0.0;
+
+        for (int c = 0; c < chunks; ++c)
+        {
+            if (rng.nextInt (25) == 0)
+                t.type = kD5cFirst + rng.nextInt (kD5cEnd - kD5cFirst);
+
+            t.cutoffHz = (float) (20.0 * std::pow (1000.0, (double) rng.nextFloat()));
+            t.res = rng.nextFloat();
+            t.morph = rng.nextFloat();
+            t.driveDb = rng.nextInt (3) == 0 ? 24.0f * rng.nextFloat() : 0.0f;
+            t.mix = rng.nextFloat() > 0.2f ? 1.0f : rng.nextFloat();
+            t.enable = rng.nextInt (200) != 0;
+
+            for (size_t i = 0; i < 32; ++i)
+                l[i] = r[i] = 0.3f * (rng.nextFloat() * 2.0f - 1.0f);
+
+            st.process (l.data(), r.data(), 32, t);
+
+            for (size_t i = 0; i < 32; ++i)
+            {
+                finite = finite && std::isfinite (l[i]) && std::isfinite (r[i]);
+                peak = std::max ({ peak, (double) std::abs (l[i]), (double) std::abs (r[i]) });
+            }
+        }
+
+        std::printf ("        (%d chunks of fully random cutoff / res / morph / drive / mix / type 28-33, peak %.3f)\n", chunks, peak);
+        check (finite, "random modulation walk over types 28-33: no NaN / inf");
+        check (peak < 64.0, "random modulation walk over types 28-33: output below the voice guard (|y| < 64)");
+    }
+
+    //==========================================================================
+    void testD5cBackend()
+    {
+        std::printf ("\n[D5c] backend: computeFilterResponse for the nonlinear types\n");
+        constexpr int n = 256;
+
+        PluginProcessor p;
+        auto& be = p.getBackendImpl();
+        be.setSampleRate (48000.0);
+
+        std::array<float, n> db {};
+        auto freq = [] (int i) { return 20.0 * std::pow (1000.0, (double) i / (double) (n - 1)); };
+
+        bool allOk = true;
+        int notEqual = 0;
+
+        for (int type = kD5cFirst; type < kD5cEnd; ++type)
+        {
+            setParam (p, "filterType", (float) type);
+            setParam (p, "filterCutoff", 2000.0f);
+            setParam (p, "filterResonance", 0.6f);
+            setParam (p, "filterMorph", 0.4f);
+            setParam (p, "filterDrive", 0.0f);
+            be.computeFilterResponse (db.data(), n);
+
+            bool inRange = true;
+            double worst = 0.0;
+            for (int i = 0; i < n; ++i)
+            {
+                inRange = inRange && std::isfinite (db[ix (i)]) && db[ix (i)] >= -48.0f && db[ix (i)] <= 24.0f;
+                worst = std::max (worst, std::abs ((double) db[ix (i)] - FilterResponse::magnitudeDbAt (type, 2000.0, 0.6, 0.0, 0.4, 48000.0, freq (i))));
+            }
+            allOk = allOk && inRange;
+            if (worst > 0.01)
+                ++notEqual;
+
+            const float mx = *std::max_element (db.begin(), db.end()), mn = *std::min_element (db.begin(), db.end());
+            std::printf ("        %d %s: %.1f .. %.1f dB\n", type, warpr::kFilterTypes[ix (type)].name, (double) mn, (double) mx);
+
+            if (type == 33)
+                check (mx == 0.0f && mn == 0.0f, "Ring Mod: flat 0 dB line");
+            else if (type == 32)
+                check (db[0] > -0.5f && db[n - 1] < -20.0f, "S&H: the drawn pre-LP is open at 20 Hz and falls away towards 20 kHz");
+            else
+                check (mx - mn > 3.0f, "ladders / Scream: a real curve (not flat)");
+        }
+        check (allOk && notEqual == 0, "types 28-33: the backend curve equals FilterResponse point for point, finite, inside [-48, +24] dB");
+
+        // drive does not move the curve
+        {
+            setParam (p, "filterType", 28.0f);
+            be.computeFilterResponse (db.data(), n);
+            const auto before = db;
+            setParam (p, "filterDrive", 18.0f);
+            be.computeFilterResponse (db.data(), n);
+            check (before == db, "the drawn curve ignores the drive (small-signal)");
+        }
+
+        // timing
+        {
+            setParam (p, "filterType", 28.0f);
+            setParam (p, "filterResonance", 0.9f);
+            double best = 1.0e9;
+            for (int rep = 0; rep < 50; ++rep)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                be.computeFilterResponse (db.data(), n);
+                const auto t1 = std::chrono::steady_clock::now();
+                best = std::min (best, std::chrono::duration<double, std::milli> (t1 - t0).count());
+            }
+            std::printf ("        (computeFilterResponse, 256 points, Res LP: best of 50 = %.3f ms)\n", best);
+            check (best < 1.0, "computeFilterResponse returns 256 ladder points in < 1 ms");
+        }
+    }
+
+    //==========================================================================
+    void testD5cProcessor()
+    {
+        std::printf ("\n[D5c] allocations (half-band buffers!), determinism, processor-level nulls\n");
+        constexpr double fs = 48000.0;
+
+        // class level
+        {
+            FilterStage st;
+            st.prepare (fs);
+            FilterTargets t = mk (28, 400.0, 0.9, 0.3, 6.0);
+            st.snap (t);
+            std::vector<float> l (32, 0.1f), r (32, 0.1f);
+            juce::Random rng (11);
+
+            std::size_t allocations = 0;
+            {
+                warpr::tests::ScopedAllocCount counter;
+                for (int round = 0; round < 600; ++round)
+                {
+                    if (round % 5 == 0)
+                        t.type = kD5cFirst + (round / 5) % 6;
+                    t.cutoffHz = 50.0f + 8000.0f * rng.nextFloat();
+                    t.res = rng.nextFloat();
+                    t.morph = rng.nextFloat();
+                    t.driveDb = 24.0f * rng.nextFloat();
+                    for (size_t i = 0; i < 32; ++i)
+                        l[i] = r[i] = 0.4f * (rng.nextFloat() * 2.0f - 1.0f);
+                    st.process (l.data(), r.data(), 32, t);
+                }
+                allocations = counter.count();
+            }
+            check (allocations == 0, "FilterStage: zero allocations while running and switching all of types 28-33 (600 chunks, local 2x active)");
+        }
+
+        // processor level
+        {
+            PluginProcessor p;
+            prepSustained (p);
+            setParam (p, "unisonVoices", 4.0f);
+            setParam (p, "filterType", 28.0f);
+            setParam (p, "filterCutoff", 700.0f);
+            setParam (p, "filterResonance", 0.8f);
+            setParam (p, "filterDrive", 6.0f);
+            p.setPlayConfigDetails (0, 2, fs, 256);
+            p.prepareToPlay (fs, 256);
+
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer on;
+            on.addEvent (juce::MidiMessage::noteOn (1, 52, 0.9f), 0);
+            on.addEvent (juce::MidiMessage::noteOn (1, 59, 0.9f), 0);
+            p.processBlock (buf, on);
+            juce::MidiBuffer none;
+
+            std::size_t allocations = 0;
+            bool sounding = false;
+            for (int round = 0; round < 18; ++round)
+            {
+                setParam (p, "filterType", (float) (kD5cFirst + round % 6));        // allocates (APVTS): uncounted
+                setParam (p, "filterCutoff", 200.0f + 900.0f * (float) (round % 4));
+                setParam (p, "filterMorph", 0.15f * (float) (round % 7));
+
+                warpr::tests::ScopedAllocCount counter;
+                for (int i = 0; i < 6; ++i)
+                {
+                    p.processBlock (buf, none);
+                    sounding = sounding || p.getSynth().getNumActiveVoices() > 0;
+                }
+                allocations += counter.count();
+            }
+
+            check (sounding, "the counted window contained sounding voices");
+            check (allocations == 0, "processBlock performs zero allocations with active nonlinear filters (2 voices x unison 4, 18 type changes)");
+            p.releaseResources();
+        }
+
+        // determinism
+        {
+            auto run = [&]
+            {
+                PluginProcessor p;
+                prepSustained (p);
+                setParam (p, "unisonVoices", 3.0f);
+                setParam (p, "filterType", 28.0f);
+                setParam (p, "filterCutoff", 900.0f);
+                setParam (p, "filterResonance", 0.7f);
+                setParam (p, "filterMorph", 0.5f);
+                return renderBlocks (p, fs, 90, 256, 50, [&p] (int b)
+                {
+                    if (b == 12) setParam (p, "filterType", 31.0f);
+                    if (b == 24) setParam (p, "filterType", 33.0f);
+                    if (b == 36) setParam (p, "filterType", 32.0f);
+                    if (b == 48) setParam (p, "filterType", 30.0f);
+                    if (b == 60) setParam (p, "filterCutoff", 2500.0f);
+                    if (b == 72) setParam (p, "filterType", 29.0f);
+                });
+            };
+
+            const auto a = run(), b = run();
+            check (bitEqual (a.l, b.l) && bitEqual (a.r, b.r) && peakOf (a.l) > 0.02, "two identical sessions with mid-note changes among the D5c types are bit-equal");
+        }
+
+        // processor-level nulls
+        {
+            auto make = [&] (const std::function<void (PluginProcessor&)>& cfg)
+            {
+                PluginProcessor p;
+                prepSustained (p);
+                cfg (p);
+                return renderBlocks (p, fs, 40, 256, 48, nullptr);
+            };
+
+            const auto defaultR = make ([] (PluginProcessor&) {});
+            const auto mixZero = make ([] (PluginProcessor& p)
+            {
+                setParam (p, "filterType", 31.0f); setParam (p, "filterCutoff", 200.0f); setParam (p, "filterResonance", 1.0f);
+                setParam (p, "filterMorph", 1.0f); setParam (p, "filterMix", 0.0f);
+            });
+            const auto offRing = make ([] (PluginProcessor& p)
+            {
+                setParam (p, "filterType", 33.0f); setParam (p, "filterEnable", 0.0f); setParam (p, "filterDrive", 24.0f);
+            });
+            const auto active = make ([] (PluginProcessor& p)
+            {
+                setParam (p, "filterType", 28.0f); setParam (p, "filterCutoff", 400.0f); setParam (p, "filterResonance", 0.7f);
+            });
+
+            check (bitEqual (defaultR.l, mixZero.l) && bitEqual (defaultR.r, mixZero.r), "processor: Scream with filterMix 0 is bit-identical to the default patch");
+            check (bitEqual (defaultR.l, offRing.l) && bitEqual (defaultR.r, offRing.r), "processor: Ring Mod with filterEnable off is bit-identical to the default patch");
+            const double nl = nullDb (defaultR.l, active.l);
+            std::printf ("        (Res LP @ 400 Hz, res 0.7 vs bypass: null %.1f dB)\n", nl);
+            check (nl > -20.0 && allFinite (active.l) && allFinite (active.r), "processor: an active Res LP really changes the sound");
+        }
+    }
 }
 
 JUCE_END_IGNORE_WARNINGS_GCC_LIKE
@@ -2523,6 +3611,21 @@ int runPhaseD5Tests (bool full)
     testD5bKeyTrack();
     testD5bBackend();
     testD5bProcessor();
+
+    std::printf ("\n=== Phase D5c: nonlinear filters (types 28-33: Res LP / Res HP / Dist LP / Scream / S&H / Ring Mod, local 2x) (%s) ===\n", full ? "full" : "quick");
+
+    testD5cTable();
+    testD5cFormulas();
+    testD5cResponse (full);
+    testD5cSelfOscillation();
+    testD5cCharacter();
+    testD5cAlias();
+    testD5cStability (full);
+    testD5cBypass();
+    testD5cSwitching();
+    testD5cSweepsAndWalk (full);
+    testD5cBackend();
+    testD5cProcessor();
 
     return failures;
 }

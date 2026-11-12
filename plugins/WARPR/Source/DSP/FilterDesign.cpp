@@ -214,6 +214,134 @@ namespace warpr
             }
         }
 
+        //======================================================================
+        // D5c helpers: nonlinear family (types 28-33)
+        //======================================================================
+
+        /** Global feedback of the ladders: k = 4.2 res.  The TPT ladder's linear stability limit is exactly k = 4 (four equal
+            poles, -180 degrees and 1/4 magnitude at fc), so the last 5% of the knob (res > 0.952) self-oscillates; the
+            saturators bound the oscillation. */
+        constexpr double kLadderFeedback = 4.2;
+
+        /** Largest feedback the DISPLAY uses: just below the limit, so a self-oscillating setting draws a very tall (clamped)
+            peak instead of the unstable pole's meaningless magnitude. */
+        constexpr double kLadderDisplayFeedback = 3.98;
+
+        void buildNonlinear (FilterDesign& d, int type, double fc, double res, double morph, double driveDb,
+                             double fs, bool localOs) noexcept
+        {
+            NonlinearSpec& nl = d.nl;
+            nl = NonlinearSpec {};
+            d.topo = FilterDesign::Topo::Nonlinear;
+
+            const double drive = std::pow (10.0, std::min (24.0, std::max (0.0, driveDb)) / 20.0);
+            nl.os2x = localOs && type != 32;
+            nl.rateFactor = nl.os2x ? 2.0 : 1.0;
+            const double fsCore = fs * nl.rateFactor;
+
+            if (type >= 28 && type <= 30)                                   // ladders
+            {
+                nl.kind = NonlinearSpec::Kind::Ladder;
+                nl.highpass = type == 29;
+                nl.g = gOf (fc, fsCore);
+                nl.bigG = nl.g / (1.0 + nl.g);
+                nl.k = kLadderFeedback * res;
+                nl.comp = nl.highpass ? 1.0 : 1.0 + 0.5 * nl.k;               // keeps the bass from collapsing at high resonance
+                nl.tapBlend = type == 30 ? 1.0 : morph;                       // 28 / 29: 2-pole (0) <-> 4-pole (1); 30 is always 4-pole
+                nl.loopScale = type == 30 ? drive * (1.0 + 15.0 * morph) : drive;
+            }
+            else if (type == 31)                                            // Scream
+            {
+                nl.kind = NonlinearSpec::Kind::Scream;
+                const double q = 0.7 * std::pow (40.0, res);                 // 0.7 .. 28
+                const double k = 1.0 / q;
+                setSvf (next (d), gOf (fc, fsCore), k, 0.0, k, 0.0);        // peak-normalised band-pass
+                nl.inGain = std::pow (10.0, 2.0 * morph) * drive;           // 0 .. 40 dB, times the drive
+                nl.fbAmount = 0.95 * morph;
+            }
+            else if (type == 32)                                            // S&H (base rate, aliasing by design)
+            {
+                nl.kind = NonlinearSpec::Kind::SampleHold;
+                const double open = 0.499 * fs;                              // pre-LP effectively open at res 0
+                const double hold = std::max (fc, 20.0);
+                const double corner = open * std::pow (std::min (1.0, 0.4 * hold / open), res);
+                const double g = gOf (corner, fs);
+                setOnePole (next (d), g, 0.0, 1.0);
+                setOnePole (next (d), g, 0.0, 1.0);
+                nl.holdStep = hold / fs;
+                nl.interp = morph;
+            }
+            else                                                            // 33: Ring Mod
+            {
+                nl.kind = NonlinearSpec::Kind::RingMod;
+                nl.carrierStep = fc / fsCore;
+                nl.carrierMorph = morph;
+                const double open = 0.499 * fsCore;
+                const double floorHz = std::min (open, std::max (40.0, 0.5 * fc));
+                const double corner = open * std::pow (floorHz / open, res);
+                const double g = gOf (corner, fsCore);
+                nl.smoothG = g / (1.0 + g);
+            }
+        }
+
+        std::complex<double> sectionH (const FilterSection& s, double w) noexcept
+        {
+            const std::complex<double> sv (0.0, w / s.g);
+
+            if (s.kind == FilterSection::Kind::Svf)
+            {
+                const std::complex<double> den = sv * sv + s.k * sv + 1.0;
+                return s.m0 + s.m1 * (sv / den) + s.m2 * (1.0 / den);
+            }
+
+            if (s.kind == FilterSection::Kind::OnePole)
+                return s.m0 + s.m2 * (1.0 / (1.0 + sv));
+
+            return { 1.0, 0.0 };
+        }
+
+        /** Small-signal (every saturator at unit slope) transfer function of the nonlinear family, see FilterResponse. */
+        std::complex<double> nonlinearResponse (const FilterDesign& d, double hz, double fs) noexcept
+        {
+            const NonlinearSpec& nl = d.nl;
+            const double f = std::min (hz, 0.49999 * fs);
+            const double w = std::tan (kPi * f / (fs * nl.rateFactor));
+
+            switch (nl.kind)
+            {
+                case NonlinearSpec::Kind::Ladder:
+                {
+                    const std::complex<double> h1 = 1.0 / (1.0 + std::complex<double> (0.0, w / nl.g));
+                    const std::complex<double> h2 = h1 * h1, h4 = h2 * h2;
+                    const double k = std::min (nl.k, kLadderDisplayFeedback);
+                    const std::complex<double> den = 1.0 + k * h4;
+
+                    std::complex<double> num;
+                    if (nl.highpass)
+                    {
+                        const std::complex<double> q = 1.0 - h1, q2 = q * q;
+                        num = (1.0 - nl.tapBlend) * q2 + nl.tapBlend * q2 * q2;
+                    }
+                    else
+                        num = (1.0 - nl.tapBlend) * h2 + nl.tapBlend * h4;
+
+                    return nl.comp * num / den;
+                }
+
+                case NonlinearSpec::Kind::Scream:
+                    return sectionH (d.sec[0], w);
+
+                case NonlinearSpec::Kind::SampleHold:
+                    return sectionH (d.sec[0], w) * sectionH (d.sec[1], w);
+
+                case NonlinearSpec::Kind::RingMod:
+                case NonlinearSpec::Kind::None:
+                    break;
+            }
+
+            return { 1.0, 0.0 };
+        }
+
         /** Vowel position of the STEPPED Vowel type: the morph knob picks the nearest vowel (plateau), and only a short
             window (0.4 of a vowel step) around every midpoint is interpolated, so the 10 ms morph smoother turns a vowel
             change into an ~8 ms glide of the formants instead of a click. */
@@ -268,7 +396,8 @@ namespace warpr
             return type >= 0 && type < kNumLowpassTypes && cutoffHz >= kOpenCutoffHz && res < 0.01 && driveDb < 0.01;
         }
 
-        void make (int type, double cutoffHz, double res, double morph, double fs, FilterDesign& d) noexcept
+        void make (int type, double cutoffHz, double res, double morph, double fs, FilterDesign& d,
+                   double driveDb, bool localOversampling) noexcept
         {
             // Header reset only (a FilterDesign carries 16 sections; unused ones are never read).
             d.topo = FilterDesign::Topo::Series;
@@ -422,7 +551,11 @@ namespace warpr
                 d.outWet = 0.5;
                 d.gain = 1.0 / std::sqrt (0.5 * (1.0 + 1.0 / (1.0 - std::abs (d.fb))));
             }
-            // else: not implemented in this phase (D5c) -> identity design
+            else if (type >= 28 && type <= 33)                              // nonlinear family (D5c)
+            {
+                buildNonlinear (d, type, fc, res, morph, driveDb, fs, localOversampling);
+            }
+            // else: out-of-range index -> identity design
         }
 
         std::complex<double> response (const FilterDesign& d, double hz, double fs) noexcept
@@ -430,6 +563,9 @@ namespace warpr
             const double f = std::min (hz, 0.49999 * fs);
             const double w = std::tan (kPi * f / fs);
             const double om = 2.0 * kPi * f / fs;                     // angular frequency in rad/sample
+
+            if (d.topo == FilterDesign::Topo::Nonlinear)
+                return nonlinearResponse (d, hz, fs);
 
             // ---- comb: H = c / (1 - sign g Hd Hlp)
             if (d.topo == FilterDesign::Topo::Comb)

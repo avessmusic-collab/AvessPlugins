@@ -42,8 +42,14 @@ namespace warpr
     }
 
     //==========================================================================
+    FilterCore::FilterCore()
+    {
+        hb.load();            // designed once (thread-safe static); construction is never on the audio thread
+    }
+
     void FilterCore::prepare (double sampleRate)
     {
+        hb.load();
         const auto length = static_cast<std::size_t> (filterdesign::combBufferLength (sampleRate));
 
         for (auto& l : line)
@@ -66,6 +72,13 @@ namespace warpr
         writePos.fill (0);
         haveDelay = false;
 
+        for (auto& s : nls)
+            s.reset();
+        for (auto& s : hbUp)
+            s.reset();
+        for (auto& s : hbDown)
+            s.reset();
+
         if (lineDirty)
         {
             for (auto& l : line)
@@ -84,6 +97,7 @@ namespace warpr
         design.outDry = d.outDry;
         design.outWet = d.outWet;
         design.comb = d.comb;
+        design.nl = d.nl;
 
         for (int i = 0; i < d.numSections; ++i)
             design.sec[static_cast<std::size_t> (i)] = d.sec[static_cast<std::size_t> (i)];
@@ -132,6 +146,12 @@ namespace warpr
     void FilterCore::process (int ch, const double* in, double* out, int n) noexcept
     {
         const auto c = static_cast<std::size_t> (ch);
+
+        if (design.topo == FilterDesign::Topo::Nonlinear)
+        {
+            processNonlinear (c, in, out, n);
+            return;
+        }
 
         // ---- comb: delay line + loop one-pole + (linear below 6) soft limiter
         if (design.topo == FilterDesign::Topo::Comb)
@@ -246,6 +266,208 @@ namespace warpr
         // ---- plain series chain (D5a types, serial all-pass)
         for (int i = 0; i < n; ++i)
             out[i] = runChain (c, in[i]) * design.gain;
+    }
+
+    //==========================================================================
+    // D5c: nonlinear kernels.  Each runs in place on `n` samples at the CORE rate (2 fs behind the local half-band pair,
+    // or fs for the S&H), per channel, in double.
+    //==========================================================================
+    void FilterCore::processNonlinear (std::size_t c, const double* in, double* out, int n) noexcept
+    {
+        constexpr int chunk = 64;                       // base samples per pass; 2 * chunk core samples on the stack
+        double buf[2 * chunk];
+        const bool os = design.nl.os2x;
+
+        for (int done = 0; done < n; done += chunk)
+        {
+            const int m = std::min (chunk, n - done);
+
+            if (os)
+            {
+                nonlin::up2 (hb, hbUp[c], in + done, buf, m);
+                runKernel (c, buf, 2 * m);
+                nonlin::down2 (hb, hbDown[c], buf, out + done, m);
+            }
+            else
+            {
+                for (int i = 0; i < m; ++i)
+                    buf[i] = in[done + i];
+
+                runKernel (c, buf, m);
+
+                for (int i = 0; i < m; ++i)
+                    out[done + i] = buf[i];
+            }
+        }
+    }
+
+    void FilterCore::runKernel (std::size_t c, double* buf, int n) noexcept
+    {
+        const NonlinearSpec& nl = design.nl;
+        NlState& st = nls[c];
+
+        switch (nl.kind)
+        {
+            //------------------------------------------------------------------ ladders (28 / 29 / 30)
+            case NonlinearSpec::Kind::Ladder:
+            {
+                // y_i = G v_i + (1 - G) s_i with v_1 = sat (L u) / L, v_i = sat (L y_{i-1}) / L and u = comp x - k y4.
+                // The saturators are replaced by their SECANT gains m_i = sat (b) / b (taken from the previous sample's
+                // operating point) to solve the zero-delay loop in closed form:  y4 = A u + B,  u = comp x - k y4.  The
+                // forward pass then uses the exact saturators and refreshes the secants, so state and outputs are exact
+                // (bounded: every v_i is in [-1/L, 1/L]); only the loop solve lags by one sample.
+                const double bigG = nl.bigG, omG = 1.0 - bigG, k = nl.k, comp = nl.comp, loop = nl.loopScale, invLoop = 1.0 / loop;
+                const double g4 = bigG * bigG * bigG * bigG;
+                const double tb = nl.tapBlend;
+                const bool hp = nl.highpass;
+                double s0 = st.s[0], s1 = st.s[1], s2 = st.s[2], s3 = st.s[3];
+                double m0 = st.m[0], m1 = st.m[1], m2 = st.m[2], m3 = st.m[3];
+
+                for (int i = 0; i < n; ++i)
+                {
+                    const double xin = comp * buf[i];
+                    const double f1 = omG * s0, f2 = omG * s1, f3 = omG * s2, f4 = omG * s3;
+                    const double a = g4 * m0 * m1 * m2 * m3;
+                    const double b = f4 + bigG * m3 * (f3 + bigG * m2 * (f2 + bigG * m1 * f1));
+                    const double y4p = (a * xin + b) / (1.0 + k * a);
+                    const double u = xin - k * y4p;
+
+                    double arg = loop * u;
+                    const double y1 = bigG * (nonlin::sat (arg) * invLoop) + f1;
+                    m0 = nonlin::secant (arg);
+
+                    arg = loop * y1;
+                    const double y2 = bigG * (nonlin::sat (arg) * invLoop) + f2;
+                    m1 = nonlin::secant (arg);
+
+                    arg = loop * y2;
+                    const double y3 = bigG * (nonlin::sat (arg) * invLoop) + f3;
+                    m2 = nonlin::secant (arg);
+
+                    arg = loop * y3;
+                    const double y4 = bigG * (nonlin::sat (arg) * invLoop) + f4;
+                    m3 = nonlin::secant (arg);
+
+                    s0 = 2.0 * y1 - s0;
+                    s1 = 2.0 * y2 - s1;
+                    s2 = 2.0 * y3 - s2;
+                    s3 = 2.0 * y4 - s3;
+
+                    if (hp)
+                        buf[i] = (1.0 - tb) * (u - 2.0 * y1 + y2) + tb * (u - 4.0 * y1 + 6.0 * y2 - 4.0 * y3 + y4);
+                    else
+                        buf[i] = (1.0 - tb) * y2 + tb * y4;
+                }
+
+                st.s = { { s0, s1, s2, s3 } };
+                st.m = { { m0, m1, m2, m3 } };
+                break;
+            }
+
+            //------------------------------------------------------------------ Scream (31)
+            case NonlinearSpec::Kind::Scream:
+            {
+                // TPT SVF band-pass (peak gain 1) fed by  clipAsym (inGain x) + fbAmount * clipAsym (y[n-1]).  The clipper
+                // has slope <= 1 and the band-pass |H| <= 1, so the loop gain is <= fbAmount < 1 (small-gain theorem):
+                // bounded for every input, Q and delay.  The band-pass has no DC gain, so the clip's DC offset never reaches
+                // the output.
+                const FilterSection& sc = design.sec[0];
+                const double inGain = nl.inGain, fbAmount = nl.fbAmount;
+                double zc1 = st.ic1, zc2 = st.ic2, fb = st.fb;
+
+                for (int i = 0; i < n; ++i)
+                {
+                    const double u = nonlin::clipAsym (inGain * buf[i]) + fbAmount * fb;
+                    const double v3 = u - zc2;
+                    const double v1 = sc.a1 * zc1 + sc.a2 * v3;
+                    const double v2 = zc2 + sc.a2 * zc1 + sc.a3 * v3;
+                    zc1 = 2.0 * v1 - zc1;
+                    zc2 = 2.0 * v2 - zc2;
+
+                    const double y = sc.m1 * v1;
+                    fb = nonlin::clipAsym (y);
+                    buf[i] = y;
+                }
+
+                st.ic1 = zc1;
+                st.ic2 = zc2;
+                st.fb = fb;
+                break;
+            }
+
+            //------------------------------------------------------------------ Sample & hold (32), base rate
+            case NonlinearSpec::Kind::SampleHold:
+            {
+                const double ga = design.sec[0].a1, gb = design.sec[1].a1;
+                const double step = nl.holdStep, interp = nl.interp;
+                double s0 = st.s[0], s1 = st.s[1];
+                double phase = st.phase, held = st.held, prev = st.prev;
+                bool primed = st.primed;
+
+                for (int i = 0; i < n; ++i)
+                {
+                    const double va = (buf[i] - s0) * ga;
+                    const double la = va + s0;
+                    s0 = la + va;
+                    const double vb = (la - s1) * gb;
+                    const double lb = vb + s1;
+                    s1 = lb + vb;
+
+                    phase += step;
+
+                    if (phase >= 1.0)
+                    {
+                        phase -= std::floor (phase);
+                        prev = primed ? held : lb;
+                        held = lb;
+                        primed = true;
+                    }
+
+                    const double ramp = prev + (held - prev) * phase;       // continuous at every strobe
+                    buf[i] = held + interp * (ramp - held);
+                }
+
+                st.s[0] = s0;
+                st.s[1] = s1;
+                st.phase = phase;
+                st.held = held;
+                st.prev = prev;
+                st.primed = primed;
+                break;
+            }
+
+            //------------------------------------------------------------------ Ring mod (33)
+            case NonlinearSpec::Kind::RingMod:
+            {
+                const double step = nl.carrierStep, morph = nl.carrierMorph, bigG = nl.smoothG;
+                const double dc = 0.5 * (1.0 - morph), amp = 0.5 * (1.0 + morph);
+                constexpr double twoPi = 6.283185307179586476925286766559;
+                double s0 = st.s[0], s1 = st.s[1], phase = st.phase;
+
+                for (int i = 0; i < n; ++i)
+                {
+                    phase += step;
+                    phase -= std::floor (phase);
+
+                    const double p = buf[i] * (dc + amp * std::sin (twoPi * phase));
+                    const double va = (p - s0) * bigG;           // product LP: two TPT one-poles (G = 1: transparent)
+                    const double la = va + s0;
+                    s0 = la + va;
+                    const double vb = (la - s1) * bigG;
+                    const double lb = vb + s1;
+                    s1 = lb + vb;
+                    buf[i] = lb;
+                }
+
+                st.s[0] = s0;
+                st.s[1] = s1;
+                st.phase = phase;
+                break;
+            }
+
+            case NonlinearSpec::Kind::None:
+                break;
+        }
     }
 
     //==========================================================================
@@ -401,12 +623,12 @@ namespace warpr
                 mixW[i] = mix0 + (mix1 - mix0) * (static_cast<double> (done + i + 1) / nD);
             }
 
-            filterdesign::make (coreType[curIdx], fc, res, morph, sampleRate, scratchCurrent);
+            filterdesign::make (coreType[curIdx], fc, res, morph, sampleRate, scratchCurrent, driveDb);
             cores[curIdx].setDesign (scratchCurrent);
 
             if (fading)
             {
-                filterdesign::make (coreType[oldIdx], fc, res, morph, sampleRate, scratchOutgoing);
+                filterdesign::make (coreType[oldIdx], fc, res, morph, sampleRate, scratchOutgoing, driveDb);
                 cores[oldIdx].setDesign (scratchOutgoing);
             }
 
