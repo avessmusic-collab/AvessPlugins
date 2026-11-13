@@ -16,7 +16,7 @@
                              stereo / mono behaviour, determinism
       6. engine              LockFreeSwap publication + 10 ms crossfade bookkeeping (class level)
       7. backend             setShaperCurveJson validation + echo rule (no revision bump), RESET, NORMALIZE, preset
-                             listener (bump), user edit -> Custom flip, asymmetric presets switch the symmetry parameter,
+                             listener (bump), user edit -> Custom flip, asymmetric presets leave the symmetry parameter alone (UI flips it),
                              state load keeps the stored curves
       8. T2 alias gate A1    shaper hard-clip preset: ADAA improvement >= 12 dB at 1x, or the curve-hardness minOS floor
                              (R1(b), enforced at note-on) covers 1x operation; the full alias table is printed
@@ -906,12 +906,17 @@ namespace
         check (be.getShaperCurveJson ("B") == presets::generate (5).toJson() && be.getShaperCurveJson ("A") != presets::generate (5).toJson()
                && rev() == r0 + 2, "with curve B selected a preset loads into B and leaves A alone");
 
-        // ---- asymmetric preset flips the symmetry parameter, one rebuild, one bump
+        // ---- asymmetric preset does NOT touch the symmetry parameter (parameter independence: auval
+        //      rejects one parameter rewriting another; the UI flips SYM->ASYM itself on user selection)
         setParam (p, "shaperCurveSelect", 0.0f);
-        setParam (p, "shaperPreset", 2.0f);                 // Tube
+        setParam (p, "shaperSymmetry", 0.0f);               // Symmetric, and it must STAY Symmetric
+        setParam (p, "shaperPreset", 2.0f);                 // Tube (asymmetric)
         be.servicePending();
-        check (getParam (p, "shaperSymmetry") == 1.0f && be.getShaperLut() != nullptr && ! be.getShaperLut()->isOdd() && rev() == r0 + 3,
-               "an asymmetric preset (Tube) switches shaperSymmetry to Asymmetric, rebuilds once, bumps once");
+        check (getParam (p, "shaperSymmetry") == 0.0f && be.getShaperLut() != nullptr && be.getShaperLut()->isOdd() && rev() == r0 + 3,
+               "an asymmetric preset (Tube) loads WITHOUT switching shaperSymmetry (host params stay independent)");
+        setParam (p, "shaperSymmetry", 1.0f);               // the UI-equivalent flip, now an explicit action
+        be.servicePending();
+        check (! be.getShaperLut()->isOdd(), "flipping to Asymmetric after the preset gives the designed Tube response");
 
         setParam (p, "shaperSymmetry", 0.0f);
         const auto rSym = rev();

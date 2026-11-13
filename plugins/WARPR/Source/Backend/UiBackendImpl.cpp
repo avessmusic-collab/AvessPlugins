@@ -1,6 +1,8 @@
 #include "Backend/UiBackendImpl.h"
+#include "Backend/SettingsDialog.h"
 #include "DSP/FilterDesign.h"
 #include "DSP/ShaperPresetLibrary.h"
+#include "PluginIdentity.h"
 
 #include <juce_events/juce_events.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -146,6 +148,8 @@ void UiBackendImpl::publishAllModulation()
 //==============================================================================
 // Shaper curves
 //==============================================================================
+UiBackendImpl::UiBackendImpl() = default;
+
 UiBackendImpl::~UiBackendImpl()
 {
     if (apvts != nullptr)
@@ -331,13 +335,11 @@ void UiBackendImpl::applyShaperPreset (int preset)
     const int curve = juce::jlimit (0, 1, currentChoice (kSelectId));
     const auto c = canonical (warpr::shaperpresets::generate (preset));
 
-    // Asymmetric presets are only audible as designed in Asymmetric mode (architecture ambiguity A6): switch the
-    // parameter first, drop the dirty flag it raises, and rebuild exactly once.
-    if (warpr::shaperpresets::isAsymmetric (preset))
-    {
-        setChoiceParam (kSymmetryId, 1);
-        symmetryDirty.store (false, std::memory_order_release);
-    }
+    // Asymmetric presets are only audible as designed in Asymmetric mode (architecture ambiguity A6).
+    // The backend does NOT write shaperSymmetry here: a parameter must never rewrite another parameter,
+    // or hosts lose automation independence (auval: "parameter did not retain set value when initialized").
+    // The UI flips SYM->ASYM itself when the USER picks an asymmetric preset; a host automating the preset
+    // alone gets the current symmetry applied to the asymmetric curve, documented behaviour.
 
     storeCurve (curve, c);
     rebuildShaper();
@@ -381,7 +383,7 @@ void UiBackendImpl::loadSampleFile (const juce::File& file)
 
         juce::MessageManager::callAsync ([message]
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "WARPR", message);
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, warpr::identity::productName, message);
         });
     });
 }
@@ -496,10 +498,249 @@ juce::String UiBackendImpl::getPresetName()
     return model.presetName;
 }
 
-void UiBackendImpl::presetStep (int)       {}   // D9: PresetManager
-void UiBackendImpl::presetSaveDialog()     {}   // D9
-void UiBackendImpl::presetLoadDialog()     {}   // D9
-void UiBackendImpl::openSettings()         {}   // D9/D10: native settings dialog
+void UiBackendImpl::attachStateHost (StateCapture capture, StateApply apply)
+{
+    stateCapture = std::move (capture);
+    stateApply = std::move (apply);
+}
+
+void UiBackendImpl::attachSettings (SettingsGetter getter, SettingsSetter setter)
+{
+    settingsGetter = std::move (getter);
+    settingsSetter = std::move (setter);
+}
+
+void UiBackendImpl::setErrorReporter (ErrorReporter reporter)
+{
+    errorReporter = std::move (reporter);
+}
+
+void UiBackendImpl::reportError (const juce::String& message)
+{
+    if (errorReporter)
+    {
+        errorReporter (message);
+        return;
+    }
+
+    juce::MessageManager::callAsync ([message]
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, warpr::identity::productName, message);
+    });
+}
+
+void UiBackendImpl::quietlySetPresetName (const juce::String& name)
+{
+    const juce::ScopedLock sl (modelLock);
+    model.presetName = name;
+}
+
+void UiBackendImpl::setPresetName (const juce::String& name)
+{
+    quietlySetPresetName (name);
+    bumpRevision (Revision::preset);                  // the editor's "warprPreset" event
+}
+
+//------------------------------------------------------------------------------
+bool UiBackendImpl::savePresetToFile (const juce::File& requested)
+{
+    if (! stateCapture)
+    {
+        reportError ("Presets are not available.");
+        return false;
+    }
+
+    const auto ext = warpr::PresetManager::extension();
+    const auto file = requested.hasFileExtension (ext)
+                        ? requested
+                        : requested.getSiblingFile (requested.getFileName() + ext);     // "my.preset" -> "my.preset.void"
+
+    const auto name = file.getFileNameWithoutExtension();
+    const auto previous = getPresetName();
+
+    quietlySetPresetName (name);                      // the saved state carries its own name
+    const auto block = stateCapture();
+
+    juce::String error;
+
+    if (! warpr::PresetManager::writeFile (file, block, error))
+    {
+        quietlySetPresetName (previous);
+        reportError ("The preset could not be saved:\n" + error);
+        return false;
+    }
+
+    bumpRevision (Revision::preset);
+    return true;
+}
+
+bool UiBackendImpl::saveUserPreset (const juce::String& name)
+{
+    if (presetManager == nullptr)
+    {
+        reportError ("Presets are not available.");
+        return false;
+    }
+
+    return savePresetToFile (presetManager->fileForName (name));
+}
+
+bool UiBackendImpl::applyPresetBytes (const juce::MemoryBlock& block, const juce::String& displayName, juce::String& error)
+{
+    if (! stateApply)
+    {
+        error = "Presets are not available.";
+        return false;
+    }
+
+    const auto outcome = stateApply (block.getData(), block.getSize());
+
+    if (outcome == warpr::state::LoadOutcome::rejected)
+    {
+        error = "\"" + displayName + "\" is not a valid " + juce::String (warpr::identity::productName) + " preset.";
+        return false;
+    }
+
+    setPresetName (displayName);                      // after adoptModel: a renamed file shows the name the user sees
+
+    if (outcome == warpr::state::LoadOutcome::loadedDefaultSampleAfterCorruptBlob)
+        reportError ("The sample embedded in \"" + displayName + "\" could not be read. The default wave is used instead.");
+
+    return true;
+}
+
+bool UiBackendImpl::loadPresetFile (const juce::File& file)
+{
+    juce::MemoryBlock block;
+    juce::String error;
+
+    if (! warpr::PresetManager::readFile (file, block, error) || ! applyPresetBytes (block, file.getFileNameWithoutExtension(), error))
+    {
+        reportError ("The preset could not be loaded:\n" + error);
+        return false;
+    }
+
+    return true;
+}
+
+bool UiBackendImpl::loadPresetEntry (const warpr::PresetEntry& entry)
+{
+    juce::MemoryBlock block;
+    juce::String error;
+
+    if (presetManager == nullptr)
+        error = "Presets are not available.";
+
+    if (error.isEmpty() && presetManager->read (entry, block, error) && applyPresetBytes (block, entry.name, error))
+        return true;
+
+    reportError ("The preset could not be loaded:\n" + error);
+    return false;
+}
+
+void UiBackendImpl::presetStep (int delta)
+{
+    if (presetManager == nullptr)
+        return;
+
+    const int count = static_cast<int> (presetManager->listEntries().size());
+    juce::String from = getPresetName();
+    juce::String firstError;
+
+    // An unreadable entry is skipped (otherwise stepping would be stuck on it forever); one report if nothing loads.
+    for (int attempt = 0; attempt < count; ++attempt)
+    {
+        warpr::PresetEntry next;
+
+        if (! presetManager->stepFrom (from, delta, next))
+            return;
+
+        juce::MemoryBlock block;
+        juce::String error;
+
+        if (presetManager->read (next, block, error) && applyPresetBytes (block, next.name, error))
+            return;
+
+        if (firstError.isEmpty())
+            firstError = error;
+
+        from = next.name;
+    }
+
+    if (firstError.isNotEmpty())
+        reportError ("The preset could not be loaded:\n" + firstError);
+}
+
+void UiBackendImpl::presetSaveDialog()
+{
+    if (presetManager == nullptr)
+    {
+        reportError ("Presets are not available.");
+        return;
+    }
+
+    const auto dir = presetManager->getDirectory();
+    dir.createDirectory();
+
+    const auto current = getPresetName();
+    const auto initial = dir.getChildFile (warpr::PresetManager::sanitiseName (current == "Init" ? juce::String ("New Preset") : current)
+                                           + warpr::PresetManager::extension());
+
+    chooser = std::make_unique<juce::FileChooser> ("Save preset", initial, "*" + warpr::PresetManager::extension());
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                              | juce::FileBrowserComponent::warnAboutOverwriting,
+                          [this] (const juce::FileChooser& fc)
+                          {
+                              const auto result = fc.getResult();
+
+                              if (result != juce::File())
+                                  savePresetToFile (result);
+                          });
+}
+
+void UiBackendImpl::presetLoadDialog()
+{
+    if (presetManager == nullptr)
+    {
+        reportError ("Presets are not available.");
+        return;
+    }
+
+    const auto dir = presetManager->getDirectory();
+    chooser = std::make_unique<juce::FileChooser> ("Load preset", dir.isDirectory() ? dir : juce::File(),
+                                                   "*" + warpr::PresetManager::extension());
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this] (const juce::FileChooser& fc)
+                          {
+                              const auto result = fc.getResult();
+
+                              if (result.existsAsFile())
+                                  loadPresetFile (result);
+                          });
+}
+
+//------------------------------------------------------------------------------
+void UiBackendImpl::openSettings()
+{
+    if (! settingsGetter || ! settingsSetter)
+    {
+        reportError ("Settings are not available.");
+        return;
+    }
+
+    if (settingsWindow == nullptr)
+        settingsWindow = std::make_unique<SettingsWindow> (settingsGetter(), settingsSetter);
+    else
+        settingsWindow->setValues (settingsGetter());
+
+    settingsWindow->setVisible (true);
+    settingsWindow->toFront (true);
+}
+
+bool UiBackendImpl::isSettingsWindowShowing() const
+{
+    return settingsWindow != nullptr && settingsWindow->isVisible();
+}
 
 //==============================================================================
 // Processor-side API

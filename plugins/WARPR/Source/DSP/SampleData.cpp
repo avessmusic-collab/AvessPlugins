@@ -2,6 +2,7 @@
 
 #include "DSP/MipBuilder.h"
 
+#include <atomic>
 #include <cmath>
 
 namespace warpr
@@ -34,7 +35,10 @@ namespace warpr
         if (frames <= 0 || chans <= 0 || ! (sampleRate > 0.0) || ! std::isfinite (sampleRate))
             return nullptr;
 
+        static std::atomic<juce::uint64> nextSerial { 1 };
+
         Ptr sd (new SampleData());
+        sd->serial = nextSerial.fetch_add (1, std::memory_order_relaxed);
         sd->name = sampleName;
         sd->fileSampleRate = sampleRate;
         sd->numChannels = chans;

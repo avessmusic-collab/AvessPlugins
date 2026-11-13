@@ -780,6 +780,14 @@ function bindSelect(el, pid) {
 }
 $$("[data-sel]").forEach(el => bindSelect(el, el.dataset.sel));
 
+/* picking an ASYMMETRIC shaper preset (Tube = 2, Diode = 3) flips SYM -> ASYM as a UI action.
+   The DSP never rewrites one parameter from another (AU hosts require parameter independence),
+   so this coupling lives here, where the USER made the choice. */
+$("[data-sel='shaperPreset']").addEventListener("change", e => {
+  const i = e.target.selectedIndex;
+  if (i === 2 || i === 3) comboOf("shaperSymmetry").setChoiceIndex(1);
+});
+
 $$("[data-step]").forEach(el => {
   const pid = el.dataset.step, f = F[el.dataset.f], b = el.querySelector("b"), [dn, up] = el.querySelectorAll("span");
   const upd = () => { b.textContent = f(scl(pid)); };

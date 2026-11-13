@@ -28,8 +28,14 @@
       setLfoCount publishes the atomic count.  The model keeps the UI's documents VERBATIM (state round trip and
       getUiStateJson serve exactly what was sent); adoptModel republishes everything.  A document that does not parse
       builds the default shape (the UI's newShape()).
-  Everything else that needs DSP is a documented no-op until its phase:
-    presets / settings ....................... D9
+    - PRESETS + SETTINGS (D9): the backend drives a PresetManager (attachPresetManager) and the processor's state
+      capture / load functions (attachStateHost).  presetStep cycles the preset list (factory first, then user files by
+      name, wrapping; an unreadable file is skipped), presetSaveDialog / presetLoadDialog open async JUCE file choosers
+      (message thread) that end in savePresetToFile / loadPresetFile, and every preset operation bumps Revision::preset
+      (the editor's "warprPreset" event).  The preset name lives in the UiModel (persisted in the state), a loaded
+      preset shows its FILE name.  Failures never touch the current state; they go to the error reporter (default: an
+      async AlertWindow).  openSettings shows the SettingsWindow shell (oscillator budget, interpolation quality, CPU
+      guard) persisted through AppSettings.
   vizFifo() receives real WarprVizFrames from the audio thread since D2 (PluginProcessor ->
   warpr::VizAnalyzer, ~30 Hz, wait-free; voices[] come from the synth's playhead snapshot).
 
@@ -44,6 +50,8 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
+#include <memory>
 
 #include "Backend/UiBackend.h"
 #include "Backend/UiModel.h"
@@ -53,11 +61,16 @@
 #include "DSP/ShaperCurve.h"
 #include "DSP/ShaperEngine.h"
 #include "DSP/WarprSynth.h"
+#include "State/AppSettings.h"
+#include "State/PresetManager.h"
+#include "State/StateIO.h"
+
+class SettingsWindow;
 
 class UiBackendImpl : public WarprUiBackend
 {
 public:
-    UiBackendImpl() = default;
+    UiBackendImpl();
     ~UiBackendImpl() override;
 
     /** The processor's sample store (outlives the backend's use of it; the processor shuts the
@@ -140,8 +153,53 @@ public:
         shaperPreset / shaperSymmetry change from the state load itself is discarded (the stored curve wins). */
     void adoptModel (const warpr::UiModel& newModel);
 
+    //==========================================================================
+    // D9: presets, state host, settings (all MESSAGE thread)
+    using StateCapture   = std::function<juce::MemoryBlock()>;
+    using StateApply     = std::function<warpr::state::LoadOutcome (const void*, std::size_t)>;
+    using ErrorReporter  = std::function<void (const juce::String&)>;
+    using SettingsGetter = std::function<warpr::AppSettingsData()>;
+    using SettingsSetter = std::function<void (const warpr::AppSettingsData&)>;
+
+    /** The preset list / directory (outlives the backend's use of it).  nullptr = presets unavailable. */
+    void attachPresetManager (warpr::PresetManager* manager) noexcept   { presetManager = manager; }
+
+    /** The processor's complete-state capture and load (the same functions get/setStateInformation use). */
+    void attachStateHost (StateCapture capture, StateApply apply);
+
+    /** Settings persistence (read for the dialog, called on every change).  Without them openSettings reports the fact. */
+    void attachSettings (SettingsGetter getter, SettingsSetter setter);
+
+    /** Where user-visible failures go.  Default: an async native alert.  Tests install a recorder. */
+    void setErrorReporter (ErrorReporter reporter);
+
+    /** Names the preset (model + Revision::preset). */
+    void setPresetName (const juce::String& name);
+
+    /** Writes the current state to `file` (the preset extension is appended when missing) and names the preset after
+        the file.  Returns false (name and files unchanged) on failure. */
+    bool savePresetToFile (const juce::File& file);
+
+    /** Save into the user preset directory under `name`. */
+    bool saveUserPreset (const juce::String& name);
+
+    /** Loads a preset file / list entry: all-or-nothing, the displayed name becomes the entry / file name. */
+    bool loadPresetFile (const juce::File& file);
+    bool loadPresetEntry (const warpr::PresetEntry& entry);
+
+    bool isSettingsWindowShowing() const;
+
 private:
+    static constexpr size_t kNumRevisions = 5;
+    static_assert (static_cast<size_t> (Revision::preset) + 1 == kNumRevisions,
+                   "Revision enum changed: resize the revision counter array and re-audit every bumpRevision site");
+
     static size_t slotOf (Revision r) noexcept            { return static_cast<size_t> (r); }
+
+    // ---- D9 helpers
+    bool applyPresetBytes (const juce::MemoryBlock& block, const juce::String& displayName, juce::String& error);
+    void reportError (const juce::String& message);
+    void quietlySetPresetName (const juce::String& name);
 
     // ---- LFO / matrix publication (message / state threads)
     void publishLfoTable (int index, const juce::String& json);
@@ -172,7 +230,7 @@ private:
     };
 
     WarprVizFifo viz;
-    std::array<std::atomic<uint32_t>, 5> revisions {};
+    std::array<std::atomic<uint32_t>, kNumRevisions> revisions {};
     std::atomic<double> responseSampleRate { 48000.0 };
     FilterParamListener filterListener { *this };
     warpr::SampleStore* sampleStore = nullptr;
@@ -192,4 +250,14 @@ private:
     std::atomic<bool> presetDirty { false }, symmetryDirty { false };
     mutable juce::CriticalSection shaperLock;             // serialises build + publish (taken BEFORE modelLock)
     warpr::ShaperLutSet::Ptr lastLut;                     // guarded by shaperLock
+
+    // ---- D9 (message thread only)
+    warpr::PresetManager* presetManager = nullptr;
+    StateCapture stateCapture;
+    StateApply stateApply;
+    ErrorReporter errorReporter;
+    SettingsGetter settingsGetter;
+    SettingsSetter settingsSetter;
+    std::unique_ptr<juce::FileChooser> chooser;           // the open async dialog (preset save / load)
+    std::unique_ptr<SettingsWindow> settingsWindow;
 };

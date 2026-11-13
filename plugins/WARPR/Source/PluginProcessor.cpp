@@ -2,6 +2,8 @@
 #include "PluginEditor.h"
 #include "State/StateIO.h"
 
+#include <limits>
+
 //==============================================================================
 PluginProcessor::PluginProcessor()
     : AudioProcessor (BusesProperties()
@@ -16,6 +18,18 @@ PluginProcessor::PluginProcessor()
     backend.attachShaper (&shaperEngine);             // builds + publishes the initial (identity) LUT set
     synth.attachModEngine (&modEngine);
     backend.attachModEngine (&modEngine);             // builds + publishes the default LFO tables, matrix and lfoCount
+
+    // D9: presets, state host and settings behind the editor's native functions (all run on the message thread)
+    backend.attachPresetManager (&presetManager);
+    backend.attachStateHost ([this] { return captureState(); },
+                             [this] (const void* data, std::size_t numBytes) { return loadStateBlock (data, numBytes); });
+    backend.attachSettings ([this] { return appSettings.load(); },
+                            [this] (const warpr::AppSettingsData& data)
+                            {
+                                appSettings.save (data);
+                                applyAppSettings (data);
+                            });
+
     drainTimer.begin();
 }
 
@@ -156,11 +170,53 @@ juce::AudioProcessorEditor* PluginProcessor::createEditor()
 }
 
 //==============================================================================
+juce::MemoryBlock PluginProcessor::captureState()
+{
+    // The sample is encoded lazily here (FLAC24 for integer-grid sources, float32 otherwise; the default wave is not
+    // embedded) and memoised per SampleData, so a host that polls the state does not re-encode megabytes each time.
+    return warpr::state::write (apvts, backend.copyModel(), blobCache.blobFor (sampleStore.latest()));
+}
+
+warpr::state::LoadOutcome PluginProcessor::loadStateBlock (const void* data, std::size_t numBytes)
+{
+    using warpr::state::LoadOutcome;
+
+    if (data == nullptr || numBytes == 0)
+        return LoadOutcome::rejected;
+
+    warpr::UiModel model;
+    warpr::state::SampleLoad sample;
+
+    if (warpr::state::readContainer (data, numBytes, apvts, model, &sample))
+    {
+        // Publish the sample BEFORE adoptModel so the Revision::sample bump it performs sees the new sample.
+        // No blob (or a default-wave flag) = the default wave: regenerated, never embedded.  A corrupt blob falls
+        // back to it too - the parameters and the UI state are still valuable.
+        if (sample.sample != nullptr)
+            sampleStore.publish (sample.sample);
+        else if (const auto current = sampleStore.latest(); current == nullptr || ! current->isDefaultWave)
+            sampleStore.publish (warpr::SampleData::createDefaultWave());
+
+        backend.adoptModel (model);
+        return sample.corruptBlob ? LoadOutcome::loadedDefaultSampleAfterCorruptBlob : LoadOutcome::loaded;
+    }
+
+    // Fallback: plain XML written by getXmlFromBinary-style hosts / older builds.  It says nothing about the sample,
+    // so the current one is kept.
+    if (numBytes <= static_cast<std::size_t> (std::numeric_limits<int>::max()))
+        if (auto xml = getXmlFromBinary (data, static_cast<int> (numBytes)))
+            if (warpr::state::readXml (*xml, apvts, model))
+            {
+                backend.adoptModel (model);
+                return LoadOutcome::loaded;
+            }
+
+    return LoadOutcome::rejected;                        // keep the current state
+}
+
 void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // D1: the sample blob stays empty (the default wave is regenerated; embedding a loaded sample is D9).
-    // SampleStore::latest() is the hook D9 will encode here.
-    destData = warpr::state::write (apvts, backend.copyModel());
+    destData = captureState();
 }
 
 void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -168,24 +224,27 @@ void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (data == nullptr || sizeInBytes <= 0)
         return;
 
-    warpr::UiModel model;
+    loadStateBlock (data, static_cast<std::size_t> (sizeInBytes));
+}
 
-    if (warpr::state::readContainer (data, static_cast<std::size_t> (sizeInBytes), apvts, model))
-    {
-        backend.adoptModel (model);
-        return;
-    }
+//==============================================================================
+void PluginProcessor::applyAppSettings (const warpr::AppSettingsData& requested)
+{
+    const auto data = warpr::AppSettings::sanitise (requested);
+    synth.setOscillatorBudget (data.oscillatorBudget);            // relaxed atomics, read per block
+    synth.setInterpolationQuality (data.interpolationQuality);    // D10 gives the value its behaviour
+    cpuGuard.store (data.cpuGuard, std::memory_order_relaxed);    // D10 acts on it
+}
 
-    // Fallback: plain XML written by getXmlFromBinary-style hosts / older builds (no sample).
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        if (warpr::state::readXml (*xml, apvts, model))
-            backend.adoptModel (model);
-
-    // Anything else: keep the current (default) state.
+void PluginProcessor::loadAppSettings()
+{
+    applyAppSettings (appSettings.load());
 }
 
 //==============================================================================
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new PluginProcessor();
+    auto* processor = new PluginProcessor();
+    processor->loadAppSettings();                        // the user's budget / quality / guard (never in direct construction)
+    return processor;
 }

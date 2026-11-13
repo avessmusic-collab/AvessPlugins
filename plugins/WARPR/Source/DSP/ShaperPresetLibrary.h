@@ -24,8 +24,8 @@
    8 Custom     no-op: selecting it changes nothing (it is also what an edited curve flips the parameter to)
 
   Odd presets (all but Tube and Diode) are built as y(-x) = -y(x) bit-exactly.  isAsymmetric() presets are only
-  audible as designed with shaperSymmetry = Asymmetric; the backend switches the parameter when it loads one
-  (architecture ambiguity A6).  The linear presets' control points sit on the 1/2048 LUT grid, so the LUT reproduces
+  audible as designed with shaperSymmetry = Asymmetric; the UI flips SYM->ASYM when the USER picks one
+  (architecture ambiguity A6).  The backend never writes the parameter: hosts require parameter independence.  The linear presets' control points sit on the 1/2048 LUT grid, so the LUT reproduces
   them exactly (a corner inside a cell would cost up to slope-jump * h / 4 of interpolation error).
 
   Message thread only (allocates).

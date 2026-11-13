@@ -14,6 +14,10 @@
 #include "Parameters/ParamSnapshot.h"
 #include "Parameters/ParameterLayout.h"
 #include "PluginIdentity.h"
+#include "State/AppSettings.h"
+#include "State/PresetManager.h"
+#include "State/SampleCodec.h"
+#include "State/StateIO.h"
 #include "Util/LockFreeSwap.h"
 
 /**
@@ -92,6 +96,26 @@ public:
         the queue wait-free into the block's MIDI stream (timestamped at sample 0). */
     void queueKeyboardNote (int midiNote, int velocity, bool noteOn) noexcept;
 
+    //==========================================================================
+    // D9: state, presets, settings
+    /** The complete state as a container (APVTS + UI state + the embedded sample, FLAC24 / float32; the default wave is
+        not embedded).  Message thread or the host's state thread - never the audio thread. */
+    juce::MemoryBlock captureState();
+
+    /** Loads a container (or legacy plain XML).  All-or-nothing for parameters and UI state; a corrupt sample blob falls
+        back to the default wave.  `rejected` leaves the current state untouched.  Same threads as captureState(). */
+    warpr::state::LoadOutcome loadStateBlock (const void* data, std::size_t numBytes);
+
+    warpr::PresetManager& getPresetManager() noexcept { return presetManager; }
+    warpr::samplecodec::BlobCache& getSampleBlobCache() noexcept { return blobCache; }
+
+    /** Per-user app settings (Settings dialog).  loadAppSettings() reads the file and applies it; it is called by the
+        plugin factory only, so direct construction (tests) never depends on the user's settings file. */
+    warpr::AppSettings& getAppSettings() noexcept { return appSettings; }
+    void loadAppSettings();
+    void applyAppSettings (const warpr::AppSettingsData& data);
+    bool isCpuGuardRequested() const noexcept { return cpuGuard.load (std::memory_order_relaxed); }
+
 private:
     struct KbdEvent { uint8_t note = 0, vel = 0; bool on = false; };
     juce::AbstractFifo kbdFifo { 128 };
@@ -123,6 +147,10 @@ private:
     warpr::ShaperEngine  shaperEngine { retireList };
     warpr::ModEngine     modEngine { retireList };
     warpr::ParamSnapshot paramSnapshot;
+    warpr::samplecodec::BlobCache blobCache;
+    warpr::PresetManager presetManager { warpr::PresetManager::defaultDirectory() };   // before the backend that uses it
+    warpr::AppSettings   appSettings { warpr::AppSettings::defaultFile() };
+    std::atomic<bool>    cpuGuard { false };
     UiBackendImpl        backend;
     warpr::WarprSynth    synth { retireList };
     warpr::MasterStage   master;

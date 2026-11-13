@@ -47,7 +47,12 @@ set(WARPR_CORE_SOURCES
     Source/Parameters/ParameterLayout.cpp
     Source/Backend/UiModel.cpp
     Source/Backend/UiBackendImpl.cpp
+    Source/Backend/SettingsDialog.cpp
     Source/State/StateIO.cpp
+    # Phase D9: embedded-sample codec (FLAC24 / float32), preset files + list, per-user settings
+    Source/State/SampleCodec.cpp
+    Source/State/PresetManager.cpp
+    Source/State/AppSettings.cpp
     # Phase D1: sample engine, voices, decimator
     Source/DSP/SampleData.cpp
     Source/DSP/SampleStore.cpp
@@ -161,6 +166,7 @@ add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/PhaseD6Tests.cpp
     Source/Tests/PhaseD7Tests.cpp
     Source/Tests/PhaseD8Tests.cpp
+    Source/Tests/PhaseD9Tests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp
     ${WARPR_CORE_SOURCES}
@@ -191,11 +197,19 @@ target_compile_definitions(WARPR_Tests
         JUCE_STANDALONE_APPLICATION=1
 )
 
-# The test harness stack-allocates whole processors (34 voices x 8 oscillators x 16-grain pools
-# since D7a), so the default 8 MB main stack overflows in ___chkstk_darwin.  Match the 64 MB
-# stack the Windows test exe already uses.
+# The test harness stack-allocates whole processors (34 voices x 8 oscillators x grain pools
+# since D7a), so the default 8 MB main stack overflows in ___chkstk_darwin.  64 MB covers the
+# normal build; AddressSanitizer's redzones inflate those frames several-fold, so the reserve
+# is 256 MB (address space only - untouched pages cost nothing).
 if(APPLE)
-    target_link_options(WARPR_Tests PRIVATE "-Wl,-stack_size,0x4000000")
+    target_link_options(WARPR_Tests PRIVATE "-Wl,-stack_size,0x10000000")
+endif()
+
+# Sanitizer runs (SPECTR pattern):
+#   cmake -B ../../build-asan -DWARPR_TEST_SANITIZE=address,undefined && cmake --build ../../build-asan --target WARPR_Tests
+if(WARPR_TEST_SANITIZE)
+    target_compile_options(WARPR_Tests PRIVATE -fsanitize=${WARPR_TEST_SANITIZE} -fno-omit-frame-pointer -g)
+    target_link_options(WARPR_Tests PRIVATE -fsanitize=${WARPR_TEST_SANITIZE})
 endif()
 
 # Platform notes

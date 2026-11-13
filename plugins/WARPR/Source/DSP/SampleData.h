@@ -53,6 +53,10 @@ namespace warpr
 
         SampleData() = default;
 
+        /** Process-unique build serial (assigned by create()).  State capture keys its encoded-blob cache on it:
+            unlike the object address it can never be reused by a later sample. */
+        juce::uint64 serial = 0;
+
         juce::String name;
         double fileSampleRate = 44100.0;
         int numChannels = 1;
