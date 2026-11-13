@@ -897,19 +897,29 @@ function wfRequest() {
 /* WARP/SHAPER PREVIEW: when either stage is active, fetch the region processed by the REAL
    kernels (warpr_processedPeaks) and overlay it on a dimmed original.  Debounced; refreshed on
    any warp/shaper/region/root parameter change, shaper curve edit, zoom change or sample load. */
-let fxPeaks = null, fxTimer = 0;
-function fxRequest() {
-  clearTimeout(fxTimer);
-  fxTimer = setTimeout(async () => {
+let fxPeaks = null, fxTimer = 0, fxLast = 0, fxBusy = false, fxAgain = false;
+async function fxFetch() {
+  if (fxBusy) { fxAgain = true; return; }                  // a call is in flight: run once more after it
+  fxBusy = true;
+  do {
+    fxAgain = false;
     const active = peaks && ((toggleOf("warpEnable").getValue()   && nrm("warpMix")   > 0.001) ||
                              (toggleOf("shaperEnable").getValue() && nrm("shaperMix") > 0.001));
-    if (!active) { fxPeaks = null; return; }
+    if (!active) { fxPeaks = null; break; }
     try {
       const a = WF.off, b = WF.off + WF.span;
       const arr = await NF.processedPeaks(a, b, Math.min(2048, (cs.width || 800) | 0));
       fxPeaks = arr && arr.length ? { start: a, end: b, peaks: Float32Array.from(arr) } : null;
     } catch (_) { fxPeaks = null; }
-  }, 140);
+  } while (fxAgain);
+  fxBusy = false;
+}
+/* THROTTLE, not debounce: the first change computes immediately, then ~14 Hz WHILE the knob is
+   turning, plus a trailing update when it stops - the wave shifts live under the drag. */
+function fxRequest() {
+  const now = performance.now(), since = now - fxLast;
+  if (since >= 70) { fxLast = now; fxFetch(); }
+  else { clearTimeout(fxTimer); fxTimer = setTimeout(() => { fxLast = performance.now(); fxFetch(); }, 70 - since); }
 }
 [["warpEnable","t"],["shaperEnable","t"],["warpMode","c"],["modOscSource","c"],["loopMode","c"],
  ["shaperSymmetry","c"],["shaperPreset","c"],["shaperCurveSelect","c"],
