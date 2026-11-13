@@ -444,6 +444,7 @@ const NF = {
   requestSample:    nat("warpr_requestSample"),     // () -> re-emit warprSample
   requestFilterResponse: nat("warpr_requestFilterResponse"),
   rangePeaks:       nat("warpr_rangePeaks"),        // (startNorm, endNorm, pairs) -> [min,max,...] zoom detail
+  processedPeaks:   nat("warpr_processedPeaks"),    // (startNorm, endNorm, pairs) -> [min,max,...] through live warp+shaper
   midiNote:         nat("warpr_midiNote"),          // (note 0-127, velocity, on) -> synth MIDI stream
   dropBegin:        nat("warpr_dropBegin"),         // (filename) start a drag-and-drop transfer
   dropChunk:        nat("warpr_dropChunk"),         // (base64) one chunk of the dropped file
@@ -881,6 +882,30 @@ function wfRequest() {
     } catch (_) {}
   }, 60);
 }
+/* WARP/SHAPER PREVIEW: when either stage is active, fetch the region processed by the REAL
+   kernels (warpr_processedPeaks) and overlay it on a dimmed original.  Debounced; refreshed on
+   any warp/shaper/region/root parameter change, shaper curve edit, zoom change or sample load. */
+let fxPeaks = null, fxTimer = 0;
+function fxRequest() {
+  clearTimeout(fxTimer);
+  fxTimer = setTimeout(async () => {
+    const active = peaks && ((toggleOf("warpEnable").getValue()   && nrm("warpMix")   > 0.001) ||
+                             (toggleOf("shaperEnable").getValue() && nrm("shaperMix") > 0.001));
+    if (!active) { fxPeaks = null; return; }
+    try {
+      const a = WF.off, b = WF.off + WF.span;
+      const arr = await NF.processedPeaks(a, b, Math.min(2048, (cs.width || 800) | 0));
+      fxPeaks = arr && arr.length ? { start: a, end: b, peaks: Float32Array.from(arr) } : null;
+    } catch (_) { fxPeaks = null; }
+  }, 140);
+}
+[["warpEnable","t"],["shaperEnable","t"],["warpMode","c"],["modOscSource","c"],["loopMode","c"],
+ ["shaperSymmetry","c"],["shaperPreset","c"],["shaperCurveSelect","c"],
+ ["warpAmount","s"],["warpParamA","s"],["warpParamB","s"],["warpMix","s"],["modOscRatio","s"],
+ ["shaperMorph","s"],["shaperMix","s"],["sampleStart","s"],["sampleEnd","s"],["rootNote","s"]
+].forEach(([p, k]) => watch(p, k, fxRequest));
+backend.addEventListener("warprShaperCurve", fxRequest);
+
 cs.addEventListener("wheel", e => {
   if (!peaks) return;
   e.preventDefault();
@@ -894,9 +919,9 @@ cs.addEventListener("wheel", e => {
     WF.off = clamp(anchor - fx * span, 0, 1 - span);
     WF.span = span;
   }
-  wfRequest(); drawSample();
+  wfRequest(); fxRequest(); drawSample();
 }, { passive: false });
-cs.addEventListener("dblclick", () => { WF.off = 0; WF.span = 1; rpCache = null; drawSample(); });
+cs.addEventListener("dblclick", () => { WF.off = 0; WF.span = 1; rpCache = null; fxRequest(); drawSample(); });
 
 /* time-ruler label: m:ss or m:ss.mmm, sampler style */
 function fmtTime(s) {
@@ -920,29 +945,34 @@ function drawSample() {
         rpCache.start <= WF.off + 1e-9 && rpCache.end >= WF.off + WF.span - 1e-9) {
       src = rpCache.peaks; s0 = rpCache.start; s1 = rpCache.end;
     }
-    const N = src.length / 2, sw = Math.max(s1 - s0, 1e-12);
-    /* per pixel column: min/max over every peak pair the column covers (+ the next pair so a
-       smooth/periodic wave draws as a connected line, not zero-length dots), min 1.5 px tall */
-    const col = i => {
-      const f0 = WF.off + i / w * WF.span, f1 = WF.off + (i + 1) / w * WF.span;
-      const j0 = clamp(Math.floor((f0 - s0) / sw * N), 0, N - 1);
-      const j1 = clamp(Math.max(j0, Math.floor((f1 - s0) / sw * N)), 0, N - 1);
-      let mn = src[2*j0], mx = src[2*j0+1];
-      for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, src[2*j]); mx = Math.max(mx, src[2*j+1]); }
-      return [mn, mx];
-    };
     /* solid filled waveform (sampler style): every pixel column is filled from its true minimum
        to its true maximum - one flat shape at full detail, no smoothing, no envelope shaping.
        Silent regions keep a thin center line so the wave reads edge to edge. */
-    x.fillStyle = "rgba(255,255,255,.90)";
-    x.beginPath();
-    for (let i = 0; i < w; i++) {
-      const [mn, mx] = col(i);
-      let y0 = h/2 - mx*h*.40, y1 = h/2 - mn*h*.40;
-      if (y1 - y0 < 1.2) { const c = (y0 + y1) / 2; y0 = c - .6; y1 = c + .6; }
-      x.rect(i, y0, 1, y1 - y0);
+    const fillWave = (pk, p0, p1, alpha) => {
+      const M = pk.length / 2, pw2 = Math.max(p1 - p0, 1e-12);
+      x.fillStyle = `rgba(255,255,255,${alpha})`;
+      x.beginPath();
+      for (let i = 0; i < w; i++) {
+        const f0 = WF.off + i / w * WF.span, f1 = WF.off + (i + 1) / w * WF.span;
+        const j0 = clamp(Math.floor((f0 - p0) / pw2 * M), 0, M - 1);
+        const j1 = clamp(Math.max(j0, Math.floor((f1 - p0) / pw2 * M)), 0, M - 1);
+        let mn = pk[2*j0], mx = pk[2*j0+1];
+        for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, pk[2*j]); mx = Math.max(mx, pk[2*j+1]); }
+        let y0 = h/2 - mx*h*.40, y1 = h/2 - mn*h*.40;
+        if (y1 - y0 < 1.2) { const c = (y0 + y1) / 2; y0 = c - .6; y1 = c + .6; }
+        x.rect(i, y0, 1, y1 - y0);
+      }
+      x.fill();
+    };
+    if (fxPeaks && fxPeaks.peaks.length) {
+      /* warp/shaper preview: the ORIGINAL becomes a dim ghost, the PROCESSED wave (real DSP,
+         computed by the engine's own kernels) draws bright on top - turning a knob shows the
+         sound's new shape against what it was */
+      fillWave(src, s0, s1, ".22");
+      fillWave(fxPeaks.peaks, fxPeaks.start, fxPeaks.end, ".92");
+    } else {
+      fillWave(src, s0, s1, ".90");
     }
-    x.fill();
   }
   const sx = clamp(a2x(P.start), 0, w), ex = clamp(a2x(P.end), 0, w);
   x.fillStyle = "rgba(0,0,0,.55)"; x.fillRect(0, 0, sx, h); x.fillRect(ex, 0, w - ex, h);
@@ -1353,7 +1383,7 @@ backend.addEventListener("warprViz", f => {
 backend.addEventListener("warprSample", s => {
   peaks = s.peaks && s.peaks.length ? Float32Array.from(s.peaks) : null;
   sInfo = s;
-  WF.off = 0; WF.span = 1; rpCache = null;                 // a new sample resets the zoom view
+  WF.off = 0; WF.span = 1; rpCache = null; fxPeaks = null; fxRequest();   // a new sample resets the zoom view
   $("#sampleName").textContent = s.name ? s.name.toUpperCase() : "NO SAMPLE";
   $("#sampleName").title = s.name ? `${s.name} · ${s.channels} ch · ${s.sampleRate} Hz · ${s.numSamples} smp` : "";
 });
@@ -1421,7 +1451,7 @@ function shaperRender() {
   pts.forEach(p => shaperSvg.appendChild(mk("circle", { class: "pt", cx: sx(p.x), cy: sy(p.y), r: 6 })));
 }
 function shaperResize() { shaperRender(); }
-const shaperPush = () => NF.setShaperCurve(shaperId(), JSON.stringify(shaperCurves[shaperId()]));
+const shaperPush = () => { NF.setShaperCurve(shaperId(), JSON.stringify(shaperCurves[shaperId()])); fxRequest(); };
 {
   let drag = null, pushT = 0;
   const xy = e => { const r = shaperSvg.getBoundingClientRect(); return { x: clamp((e.clientX - r.left)/r.width*2 - 1, -1, 1), y: clamp(1 - (e.clientY - r.top)/r.height*2, -1, 1) }; };

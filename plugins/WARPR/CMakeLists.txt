@@ -167,6 +167,7 @@ add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/PhaseD7Tests.cpp
     Source/Tests/PhaseD8Tests.cpp
     Source/Tests/PhaseD9Tests.cpp
+    Source/Tests/PreviewTests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp
     ${WARPR_CORE_SOURCES}

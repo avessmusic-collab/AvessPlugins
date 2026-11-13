@@ -9,6 +9,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -63,6 +64,31 @@ public:
     {
         juce::ignoreUnused (startNorm, endNorm, numPairs);
         return {};
+    }
+
+    // PROCESSED-WAVEFORM PREVIEW (message thread only; never touches the voices or the audio thread).
+    //
+    // Fills `minMaxInterleaved` ([min0,max0,min1,max1,...], room for `pairs` pairs) with the min/max peaks of the
+    // current sample's level-0 frames in [startNorm, endNorm) (absolute sample fractions, the getRangePeaks convention
+    // and the same bucketing arithmetic) AFTER the real warp stage and shaper stage have processed them with the CURRENT
+    // parameter values and shaper curve set (a mono mix of L/R, like the raw peaks).  Frames the voices never play
+    // (outside the sampleStart..sampleEnd region) are passed through unprocessed.
+    //
+    // Returns the number of pairs written = min(pairs, 2048, frames in the span); 0 = no data (no sample / no backend
+    // support).  Entries beyond the returned count (and everything when 0 is returned) are set to 0.  Deterministic:
+    // equal state -> bit-identical output.  Cost is bounded: spans above kPreviewFrameCap (1.5M frames) are processed as
+    // evenly spaced sub-windows, one per output pair (every pair still comes from real processed frames).  The caller
+    // debounces; typical cost is a few ms per second of audio.  Default: no data (test backends).
+    static constexpr int kPreviewFrameCap = 1500000;
+
+    virtual int computeProcessedPeaks (float* minMaxInterleaved, int pairs, double startNorm, double endNorm)
+    {
+        juce::ignoreUnused (startNorm, endNorm);
+
+        if (minMaxInterleaved != nullptr && pairs > 0)
+            std::fill_n (minMaxInterleaved, (size_t) pairs * 2, 0.0f);
+
+        return 0;
     }
 
     // real filter magnitude response: fills n log-spaced points 20 Hz..20 kHz in dB from the actual filter DSP

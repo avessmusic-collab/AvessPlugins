@@ -461,6 +461,228 @@ std::vector<float> UiBackendImpl::getRangePeaks (double startNorm, double endNor
 }
 
 //==============================================================================
+// Processed-waveform preview
+//==============================================================================
+namespace
+{
+    /** Everything one preview run needs (built once per computeProcessedPeaks call). */
+    struct PreviewCtx
+    {
+        const warpr::SampleData* sd = nullptr;
+        const float* c0 = nullptr;
+        const float* c1 = nullptr;            // nullptr for a mono sample
+        warpr::RegionFold rg;
+        warpr::WarpSpan warp;
+        warpr::ShaperSpan shaper;
+        int regionFirst = 0, regionLast = 0;  // integer frames [first, last) the voices can play
+
+        float rawMono (int i) const noexcept  { return c1 != nullptr ? 0.5f * (c0[i] + c1[i]) : c0[i]; }
+    };
+
+    constexpr int kPreviewChunk = 32;         // the voice's chunk size
+
+    /** Writes the mono mix of frames [a, b) after the warp + shaper stages into out[0 .. b - a).  Frames outside the
+        voices' region are the raw sample.  The oscillator is restarted at the first processed frame (fresh warp /
+        shaper state, cycle clock seeded from the position), then runs chunk by chunk exactly like a voice at 1x. */
+    void renderPreviewRun (const PreviewCtx& cx, warpr::UnisonOsc& osc, int a, int b, float* out) noexcept
+    {
+        const int pa = std::max (a, cx.regionFirst);
+        const int pb = std::min (b, cx.regionLast);
+
+        if (pb <= pa)
+        {
+            for (int i = a; i < b; ++i)
+                out[i - a] = cx.rawMono (i);
+
+            return;
+        }
+
+        for (int i = a; i < pa; ++i)
+            out[i - a] = cx.rawMono (i);
+
+        for (int i = pb; i < b; ++i)
+            out[i - a] = cx.rawMono (i);
+
+        osc.start (cx.rg, false, 0, cx.warp.Lc, 1u);
+        osc.pos = (double) pa;
+        osc.vpos = osc.pos;
+        osc.vdir = osc.dir;
+
+        const double cyc = (osc.pos - cx.rg.lo) / cx.warp.Lc;
+        osc.warp.reset (cyc - std::floor (cyc));
+        osc.shaper.idle();
+
+        float busL[kPreviewChunk], busR[kPreviewChunk];
+
+        for (int i = pa; i < pb; i += kPreviewChunk)
+        {
+            const int n = std::min (kPreviewChunk, pb - i);
+            std::fill_n (busL, n, 0.0f);
+            std::fill_n (busR, n, 0.0f);
+
+            osc.render (*cx.sd, cx.rg, 0, 1.0, 1.0, 1, 1.0f, 1.0f, 1.0f, 1.0f, busL, busR, n, &cx.warp, &cx.shaper, nullptr);
+
+            for (int k = 0; k < n; ++k)
+            {
+                const float v = cx.c1 != nullptr ? 0.5f * (busL[k] + busR[k]) : busL[k];
+                out[i - a + k] = std::isfinite (v) ? v : 0.0f;          // a voice would be killed by the guard; the preview shows 0
+            }
+        }
+    }
+}
+
+int UiBackendImpl::computeProcessedPeaks (float* minMaxInterleaved, int pairs, double startNorm, double endNorm)
+{
+    // Message thread.  A dedicated UnisonOsc (the same oscillator, warp stage and shaper stage a voice runs) is restarted
+    // for every run, so the result depends only on the parameters, the curve set and the sample: deterministic.
+    if (minMaxInterleaved == nullptr || pairs <= 0)
+        return 0;
+
+    std::fill_n (minMaxInterleaved, (size_t) pairs * 2, 0.0f);
+
+    if (sampleStore == nullptr)
+        return 0;
+
+    const auto sample = sampleStore->latest();
+
+    if (sample == nullptr || sample->level (0).numFrames <= 0)
+        return 0;
+
+    const auto& l0 = sample->level (0);
+    const int frames = l0.numFrames;
+
+    // same span / bucket arithmetic as getRangePeaks
+    const double a = juce::jlimit (0.0, 1.0, juce::jmin (startNorm, endNorm));
+    const double b = juce::jlimit (0.0, 1.0, juce::jmax (startNorm, endNorm));
+    const int f0 = juce::jlimit (0, frames - 1, (int) std::floor (a * frames));
+    const int f1 = juce::jlimit (f0 + 1, frames, (int) std::ceil (b * frames));
+    const int span = f1 - f0;
+    const int outPairs = juce::jlimit (1, warpr::SampleData::maxPeakPairs, juce::jmin (pairs, span));
+
+    // ---- current parameter values (raw atomics, same clamps as WarprSynth::setBlockParams; defaults without an APVTS)
+    auto raw = [this] (const char* id, double fallback)
+    {
+        if (apvts != nullptr)
+            if (auto* p = apvts->getRawParameterValue (id))
+                return static_cast<double> (p->load());
+
+        return fallback;
+    };
+
+    auto rawF = [&raw] (const char* id, double fallback, float lo, float hi)
+    {
+        return juce::jlimit (lo, hi, (float) raw (id, fallback));
+    };
+
+    const bool warpEnable = raw ("warpEnable", 1.0) >= 0.5;
+    const bool shaperEnable = raw ("shaperEnable", 0.0) >= 0.5;
+    const int rootNote = juce::jlimit (0, 127, juce::roundToInt (raw ("rootNote", 60.0)));
+    const int loopMode = juce::jlimit (0, 2, juce::roundToInt (raw ("loopMode", 0.0)));
+
+    PreviewCtx cx;
+    cx.sd = sample.get();
+    cx.c0 = l0.channel (0);
+    cx.c1 = sample->numChannels > 1 ? l0.channel (1) : nullptr;
+
+    // the voices' region (sampleStart..sampleEnd, loop mode) - phase warps fold their read offsets into it.  The loop-seam
+    // crossfade and the One-Shot end fade are loop-boundary treatments, not warp / shaper effects: left out of the preview.
+    const auto foldMode = loopMode == 1 ? warpr::RegionFold::Mode::PingPong
+                                        : (loopMode == 2 ? warpr::RegionFold::Mode::OneShot : warpr::RegionFold::Mode::Forward);
+    cx.rg.configure (*sample, rawF ("sampleStart", 0.0, 0.0f, 1.0f), rawF ("sampleEnd", 1.0, 0.0f, 1.0f), foldMode);
+    cx.rg.xfade = 0.0;
+    cx.rg.endFade = 0.0;
+    cx.regionFirst = juce::jlimit (0, frames, (int) std::ceil (cx.rg.lo));
+    cx.regionLast = juce::jlimit (0, frames, (int) std::ceil (cx.rg.hi));          // frames i with i < hi
+
+    // warp stage: the steady state of a voice's smoothed values (amount / A / B / mix * enable, ratio), 1x oversampling
+    const auto lut = getShaperLut();
+    const double osRate = sample->fileSampleRate;                // the preview runs one output sample per source frame
+    const float warpMix = rawF ("warpMix", 1.0, 0.0f, 1.0f) * (warpEnable ? 1.0f : 0.0f);
+    const float ratio = rawF ("modOscRatio", 1.0, 0.25f, 16.0f);
+
+    cx.warp.mode = juce::jlimit (0, warpr::kNumWarpModes - 1, juce::roundToInt (raw ("warpMode", 17.0)));
+    cx.warp.a0 = cx.warp.a1 = rawF ("warpAmount", 0.0, 0.0f, 1.0f);
+    cx.warp.A0 = cx.warp.A1 = rawF ("warpParamA", 0.5, 0.0f, 1.0f);
+    cx.warp.B0 = cx.warp.B1 = rawF ("warpParamB", 0.0, 0.0f, 1.0f);
+    cx.warp.mix0 = cx.warp.mix1 = warpMix;
+    cx.warp.active = warpMix > 0.0f;
+    cx.warp.Lc = sample->fileSampleRate / (440.0 * std::exp2 (((double) (float) rootNote - 69.0) / 12.0));   // a voice at its root pitch
+    cx.warp.fadeLen = std::max (1, (int) std::lround (0.010 * osRate));
+    cx.warp.os = 1;
+    cx.warp.osRate = osRate;
+    cx.warp.modSource = juce::jlimit (0, 4, juce::roundToInt (raw ("modOscSource", 4.0)));
+    cx.warp.ratio0 = cx.warp.ratio1 = ratio;
+    cx.warp.curve = lut.get();                                   // Phase Remapping reads the curve set even with the shaper off
+
+    const float shMix = rawF ("shaperMix", 1.0, 0.0f, 1.0f) * (shaperEnable ? 1.0f : 0.0f);
+    const float shMorph = rawF ("shaperMorph", 0.0, 0.0f, 1.0f);
+    cx.shaper.cur = lut.get();
+    cx.shaper.prev = nullptr;
+    cx.shaper.morph0 = cx.shaper.morph1 = shMorph;
+    cx.shaper.mix0 = cx.shaper.mix1 = shMix;
+    cx.shaper.w0 = cx.shaper.w1 = 1.0f;
+    cx.shaper.active = cx.shaper.cur != nullptr && shMix > 0.0f;
+
+    if (previewOsc == nullptr)
+        previewOsc = std::make_unique<warpr::UnisonOsc>();
+
+    auto& osc = *previewOsc;
+
+    auto reduce = [] (const float* s, int count, float& mn, float& mx)
+    {
+        mn = 1.0e9f;
+        mx = -1.0e9f;
+
+        for (int i = 0; i < count; ++i)
+        {
+            mn = juce::jmin (mn, s[i]);
+            mx = juce::jmax (mx, s[i]);
+        }
+    };
+
+    if (span <= kPreviewFrameCap)
+    {
+        // one continuous run over the whole span (stateful modes behave as in a sounding voice)
+        std::vector<float> stream ((size_t) span);
+        renderPreviewRun (cx, osc, f0, f1, stream.data());
+
+        for (int p = 0; p < outPairs; ++p)
+        {
+            const int i0 = (int) (((juce::int64) p * span) / outPairs);
+            const int i1 = juce::jmax (i0 + 1, (int) (((juce::int64) (p + 1) * span) / outPairs));
+            float mn, mx;
+            reduce (stream.data() + i0, juce::jmin (i1, span) - i0, mn, mx);
+            minMaxInterleaved[(size_t) p * 2]     = mn;
+            minMaxInterleaved[(size_t) p * 2 + 1] = mx;
+        }
+
+        return outPairs;
+    }
+
+    // Over the cap: every output pair gets its own window of real processed frames (centred in its bucket, at most
+    // cap / pairs frames, fresh state per window).  Nothing is interpolated or invented; the work is decimated.
+    const int windowMax = std::max (64, kPreviewFrameCap / outPairs);
+    std::vector<float> scratch ((size_t) windowMax);
+
+    for (int p = 0; p < outPairs; ++p)
+    {
+        const int i0 = f0 + (int) (((juce::int64) p * span) / outPairs);
+        const int i1 = juce::jmin (f1, juce::jmax (i0 + 1, f0 + (int) (((juce::int64) (p + 1) * span) / outPairs)));
+        const int len = std::min (i1 - i0, windowMax);
+        const int w0 = i0 + ((i1 - i0) - len) / 2;
+
+        renderPreviewRun (cx, osc, w0, w0 + len, scratch.data());
+
+        float mn, mx;
+        reduce (scratch.data(), len, mn, mx);
+        minMaxInterleaved[(size_t) p * 2]     = mn;
+        minMaxInterleaved[(size_t) p * 2 + 1] = mx;
+    }
+
+    return outPairs;
+}
+
+//==============================================================================
 // Filter response
 //==============================================================================
 void UiBackendImpl::computeFilterResponse (float* dbOut, int n)

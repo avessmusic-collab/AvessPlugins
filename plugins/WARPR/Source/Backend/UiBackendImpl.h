@@ -60,6 +60,7 @@
 #include "DSP/SampleStore.h"
 #include "DSP/ShaperCurve.h"
 #include "DSP/ShaperEngine.h"
+#include "DSP/UnisonOsc.h"
 #include "DSP/WarprSynth.h"
 #include "State/AppSettings.h"
 #include "State/PresetManager.h"
@@ -129,6 +130,8 @@ public:
     void loadSampleFile (const juce::File& file) override;
     WarprSampleDisplay getSampleDisplay() override;
     std::vector<float> getRangePeaks (double startNorm, double endNorm, int numPairs) override;
+
+    int computeProcessedPeaks (float* minMaxInterleaved, int pairs, double startNorm, double endNorm) override;
 
     void computeFilterResponse (float* dbOut, int n) override;
 
@@ -250,6 +253,9 @@ private:
     std::atomic<bool> presetDirty { false }, symmetryDirty { false };
     mutable juce::CriticalSection shaperLock;             // serialises build + publish (taken BEFORE modelLock)
     warpr::ShaperLutSet::Ptr lastLut;                     // guarded by shaperLock
+
+    // ---- processed-waveform preview (message thread only): a dedicated oscillator, never a voice's
+    std::unique_ptr<warpr::UnisonOsc> previewOsc;
 
     // ---- D9 (message thread only)
     warpr::PresetManager* presetManager = nullptr;

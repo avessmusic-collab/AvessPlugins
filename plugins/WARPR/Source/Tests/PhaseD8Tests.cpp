@@ -1965,7 +1965,19 @@ namespace
         // flops; x 16 voices x 1500 chunks/s = ~150 Mflop/s = ~5 % of a ~3 GFlop/s core.  The plan allows 15 points.
         std::printf ("        (core load: no modulation %.1f %%, modulated %.1f %%, delta %+.2f points of one core)\n",
                      coreBase * 100.0, coreMod * 100.0, deltaPoints);
+
+        // Wall-clock gates are meaningless under sanitizer instrumentation (TSan ~10x: measured 926 %
+        // baseline core load); print the numbers above but only gate the uninstrumented build.
+       #if defined (__has_feature)
+        #if __has_feature (thread_sanitizer) || __has_feature (address_sanitizer)
+         #define WARPR_SANITIZED_BUILD 1
+        #endif
+       #endif
+       #if WARPR_SANITIZED_BUILD
+        std::printf ("        (sanitizer build: CPU gate reported, not enforced)\n");
+       #else
         check (deltaPoints <= 15.0, "modulation costs <= 15 percentage points of one core (plan D8)");
+       #endif
     }
 }
 

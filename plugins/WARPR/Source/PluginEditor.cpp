@@ -249,6 +249,25 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
         {
             filterRequested = true; done ({});
         })
+        .withNativeFunction ("warpr_processedPeaks", [be] (const Args& a, Done done)
+        {
+            // processed-waveform preview: (startNorm, endNorm, pairCount) -> [min, max, ...] of the
+            // region run through the LIVE warp + shaper settings (real kernels, message thread)
+            juce::Array<juce::var> out;
+
+            if (a.size() >= 3)
+            {
+                const int pairs = juce::jlimit (1, 2048, (int) a[2]);
+                std::vector<float> buf ((size_t) pairs * 2, 0.0f);
+                const int got = be().computeProcessedPeaks (buf.data(), pairs, (double) a[0], (double) a[1]);
+                out.ensureStorageAllocated (got * 2);
+
+                for (int i = 0; i < got * 2; ++i)
+                    out.add ((double) buf[(size_t) i]);
+            }
+
+            done (juce::var (out));
+        })
         .withNativeFunction ("warpr_rangePeaks", [be] (const Args& a, Done done)
         {
             // waveform zoom: (startNorm, endNorm, pairCount) -> [min, max, ...] for that sub-range

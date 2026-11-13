@@ -737,6 +737,7 @@ int runPhaseD6Tests (bool full);              // Tests/PhaseD6Tests.cpp
 int runPhaseD7Tests (bool full);              // Tests/PhaseD7Tests.cpp
 int runPhaseD8Tests (bool full);              // Tests/PhaseD8Tests.cpp
 int runPhaseD9Tests (bool full);              // Tests/PhaseD9Tests.cpp
+int runPreviewTests (bool full);              // Tests/PreviewTests.cpp
 
 int main (int argc, char** argv)
 {
@@ -769,6 +770,7 @@ int main (int argc, char** argv)
     failures += runPhaseD7Tests (full);
     failures += runPhaseD8Tests (full);
     failures += runPhaseD9Tests (full);
+    failures += runPreviewTests (full);
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;
