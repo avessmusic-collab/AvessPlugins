@@ -3,9 +3,16 @@
   MasterStage (architecture C14 / section J).
 
       voice sum -> DC blocker (one-pole HP, ~5 Hz) -> masterGain (dB, 20 ms linear slew, then to
-      linear) -> safety knee soft-clip (ADAA1) -> NaN / inf guard
+      linear) -> safety knee soft-clip (ADAA1) -> BRICKWALL LIMITER (ceiling -0.1 dBFS) -> NaN / inf guard
 
   NEVER juce::dsp::Limiter (it hides a fixed 4:1 compressor first stage - house lesson).
+
+  Limiter (owner request 2026-11-13, "a limiter with 0.1 db headroom"): stereo-linked peak limiter,
+  instant attack (the gain drops on the same sample), exponential release (~100 ms to recover),
+  ceiling 10^(-0.1/20).  It sits AFTER the knee: the knee keeps its soft-clip character and bounds
+  pathological jumps; the limiter then guarantees the -0.1 dBFS ceiling by gain riding, never by
+  clipping.  While the envelope sits at/below the ceiling the gain is exactly 1 and the samples
+  pass through BIT-EXACTLY (no multiply).
 
   Safety knee: |x| <= 0.89 is untouched, bit-exactly; above, the output follows
       y = sgn(x) * (0.89 + 0.11 * tanh((|x| - 0.89) / 0.11))        (C1 at the knee, |y| < 1)
@@ -28,10 +35,12 @@ namespace warpr
     public:
         static constexpr double knee  = 0.89;
         static constexpr double width = 0.11;
+        static constexpr double ceiling = 0.98855309465693897;   // -0.1 dBFS = 10^(-0.1/20)
 
         void prepare (double newSampleRate) noexcept
         {
             dcR = 1.0 - 6.283185307179586 * 5.0 / newSampleRate;
+            limRelease = std::exp (-1.0 / (0.100 * newSampleRate));   // 100 ms peak-envelope release
             gainDb.reset (newSampleRate, 0.020);
             reset();
         }
@@ -40,6 +49,7 @@ namespace warpr
         {
             dcxL = dcxR = dcyL = dcyR = 0.0;
             prevL = prevR = 0.0;
+            limEnv = ceiling;
             first = true;
             cachedDb = 1.0e9f;
             cachedGain = 1.0f;
@@ -82,10 +92,31 @@ namespace warpr
                 const double gl = yl * (double) cachedGain;
                 const double gr = yr * (double) cachedGain;
 
-                l[i] = (float) softClip (gl, prevL);
-                r[i] = (float) softClip (gr, prevR);
+                const double kl = softClip (gl, prevL);
+                const double kr = softClip (gr, prevR);
+
+                // ---- brickwall limiter, -0.1 dBFS: instant attack, 100 ms release, stereo-linked.
+                // At/below the ceiling the envelope rests AT the ceiling, the gain is exactly 1 and
+                // the knee output passes through untouched (bit-exact silence/low-level path).
+                const double peak = std::max (std::abs (kl), std::abs (kr));
+                limEnv = std::max (peak, ceiling + (limEnv - ceiling) * limRelease);
+
+                if (limEnv > ceiling)
+                {
+                    const double g = ceiling / limEnv;
+                    l[i] = (float) (kl * g);
+                    r[i] = (float) (kr * g);
+                }
+                else
+                {
+                    l[i] = (float) kl;
+                    r[i] = (float) kr;
+                }
             }
         }
+
+        /** The limiter's current gain-reduction factor (1 = none); for tests / metering. */
+        double limiterGain() const noexcept { return limEnv > ceiling ? ceiling / limEnv : 1.0; }
 
         /** Antialiased knee: exposed for tests. */
         static double softClipAdaa (double x, double& previous) noexcept { return softClip (x, previous); }
@@ -155,6 +186,7 @@ namespace warpr
 
         juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gainDb;
         double dcR = 0.9993;
+        double limRelease = 0.9998, limEnv = ceiling;
         double dcxL = 0.0, dcxR = 0.0, dcyL = 0.0, dcyR = 0.0;
         double prevL = 0.0, prevR = 0.0;
         bool   first = true;

@@ -25,6 +25,7 @@
 #include "State/PresetManager.h"
 #include "State/SampleCodec.h"
 #include "State/StateIO.h"
+#include "DSP/MasterStage.h"
 #include "Tests/AllocHook.h"
 #include "Tests/OfflineRender.h"
 #include "Tests/Scanners.h"
@@ -1387,6 +1388,78 @@ namespace
                              : "(g) Mono one-shot storm: deterministic, finite, audible, all voices freed");
         }
     }
+
+    //==========================================================================
+    // master limiter: -0.1 dBFS brickwall (owner request 2026-11-13)
+    //==========================================================================
+    void testMasterLimiter()
+    {
+        std::printf ("\n[limiter] master brickwall: -0.1 dBFS ceiling, instant attack, 100 ms release\n");
+        constexpr double fs = 48000.0;
+        const float ceil = (float) warpr::MasterStage::ceiling;
+        const double tau = 6.283185307179586 * 220.0 / fs;
+
+        // ---- a +6 dB sine never exceeds the ceiling, and the limited peak sits AT it (gain riding)
+        {
+            warpr::MasterStage ms;
+            ms.prepare (fs);
+            std::vector<float> l (48000), r (48000);
+            for (size_t i = 0; i < l.size(); ++i)
+                l[i] = r[i] = (float) (2.0 * std::sin (tau * (double) i));
+            ms.process (l.data(), r.data(), (int) l.size(), 0.0f);
+
+            float mx = 0.0f;
+            bool same = true;
+            for (size_t i = 0; i < l.size(); ++i)
+            {
+                mx = std::max (mx, std::abs (l[i]));
+                same = same && juce::exactlyEqual (l[i], r[i]);
+            }
+            std::printf ("        (+6 dB sine: output peak %.6f, ceiling %.6f)\n", (double) mx, (double) ceil);
+            check (mx <= ceil + 1.0e-6f, "a +6 dB sine never exceeds the -0.1 dBFS ceiling");
+            check (mx >= ceil - 1.0e-3f, "the limited peak sits AT the ceiling (gain riding, not clipped below it)");
+            check (same, "stereo-linked: identical L / R inputs stay identical");
+        }
+
+        // ---- low-level material: the limiter's gain is exactly 1 (transparent pass-through)
+        {
+            warpr::MasterStage ms;
+            ms.prepare (fs);
+            std::vector<float> l (9600), r (9600);
+            for (size_t i = 0; i < l.size(); ++i)
+                l[i] = r[i] = (float) (0.5 * std::sin (tau * (double) i));
+            ms.process (l.data(), r.data(), (int) l.size(), 0.0f);
+
+            float mx = 0.0f;
+            for (float v : l) mx = std::max (mx, std::abs (v));
+            check (juce::exactlyEqual (ms.limiterGain(), 1.0), "below the ceiling the limiter gain is exactly 1");
+            check (mx < 0.52f, "a 0.5 sine passes at its own level (knee + limiter both idle)");
+        }
+
+        // ---- release: after a loud burst, the gain recovers with the ~100 ms envelope
+        {
+            warpr::MasterStage ms;
+            ms.prepare (fs);
+            std::vector<float> l (4800), r (4800);
+            for (size_t i = 0; i < l.size(); ++i)
+                l[i] = r[i] = (float) (2.0 * std::sin (tau * (double) i));
+            ms.process (l.data(), r.data(), (int) l.size(), 0.0f);
+
+            int blocks = 0;
+            std::vector<float> zl (480, 0.0f), zr (480, 0.0f);
+            while (ms.limiterGain() < 0.999 && blocks < 100)
+            {
+                std::fill (zl.begin(), zl.end(), 0.0f);
+                std::fill (zr.begin(), zr.end(), 0.0f);
+                ms.process (zl.data(), zr.data(), 480, 0.0f);
+                ++blocks;
+            }
+            // HAND-DERIVED: envelope starts at the knee bound (~1.0), recovers to gain .999 when
+            // (env - ceil) falls from ~0.0114 to ~0.00099, i.e. ln(0.0864) * 100 ms = ~245 ms = ~24.5 blocks.
+            std::printf ("        (release: gain back to 0.999 after %d x 10 ms blocks)\n", blocks);
+            check (blocks >= 12 && blocks <= 45, "the limiter releases over the ~100 ms envelope (measured above)");
+        }
+    }
 }
 
 //==============================================================================
@@ -1409,6 +1482,7 @@ int runPhaseD9Tests (bool full)
     testStateSizes (full);
     testSoak (full);
     testOneShotTrigger();
+    testMasterLimiter();
 
     std::printf ("[D9] %d failure%s\n", failures, failures == 1 ? "" : "s");
     return failures;
