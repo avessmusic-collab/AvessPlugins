@@ -66,6 +66,7 @@ namespace warpr
         keyHeld = false;
         pedalHeld = false;
         oneShotReleased = false;
+        triggerLatched = false;
         killedByGuard = false;
         note = -1;
         age = 0;
@@ -111,6 +112,8 @@ namespace warpr
         note = info.note;
         age = info.age;
         keyHeld = true;
+        // One-Shot TRIGGER latch (Classic playback only: grains have no natural end, so granular One-Shot stays gated).
+        triggerLatched = vp.loopMode == 2 && vp.playMode == 0;
         velGain = 0.25f + 0.75f * juce::jlimit (0.0f, 1.0f, info.velocity);   // fixed velocity law (A2)
         os = juce::jlimit (1, maxOs, info.os);
         unison = juce::jlimit (1, maxUnison, info.unison);
@@ -300,6 +303,17 @@ namespace warpr
     {
         const SampleData& sd = *sample;
         const double nD = (double) n;
+
+        // A trigger voice has no key gate, so it must be able to end by itself.  If the loop mode leaves One-Shot or the play
+        // mode becomes Granular mid-note, the region read no longer ends: drop the latch and hand the voice back to the keys
+        // (a key that was already let go releases now).  Never re-latched mid-note.
+        if (triggerLatched && (vp.loopMode != 2 || vp.playMode != 0))
+        {
+            triggerLatched = false;
+
+            if (! keyHeld && ! pedalHeld)
+                release();
+        }
 
         auto slewCoef = [&] (double seconds) { return (float) (1.0 - std::exp (-nD / (seconds * sampleRate))); };
         const float k3 = slewCoef (0.003), k5 = slewCoef (0.005), k20 = slewCoef (0.020);
@@ -498,13 +512,17 @@ namespace warpr
             float& pgl = prevGainL[(size_t) u];
             float& pgr = prevGainR[(size_t) u];
 
-            if (rho0 <= maxRho && rho1 <= maxRho && rho0 > 0.0 && rho1 > 0.0)
+            const bool readable = rho0 <= maxRho && rho1 <= maxRho && rho0 > 0.0 && rho1 > 0.0;
+
+            if (readable)
                 o.render (sd, region, vp.interpQuality, rho0, rho1, os, pgl, pgr, gl, gr,
                           busL.data(), busR.data(), nOS, &warpSpan, &shaperSpan, &grainSpan);
 
             pgl = gl;
             pgr = gr;
-            allEnded = allEnded && o.ended;
+            // A trigger voice whose oscillator is muted (rate above maxRho) would never reach the region end and, with the
+            // key gate ignored, would never free: count the muted oscillator as ended for latched voices only.
+            allEnded = allEnded && (o.ended || (triggerLatched && ! readable));
         }
 
         // One-Shot: when every oscillator has run off its end the voice releases over 5 ms

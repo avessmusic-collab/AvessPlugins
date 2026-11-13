@@ -1021,6 +1021,372 @@ namespace
         check (identical (r1, r3), "two fresh runs are bit-identical");
         check (identical (r1, r2), "capturing the state between blocks does not change the audio by a single bit");
     }
+
+    //==========================================================================
+    // 13. [oneshot] One-Shot TRIGGER semantics (loopMode One-Shot + Classic playback ignores key-up)
+    //==========================================================================
+    constexpr double osFs = 48000.0;
+    constexpr int osBlock = 256;
+    constexpr int osFrames = 24000;                                  // 0.5 s sample, played at its root: 24000 host samples
+    constexpr int osTotal = 282 * osBlock;                           // 72192 samples = 1.504 s
+
+    struct OsEv { int at; juce::MidiMessage msg; };
+
+    OsEv onEv (int at, int note)  { return { at, juce::MidiMessage::noteOn (1, note, 1.0f) }; }
+    OsEv offEv (int at, int note) { return { at, juce::MidiMessage::noteOff (1, note) }; }
+    OsEv ccEv (int at, int cc, int v) { return { at, juce::MidiMessage::controllerEvent (1, cc, v) }; }
+
+    warpr::SampleData::Ptr osSample()
+    {
+        juce::AudioBuffer<float> b (1, osFrames);
+        for (int i = 0; i < osFrames; ++i)
+            b.setSample (0, i, 0.5f * (float) std::sin (2.0 * 3.14159265358979 * 220.0 * (double) i / osFs));
+        return warpr::SampleData::create (b, osFs, "oneshot sine", false, false);
+    }
+
+    /** loopMode 0 Forward / 1 Ping-Pong / 2 One-Shot, playMode 0 Classic / 1 Granular, voiceMode 0 Poly / 1 Mono / 2 Legato. */
+    ProcPtr osProc (int loopMode, int playMode = 0, int voiceMode = 0)
+    {
+        auto p = makeProc();
+        p->getSampleStore().publish (osSample());
+        setReal (*p, "loopMode", (float) loopMode);
+        setReal (*p, "playMode", (float) playMode);
+        setReal (*p, "voiceMode", (float) voiceMode);
+        setReal (*p, "ampAttack", 1.0f);
+        setReal (*p, "ampDecay", 100.0f);
+        setReal (*p, "ampSustain", 1.0f);
+        setReal (*p, "ampRelease", 50.0f);
+        return p;
+    }
+
+    using OsCheckpoint = std::function<void (int endSample)>;
+
+    /** Persistent block loop (events split per block like OfflineRender), left channel captured. */
+    std::vector<float> osRender (PluginProcessor& p, const std::vector<OsEv>& evs, int total, const OsCheckpoint& cb = {})
+    {
+        p.setPlayConfigDetails (0, 2, osFs, osBlock);                // BEFORE prepareToPlay (house rule)
+        p.prepareToPlay (osFs, osBlock);
+
+        std::vector<float> out;
+        out.reserve ((size_t) total);
+        juce::AudioBuffer<float> scratch (2, osBlock);
+        juce::MidiBuffer midi;
+
+        for (int pos = 0, bi = 0; pos < total; pos += osBlock, ++bi)
+        {
+            const int n = std::min (osBlock, total - pos);
+            midi.clear();
+            for (const auto& e : evs)
+                if (e.at >= pos && e.at < pos + n)
+                    midi.addEvent (e.msg, e.at - pos);
+
+            juce::AudioBuffer<float> blk (scratch.getArrayOfWritePointers(), 2, n);
+            blk.clear();
+            p.processBlock (blk, midi);
+            out.insert (out.end(), blk.getReadPointer (0), blk.getReadPointer (0) + n);
+
+            if ((bi & 7) == 7)
+                p.drainRetired();
+
+            if (cb)
+                cb (pos + n);
+        }
+
+        p.releaseResources();
+        return out;
+    }
+
+    bool osSame (const std::vector<float>& a, const std::vector<float>& b)
+    {
+        return a.size() == b.size() && std::memcmp (a.data(), b.data(), a.size() * sizeof (float)) == 0;
+    }
+
+    double osRms (const std::vector<float>& x, int from, int to)
+    {
+        double s = 0.0;
+        for (int i = from; i < to && i < (int) x.size(); ++i)
+            s += (double) x[(size_t) i] * (double) x[(size_t) i];
+        return to > from ? std::sqrt (s / (double) (to - from)) : 0.0;
+    }
+
+    int osLastAudible (const std::vector<float>& x, float thr)
+    {
+        for (int i = (int) x.size() - 1; i >= 0; --i)
+            if (std::abs (x[(size_t) i]) > thr)
+                return i;
+        return -1;
+    }
+
+    std::vector<int> osNonGhostNotes (PluginProcessor& p)
+    {
+        std::vector<int> notes;
+        for (int s = 0; s < warpr::WarprSynth::totalSlots; ++s)
+        {
+            const auto info = p.getSynth().getVoiceInfo (s);
+            if (info.active && ! info.ghost)
+                notes.push_back (info.note);
+        }
+        std::sort (notes.begin(), notes.end());
+        return notes;
+    }
+
+    void testOneShotTrigger()
+    {
+        std::printf ("\n[oneshot] One-Shot trigger: one tap plays the whole region (Classic), auto-releases, frees\n");
+        using Notes = std::vector<int>;
+
+        // ---- (a) 10 ms tap plays the full region and is bit-identical to a note held far past the region end
+        // Hand-derived: sample 24000 frames at root pitch, host == file rate -> read reaches the region end at ~24000.  The end
+        // fade + 5 ms fast release (-60 dB in 240 samples, -90 dB in 360) put the last audible sample just after 24000.
+        std::vector<float> tapOut, heldOut;
+        std::vector<int> activeAt (osTotal / osBlock + 1, 0);
+        {
+            auto p = osProc (2);
+            tapOut = osRender (*p, { onEv (0, 60), offEv (480, 60) }, osTotal, [&] (int end)
+            {
+                activeAt[(size_t) (end / osBlock)] = p->getNumActiveVoices();
+            });
+        }
+        {
+            auto p = osProc (2);
+            heldOut = osRender (*p, { onEv (0, 60), offEv (60000, 60) }, osTotal);
+        }
+        const int lastTap = osLastAudible (tapOut, 1.0e-4f);
+        const double rmsAfterOff = osRms (tapOut, 2000, 20000);
+        std::printf ("        10 ms tap: rms over [2000, 20000) = %.4f (sine 0.5 -> 0.354), last sample > 1e-4 at %d (region end %d)\n",
+                     rmsAfterOff, lastTap, osFrames);
+        check (rmsAfterOff > 0.05, "(a) output keeps sounding long after the 10 ms note-off (note-off ignored)");
+        // MEASURED 26838: region end ~24000 + the D2 one-shot END FADE (~2000 samples) and THEN the
+        // 5 ms fastRelease - the original 26000 ceiling forgot the end fade precedes the release.
+        check (lastTap > 22500 && lastTap < 27500, "(a) the render ends at region end + end fade + release tail (22500 < last < 27500)");
+        check (osSame (tapOut, heldOut), "(a) 10 ms tap == note held past the region end, bit-exact over the whole render");
+
+        // sustain pedal: pedal-up must not release either
+        {
+            auto pedal = osProc (2);
+            const auto pedalOut = osRender (*pedal, { ccEv (0, 64, 127), onEv (10, 60), offEv (480, 60), ccEv (1000, 64, 0) }, osTotal);
+            auto ref = osProc (2);
+            const auto refOut = osRender (*ref, { onEv (10, 60), offEv (60000, 60) }, osTotal);
+            check (osSame (pedalOut, refOut), "(a) sustain-pedal release is ignored too (bit-exact vs a never-released note)");
+        }
+
+        // ---- (b) the voice frees after region end + release, no leak
+        {
+            int firstZero = -1, lastNonZero = -1;
+            for (int bi = 1; bi < (int) activeAt.size(); ++bi)
+            {
+                if (activeAt[(size_t) bi] > 0) lastNonZero = bi;
+                else if (firstZero < 0) firstZero = bi;
+            }
+            std::printf ("        active voices: > 0 through block %d (sample %d), first 0 at block %d (sample %d), 0 for the remaining %d blocks\n",
+                         lastNonZero, lastNonZero * osBlock, firstZero, firstZero * osBlock, (int) activeAt.size() - 1 - firstZero);
+            check (activeAt[(size_t) (20000 / osBlock)] == 1, "(b) one voice at 20000 (10 s of gate long gone)");
+            check (firstZero * osBlock >= 22000 && firstZero * osBlock <= osFrames + 2400, "(b) freed within [22000, region end + 2400]");
+            check (lastNonZero == firstZero - 1, "(b) never comes back after freeing (no leak)");
+
+            // burst of taps over the whole range, extreme pitches included: everything frees
+            auto p = osProc (2);
+            std::vector<OsEv> evs;
+            // slowest reads: note 36 plays at 0.25x (96000 samples), note 40 at 0.315x (76000) - all end inside the 3 s render
+            const int notes[] = { 36, 48, 60, 72, 84, 96, 108, 40, 55, 67, 79, 91 };
+            for (int k = 0; k < 12; ++k)
+            {
+                evs.push_back (onEv (k * 1500, notes[k]));
+                evs.push_back (offEv (k * 1500 + 200, notes[k]));
+            }
+            int peakVoices = 0;
+            osRender (*p, evs, osTotal * 2, [&] (int) { peakVoices = std::max (peakVoices, p->getNumActiveVoices()); });
+            std::printf ("        12-tap burst: peak %d voices, %d active after %d blocks\n", peakVoices, p->getNumActiveVoices(), osTotal * 2 / osBlock);
+            check (p->getNumActiveVoices() == 0 && peakVoices >= 3, "(b) 12 overlapping taps all free (peak >= 3, final 0)");
+        }
+
+        // muted oscillator (rate above maxRho): note 127 with root 12 -> 2^((127-12)/12) = 768 > 256 -> would never reach the end
+        {
+            auto p = osProc (2);
+            setReal (*p, "rootNote", 12.0f);
+            int at2560 = -1;
+            osRender (*p, { onEv (0, 127), offEv (100, 127) }, 4096, [&] (int end) { if (end == 2560) at2560 = p->getNumActiveVoices(); });
+            std::printf ("        muted-rate trigger voice: %d active at sample 2560\n", at2560);
+            check (at2560 == 0, "(b) a muted (rate > 256) trigger voice still frees");
+        }
+
+        // CC123 / CC120 still end a latched voice (panic paths), stealing is covered below
+        {
+            auto p = osProc (2);
+            int a123 = -1, a120 = -1;
+            osRender (*p, { onEv (0, 60), offEv (100, 60), ccEv (3000, 123, 0) }, 16384, [&] (int end) { if (end == 12288) a123 = p->getNumActiveVoices(); });
+            // CC123: release 50 ms -> -90 dB at 1.5 * 2400 = 3600 samples -> idle by ~6700 << 12288
+            auto q = osProc (2);
+            osRender (*q, { onEv (0, 60), offEv (100, 60), ccEv (3000, 120, 0) }, 16384, [&] (int end) { if (end == 4096) a120 = q->getNumActiveVoices(); });
+            // CC120: 3 ms ghost fade (144 samples) -> gone well before 4096
+            std::printf ("        CC123 -> %d voices at 12288, CC120 -> %d voices at 4096\n", a123, a120);
+            check (a123 == 0 && a120 == 0, "(b) all-notes-off (CC123) and all-sound-off (CC120) end latched voices");
+        }
+
+        // leaving One-Shot / entering Granular mid-note drops the latch (no key gate left to end the voice)
+        for (int variant = 0; variant < 2; ++variant)
+        {
+            auto p = osProc (2);
+            int at4096 = -1, at12288 = -1, atEnd = -1;
+            osRender (*p, { onEv (0, 60), offEv (480, 60) }, osTotal, [&] (int end)
+            {
+                if (end == 4096)
+                {
+                    at4096 = p->getNumActiveVoices();
+                    setReal (*p, variant == 0 ? "loopMode" : "playMode", variant == 0 ? 0.0f : 1.0f);
+                }
+                if (end == 12288) at12288 = p->getNumActiveVoices();
+                atEnd = p->getNumActiveVoices();
+            });
+            std::printf ("        %s mid-note: %d voice at 4096, %d at 12288 (unlatched + released), %d at the end\n",
+                         variant == 0 ? "loopMode -> Forward" : "playMode -> Granular", at4096, at12288, atEnd);
+            check (at4096 == 1 && at12288 == 0 && atEnd == 0,
+                   variant == 0 ? "(b) loopMode changed mid-note: latch dropped, the released key now ends the voice"
+                                : "(b) playMode -> Granular mid-note: latch dropped, the released key now ends the voice");
+        }
+
+        // ---- (c) Forward Loop unchanged: a 10 ms tap gates as before (480 + release -90 dB at 3600 -> silent by ~4100)
+        {
+            auto p = osProc (0);
+            const auto out = osRender (*p, { onEv (0, 60), offEv (480, 60) }, osTotal);
+            const int last = osLastAudible (out, 1.0e-4f);
+            // hand: release -60 dB per 2400 samples; the 1e-4 threshold is ~-74 dB below the 0.5 peak -> ~480 + 2960 = 3440
+            std::printf ("        Forward Loop 10 ms tap: last sample > 1e-4 at %d (hand: ~3440; -90 dB idle at 4080)\n", last);
+            check (last > 2000 && last < 6000, "(c) Forward Loop: a short note gates (release tail ends near 4100)");
+
+            auto q = osProc (1);
+            const auto pp = osRender (*q, { onEv (0, 60), offEv (480, 60) }, osTotal);
+            check (osLastAudible (pp, 1.0e-4f) < 6000, "(c) Ping-Pong: a short note gates too");
+        }
+
+        // ---- (d) Granular One-Shot unchanged: gated (grains have no natural end)
+        {
+            auto p = osProc (2, 1);
+            int at2048 = -1, at12288 = -1;
+            const auto out = osRender (*p, { onEv (0, 60), offEv (480, 60) }, osTotal, [&] (int end)
+            {
+                if (end == 2048) at2048 = p->getNumActiveVoices();
+                if (end == 12288) at12288 = p->getNumActiveVoices();
+            });
+            std::printf ("        granular One-Shot: %d voice at 2048 (releasing), %d at 12288, last sample > 1e-4 at %d\n",
+                         at2048, at12288, osLastAudible (out, 1.0e-4f));
+            check (at2048 == 1 && at12288 == 0, "(d) granular One-Shot: note-off still releases (gated, frees by 12288)");
+            check (osLastAudible (out, 1.0e-4f) < 12288, "(d) granular One-Shot: silent after the release");
+        }
+
+        // ---- (e) Mono: note-off of a latched voice does not cut it; the next note-on steals per the mono rules
+        {
+            auto p = osProc (2, 0, 1);
+            Notes n10240, n30720;
+            int a10240 = -1, a33024 = -1;
+            const auto out = osRender (*p, { onEv (0, 60), offEv (480, 60) }, osTotal, [&] (int end)
+            {
+                if (end == 10240) { n10240 = osNonGhostNotes (*p); a10240 = p->getNumActiveVoices(); }
+                if (end == 30720) n30720 = osNonGhostNotes (*p);
+                if (end == 33024) a33024 = p->getNumActiveVoices();
+            });
+            check (n10240 == Notes { 60 } && a10240 == 1 && osRms (out, 2000, 20000) > 0.05, "(e) Mono: latched voice survives its note-off");
+            check (n30720.empty() && a33024 == 0, "(e) Mono: the latched voice frees at its region end");
+        }
+        {
+            // 60 held, 64 pressed (mono one-shot restarts through a ghost), 64 released with 60 still held, then 60 released
+            auto p = osProc (2, 0, 1);
+            Notes at3072, at5120, at10240, at43008;
+            int a33024 = -1, aEnd = -1;
+            const auto out = osRender (*p, { onEv (0, 60), onEv (2000, 64), offEv (4000, 64), offEv (6000, 60),
+                                             onEv (40000, 67), offEv (40100, 67) }, osTotal, [&] (int end)
+            {
+                if (end == 3072) at3072 = osNonGhostNotes (*p);
+                if (end == 5120) at5120 = osNonGhostNotes (*p);
+                if (end == 10240) at10240 = osNonGhostNotes (*p);
+                if (end == 33024) a33024 = p->getNumActiveVoices();
+                if (end == 43008) at43008 = osNonGhostNotes (*p);
+                aEnd = p->getNumActiveVoices();
+            });
+            std::printf ("        mono stack run: notes %zu/%zu/%zu after 64-on / 64-off / 60-off, %d voices at 33024, final %d\n",
+                         at3072.size(), at5120.size(), at10240.size(), a33024, aEnd);
+            check (at3072 == Notes { 64 }, "(e) Mono: the new note-on steals (ghost) and starts a fresh one-shot");
+            // old behaviour: releasing 64 with 60 held falls back to 60 (retarget).  A trigger voice keeps its note, is not released.
+            check (at5120 == Notes { 64 } && at10240 == Notes { 64 }, "(e) Mono: key-up (with and without stack fallback) neither retargets nor releases the latched voice");
+            check (a33024 == 0, "(e) Mono: the voice started at 2000 frees at ~26000");
+            check (at43008 == Notes { 67 } && osRms (out, 41000, 46000) > 0.05, "(e) Mono: note stack is clean afterwards (a later note plays normally)");
+            check (aEnd == 0, "(e) Mono: everything freed at the end");
+        }
+        {
+            // Mono, tap then a new note while the latched voice still plays: steals it (mono one-shot rule)
+            auto p = osProc (2, 0, 1);
+            Notes n6144;
+            int a6144 = -1;
+            osRender (*p, { onEv (0, 60), offEv (480, 60), onEv (5000, 64) }, 8192, [&] (int end)
+            {
+                if (end == 6144) { n6144 = osNonGhostNotes (*p); a6144 = p->getNumActiveVoices(); }
+            });
+            check (n6144 == Notes { 64 } && a6144 == 1, "(e) Mono: next note-on steals the latched voice (one voice, note 64, ghost gone)");
+        }
+        {
+            // Legato: keys not alive -> a new note starts a fresh voice and ghosts the latched one
+            auto p = osProc (2, 0, 2);
+            Notes n6144;
+            int a6144 = -1;
+            osRender (*p, { onEv (0, 60), offEv (480, 60), onEv (5000, 64) }, 8192, [&] (int end)
+            {
+                if (end == 6144) { n6144 = osNonGhostNotes (*p); a6144 = p->getNumActiveVoices(); }
+            });
+            check (n6144 == Notes { 64 } && a6144 == 1, "(e) Legato: latched voice + a new note after key-up -> one fresh voice");
+        }
+
+        // ---- (f) stealing / governor / same-note retrigger still act on latched voices
+        {
+            auto p = osProc (2);
+            setReal (*p, "polyphony", 2.0f);
+            Notes n2560;
+            int a2560 = -1;
+            osRender (*p, { onEv (0, 60), offEv (100, 60), onEv (1000, 62), offEv (1100, 62), onEv (2000, 64), offEv (2100, 64) }, 4096,
+                      [&] (int end) { if (end == 2560) { n2560 = osNonGhostNotes (*p); a2560 = p->getNumActiveVoices(); } });
+            std::printf ("        polyphony 2, three taps: %zu non-ghost voices, %d active at 2560\n", n2560.size(), a2560);
+            check (n2560 == Notes { 62, 64 } && a2560 == 2, "(f) polyphony cap steals the oldest LATCHED voice (3 ms ghost, gone by 2560)");
+        }
+        {
+            // oscillator budget 16 units: one unison-8 note at 2x OS (8 * 2 = 16) fills it -> the second tap steals the first
+            auto p = osProc (2);
+            setReal (*p, "unisonVoices", 8.0f);
+            setReal (*p, "oversampling", 1.0f);                     // 2x: cost per oscillator 2 units, so 8 x 2 = 16 fills the budget
+            p->getSynth().setOscillatorBudget (16);
+            Notes n2048;
+            osRender (*p, { onEv (0, 60), offEv (100, 60), onEv (1000, 64), offEv (1100, 64) }, 4096,
+                      [&] (int end) { if (end == 2048) n2048 = osNonGhostNotes (*p); });
+            check (n2048 == Notes { 64 }, "(f) budget governor ghosts a latched voice to admit the next note");
+        }
+        {
+            // same note again while the first plays: today's poly rule (the old voice ghosts, one fresh voice)
+            auto p = osProc (2);
+            Notes n4096;
+            int a4096 = -1;
+            osRender (*p, { onEv (0, 60), offEv (100, 60), onEv (3000, 60), offEv (3100, 60) }, 5120,
+                      [&] (int end) { if (end == 4096) { n4096 = osNonGhostNotes (*p); a4096 = p->getNumActiveVoices(); } });
+            check (n4096 == Notes { 60 } && a4096 == 1, "(f) same-note retrigger: normal poly allocation (old voice ghosted, one voice left)");
+        }
+
+        // ---- (g) determinism: random one-shot storm, poly and mono, two fresh runs bit-identical
+        for (int mode : { 0, 1 })
+        {
+            juce::Random rng (4242 + mode);
+            std::vector<OsEv> evs;
+            for (int k = 0; k < 14; ++k)
+            {
+                const int t = k * 3100 + rng.nextInt (1500), note = 40 + rng.nextInt (40);
+                evs.push_back (onEv (t, note));
+                evs.push_back (offEv (t + 100 + rng.nextInt (600), note));
+            }
+            auto p1 = osProc (2, 0, mode), p2 = osProc (2, 0, mode);
+            const auto r1 = osRender (*p1, evs, osTotal * 2), r2 = osRender (*p2, evs, osTotal * 2);
+            bool finite = true;
+            for (float v : r1) finite = finite && std::isfinite (v);
+            check (osSame (r1, r2) && finite && osRms (r1, 0, (int) r1.size()) > 0.01 && p1->getNumActiveVoices() == 0,
+                   mode == 0 ? "(g) Poly one-shot storm: deterministic, finite, audible, all voices freed"
+                             : "(g) Mono one-shot storm: deterministic, finite, audible, all voices freed");
+        }
+    }
 }
 
 //==============================================================================
@@ -1042,6 +1408,7 @@ int runPhaseD9Tests (bool full)
     testSettings();
     testStateSizes (full);
     testSoak (full);
+    testOneShotTrigger();
 
     std::printf ("[D9] %d failure%s\n", failures, failures == 1 ? "" : "s");
     return failures;

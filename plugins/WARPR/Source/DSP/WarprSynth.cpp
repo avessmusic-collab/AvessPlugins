@@ -579,9 +579,9 @@ namespace warpr
         if (stackCount == 0)
         {
             v->keyHeld = false;
-            v->release();
+            v->releaseKey();                                  // a one-shot trigger voice ignores it (plays to its end)
         }
-        else if (v->note == removedNote)
+        else if (v->note == removedNote && ! v->isTriggerLatched())    // a trigger voice keeps its pitch: no fall-back to the stack
         {
             v->retarget ((int) stack[(size_t) (stackCount - 1)], glideNow());
 
@@ -601,9 +601,9 @@ namespace warpr
         {
             v->keyHeld = false;
             v->pedalHeld = false;
-            v->release();
+            v->releaseKey();
         }
-        else if (! inStack (v->note))
+        else if (! inStack (v->note) && ! v->isTriggerLatched())
         {
             v->retarget ((int) stack[(size_t) (stackCount - 1)], glideNow());
 
@@ -637,7 +637,7 @@ namespace warpr
                 if (v.isActive() && ! v.ghost && v.note == note && v.keyHeld)
                 {
                     v.keyHeld = false;
-                    v.release();
+                    v.releaseKey();
                 }
         }
         else
@@ -669,7 +669,7 @@ namespace warpr
                 if (v.isActive() && ! v.ghost && v.pedalHeld)
                 {
                     v.pedalHeld = false;
-                    v.release();
+                    v.releaseKey();
                 }
         }
         else
@@ -680,6 +680,7 @@ namespace warpr
 
     void WarprSynth::allNotesOff() noexcept
     {
+        // CC123 is a panic: it releases one-shot trigger voices too (release(), not releaseKey()).
         for (auto& v : voices)
             if (v.isActive() && ! v.ghost)
             {

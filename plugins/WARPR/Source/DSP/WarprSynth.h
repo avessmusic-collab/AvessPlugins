@@ -19,6 +19,10 @@
              pitch (glide) and RETRIGGERS THE ENVELOPE FROM THE CURRENT LEVEL on the same voice - no
              playhead restart, so it is click-free.  Exception: One-Shot loop mode restarts the sample
              through a ghost fade (a drum hit must re-trigger).
+  One-Shot TRIGGER: loopMode One-Shot + Classic playback (latched per voice at note-on) ignores key-up and sustain-pedal
+             release - one tap plays the whole region; the voice auto-releases at the region end (WarprVoice, 5 ms fast
+             release).  Mono / Legato key-up of such a voice removes the note from the stack but neither releases nor retargets
+             it.  Granular One-Shot is unchanged (gated: grains have no natural end).  Steal / ghost / CC120 / CC123 still end it.
   Legato   : as Mono but overlapping notes do not retrigger the envelope (glide only).
   Pedal    : CC64 >= 64 holds released notes; releasing it releases them (Poly: per voice flag,
              Mono / Legato: through the note stack).  CC123 releases everything, CC120 fades it in 3 ms.

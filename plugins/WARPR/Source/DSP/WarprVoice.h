@@ -131,6 +131,18 @@ namespace warpr
         //======================================================================
         // Control (audio thread)
         void release() noexcept;                              // normal note-off
+
+        /** Key-up / pedal-up release.  A one-shot TRIGGER voice (loopMode One-Shot + Classic playback, latched at note-on)
+            ignores it: one tap plays the whole region and the voice auto-releases when the read head reaches the region end.
+            Panic paths (CC123, ghosts, kill) use release() / beginFade() / kill() and are unaffected. */
+        void releaseKey() noexcept
+        {
+            if (! triggerLatched)
+                release();
+        }
+
+        bool isTriggerLatched() const noexcept { return triggerLatched; }
+
         void beginFade (int samples) noexcept;                // ghost fade-out (steal, mode change, sound-off)
         void retarget (int newNote, double glideMs) noexcept; // mono / legato pitch change, no restart
         void retriggerEnvelope (float attackMs) noexcept;     // attack again from the current level
@@ -224,6 +236,7 @@ namespace warpr
 
         bool active = false;
         bool oneShotReleased = false;
+        bool triggerLatched = false;                 // one-shot trigger voice (latched at note-on, see releaseKey())
         bool killedByGuard = false;
         float velGain = 1.0f;
         int os = 2, unison = 1;
