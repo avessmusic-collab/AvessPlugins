@@ -266,7 +266,9 @@
           <div id="pageWarp" style="display:flex;flex-direction:column;gap:8px">
             <div class="row" style="align-items:center">
               <div class="onbox" data-tog="warpEnable"></div>
-              <select id="warpMode" data-sel="warpMode" data-grouped="warp" style="flex:1;max-width:none"></select>
+              <button class="btn" id="btnWrpPrev" style="padding:3px 7px">&#9664;</button>
+              <select id="warpMode" data-sel="warpMode" data-grouped="warp" style="flex:1;max-width:none;min-width:0"></select>
+              <button class="btn" id="btnWrpNext" style="padding:3px 7px">&#9654;</button>
               <span class="lbl">OS</span>
               <select style="max-width:56px" data-sel="oversampling"></select>
             </div>
@@ -286,7 +288,9 @@
             <div class="row" style="align-items:center">
               <div class="onbox" data-tog="shaperEnable"></div>
               <div class="tg" data-seg="shaperCurveSelect"><span>A</span><span>B</span></div>
-              <select style="flex:1;max-width:none" data-sel="shaperPreset"></select>
+              <button class="btn" id="btnShpPrev" style="padding:3px 7px">&#9664;</button>
+              <select id="shaperPreset" style="flex:1;max-width:none;min-width:0" data-sel="shaperPreset"></select>
+              <button class="btn" id="btnShpNext" style="padding:3px 7px">&#9654;</button>
               <button class="btn" id="btnShReset" style="padding:3px 7px">RESET</button>
               <button class="btn" id="btnShNorm" style="padding:3px 7px">NORM</button>
             </div>
@@ -536,7 +540,7 @@ const DEF = {
   grainPosition:0, grainScan:0, grainScanDist:0, grainSize:80, grainShape:.5, grainVariation:0, grainSpread:0,
   grainReverse:0, grainDensity:8,
   warpAmount:0, warpParamA:.5, warpParamB:0, modOscRatio:1, warpMix:1,
-  shaperMorph:0, shaperMix:1, ampAttack:1, ampDecay:180, ampSustain:1, ampRelease:50,
+  shaperMorph:0, shaperMix:1, ampAttack:0, ampDecay:180, ampSustain:1, ampRelease:50,
   filterCutoff:20000, filterResonance:0, filterDrive:0, filterMorph:0, filterKeyTrack:0, filterMix:1,
   polyphony:16, unisonVoices:1, unisonDetune:12, unisonSpread:.5, glideTime:0, masterGain:0
 };
@@ -831,6 +835,14 @@ function stepFilterType(d) {
 }
 tap($("#btnFltPrev"), () => stepFilterType(-1)); tap($("#btnFltNext"), () => stepFilterType(1));
 
+/* warp mode + shaper preset prev/next (same pattern; wraps around) */
+function stepChoice(pid, d, fallback) {
+  const st = comboOf(pid), n = (st.properties.choices && st.properties.choices.length) || fallback;
+  setChoice(st, (cidx(st, n) + d + n) % n);
+}
+tap($("#btnWrpPrev"), () => stepChoice("warpMode", -1, 60)); tap($("#btnWrpNext"), () => stepChoice("warpMode", 1, 60));
+tap($("#btnShpPrev"), () => stepChoice("shaperPreset", -1, 9)); tap($("#btnShpNext"), () => stepChoice("shaperPreset", 1, 9));
+
 /* header buttons */
 tap($("#btnPrev"), () => NF.presetStep(-1)); tap($("#btnNext"), () => NF.presetStep(1));
 tap($("#btnSave"), () => NF.presetSave()); tap($("#btnLoad"), () => NF.presetLoad());
@@ -923,6 +935,29 @@ cs.addEventListener("wheel", e => {
 }, { passive: false });
 cs.addEventListener("dblclick", () => { WF.off = 0; WF.span = 1; rpCache = null; fxRequest(); drawSample(); });
 
+/* ACCURATE AMP ENVELOPE on the sample timeline.  Mirrors AmpEnvelope.h exactly:
+   linear attack to 1, exponential decay to sustain (60 dB after D ms, tau = D/ln 1000),
+   exponential release (60 dB after R ms).  Note-on at the START marker, note-off at END,
+   so the release tail falls into the dimmed after-region.  All in absolute sample fractions,
+   so it is time-true against the ruler at any zoom. */
+const ENV_LN1000 = Math.log(1000);
+function envParams() {
+  const sr = sInfo && sInfo.sampleRate > 0 ? sInfo.sampleRate : 44100;
+  const N  = sInfo && sInfo.numSamples > 0 ? sInfo.numSamples : 1;
+  const msF = ms => ms * 0.001 * sr / N;
+  return { t0: nrm("sampleStart"), t1: nrm("sampleEnd"),
+           aF: msF(scl("ampAttack")), dTau: Math.max(msF(scl("ampDecay")) / ENV_LN1000, 1e-9),
+           s: clamp(scl("ampSustain"), 0, 1), rTau: Math.max(msF(scl("ampRelease")) / ENV_LN1000, 1e-9) };
+}
+function envAt(t, E) {
+  if (t < E.t0) return 0;
+  const held = Math.min(t, E.t1) - E.t0;
+  let L = held < E.aF ? held / E.aF                                   // linear attack (aF 0 = instant)
+                      : E.s + (1 - E.s) * Math.exp(-(held - E.aF) / E.dTau);
+  if (t > E.t1) L *= Math.exp(-(t - E.t1) / E.rTau);                  // release after note-off at END
+  return L;
+}
+
 /* time-ruler label: m:ss or m:ss.mmm, sampler style */
 function fmtTime(s) {
   const m = Math.floor(s / 60);
@@ -948,7 +983,8 @@ function drawSample() {
     /* solid filled waveform (sampler style): every pixel column is filled from its true minimum
        to its true maximum - one flat shape at full detail, no smoothing, no envelope shaping.
        Silent regions keep a thin center line so the wave reads edge to edge. */
-    const fillWave = (pk, p0, p1, alpha) => {
+    const E = envParams();
+    const fillWave = (pk, p0, p1, alpha, env) => {
       const M = pk.length / 2, pw2 = Math.max(p1 - p0, 1e-12);
       x.fillStyle = `rgba(255,255,255,${alpha})`;
       x.beginPath();
@@ -958,20 +994,33 @@ function drawSample() {
         const j1 = clamp(Math.max(j0, Math.floor((f1 - p0) / pw2 * M)), 0, M - 1);
         let mn = pk[2*j0], mx = pk[2*j0+1];
         for (let j = j0 + 1; j <= j1; j++) { mn = Math.min(mn, pk[2*j]); mx = Math.max(mx, pk[2*j+1]); }
+        if (env) { const g = envAt(0.5 * (f0 + f1), E); mn *= g; mx *= g; }
         let y0 = h/2 - mx*h*.40, y1 = h/2 - mn*h*.40;
         if (y1 - y0 < 1.2) { const c = (y0 + y1) / 2; y0 = c - .6; y1 = c + .6; }
         x.rect(i, y0, 1, y1 - y0);
       }
       x.fill();
     };
+    /* the FRONT wave is what you hear: envelope-shaped (live, per-frame - knob turns reshape it
+       immediately); the ghost behind a warp/shaper preview stays the untouched original */
     if (fxPeaks && fxPeaks.peaks.length) {
-      /* warp/shaper preview: the ORIGINAL becomes a dim ghost, the PROCESSED wave (real DSP,
-         computed by the engine's own kernels) draws bright on top - turning a knob shows the
-         sound's new shape against what it was */
       fillWave(src, s0, s1, ".22");
-      fillWave(fxPeaks.peaks, fxPeaks.start, fxPeaks.end, ".92");
+      fillWave(fxPeaks.peaks, fxPeaks.start, fxPeaks.end, ".92", true);
     } else {
-      fillWave(src, s0, s1, ".90");
+      fillWave(src, s0, s1, ".90", true);
+    }
+    /* the envelope curve itself, time-true (dark under-stroke so it reads on the white wave) */
+    const envY = tt => h/2 - envAt(tt, E)*h*.40;
+    for (const [col2, lw] of [["rgba(0,0,0,.75)", 3], ["rgba(255,255,255,.95)", 1.5]]) {
+      x.strokeStyle = col2; x.lineWidth = lw; x.lineJoin = "round"; x.beginPath();
+      let started = false;
+      for (let i = 0; i <= w; i++) {
+        const tt = WF.off + i / w * WF.span;
+        if (tt < E.t0) continue;
+        const y = envY(tt);
+        if (!started) { x.moveTo(i, y); started = true; } else x.lineTo(i, y);
+      }
+      x.stroke();
     }
   }
   const sx = clamp(a2x(P.start), 0, w), ex = clamp(a2x(P.end), 0, w);

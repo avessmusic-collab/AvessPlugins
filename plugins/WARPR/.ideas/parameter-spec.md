@@ -667,3 +667,8 @@ These items are part of the preset/host state contract. They are transported to 
 - Defaults for demo-valued controls are the neutral "Init" values listed above (mockup display values such as WARP 38% / CUTOFF 1.2 kHz were illustrative); they may be changed only by amending this file and `DEF` in v9-ui.html together.
 - `warpParamA/B` meaning is mode-specific; Stage 2 must document the meaning per mode alongside the DSP (no placeholder modes).
 - `grainVariation` is a single master amount; per-target sub-amounts (position 0-2 s, size, transpose, volume) are internal fixed weights, not parameters.
+
+> **Owner change (2026-11-13):** ampAttack minimum 0.1 ms -> 0.0 ms and default 1.0 ms -> 0.0 ms, by
+> direct user instruction ("i want the attack to be at 0.0ms"). AmpEnvelope clamps a 0 ms attack to one
+> sample (instant; click-free re-attack semantics unchanged). Note: the normalised mapping of saved
+> host automation shifts marginally at the bottom of the range.
