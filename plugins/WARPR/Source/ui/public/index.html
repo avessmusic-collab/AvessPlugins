@@ -152,6 +152,14 @@
   #fxrow .tg span{padding:4px 6px}
   #fxrow select{padding:4px 5px}
   #lfoTabs.many span{padding:4px 4px}
+  #lfoTabs.many span{padding:4px 3px;min-width:12px;text-align:center}
+  #lfoTabs.dense span{padding:4px 1px;min-width:9px;letter-spacing:0}
+  #lfoTabs{flex:none}
+  #lfoShapeSel{min-width:36px}
+  .lfohdr.dense{gap:3px;padding:6px 8px}
+  .lfohdr.dense .name{letter-spacing:.12em}
+  .lfohdr.dense #lfoShapeSel{padding:4px 2px;font-size:8px;min-width:64px;text-overflow:clip}
+  .lfohdr.dense #lfoDir span,.lfohdr.dense #lfoSync span{padding:4px 4px;letter-spacing:.04em}
   .lfopt{fill:#111;stroke:#FFF;stroke-width:1.6;cursor:grab}
   .lfoc{fill:#0A0A0A;stroke:rgba(255,255,255,.55);stroke-width:1.2;cursor:ns-resize}
   #sampleName{max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -330,10 +338,10 @@
           </div>
         </div>
         <div class="sec" style="flex:1.23;min-width:0;order:1">
-          <div class="sec-h">
+          <div class="sec-h lfohdr" id="lfoHdr">
             <span class="name">LFO</span>
             <div class="tg" id="lfoTabs"></div>
-            <select id="lfoShapeSel" style="flex:1;max-width:none;min-width:36px">
+            <select id="lfoShapeSel" style="flex:1;max-width:none">
               <option>CUSTOM</option><option>SINE</option><option>TRIANGLE</option>
               <option>SAW UP</option><option>SAW DOWN</option><option>SQUARE</option>
               <option>PUMP</option><option>STEPS 4</option><option>STEPS 8</option>
@@ -659,20 +667,23 @@ class Knob {
       const adj = e0 => {
         e0.stopPropagation(); e0.preventDefault();
         const mm = mods.find(q => q.dst === this.pid); if (!mm) return;
-        let y = e0.clientY;
-        const mv = e => { mm.depth = clamp(mm.depth + (y - e.clientY) / SCALE * 0.008, 0, 1); y = e.clientY; this.paintMod(); };
-        const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); sendMods(); };
+        if (e0.altKey || e0.button === 2) { removeMod(this.pid); return; }         // alt-click / right-click removes the route
+        let y = e0.clientY; modDragging = true;
+        const mv = e => { mm.depth = clamp(mm.depth + (y - e.clientY) / SCALE * 0.008, 0, 1); y = e.clientY; this.paintMod(); sendMods(); };
+        const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); modDragging = false; sendMods(); };
         window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
       };
       ring.addEventListener("pointerdown", adj); badge.addEventListener("pointerdown", adj);
-      badge.addEventListener("dblclick", e => { e.stopPropagation(); mods = mods.filter(q => q.dst !== this.pid); repaintMods(); sendMods(); });
+      badge.addEventListener("dblclick", e => { e.stopPropagation(); removeMod(this.pid); });
+      [ring, badge].forEach(x => x.addEventListener("contextmenu", e => { e.preventDefault(); e.stopPropagation(); removeMod(this.pid); }));
     }
     badge.textContent = m.src;
     ring.style.background = `conic-gradient(from 225deg, #8C8C8C 0deg ${m.depth*270}deg, transparent ${m.depth*270}deg 360deg)`;
   }
 }
 const repaintMods = () => KNOBS.forEach(k => k.paintMod());
-let modTimer = 0;
+let modTimer = 0, modDragging = false;
+function removeMod(dst) { mods = mods.filter(q => q.dst !== dst); repaintMods(); sendMods(); }
 function sendMods() { clearTimeout(modTimer); modTimer = setTimeout(() => NF.setModMatrix(JSON.stringify(mods)), 30); }
 function assignMod(dst, src) {
   mods = mods.filter(q => q.dst !== dst);          // one source per destination in the v9 UI
@@ -1625,7 +1636,7 @@ $$("[data-lfosel]").forEach(el => el.addEventListener("change", () => setChoice(
 
 /* tabs (also the mod-source chips) */
 function buildTabs() {
-  const tabs = $("#lfoTabs"); tabs.innerHTML = ""; tabs.classList.toggle("many", lfoShapes.length > 4);
+  const tabs = $("#lfoTabs"); tabs.innerHTML = ""; tabs.classList.toggle("many", lfoShapes.length > 4); tabs.classList.toggle("dense", lfoShapes.length > 7); $("#lfoHdr").classList.toggle("dense", lfoShapes.length > 7);
   lfoShapes.forEach((_, i) => {
     const s = document.createElement("span"); s.textContent = String(i + 1); s.classList.toggle("on", i === activeLfo);
     tap(s, () => { activeLfo = i; buildTabs(); lfoRefreshWidgets(); });
@@ -1663,12 +1674,21 @@ window.addEventListener("pointerup", e => {
 });
 
 /* non-parameter state from C++ (initial open, preset load, host state restore) */
+/* G2 lesson reused: an external update that lands mid-gesture must not replace the object being dragged.
+   While an LFO point/bend/step drag or a depth-rim drag is live, the edited LFO (and the matrix, for a rim drag) keep
+   the UI version; everything else takes the update.  The local edit is pushed on release and wins in the backend too. */
+const lfoBusy = () => !!(dragPt || dragBend || stepDraw);
 function loadUiState(json) {
   let s; try { s = JSON.parse(json); } catch (e) { console.error("bad uiState", e); return; }
+  const busy = lfoBusy(), keepLfo = busy ? lfoShapes[activeLfo] : null;
+  clearTimeout(lfoPushT); clearTimeout(modTimer);        // stale local debounce must not overwrite the loaded state
+  if (busy) { lfoPushT = setTimeout(() => pushLfo(true), 0); }
   const n = clamp(s.lfoCount || 3, 1, MAX_LFO);
   lfoShapes = Array.from({ length: n }, (_, i) => (s.lfoShapes && s.lfoShapes[i]) ? fromWire(s.lfoShapes[i]) : newShape());
   lfoShapes.forEach(sh => { if (sh.points.length < 2) sh.points = newShape().points; });
+  if (keepLfo && activeLfo < n) lfoShapes[activeLfo] = keepLfo;
   activeLfo = Math.min(activeLfo, n - 1);
+  if (modDragging) { /* keep local matrix; rim release re-sends it */ } else
   mods = Array.isArray(s.modMatrix) ? s.modMatrix.map(m => ({ src: m.src | 0, dst: String(m.dst), depth: clamp(+m.depth, 0, 1) })) : [];
   if (s.shaperCurves) {
     const a = s.shaperCurves.A || identityCurve(), b = s.shaperCurves.B || identityCurve();
