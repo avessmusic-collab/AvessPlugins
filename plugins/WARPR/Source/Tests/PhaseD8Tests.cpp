@@ -1576,15 +1576,16 @@ namespace
         check (t1 != nullptr && std::abs (t1->eval (0.25) - 0.45f) < 1.0e-4f && std::abs (t1->eval (0.5) - 0.8f) < 1.0e-4f,
                "setLfoShapeJson: the published table is SAW UP + bend (0.45 at t=1/4, 0.8 at the bend)");
         const auto* t0 = a->getModEngine().tables()[0];
-        check (t0 != nullptr && std::abs (t0->eval (0.25) - 0.9f) < 1.0e-4f && std::abs (t0->eval (0.0) - 0.1f) < 1.0e-4f,
-               "a never-edited LFO plays the UI's default shape (newShape(): v = 0.1, 0.9, 0.35, 0.75, 0.1)");
+        // owner change 2026-11-13: the default shape is the SINE preset (v = 0.5 + 0.4 sin 2pi t)
+        check (t0 != nullptr && std::abs (t0->eval (0.25) - 0.9f) < 1.0e-4f && std::abs (t0->eval (0.0) - 0.5f) < 1.0e-4f,
+               "a never-edited LFO plays the UI's default shape (SINE: v(0) = 0.5, v(1/4) = 0.9)");
 
         const auto ui = juce::JSON::parse (be.getUiStateJson());
         const auto* shapes = ui.getProperty ("lfoShapes", {}).getArray();
         const auto* mx = ui.getProperty ("modMatrix", {}).getArray();
         check (ui.getProperty ("lfoCount", 0) == juce::var (5) && shapes != nullptr && shapes->size() == 5
                    && (*shapes)[1].getProperty ("preset", {}).toString() == "SAW UP"
-                   && (*shapes)[0].getProperty ("preset", {}).toString() == "CUSTOM",
+                   && (*shapes)[0].getProperty ("preset", {}).toString() == "SINE",
                "getUiStateJson: lfoCount 5, five shapes (edited one verbatim, unedited ones = the default shape)");
         check (mx != nullptr && mx->size() == 5, "getUiStateJson: the matrix document comes back verbatim (all 5 entries - the UI owns the document)");
 

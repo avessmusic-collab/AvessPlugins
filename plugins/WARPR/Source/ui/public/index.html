@@ -1556,8 +1556,8 @@ const shaperPush = () => { NF.setShaperCurve(shaperId(), JSON.stringify(shaperCu
    shape (UI coords, y: 0 = top/max):  { preset, points:[{x,y,c}], bends:[{x,y}], table:[...]|null, drift:{a,b}|null }
    wire  (to C++, v = 1 - y):          { preset, points:[{x,v,c}], bends:[{x,v}], table:[...], drift:{a,b} }
    ===================================================================== */
-const TAU = Math.PI * 2, MAX_LFO = 10;
-const newShape = () => ({ preset: "CUSTOM", points: [{ x:0, y:.9, c:0 }, { x:.25, y:.1, c:0 }, { x:.5, y:.65, c:0 }, { x:.75, y:.25, c:0 }, { x:1, y:.9, c:0 }], bends: [], table: null, drift: null });
+const TAU = Math.PI * 2, MAX_LFO = 4;
+const newShape = () => ({ preset: "SINE", points: [{ x:0, y:.9, c:0 }, { x:.25, y:.1, c:0 }, { x:.5, y:.65, c:0 }, { x:.75, y:.25, c:0 }, { x:1, y:.9, c:0 }], bends: [], table: null, drift: null });
 let lfoShapes = [newShape(), newShape(), newShape()], activeLfo = 0, lfoTool = "POINT";
 const curShape = () => lfoShapes[activeLfo];
 const lp = key => "lfo" + (activeLfo + 1) + key;
@@ -1741,7 +1741,7 @@ function buildTabs() {
     tabs.appendChild(s);
   });
   if (lfoShapes.length < MAX_LFO) {
-    const a = document.createElement("span"); a.textContent = "+"; a.title = "add LFO (max 10)";
+    const a = document.createElement("span"); a.textContent = "+"; a.title = "add LFO (max 4)";
     tap(a, () => { lfoShapes.push(newShape()); activeLfo = lfoShapes.length - 1; NF.setLfoCount(lfoShapes.length); pushLfo(true); buildTabs(); lfoRefreshWidgets(); });
     tabs.appendChild(a);
   }

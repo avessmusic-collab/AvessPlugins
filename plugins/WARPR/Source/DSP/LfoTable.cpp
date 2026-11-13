@@ -111,9 +111,10 @@ namespace warpr
 
     LfoShapeDesc LfoShapeDesc::defaultShape()
     {
-        // index.html newShape(): y = .9 .1 .65 .25 .9  ->  v = 1 - y
+        // index.html newShape(): preset SINE (owner request 2026-11-13); the points stay as the
+        // CUSTOM starting shape the UI offers when switching away from the preset.
         LfoShapeDesc d;
-        d.preset = Preset::Custom;
+        d.preset = Preset::Sine;
         d.points = { { 0.0, 0.1, 0.0 }, { 0.25, 0.9, 0.0 }, { 0.5, 0.35, 0.0 }, { 0.75, 0.75, 0.0 }, { 1.0, 0.1, 0.0 } };
         return d;
     }
