@@ -74,6 +74,10 @@ namespace warpr
         /** The preset file extension including the dot (identity::presetExtension). */
         static juce::String extension();
 
+        /** Replaces the factory list (the processor injects its "Init" = default-state preset at
+            construction, when the APVTS still holds pure defaults). */
+        void setFactoryPresets (std::vector<FactoryPreset> presets) { factory = std::move (presets); }
+
     private:
         juce::File directory;
         std::vector<FactoryPreset> factory;

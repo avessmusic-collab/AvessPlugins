@@ -761,19 +761,21 @@ namespace
                    && be.revision (WarprUiBackend::Revision::uiState) == ui, "save bumps only Revision::preset");
         }
 
+        // the processor injects its "Init" factory preset (pure defaults) at construction, so the
+        // list is: Init, then the 20 user files in name order
         const auto entries = a->getPresetManager().listEntries();
-        bool sorted = entries.size() == 20, ext = true;
-        for (size_t i = 0; i < entries.size(); ++i)
+        bool sorted = entries.size() == 21 && entries[0].factory && entries[0].name == "Init", ext = true;
+        for (size_t i = 1; i < entries.size(); ++i)
         {
-            sorted = sorted && entries[i].name == "Preset " + juce::String ((int) i).paddedLeft ('0', 2);
+            sorted = sorted && entries[i].name == "Preset " + juce::String ((int) i - 1).paddedLeft ('0', 2);
             ext = ext && entries[i].file.hasFileExtension (warpr::identity::presetExtension);
         }
-        check (sorted && ext && errors.empty(), "20 .void files listed in name order, no errors");
+        check (sorted && ext && errors.empty(), "Init factory preset + 20 .void files listed in name order, no errors");
 
         {
             juce::MemoryBlock fileBytes;
             juce::String err;
-            warpr::PresetManager::readFile (entries[0].file, fileBytes, err);
+            warpr::PresetManager::readFile (entries[1].file, fileBytes, err);
             check (fileBytes.getSize() > 16 && std::memcmp (fileBytes.getData(), "WRPR", 4) == 0, "preset file starts with the container magic");
         }
 
@@ -800,9 +802,19 @@ namespace
         check (wrongSample == 0, "embedded samples restored, and replaced by the default wave when a preset has none");
         check (noEvent == 0, "every step bumps Revision::preset (presetName event)");
         bb.presetStep (+1);
-        check (bb.getPresetName() == "Preset 00", "step +1 wraps from the last to the first");
-        bb.presetStep (-1);
-        check (bb.getPresetName() == "Preset 19", "step -1 wraps from the first to the last");
+        check (bb.getPresetName() == "Init", "step +1 wraps from the last user preset to the Init factory preset");
+        // Init = the state captured at construction: every parameter at its default (ampAttack 0 ms,
+        // owner change 2026-11-13), default UI model, default wave
+        check (std::abs (rawOf (*b, "warpAmount")) < 1.0e-6f && std::abs (rawOf (*b, "ampAttack")) < 1.0e-6f,
+               "the Init factory preset restores pure defaults (ampAttack 0.0 ms)");
+        {
+            auto s = b->getSampleStore().latest();
+            check (s != nullptr && s->isDefaultWave, "the Init factory preset restores the default wave");
+        }
+        bb.presetStep (+1);
+        check (bb.getPresetName() == "Preset 00", "stepping past Init reaches the first user preset");
+        bb.presetStep (-1); bb.presetStep (-1);
+        check (bb.getPresetName() == "Preset 19", "step -1 wraps from the first entry to the last");
 
         // corrupt file between two good ones
         const auto bad = presetDir.getChildFile ("Preset 05b broken" + juce::String (warpr::identity::presetExtension));

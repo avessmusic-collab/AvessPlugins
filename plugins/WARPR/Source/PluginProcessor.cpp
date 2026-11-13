@@ -21,6 +21,15 @@ PluginProcessor::PluginProcessor()
 
     // D9: presets, state host and settings behind the editor's native functions (all run on the message thread)
     backend.attachPresetManager (&presetManager);
+
+    // "Init" factory preset = this plugin's pure default state, captured NOW (the APVTS still holds
+    // every parameter's default - ampAttack 0 ms included - the UI model is the default and the sample
+    // is the default wave, so the container carries blob 0).  Loading Init is a guaranteed clean reset
+    // through the ordinary preset path.
+    {
+        juce::MemoryBlock initState (captureState());
+        presetManager.setFactoryPresets ({ { "Init", std::move (initState) } });
+    }
     backend.attachStateHost ([this] { return captureState(); },
                              [this] (const void* data, std::size_t numBytes) { return loadStateBlock (data, numBytes); });
     backend.attachSettings ([this] { return appSettings.load(); },
