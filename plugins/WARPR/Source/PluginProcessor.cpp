@@ -62,8 +62,10 @@ void PluginProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     master.prepare (sampleRate);
     vizAnalyzer.prepare (sampleRate);
     activeVoices.store (0, std::memory_order_relaxed);
+    guardState.reset();                               // D10: the guard restarts from "idle" (the synth level was reset in prepare)
+    guardWasActive = false;
 
-    backend.setSampleRate (sampleRate);                                // the response display is evaluated at this rate
+    backend.setSampleRate (sampleRate);                               // the response display is evaluated at this rate
     backend.bumpRevision (WarprUiBackend::Revision::filterResponse);   // sample-rate dependent display
 }
 
@@ -81,6 +83,10 @@ bool PluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // D10 CPU guard: the block's wall time is only measured while the (opt-in) setting is on
+    const bool guardRequested = cpuGuard.load (std::memory_order_relaxed);
+    const juce::int64 guardT0 = guardRequested ? juce::Time::getHighResolutionTicks() : (juce::int64) 0;
 
     const int numSamples = buffer.getNumSamples();
     buffer.clear();
@@ -156,6 +162,31 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     vizAnalyzer.process (left, right, numSamples, backend.vizFifo(), &synth);      // wait-free, no allocation
 
     activeVoices.store (synth.getNumActiveVoices(), std::memory_order_relaxed);
+
+    // D10 CPU guard: load = this block's processing time / its duration, fed to the deterministic CpuGuard (1 s EMA,
+    // engage 0.85 / release 0.60, one level per 0.25 s up / 2 s down).  The level reaches the NEXT block's note-ons.
+    if (guardRequested)
+    {
+        const double fs = getSampleRate();
+
+        if (fs > 0.0)
+        {
+            const double blockSeconds = (double) numSamples / fs;
+            const double injected = injectedGuardLoad.load (std::memory_order_relaxed);
+            const double load = injected >= 0.0
+                                    ? injected
+                                    : juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - guardT0) / blockSeconds;
+
+            synth.setGuardLevel (guardState.update (load, blockSeconds));
+            guardWasActive = true;
+        }
+    }
+    else if (guardWasActive)
+    {
+        guardState.reset();
+        synth.setGuardLevel (0);
+        guardWasActive = false;
+    }
 }
 
 void PluginProcessor::queueKeyboardNote (int midiNote, int velocity, bool noteOn) noexcept
@@ -241,8 +272,8 @@ void PluginProcessor::applyAppSettings (const warpr::AppSettingsData& requested)
 {
     const auto data = warpr::AppSettings::sanitise (requested);
     synth.setOscillatorBudget (data.oscillatorBudget);            // relaxed atomics, read per block
-    synth.setInterpolationQuality (data.interpolationQuality);    // D10 gives the value its behaviour
-    cpuGuard.store (data.cpuGuard, std::memory_order_relaxed);    // D10 acts on it
+    synth.setInterpolationQuality (data.interpolationQuality);    // 0 High (sinc8), 1 Eco (Hermite4): every sample read
+    cpuGuard.store (data.cpuGuard, std::memory_order_relaxed);    // processBlock measures + feeds the CpuGuard while true
 }
 
 void PluginProcessor::loadAppSettings()

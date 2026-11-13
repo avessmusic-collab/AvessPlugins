@@ -9,7 +9,22 @@
   anti-imaging filter; band-limiting for pitched-up playback is done by the mip pyramid, not here.
   (The architecture's ">80 dB stopband" figure for the 8-tap kernel is NOT claimed or measured here.)
 
-  Draft interpolator (CPU governor / "Eco"): 4-point Hermite.
+  Draft interpolator (Settings "Interpolation: Eco"): 4-point Hermite (Catmull-Rom).
+
+  INTERPOLATION QUALITY (Settings, D10) - exactly what each level changes.  The level reaches makeReadParams as `quality`
+  (WarprSynth -> VoiceParams::interpQuality -> UnisonOsc::render -> ReadParamsCache / makeReadParams) and sets
+  ReadParams::hermite for EVERY read of the voice: Classic playback, warp-shifted reads (the phase warps, the dry read),
+  the Sample-source modulator (rpMod) and every grain read.  Nothing else changes: the mip pyramid, the mip level
+  selection / blend weights, the loop-wrapped taps, the seam crossfade and the one-shot end fade are identical at both levels.
+      0  High (default)  8-tap Kaiser sinc, 512 sub-phases + row interpolation: 8 loads from the source, 8 x 2 table loads,
+                         ~24 flops per channel per read.  This is the pre-D10 behaviour, bit-exact.
+      1  Eco             4 loads, ~10 flops per channel per read (about 1/3 of the arithmetic and 1/4 of the source
+                         loads).  Catmull-Rom is exact at integer positions (so unity-ratio playback is identical) but its
+                         passband droops (worst case, a half-sample read: -0.46 dB at 0.2 fs, -4.0 dB at 0.35 fs) and it images
+                         more near Nyquist, so very bright material played at non-integer ratios loses some top end and
+                         gains a little aliasing.  Expected saving: the read is the largest single part of an oscillator
+                         sample, so `--bench` (rows "typical" vs "typical eco") measures it per patch.
+  The level is applied to sounding voices as well as new ones (it is a global per-block setting, not latched per note).
 
   Mip selection: lambda = log2(rho) for rho > 1 (source frames per host sample), clamped to the
   available levels.  Level floor(lambda) is blended with level floor(lambda)+1 by

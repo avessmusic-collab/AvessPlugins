@@ -5,6 +5,7 @@
 #include <atomic>
 
 #include "Backend/UiBackendImpl.h"
+#include "DSP/CpuGuard.h"
 #include "DSP/MasterStage.h"
 #include "DSP/ModEngine.h"
 #include "DSP/SampleStore.h"
@@ -116,6 +117,17 @@ public:
     void applyAppSettings (const warpr::AppSettingsData& data);
     bool isCpuGuardRequested() const noexcept { return cpuGuard.load (std::memory_order_relaxed); }
 
+    //==========================================================================
+    // D10: CPU guard.  When the setting is on, processBlock measures its own wall time per block (two high-resolution tick
+    // reads, no allocation), feeds load = time / block duration to a CpuGuard and publishes the level to the synth for
+    // the NEXT block (it caps the oversampling latched by new notes; see CpuGuard.h / WarprSynth.h).
+    /** Current guard level 0..3 (0 whenever the setting is off). */
+    int getGuardLevel() const noexcept { return synth.getGuardLevel(); }
+
+    /** TEST-ONLY hook: a value >= 0 replaces the measured load of every block (so tests never depend on the wall clock);
+        a negative value (the default) uses the measurement.  Relaxed atomic; harmless in production. */
+    void setGuardLoadInjectionForTests (double load) noexcept { injectedGuardLoad.store (load, std::memory_order_relaxed); }
+
 private:
     struct KbdEvent { uint8_t note = 0, vel = 0; bool on = false; };
     juce::AbstractFifo kbdFifo { 128 };
@@ -151,6 +163,9 @@ private:
     warpr::PresetManager presetManager { warpr::PresetManager::defaultDirectory() };   // before the backend that uses it
     warpr::AppSettings   appSettings { warpr::AppSettings::defaultFile() };
     std::atomic<bool>    cpuGuard { false };
+    std::atomic<double>  injectedGuardLoad { -1.0 };        // test-only load injection (< 0 = measure)
+    warpr::CpuGuard      guardState;                         // audio thread only
+    bool                 guardWasActive = false;             // audio thread only
     UiBackendImpl        backend;
     warpr::WarprSynth    synth { retireList };
     warpr::MasterStage   master;

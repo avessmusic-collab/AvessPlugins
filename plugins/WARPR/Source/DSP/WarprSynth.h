@@ -39,6 +39,18 @@
   changes what a sounding voice is charged.  This is also the "unison cap in Granular": a Cloud of 20 grains at
   OS 2 costs 12 units per oscillator, so a 256-unit budget fits 21 of them and new notes shrink their own unison.
 
+  CPU guard (D10, opt-in; CpuGuard.h): PluginProcessor feeds the measured block load to a CpuGuard and publishes its
+  level (0..3) here once per block (setGuardLevel).  startNewVoice caps the oversampling factor LATCHED for the NEW note
+  to CpuGuard::osCap (level) = 8 / 4 / 2 / 1.  Sounding voices (unison, OS, anything) are never touched, nothing is stolen
+  or refused because of the guard, and the guard overrides the warp / shaper minOS floors on purpose (an aliasing note beats
+  a dropout).  The cheaper latched OS also lowers the note's budget cost (cost = os x c_mode), so the ordinary budget
+  governor above then lets it keep more unison oscillators.  Level 0 (the default, and whenever the setting is off) is the
+  untouched path, bit-exact.
+
+  Interpolation quality (D10, Settings): 0 = High (8-tap Kaiser sinc, the default), 1 = Eco (4-point Hermite).  The value is
+  read once per block into VoiceParams::interpQuality and acts on EVERY sample read of sounding and new voices alike
+  (Classic reads, warp-shifted reads, the Sample-source modulator and the grain reads); see SampleReader.h for the numbers.
+
   Sample references: each voice owns one explicit reference to the SampleData it plays and returns it
   through the RetireList (deferRelease) when it ends, so the final delete is never on the audio thread.
 */
@@ -160,8 +172,16 @@ namespace warpr
         //======================================================================
         // Settings (non-parameter, message thread -> audio thread, relaxed atomics)
         void setOscillatorBudget (int units) noexcept     { oscBudget.store (units, std::memory_order_relaxed); }
-        void setInterpolationQuality (int quality) noexcept { interpQuality.store (quality, std::memory_order_relaxed); }
+        void setInterpolationQuality (int quality) noexcept { interpQuality.store (quality < 0 ? 0 : (quality > 1 ? 1 : quality), std::memory_order_relaxed); }
         int  getOscillatorBudget() const noexcept         { return oscBudget.load (std::memory_order_relaxed); }
+        int  getInterpolationQuality() const noexcept     { return interpQuality.load (std::memory_order_relaxed); }
+
+        /** CPU guard level 0..3 (CpuGuard), published by the processor once per block.  0 = guard idle / off. */
+        void setGuardLevel (int level) noexcept           { guardLevel.store (level < 0 ? 0 : (level > 3 ? 3 : level), std::memory_order_relaxed); }
+        int  getGuardLevel() const noexcept               { return guardLevel.load (std::memory_order_relaxed); }
+
+        /** Notes whose latched oversampling was lowered by the guard since prepare (diagnostics / tests). */
+        int  getGuardLoweredNotes() const noexcept        { return guardLowered.load (std::memory_order_relaxed); }
 
         // Diagnostics / tests
         VoiceInfo getVoiceInfo (int slot) const noexcept;
@@ -260,6 +280,8 @@ namespace warpr
 
         std::atomic<int> oscBudget { 256 };
         std::atomic<int> interpQuality { 0 };
+        std::atomic<int> guardLevel { 0 };
+        std::atomic<int> guardLowered { 0 };
         std::atomic<int> guardKills { 0 };
         std::atomic<int> leakedRefs { 0 };
     };

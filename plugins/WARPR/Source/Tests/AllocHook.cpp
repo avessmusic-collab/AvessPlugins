@@ -7,11 +7,15 @@ namespace
 {
     thread_local bool        tArmed = false;
     thread_local std::size_t tCount = 0;
+    thread_local std::size_t tBytes = 0;
 
     void* countedAlloc (std::size_t n)
     {
         if (tArmed)
+        {
             ++tCount;
+            tBytes += n;
+        }
 
         if (void* p = std::malloc (n != 0 ? n : 1))
             return p;
@@ -25,6 +29,7 @@ namespace warpr::tests
     ScopedAllocCount::ScopedAllocCount()
     {
         startCount = tCount;
+        startBytes = tBytes;
         tArmed = true;
     }
 
@@ -36,6 +41,11 @@ namespace warpr::tests
     std::size_t ScopedAllocCount::count() const
     {
         return tCount - startCount;
+    }
+
+    std::size_t ScopedAllocCount::bytes() const
+    {
+        return tBytes - startBytes;
     }
 }
 

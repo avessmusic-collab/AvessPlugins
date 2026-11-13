@@ -3,8 +3,9 @@
   AppSettings - the non-parameter, per-user settings behind the Settings dialog (architecture C18 "Settings"):
   oscillator budget, interpolation quality, CPU guard.  Stored as a small XML file next to the presets
   (<userApplicationData>/<company>/<product>/Settings.xml); they are NOT part of the plugin state, presets or
-  projects.  D9 delivers the persistence + the dialog shell + the budget hook; D10 owns the interpolation
-  and CPU-guard behaviour behind the two remaining values.
+  projects.  D9 delivered the persistence + the dialog shell + the budget hook; D10 gave the other two values their
+  behaviour: interpolationQuality = SampleReader (0 sinc8 / 1 Hermite4, see SampleReader.h) and cpuGuard = CpuGuard.h
+  (block-time EMA > 85 % caps the oversampling latched by NEW notes; WarprSynth.h).
 
   Loading is tolerant (missing / unreadable / out-of-range -> defaults or clamped values).
 */

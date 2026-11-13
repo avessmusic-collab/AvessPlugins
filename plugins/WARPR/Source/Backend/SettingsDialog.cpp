@@ -24,7 +24,8 @@ public:
 
         interpBox.addItem ("High quality (8-tap sinc)", 1);
         interpBox.addItem ("Eco (4-point Hermite)", 2);
-        guardToggle.setButtonText ("CPU guard: lower oversampling for new notes when the CPU is overloaded");
+        guardToggle.setButtonText ("CPU guard: cap oversampling of NEW notes (4x, 2x, 1x) while the CPU is overloaded");
+        interpBox.setTooltip ("High: 8-tap sinc (default). Eco: 4-point Hermite, cheaper, slightly duller on bright material at non-integer pitch ratios.");
 
         for (juce::Component* c : { static_cast<juce::Component*> (&budgetLabel), static_cast<juce::Component*> (&interpLabel),
                                     static_cast<juce::Component*> (&note), static_cast<juce::Component*> (&budgetBox),

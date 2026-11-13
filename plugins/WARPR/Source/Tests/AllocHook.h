@@ -29,7 +29,11 @@ namespace warpr::tests
         /** Allocations (operator new / new[]) made on THIS thread since construction. */
         std::size_t count() const;
 
+        /** D10: bytes REQUESTED by those allocations (gross; frees are not subtracted, over-aligned allocations are not seen). */
+        std::size_t bytes() const;
+
     private:
         std::size_t startCount = 0;
+        std::size_t startBytes = 0;
     };
 }

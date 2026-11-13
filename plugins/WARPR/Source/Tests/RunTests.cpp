@@ -17,8 +17,12 @@
     (runPhaseD2Tests), phase D3 in PhaseD3Tests.cpp (runPhaseD3Tests; shared class-level machinery in
     WarpTestKit.h), phase D4 in PhaseD4Tests.cpp (runPhaseD4Tests: shaper curves, LUT/ADAA, backend),
     phase D5 in PhaseD5Tests.cpp (runPhaseD5Tests: standard filters 0-19, response display, switching),
-    phase D7 in PhaseD7Tests.cpp (runPhaseD7Tests: granular engine, D7a CLASSIC + LOOP).
+    phase D7 in PhaseD7Tests.cpp (runPhaseD7Tests: granular engine, D7a CLASSIC + LOOP),
+    phase D10 in PhaseD10Tests.cpp (runPhaseD10Tests: interpolation levels, CPU guard, budget determinism, memory audit,
+    bench self-check; the `--bench` CPU table lives there too).
     Flags:  --full  widens the sweeps.
+            --bench [--bench-full] [--bench-runs=N] [--bench-blocks=N] [--bench-filter=text]
+                    prints the CPU table (one `BENCH ...` line per patch) instead of running the tests; use a Release build.
 */
 
 #include "PluginProcessor.h"
@@ -738,6 +742,8 @@ int runPhaseD7Tests (bool full);              // Tests/PhaseD7Tests.cpp
 int runPhaseD8Tests (bool full);              // Tests/PhaseD8Tests.cpp
 int runPhaseD9Tests (bool full);              // Tests/PhaseD9Tests.cpp
 int runPreviewTests (bool full);              // Tests/PreviewTests.cpp
+int runPhaseD10Tests (bool full);             // Tests/PhaseD10Tests.cpp
+int runBenchmark (int argc, char** argv);     // Tests/PhaseD10Tests.cpp  (--bench)
 
 int main (int argc, char** argv)
 {
@@ -745,8 +751,14 @@ int main (int argc, char** argv)
 
     bool full = false;
     for (int i = 1; i < argc; ++i)
-        if (std::string (argv[i]) == "--full")
+    {
+        const std::string arg = argv[i];
+
+        if (arg == "--full")
             full = true;
+        else if (arg == "--bench")
+            return runBenchmark (argc, argv);      // D10: CPU table only (no tests); options: --bench-full --bench-runs=N --bench-blocks=N --bench-filter=text
+    }
 
     std::printf ("WARPR tests  (Stage 1: Foundation + Shell, Stage 2 / D1: sample engine + voices)%s\n",
                  full ? "  [--full]" : "  [quick; --full widens the sweeps]");
@@ -771,6 +783,7 @@ int main (int argc, char** argv)
     failures += runPhaseD8Tests (full);
     failures += runPhaseD9Tests (full);
     failures += runPreviewTests (full);
+    failures += runPhaseD10Tests (full);
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

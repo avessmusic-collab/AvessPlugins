@@ -1,4 +1,5 @@
 #include "DSP/WarprSynth.h"
+#include "DSP/CpuGuard.h"
 #include "DSP/WarpModeTable.h"
 
 #include <algorithm>
@@ -26,6 +27,9 @@ namespace warpr
 
         clock.prepare (newSampleRate);
         reset();
+
+        guardLevel.store (0, std::memory_order_relaxed);        // the processor restarts its CpuGuard in prepareToPlay too
+        guardLowered.store (0, std::memory_order_relaxed);
     }
 
     void WarprSynth::reset()
@@ -441,7 +445,19 @@ namespace warpr
         if (currentSample == nullptr)
             return nullptr;
 
-        const int os = osLatched;
+        // D10 CPU guard: the oversampling factor LATCHED for this new note is capped by the guard level (8/4/2/1).  Level 0
+        // is the identity, so the default path is unchanged.  Sounding voices are never touched.
+        int os = osLatched;
+        {
+            const int cap = CpuGuard::osCap (guardLevel.load (std::memory_order_relaxed));
+
+            if (os > cap)
+            {
+                os = cap;
+                guardLowered.fetch_add (1, std::memory_order_relaxed);
+            }
+        }
+
         // D8: unisonVoices is a latched destination - the matrix is sampled here, at note-on
         int uni = juce::jlimit (1, WarprVoice::maxUnison, juce::roundToInt (latchedValue (ParamId::unisonVoices, (float) unisonLatched)));
         const int budget = oscBudget.load (std::memory_order_relaxed);
