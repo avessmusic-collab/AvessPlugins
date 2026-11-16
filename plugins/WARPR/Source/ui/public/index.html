@@ -857,7 +857,7 @@ async function autoSlice(byT) {
       if (best) sliceDoc.edges = best;
     }
     if (sliceDoc.edges.length >= 2) {
-      sliceDoc.on = true; sliceCount = sliceDoc.edges.length - 1;
+      sliceDoc.on = true; sliceCount = sliceDoc.edges.length - 1; sliceSel = -1;
       pushSlice(); updSourcePages(); drawSample();
     }
   } catch (_) {}
@@ -1008,15 +1008,25 @@ cs.addEventListener("wheel", e => {
 }, { passive: false });
 cs.addEventListener("dblclick", e => {
   if (sliceDoc.on && sliceDoc.edges.length >= 2) {
-    // double-click the wave = a NEW slice edge at the exact clicked position (zoom in for precision)
     const r = cs.getBoundingClientRect();
     const ax = clamp(WF.off + clamp((e.clientX - r.left) / r.width, 0, 1) * WF.span, 0, 1);
-    const eps = 1.0e-4;
-    if (sliceDoc.edges.every(q => Math.abs(q - ax) > eps)) {
-      sliceDoc.edges = [...sliceDoc.edges, ax].sort((a, b) => a - b);
-      sliceCount = sliceDoc.edges.length - 1;
-      pushSlice(); drawSample();
+    // double-click ON a line = remove it (keep at least one slice)
+    let bi = -1, bd = 0.012 * WF.span;
+    sliceDoc.edges.forEach((q, i) => { const d = Math.abs(q - ax); if (d < bd) { bd = d; bi = i; } });
+    if (bi >= 0) {
+      if (sliceDoc.edges.length > 2) {
+        sliceDoc.edges = sliceDoc.edges.filter((_, i) => i !== bi);
+        sliceCount = sliceDoc.edges.length - 1;
+        sliceSel = -1;
+        pushSlice(); drawSample();
+      }
+      return;
     }
+    // double-click on empty wave = a NEW slice edge at the exact position (it comes up selected)
+    sliceDoc.edges = [...sliceDoc.edges, ax].sort((a, b) => a - b);
+    sliceSel = sliceDoc.edges.indexOf(ax);
+    sliceCount = sliceDoc.edges.length - 1;
+    pushSlice(); drawSample();
     return;
   }
   WF.off = 0; WF.span = 1; rpCache = null; fxRequest(); drawSample();
@@ -1142,10 +1152,12 @@ function drawSample() {
     x.font = "9px 'Inter','Helvetica Neue',sans-serif"; x.textAlign = "left";
     for (let k = 0; k < sliceDoc.edges.length; k++) {
       const px = a2x(sliceDoc.edges[k]);
-      if (px < -2 || px > w + 2) continue;
-      x.fillStyle = "rgba(0,0,0,.6)"; x.fillRect(px - 1.5, 0, 3, h);
-      x.fillStyle = "rgba(255,255,255,.55)"; x.fillRect(px - .5, 0, 1, h);
-      if (k < sliceDoc.edges.length - 1) { x.fillStyle = "rgba(255,255,255,.5)"; x.fillText(String(k + 1), px + 3, 15); }
+      if (px < -4 || px > w + 4) continue;
+      const sel = k === sliceSel;
+      x.fillStyle = sel ? "rgba(0,0,0,.8)" : "rgba(0,0,0,.6)"; x.fillRect(px - (sel ? 2.5 : 1.5), 0, sel ? 5 : 3, h);
+      x.fillStyle = sel ? "rgba(255,255,255,1)" : "rgba(255,255,255,.55)"; x.fillRect(px - (sel ? 1 : .5), 0, sel ? 2 : 1, h);
+      if (sel) { x.beginPath(); x.moveTo(px - 5, 0); x.lineTo(px + 5, 0); x.lineTo(px, 8); x.closePath(); x.fill(); }
+      if (k < sliceDoc.edges.length - 1) { x.fillStyle = sel ? "rgba(255,255,255,.9)" : "rgba(255,255,255,.5)"; x.fillText(String(k + 1), px + 4, 15); }
     }
   }
   grains.forEach(g => {                                   // grain cloud (GRANULAR): one short stroke per live grain,
@@ -1179,7 +1191,7 @@ const csXY = e => { const r = cs.getBoundingClientRect(); return { x: clamp((e.c
 const gestureBegin = ids => ids.forEach(i => sliderOf(i).sliderDragStarted());
 const gestureEnd   = ids => ids.forEach(i => sliderOf(i).sliderDragEnded());
 cs.style.cursor = "pointer"; cs.style.touchAction = "none";
-let sliceDrag = -1;                                       // index of the edge being dragged
+let sliceDrag = -1, sliceSel = -1;                        // dragged / SELECTED edge index
 cs.addEventListener("pointerdown", e => {
   const p = csXY(e), S = nrm("sampleStart"), En = nrm("sampleEnd");
   const ax = WF.off + p.x * WF.span;                       // absolute sample fraction under the cursor
@@ -1191,13 +1203,17 @@ cs.addEventListener("pointerdown", e => {
         if (sliceDoc.edges.length > 2) {
           sliceDoc.edges = sliceDoc.edges.filter((_, i) => i !== bi);
           sliceCount = sliceDoc.edges.length - 1;
+          sliceSel = -1;
           pushSlice(); drawSample();
         }
         return;
       }
+      sliceSel = bi;                                       // click SELECTS the line (highlight)
       sliceDrag = bi; cs.setPointerCapture(e.pointerId);
+      drawSample();
       return;
     }
+    if (sliceSel >= 0) { sliceSel = -1; drawSample(); }    // clicking empty wave deselects
   }
   let kind = null;
   if (Math.abs(ax - S) < 0.02 * WF.span) kind = "ps"; else if (Math.abs(ax - En) < 0.02 * WF.span) kind = "pe";
