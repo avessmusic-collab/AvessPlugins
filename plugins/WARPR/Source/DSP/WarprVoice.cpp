@@ -118,6 +118,7 @@ namespace warpr
         active = true;
         note = info.note;
         age = info.age;
+        startStamp = info.startStamp;
         keyHeld = true;
         // One-Shot TRIGGER latch (Classic playback only: grains have no natural end, so granular One-Shot stays gated).
         sliceLatched = info.slice;

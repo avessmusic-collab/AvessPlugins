@@ -70,6 +70,7 @@ namespace warpr
         lastPolyLimit = -1;
         masterDelta = 0.0f;
         blockPos = 0;
+        sampleClock = 0;
         clock.reset();
 
         for (auto& p : lfoPhaseOut)
@@ -515,6 +516,7 @@ namespace warpr
         info.glideFromSemis = lastPlayedPitch >= 0.0 ? lastPlayedPitch : (double) note;
         info.glideMs = sliceNoteActive ? 0.0 : glideNow();         // a slice voice is unpitched: nothing to glide
         info.age = ++noteCounter;
+        info.startStamp = sampleClock + (std::uint64_t) blockPos;
         info.slice = sliceNoteActive;
         info.sliceLo = sliceNoteLo;
         info.sliceHi = sliceNoteHi;
@@ -531,6 +533,23 @@ namespace warpr
         for (auto& v : voices)
             if (v.isActive() && ! v.ghost && v.note == note)
                 makeGhost (v, ghostFadeSamples());           // (1) the same note
+
+        // One-Shot choke (owner bug report 2026-11-16: "a second playhead line ... moves slower
+        // than the playhead").  A latched one-shot voice keeps playing after its key is released,
+        // so each new tap used to STACK another full-length copy: a new One-Shot note therefore
+        // cuts every other free-running one-shot first, drum-pad style.  Notes started inside the
+        // 30 ms window keep sounding - a chord lands in one gesture.  Slice voices keep their own
+        // rules (same-note ghost above; polyphonic across pads).
+        if (vp.loopMode == 2 && vp.playMode == 0 && ! sliceNoteActive)
+        {
+            const std::uint64_t now    = sampleClock + (std::uint64_t) blockPos;
+            const std::uint64_t window = (std::uint64_t) std::llround (0.030 * sampleRate);
+
+            for (auto& v : voices)
+                if (v.isActive() && ! v.ghost && v.isTriggerLatched() && ! v.isSliceVoice()
+                    && now - v.startedAt() > window)
+                    makeGhost (v, ghostFadeSamples());
+        }
 
         // D8: polyphony is a latched destination - sampled here, at note-on (live reduction below uses the plain value)
         const int limit = juce::jlimit (1, maxVoices, juce::roundToInt (latchedValue (ParamId::polyphony, (float) polyLimit)));
@@ -1071,5 +1090,6 @@ namespace warpr
 
         publishPlayheads();
         publishLfoPhases();
+        sampleClock += (std::uint64_t) numSamples;
     }
 }

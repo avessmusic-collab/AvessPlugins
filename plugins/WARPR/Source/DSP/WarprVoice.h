@@ -93,6 +93,7 @@ namespace warpr
             double glideFromSemis = 60.0;
             double glideMs = 0.0;
             std::uint64_t age = 0;               // note counter (stealing order)
+            std::uint64_t startStamp = 0;        // synth sample clock at note-on (one-shot choke window)
 
             // D11 SLICE MODE: a slice voice plays only [sliceLo, sliceHi) (sample fractions, latched for the life of the note),
             // unpitched (always at the root pitch, whatever `note` is), as a one-shot trigger, with Classic playback.
@@ -147,6 +148,7 @@ namespace warpr
         }
 
         bool isTriggerLatched() const noexcept { return triggerLatched; }
+        std::uint64_t startedAt() const noexcept { return startStamp; }     // synth sample clock at note-on
 
         /** D11: the voice was started by a slice note (region latched, unpitched, one-shot, Classic).  Always trigger-latched. */
         bool isSliceVoice() const noexcept { return sliceLatched; }
@@ -245,6 +247,7 @@ namespace warpr
 
         bool active = false;
         bool oneShotReleased = false;
+        std::uint64_t startStamp = 0;                // synth sample clock at note-on (one-shot choke window)
         bool triggerLatched = false;                 // one-shot trigger voice (latched at note-on, see releaseKey())
         bool sliceLatched = false;                   // D11 slice voice (implies triggerLatched)
         bool killedByGuard = false;

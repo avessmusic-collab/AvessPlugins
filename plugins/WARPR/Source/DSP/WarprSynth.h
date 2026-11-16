@@ -243,6 +243,7 @@ namespace warpr
         TransportInfo transportInfo;
         TransportClock clock;
         int blockPos = 0;                            // base samples of the current block already rendered
+        std::uint64_t sampleClock = 0;               // samples rendered since prepare (one-shot choke timing)
         std::array<LfoBlockParams, (size_t) kNumLfos> lfoParams {};
         std::array<const LfoShapeTable*, (size_t) kNumLfos> tablePtrs {};
         const ModMatrixSnapshot* matrixPtr = nullptr;

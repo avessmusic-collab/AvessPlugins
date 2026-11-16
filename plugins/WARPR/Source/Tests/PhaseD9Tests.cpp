@@ -1198,7 +1198,11 @@ namespace
             int peakVoices = 0;
             osRender (*p, evs, osTotal * 2, [&] (int) { peakVoices = std::max (peakVoices, p->getNumActiveVoices()); });
             std::printf ("        12-tap burst: peak %d voices, %d active after %d blocks\n", peakVoices, p->getNumActiveVoices(), osTotal * 2 / osBlock);
-            check (p->getNumActiveVoices() == 0 && peakVoices >= 3, "(b) 12 overlapping taps all free (peak >= 3, final 0)");
+            // One-shot choke (2026-11-16): taps > 30 ms apart CUT the previous trigger, so the
+            // peak is the new voice + its choked ghost (2), never a free-running stack; the leak
+            // assertion (final 0) is the point of this test and is unchanged.
+            check (p->getNumActiveVoices() == 0 && peakVoices >= 2 && peakVoices <= 3,
+                   "(b) 12 choked taps never stack (peak 2..3, final 0 - no leak)");
         }
 
         // muted oscillator (rate above maxRho): note 127 with root 12 -> 2^((127-12)/12) = 768 > 256 -> would never reach the end

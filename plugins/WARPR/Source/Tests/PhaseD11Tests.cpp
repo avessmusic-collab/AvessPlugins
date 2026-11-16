@@ -1024,8 +1024,88 @@ namespace
 }
 
 //==============================================================================
+    //==========================================================================
+    // One-Shot choke (owner bug report 2026-11-16): a new One-Shot tap cuts every other
+    // free-running one-shot voice (no stacked playheads); chords inside 30 ms survive;
+    // slice pads stay polyphonic across different notes.
+    //==========================================================================
+    void testOneShotChoke()
+    {
+        std::printf ("\n[one-shot choke] new tap cuts the previous free-running trigger\n");
+
+        float ph[32], lv[32];
+
+        {   // 1. tap C3, wait ~0.5 s (released, still latched), tap D3 -> only D3 keeps sounding
+            Rig rig (makeNoise ((int) kFs * 2, 11, "Long"));
+            setParam (rig.proc, "loopMode", 2.0f);                                 // One-Shot
+            rig.block();
+
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn  (1, 60, 0.8f), 0);
+            m.addEvent (juce::MidiMessage::noteOff (1, 60), 64);
+            rig.block (m);
+            for (int b = 0; b < 90; ++b) rig.block();                              // ~0.5 s at 256 frames
+            check (rig.proc.getSynth().readPlayheads (ph, lv, 32) == 1, "the first tap free-runs after release");
+
+            juce::MidiBuffer m2;
+            m2.addEvent (juce::MidiMessage::noteOn (1, 62, 0.8f), 0);
+            rig.block (m2);
+            for (int b = 0; b < 4; ++b) rig.block();                               // let the 3 ms ghost fade finish
+            const int n = rig.proc.getSynth().readPlayheads (ph, lv, 32);
+            std::printf ("        after the second tap: %d sounding voice(s)\n", n);
+            check (n == 1, "the new One-Shot tap CHOKES the previous free-running voice (one playhead)");
+        }
+
+        {   // 2. a chord (two notes in the same block) keeps BOTH voices
+            Rig rig (makeNoise ((int) kFs * 2, 12, "Long"));
+            setParam (rig.proc, "loopMode", 2.0f);
+            rig.block();
+
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            m.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 32);              // same gesture, < 30 ms apart
+            rig.block (m);
+            for (int b = 0; b < 20; ++b) rig.block();
+            check (rig.proc.getSynth().readPlayheads (ph, lv, 32) == 2, "a One-Shot chord keeps both voices sounding");
+        }
+    }
+
+    //==========================================================================
+    // playhead regression: a Classic voice's UI playhead must ADVANCE while it plays
+    //==========================================================================
+    void testPlayheadAdvances()
+    {
+        std::printf ("\n[playhead] Classic voice: readPlayheads advances while the note plays\n");
+
+        Rig rig (makeNoise ((int) kFs * 2, 1, "Long"));                                // 2 s sample
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+        rig.block (on);
+
+        float p0[32], l0[32];
+        std::vector<float> seen;
+
+        for (int blk = 0; blk < 40; ++blk)
+        {
+            rig.block();
+            const int n = rig.proc.getSynth().readPlayheads (p0, l0, 32);
+            if (blk % 8 == 0)
+            {
+                std::printf ("        block %2d: voices %d, pos %s\n", blk, n, n > 0 ? juce::String (p0[0], 5).toRawUTF8() : "-");
+                if (n > 0) seen.push_back (p0[0]);
+            }
+        }
+        check (seen.size() >= 4, "playheads are published while the note sounds");
+        bool advancing = true;
+        for (size_t k = 1; k < seen.size(); ++k) advancing = advancing && seen[k] > seen[k - 1] + 1.0e-4f;
+        check (advancing, "the Classic playhead ADVANCES over time (UI regression: frozen/missing line)");
+        check (seen.empty() || (seen.front() >= 0.0f && seen.back() <= 1.0f), "positions stay in 0..1");
+    }
+
 int runPhaseD11Tests (bool full)
 {
+    testPlayheadAdvances();
+    testOneShotChoke();
     juce::ignoreUnused (full);
     failures = 0;
 

@@ -861,9 +861,10 @@ function autoSlice() { applySlice(Math.max(2, sliceCount), false); }   // EQUAL:
   watch("playMode", "c", updSourcePages);
   tap($("#btnSliceEq"), () => autoSlice());
   tap($("#btnSliceTr"), () => sensSlice());
-  /* SENS 0..200 %: requests round(sens/100 * 32) slices from the transient search - it keeps the
-     STRONGEST onsets, so raising the number surfaces progressively weaker hits (beyond what the
-     sample contains, the search falls back to an even grid). Drag vertically; double-click = 100 %. */
+  /* SENS 0..200 %: caps the transient search at round(sens/100 * 32) slices - it keeps the
+     STRONGEST onsets in strict strength order, so raising the number only surfaces progressively
+     weaker hits and simply stops when the sample has no more real transients (no grid fallback).
+     Drag vertically; double-click = 100 %. */
   {
     const el = $("#sliceSens"), tn = el.querySelector(".tn");
     let sensV = 100, sensT = 0, drag = null;
