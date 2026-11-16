@@ -219,10 +219,11 @@ namespace warpr
         }
 
         // 5. use what was FOUND - `count` is a cap, not a promise.  No grid fallback in transient
-        //    mode: raising the cap past the sample's real hits simply stops adding lines.  (The
-        //    degenerate cases above - no rise, short region, transient mode off - still grid.)
+        //    mode: raising the cap past the sample's real hits simply stops adding lines.  When
+        //    every candidate fails the 30 ms gap test (e.g. a one-shot whose only onset hugs the
+        //    region start), the honest answer is ONE slice - never a count-sized grid.
         if (chosen.empty())
-            return equalDivision();
+            return { s, e };
 
         std::sort (chosen.begin(), chosen.end());
 

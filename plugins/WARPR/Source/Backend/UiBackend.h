@@ -62,7 +62,8 @@ public:
 
     // Auto-slice of the current sample REGION [sampleStart, sampleEnd] into UP TO `count` (1..64) slices: fills `out` with
     // ascending normalised edges (front == sampleStart, back == sampleEnd).  byTransients = onset detection with an equal
-    // division fallback (see autoSliceEdges).  Message thread.  Returns false (out cleared) when there is no sample.
+    // byTransients: count CAPS the strongest-first onset pick; no grid fallback (see autoSliceEdges).
+    // Message thread.  Returns false (out cleared) when there is no sample.
     virtual bool computeSliceEdges (int count, bool byTransients, std::vector<double>& out)
     {
         juce::ignoreUnused (count, byTransients);

@@ -915,6 +915,19 @@ namespace
             silence.clear();
             check (autoSliceEdges (silence.getReadPointer (0), nullptr, n, kFs, 0.0, 1.0, 4, true) == autoSliceEdges (x, nullptr, n, kFs, 0.0, 1.0, 4, false),
                    "digital silence: equal division");
+
+            // REVIEW FIX 2026-11-16: a one-shot whose ONLY onset sits inside the 30 ms start guard
+            // must yield ONE slice {s, e} - never a count-sized grid (the removed fallback leaked
+            // through the chosen-empty path before).
+            juce::AudioBuffer<float> kick (1, n);
+            kick.clear();
+            const int kickPos = (int) std::lround (0.020 * kFs);           // 20 ms: inside the gap
+            for (int i = 0; i < 48; ++i)
+                kick.setSample (0, kickPos + i, 0.9f * (1.0f - (float) i / 48.0f));
+            const auto ke = autoSliceEdges (kick.getReadPointer (0), nullptr, n, kFs, 0.0, 1.0, 8, true);
+            show ("lone 20 ms kick, count 8", ke);
+            check (ke.size() == 2 && juce::exactlyEqual (ke.front(), 0.0) && juce::exactlyEqual (ke.back(), 1.0),
+                   "a lone onset inside the 30 ms guard yields ONE slice, not a grid");
         }
 
         // 30 ms minimum gap: a strong click 20 ms after the strongest is skipped

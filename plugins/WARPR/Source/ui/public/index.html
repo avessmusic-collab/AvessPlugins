@@ -250,7 +250,7 @@
               <button class="btn" id="btnSliceEq" style="padding:3px 10px">EQUAL</button>
               <button class="btn" id="btnSliceTr" style="padding:3px 10px">TRANSIENT</button>
               <button class="btn" id="btnSliceClr" style="padding:3px 10px">CLEAR</button>
-              <span class="tv" id="sliceSens" title="Transient sensitivity: how many slices the transient search creates" style="min-width:56px"><span class="tl">SENS</span><span class="tn">100%</span></span>
+              <span class="tv" id="sliceSens" title="Transient sensitivity: caps how many of the strongest hits become slices" style="min-width:56px"><span class="tl">SENS</span><span class="tn">100%</span></span>
               <div class="spacer"></div>
               <span class="hint">DRAG EDGES &middot; 2&times;CLICK WAVE = NEW SLICE &middot; ALT-CLICK EDGE = REMOVE &middot; NOTES FROM C1</span>
             </div>
@@ -834,28 +834,25 @@ function updSourcePages() {
   $("#granRow").style.display = (!sliceDoc.on && pm === 1) ? "flex" : "none";
   $("#sliceRow").style.display = sliceDoc.on ? "flex" : "none";
 }
-async function sensSlice() {
+/* one fetch-and-commit path for every auto-slice action.  On failure (no sample, no edges)
+   slicing is reverted so the UI never shows SLICE active while the engine holds the old map. */
+async function applySlice(count, byTransients) {
+  let ok = false;
   try {
-    const n = window.sliceSensCount ? window.sliceSensCount() : 32;
-    const arr = await NF.sliceEdges(Math.max(1, n), 1);
+    const arr = await NF.sliceEdges(Math.max(1, Math.min(64, count)), byTransients ? 1 : 0);
     if (arr && arr.length >= 2) {
       sliceDoc.edges = Array.from(arr, Number);
       sliceDoc.on = true; sliceCount = sliceDoc.edges.length - 1; sliceSel = -1;
-      pushSlice(); updSourcePages(); drawSample();
+      pushSlice(); ok = true;
     }
   } catch (_) {}
+  if (!ok) { sliceDoc.on = false; pushSlice(); }
+  updSourcePages(); drawSample();
 }
-async function autoSlice() {                              // EQUAL: grid at the current slice count
-  try {
-    const nq = Math.max(2, Math.min(64, sliceCount));
-    const arr = await NF.sliceEdges(nq, 0);
-    if (arr && arr.length >= 2) {
-      sliceDoc.edges = Array.from(arr, Number);
-      sliceDoc.on = true; sliceCount = sliceDoc.edges.length - 1; sliceSel = -1;
-      pushSlice(); updSourcePages(); drawSample();
-    }
-  } catch (_) {}
-}
+/* SENS cap: round(sens/100 * 32) strongest hits - the scan adds lines in strict strength order
+   and simply stops when the sample has no more real transients (no grid fallback). */
+function sensSlice() { applySlice(window.sliceSensCount ? window.sliceSensCount() : 32, true); }
+function autoSlice() { applySlice(Math.max(2, sliceCount), false); }   // EQUAL: grid at the current count
 {
   const spans = [...$("#pmode").children];
   tap(spans[0], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 0); updSourcePages(); });
@@ -886,16 +883,7 @@ async function autoSlice() {                              // EQUAL: grid at the 
     el.addEventListener("wheel", e => { e.preventDefault(); sensV = clamp(sensV + (e.deltaY < 0 ? 5 : -5), 0, 200); show(); apply(); }, { passive: false });
     show();
   }
-  tap($("#btnSliceClr"), async () => {                     // CLEAR: no interior lines - one slice over the region
-    try {
-      const arr = await NF.sliceEdges(1, 0);
-      if (arr && arr.length >= 2) {
-        sliceDoc.edges = Array.from(arr, Number); sliceDoc.on = true;
-        sliceCount = 1; sliceSel = -1;
-        pushSlice(); updSourcePages(); drawSample();
-      }
-    } catch (_) {}
-  });
+  tap($("#btnSliceClr"), () => applySlice(1, false));      // CLEAR: one full-region slice, no lines
   updSourcePages();
 }
 $$("[data-seg]").forEach(el => { if (el.id !== "pmode" && el.id !== "grainMode") bindSeg(el, el.dataset.seg); });
@@ -1048,7 +1036,9 @@ cs.addEventListener("dblclick", e => {
       }
       return;
     }
-    // double-click on empty wave = a NEW slice edge at the exact position (it comes up selected)
+    // double-click on empty wave = a NEW slice edge at the exact position (it comes up selected);
+    // 64 slices (65 edges) is the engine's cap - past it the map would silently truncate
+    if (sliceDoc.edges.length >= 65) return;
     sliceDoc.edges = [...sliceDoc.edges, ax].sort((a, b) => a - b);
     sliceSel = sliceDoc.edges.indexOf(ax);
     sliceCount = sliceDoc.edges.length - 1;

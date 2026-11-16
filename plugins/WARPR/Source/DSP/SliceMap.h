@@ -71,8 +71,12 @@ namespace warpr
           3. Candidates = local maxima of o (o_j > o_(j-1), o_j >= o_(j+1)) with o_j >= 5 % of the strongest rise.
           4. Peak-pick the count - 1 strongest (ties: the earlier one) subject to a minimum 30 ms distance to every already
              chosen onset, to the region start (which is always an edge) and to the region end.
-          5. Fewer than count - 1 onsets found: FALL BACK to equal division for the whole result.
-        `c1` may be nullptr (mono sample).  A region shorter than the window, or an empty buffer, also falls back. */
+          5. `count` is a CAP, not a promise: the result holds every onset found (strongest first, strict
+             strength order - raising the cap only appends) and stops when the sample runs out.  When no
+             candidate survives the gap test the result is ONE slice {start, end}.  Equal division happens
+             ONLY with byTransients off, or in the degenerate cases below.
+        `c1` may be nullptr (mono sample).  A region shorter than the window, an empty buffer or digital
+        silence grids at `count` (there is nothing to rank). */
     std::vector<double> autoSliceEdges (const float* c0, const float* c1, int numFrames, double sampleRate,
                                         double startNorm, double endNorm, int count, bool byTransients);
 }

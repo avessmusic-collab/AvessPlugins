@@ -115,7 +115,9 @@ namespace warpr
             }
         }
 
-        /** The limiter's current gain-reduction factor (1 = none); for tests / metering. */
+        /** The limiter's current gain-reduction factor (1 = none).  TESTS ONLY: limEnv is plain
+            audio-thread state - reading it from another thread while audio runs is a data race.
+            (A UI gain-reduction meter would need an atomic mirror; none exists yet.) */
         double limiterGain() const noexcept { return limEnv > ceiling ? ceiling / limEnv : 1.0; }
 
         /** Antialiased knee: exposed for tests. */

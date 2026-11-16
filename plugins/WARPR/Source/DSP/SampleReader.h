@@ -306,22 +306,131 @@ namespace warpr
         Slot storage[(size_t) slots];
     };
 
+    /** Both channels of one level at the SAME level position in one call (the stereo read).
+
+        BIT-EXACTNESS (CPU pass, D10 backlog): this is readLevel (base0, ...) and readLevel (base1, ...) with everything
+        that depends only on the position / level / quality computed ONCE instead of twice: floor / fraction, the tap
+        window, the loop-wrap test and its wrapped index list (the same indices for both channels), and for the sinc the
+        row choice, the row-interpolation weight and the 8 interpolated coefficients c[t] = h0[t] + w * (h1[t] - h0[t]).
+        Every one of those values is a function of (levelPos, v, hermite) only, so the second computation in the old code
+        produced the identical bits.  The per-channel arithmetic is unchanged: the SAME expressions in the SAME order
+        (acc += c[t] * src[t], t ascending, one accumulator per channel, no reassociation).  The coefficient expression keeps
+        the old shape h0 + w * (h1 - h0) and the multiply-accumulate keeps the old shape acc + c * src, so any
+        floating-point contraction the compiler applies to the old single expression applies identically here. */
+    inline void readLevelPair (const float* base0, const float* base1, double levelPos, const LevelView& v, bool hermite,
+                               float& out0, float& out1) noexcept
+    {
+        const double fl = std::floor (levelPos);
+        const int i = (int) fl;
+        const float f = (float) (levelPos - fl);
+
+        const int count = hermite ? 4 : 8;
+        const int first = hermite ? i - 1 : i - 3;
+
+        float gathered0[8], gathered1[8];
+        const float* src0;
+        const float* src1;
+
+        if (v.wrap && (levelPos - v.wrapLo < 6.0 || v.wrapHi - levelPos < 7.0))
+        {
+            for (int t = 0; t < count; ++t)
+            {
+                int rel = first + t - v.wrapLoI;
+
+                if (rel < 0 || rel >= v.wrapLen)
+                {
+                    rel %= v.wrapLen;
+                    if (rel < 0)
+                        rel += v.wrapLen;
+                }
+
+                gathered0[t] = base0[v.wrapLoI + rel];
+                gathered1[t] = base1[v.wrapLoI + rel];
+            }
+
+            src0 = gathered0;
+            src1 = gathered1;
+        }
+        else
+        {
+            src0 = base0 + first;
+            src1 = base1 + first;
+        }
+
+        if (hermite)
+        {
+            auto eval = [f] (const float* s) noexcept
+            {
+                const float ym1 = s[0], y0 = s[1], y1 = s[2], y2 = s[3];
+                const float c1 = 0.5f * (y1 - ym1);
+                const float c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
+                const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
+                return ((c3 * f + c2) * f + c1) * f + y0;
+            };
+
+            out0 = eval (src0);
+            out1 = eval (src1);
+            return;
+        }
+
+        const auto& table = SincTable::get();
+        const float ph = f * (float) SincTable::phases;
+        int r = (int) ph;
+
+        if (r > SincTable::phases)
+            r = SincTable::phases;
+
+        const float w = ph - (float) r;
+        const float* h0 = table.row (r);
+        const float* h1 = table.row (r + 1);
+
+        float c[SincTable::taps];
+
+        for (int t = 0; t < SincTable::taps; ++t)
+            c[t] = h0[t] + w * (h1[t] - h0[t]);
+
+        float acc0 = 0.0f, acc1 = 0.0f;
+
+        for (int t = 0; t < SincTable::taps; ++t)
+        {
+            acc0 += c[t] * src0[t];
+            acc1 += c[t] * src1[t];
+        }
+
+        out0 = acc0;
+        out1 = acc1;
+    }
+
     /** Reads one frame at level-0 position `pos` (source frames), both channels. */
     inline void readFrame (const ReadParams& rp, double pos, float& outL, float& outR) noexcept
     {
         const auto& a = rp.lv[0];
         const double pa = pos * a.invScale;
 
-        float l = readLevel (a.ch0, pa, a, rp.hermite);
-        float r = rp.stereo ? readLevel (a.ch1, pa, a, rp.hermite) : l;
+        float l, r;
+
+        if (rp.stereo)
+            readLevelPair (a.ch0, a.ch1, pa, a, rp.hermite, l, r);
+        else
+        {
+            l = readLevel (a.ch0, pa, a, rp.hermite);
+            r = l;
+        }
 
         if (rp.wHigh > 0.0f)
         {
             const auto& b = rp.lv[1];
             const double pb = pos * b.invScale;
 
-            const float l2 = readLevel (b.ch0, pb, b, rp.hermite);
-            const float r2 = rp.stereo ? readLevel (b.ch1, pb, b, rp.hermite) : l2;
+            float l2, r2;
+
+            if (rp.stereo)
+                readLevelPair (b.ch0, b.ch1, pb, b, rp.hermite, l2, r2);
+            else
+            {
+                l2 = readLevel (b.ch0, pb, b, rp.hermite);
+                r2 = l2;
+            }
 
             l += rp.wHigh * (l2 - l);
             r += rp.wHigh * (r2 - r);
