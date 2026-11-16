@@ -38,7 +38,7 @@
   #hdr{height:88px;display:flex;align-items:center;gap:12px;padding:0 18px;flex:none;
     background:linear-gradient(180deg,#232323,#121212);
     border-bottom:1px solid #000;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 4px 14px rgba(0,0,0,.5)}
-  #hdr .title{font-size:21px;font-weight:700;letter-spacing:.22em;
+  #hdr .title{font-size:30px;font-weight:700;letter-spacing:.26em;margin-left:26px;
     background:linear-gradient(180deg,#FFF,#9A9A9A);-webkit-background-clip:text;background-clip:text;color:transparent}
   #hdr .wt{font-size:8px;color:var(--tx3);letter-spacing:.18em;margin-top:8px}
   .btn{background:linear-gradient(180deg,#2C2C2C,#161616);border:1px solid #000;color:#CFCFCF;border-radius:var(--rc);
@@ -250,6 +250,7 @@
               <button class="btn" id="btnSliceEq" style="padding:3px 10px">EQUAL</button>
               <button class="btn" id="btnSliceTr" style="padding:3px 10px">TRANSIENT</button>
               <button class="btn" id="btnSliceClr" style="padding:3px 10px">CLEAR</button>
+              <span class="tv" id="sliceSens" title="Transient sensitivity: how many slices the transient search creates" style="min-width:56px"><span class="tl">SENS</span><span class="tn">100%</span></span>
               <div class="spacer"></div>
               <span class="hint">DRAG EDGES &middot; 2&times;CLICK WAVE = NEW SLICE &middot; ALT-CLICK EDGE = REMOVE &middot; NOTES FROM C1</span>
             </div>
@@ -838,6 +839,17 @@ const isEqualDivision = arr => {
   const n = arr.length - 1, a = arr[0], b = arr[n];
   return arr.every((e, k) => Math.abs(e - (a + (b - a) * k / n)) < 1e-6);
 };
+async function sensSlice() {
+  try {
+    const n = window.sliceSensCount ? window.sliceSensCount() : 32;
+    const arr = await NF.sliceEdges(Math.max(1, n), 1);
+    if (arr && arr.length >= 2) {
+      sliceDoc.edges = Array.from(arr, Number);
+      sliceDoc.on = true; sliceCount = sliceDoc.edges.length - 1; sliceSel = -1;
+      pushSlice(); updSourcePages(); drawSample();
+    }
+  } catch (_) {}
+}
 async function autoSlice(byT) {
   try {
     if (!byT) {
@@ -870,7 +882,29 @@ async function autoSlice(byT) {
   tap(spans[2], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 1); updSourcePages(); });
   watch("playMode", "c", updSourcePages);
   tap($("#btnSliceEq"), () => autoSlice(false));
-  tap($("#btnSliceTr"), () => autoSlice(true));
+  tap($("#btnSliceTr"), () => sensSlice());
+  /* SENS 0..200 %: requests round(sens/100 * 32) slices from the transient search - it keeps the
+     STRONGEST onsets, so raising the number surfaces progressively weaker hits (beyond what the
+     sample contains, the search falls back to an even grid). Drag vertically; double-click = 100 %. */
+  {
+    const el = $("#sliceSens"), tn = el.querySelector(".tn");
+    let sensV = 100, sensT = 0, drag = null;
+    const show = () => { tn.textContent = Math.round(sensV) + "%"; };
+    const apply = () => { clearTimeout(sensT); sensT = setTimeout(sensSlice, 150); };
+    window.sliceSensCount = () => Math.max(1, Math.min(64, Math.round(sensV / 100 * 32)));
+    el.style.cursor = "ns-resize"; el.style.touchAction = "none";
+    el.addEventListener("pointerdown", e => { drag = { y: e.clientY }; el.setPointerCapture(e.pointerId); });
+    el.addEventListener("pointermove", e => {
+      if (!drag) return;
+      sensV = clamp(sensV + (drag.y - e.clientY) / SCALE * (e.shiftKey ? 0.2 : 1.2), 0, 200);
+      drag.y = e.clientY; show(); apply();
+    });
+    const end = () => { drag = null; };
+    el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+    el.addEventListener("dblclick", () => { sensV = 100; show(); apply(); });
+    el.addEventListener("wheel", e => { e.preventDefault(); sensV = clamp(sensV + (e.deltaY < 0 ? 5 : -5), 0, 200); show(); apply(); }, { passive: false });
+    show();
+  }
   tap($("#btnSliceClr"), async () => {                     // CLEAR: no interior lines - one slice over the region
     try {
       const arr = await NF.sliceEdges(1, 0);
@@ -1955,6 +1989,60 @@ function frame() {
   updatePhaseMarker();
   requestAnimationFrame(frame);
 }
+
+/* =====================================================================
+   HOVER DESCRIPTIONS - what each control does (plain, one line)
+   ===================================================================== */
+const TIPS = {
+  sampleStart: "Start of the playable region", sampleEnd: "End of the playable region",
+  rootNote: "Note that plays the sample at its original pitch and speed",
+  transpose: "Pitch offset in semitones", fineTune: "Pitch offset in cents",
+  loopMode: "What happens at the region end: loop, ping-pong, or one-shot trigger",
+  direction: "Playback direction",
+  ampAttack: "Envelope attack time", ampDecay: "Envelope decay time",
+  ampSustain: "Envelope sustain level", ampRelease: "Envelope release time",
+  warpMode: "Wave-warp algorithm", warpAmount: "Warp intensity",
+  warpParamA: "Warp character A", warpParamB: "Warp character B",
+  warpMix: "Dry/wet of the warp stage", warpEnable: "Warp stage on/off",
+  modOscSource: "Modulator for the FM/AM/RM warp modes", modOscRatio: "Modulator frequency ratio",
+  oversampling: "Warp-engine quality vs CPU",
+  shaperEnable: "Shaper stage on/off", shaperCurveSelect: "Which curve is edited (A or B)",
+  shaperPreset: "Shaper curve preset", shaperMorph: "Blend between curves A and B",
+  shaperMix: "Dry/wet of the shaper", shaperSymmetry: "Mirrored curve (SYM) or as drawn (ASYM)",
+  playMode: "Sound source: classic playback, slices, or granular",
+  grainMode: "Grain scheduling: classic, loop crossfade, or cloud",
+  grainPosition: "Grain start position", grainScan: "Automatic travel through the sample",
+  grainScanDist: "How far the scan travels", grainScanLoop: "Scan loops or holds at the end",
+  grainScanKey: "Higher notes scan faster", grainSize: "Grain length",
+  grainShape: "Grain window shape", grainVariation: "Random position / size / level (and pitch in Cloud)",
+  grainSpread: "Stereo spread of grains", grainReverse: "Chance a grain plays backwards",
+  grainDensity: "Simultaneous grains in Cloud",
+  filterEnable: "Filter on/off", filterType: "Filter type",
+  filterCutoff: "Filter cutoff frequency", filterResonance: "Filter resonance",
+  filterDrive: "Drive into the filter", filterMorph: "Filter character (depends on the type)",
+  filterKeyTrack: "Cutoff follows the played note", filterMix: "Dry/wet of the filter",
+  voiceMode: "Polyphonic, mono, or legato", polyphony: "Maximum simultaneous voices",
+  unisonVoices: "Stacked oscillators per note", unisonDetune: "Unison detune amount",
+  unisonSpread: "Unison stereo width", glideTime: "Pitch glide time between notes",
+  bendRange: "Pitch-bend range", masterGain: "Output level (a limiter holds the ceiling at -0.1 dB)",
+};
+for (const [attr, key] of [["data-p","p"],["data-tv","tv"],["data-sel","sel"],["data-seg","seg"],["data-segbool","segbool"],["data-tog","tog"],["data-step","step"]])
+  $$("[" + attr + "]").forEach(el => { const k = el.dataset[key]; if (TIPS[k] && !el.title) el.title = TIPS[k]; });
+for (const [sel2, tip] of Object.entries({
+  "#btnSample": "Load a sample from disk (or drag and drop one anywhere)",
+  "#btnSliceEq": "Slice the region into equal parts",
+  "#btnSliceTr": "Slice at detected transients",
+  "#btnSliceClr": "Remove all slice lines",
+  "#btnPrev": "Previous preset", "#btnNext": "Next preset",
+  "#btnSave": "Save preset", "#btnLoad": "Load preset",
+  "#btnSettings": "Audio quality and CPU settings",
+  "#btnFltPrev": "Previous filter type", "#btnFltNext": "Next filter type",
+  "#btnWrpPrev": "Previous warp mode", "#btnWrpNext": "Next warp mode",
+  "#btnShpPrev": "Previous shaper preset", "#btnShpNext": "Next shaper preset",
+  "#cvSample": "The sample: slices, playheads and the processed wave are drawn here",
+  "#kLfoRate": "LFO speed", "#kLfoPhase": "LFO start phase", "#kLfoSmooth": "LFO output smoothing",
+  "#grainModeK": "Reverse chance (Loop) or grain density (Cloud)",
+})) { const el = $(sel2); if (el) el.title = tip; }
 
 /* =====================================================================
    BOOT
