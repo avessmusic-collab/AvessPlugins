@@ -364,9 +364,9 @@ namespace warpr
                    - (double) (m (ParamId::rootNote, (float) vp.rootNote) - (float) vp.rootNote);
         };
 
-        if (sliceLatched)
+        if (sliceLatched || posKeyFrac >= 0.0f)
         {
-            pitchCur = pitchTarget = (double) vp.rootNote;        // D11: a slice voice is unpitched (note-independent)
+            pitchCur = pitchTarget = (double) vp.rootNote;        // unpitched voices (slice / POS-KEY) follow the CURRENT root
             glideLeft = 0;
         }
 

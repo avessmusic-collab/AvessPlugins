@@ -131,6 +131,15 @@ void UiBackendImpl::setGrainPosKey (bool on)
         synthRef->setGrainPosKey (on);       // NEW notes pick it up; no revision bump (echo avoidance)
 }
 
+double UiBackendImpl::raw (const char* id, double fallback) const
+{
+    if (apvts != nullptr)
+        if (auto* p = apvts->getRawParameterValue (id))
+            return static_cast<double> (p->load());
+
+    return fallback;
+}
+
 bool UiBackendImpl::computeSliceEdges (int count, bool byTransients, std::vector<double>& out)
 {
     out.clear();
@@ -143,14 +152,6 @@ bool UiBackendImpl::computeSliceEdges (int count, bool byTransients, std::vector
     if (sample == nullptr || sample->level (0).numFrames <= 0)
         return false;
 
-    auto raw = [this] (const char* id, double fallback)
-    {
-        if (apvts != nullptr)
-            if (auto* p = apvts->getRawParameterValue (id))
-                return static_cast<double> (p->load());
-
-        return fallback;
-    };
 
     const double start = juce::jlimit (0.0, 1.0, raw ("sampleStart", 0.0));
     const double end = juce::jlimit (0.0, 1.0, raw ("sampleEnd", 1.0));
@@ -622,16 +623,8 @@ int UiBackendImpl::computeProcessedPeaks (float* minMaxInterleaved, int pairs, d
     const int outPairs = juce::jlimit (1, warpr::SampleData::maxPeakPairs, juce::jmin (pairs, span));
 
     // ---- current parameter values (raw atomics, same clamps as WarprSynth::setBlockParams; defaults without an APVTS)
-    auto raw = [this] (const char* id, double fallback)
-    {
-        if (apvts != nullptr)
-            if (auto* p = apvts->getRawParameterValue (id))
-                return static_cast<double> (p->load());
 
-        return fallback;
-    };
-
-    auto rawF = [&raw] (const char* id, double fallback, float lo, float hi)
+    auto rawF = [this] (const char* id, double fallback, float lo, float hi)
     {
         return juce::jlimit (lo, hi, (float) raw (id, fallback));
     };
@@ -754,14 +747,6 @@ void UiBackendImpl::computeFilterResponse (float* dbOut, int n)
 
     // Raw (denormalised) values straight from the atomics: Choice = index, Float = real units.  Without an
     // APVTS (class-level tests) the parameter defaults are used.
-    auto raw = [this] (const char* id, double fallback)
-    {
-        if (apvts != nullptr)
-            if (auto* a = apvts->getRawParameterValue (id))
-                return static_cast<double> (a->load());
-
-        return fallback;
-    };
 
     // Same coefficient generators as the voices (FilterDesign); key tracking is note-dependent and not drawn.
     warpr::FilterResponse::magnitudeDbLogSpaced (juce::roundToInt (raw ("filterType", 3.0)),

@@ -92,7 +92,23 @@ void PluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     buffer.clear();
 
     if (buffer.getNumChannels() < 2 || numSamples <= 0)
+    {
+        // Review 2026-11-16: some hosts flush MIDI in zero-sample blocks (transport changes) - a
+        // dropped note-off is a stuck note.  Hand the events to the synth; it renders nothing.
+        if (! midiMessages.isEmpty())
+        {
+            if (sampleStore.acquire())
+                synth.setCurrentSample (sampleStore.get());
+
+            paramSnapshot.read (paramBlock);
+            synth.setBlockParams (paramBlock);
+
+            float silent = 0.0f;
+            synth.renderBlock (&silent, &silent, 0, midiMessages);
+        }
+
         return;
+    }
 
     // Block start: adopt a pending sample publication (single atomic exchange; the previous sample is
     // handed to the retire list, never freed here), read the parameters once.

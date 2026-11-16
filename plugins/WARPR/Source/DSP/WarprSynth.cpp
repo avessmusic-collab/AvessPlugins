@@ -154,7 +154,9 @@ namespace warpr
         vp.grainScanDist = juce::jlimit (-1.0f, 1.0f, pb.get (ParamId::grainScanDist));
         vp.grainScanLoop = pb.getBool (ParamId::grainScanLoop);
         vp.grainScanKey = pb.getBool (ParamId::grainScanKey);
-        vp.grainPosKey = grainPosKeyFlag.load (std::memory_order_relaxed);
+        // the KEY param wins over the non-param POS flag (the UI shows the param when both are set,
+        // so the engine must agree - host automation of KEY stays truthful)
+        vp.grainPosKey = grainPosKeyFlag.load (std::memory_order_relaxed) && ! vp.grainScanKey;
         vp.grainSizeMs = juce::jlimit (2.0f, 2000.0f, pb.get (ParamId::grainSize));
         vp.grainShape = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainShape));
         vp.grainVariation = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainVariation));
@@ -571,8 +573,10 @@ namespace warpr
         auto* cur = findMonoVoice();
 
         // D11: a slice note never retargets / retriggers (it has no pitch); a slice voice is never retargeted by a later
-        // ordinary note either.  Both start a fresh voice through a ghost fade.
-        if (cur != nullptr && cur->isSounding() && ! sliceNoteActive && ! cur->isSliceVoice())
+        // ordinary note either.  Both start a fresh voice through a ghost fade.  A POS-KEY voice is unpitched the same
+        // way, and its position is latched - a legato retarget would detune it and never move the cloud, so it too
+        // starts fresh.
+        if (cur != nullptr && cur->isSounding() && ! sliceNoteActive && ! cur->isSliceVoice() && ! cur->isPosKeyVoice())
         {
             if (legato && keysWereAlive)
             {
@@ -1104,6 +1108,15 @@ namespace warpr
 
             renderRange (outL + pos, outR + pos, next - pos);
             pos = next;
+        }
+
+        // Review 2026-11-16: a zero-sample block still carries MIDI in some hosts (transport
+        // flushes), and an event stamped at/after numSamples would fall off the loop above - a
+        // dropped note-off is a stuck note, so drain whatever is left.
+        while (it != end)
+        {
+            handleMidi (*it);
+            ++it;
         }
 
         publishPlayheads();

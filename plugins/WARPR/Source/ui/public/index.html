@@ -492,7 +492,7 @@ window.addEventListener("dragleave", e => { e.preventDefault(); if (--dragDepth 
 window.addEventListener("drop", async e => {
   e.preventDefault(); dropHide();
   const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (!f || !/\.(wav|aif|aiff|aifc|flac|mp3|ogg|m4a|caf|wv)$/i.test(f.name)) return;
+  if (!f || !/\.(wav|aif|aiff|aifc|flac|mp3|ogg|m4a|caf)$/i.test(f.name)) return;
   dropOverlay.querySelector("span").textContent = "LOADING…";
   dropOverlay.classList.add("show");
   try {

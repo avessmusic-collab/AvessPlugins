@@ -1,6 +1,4 @@
 #pragma once
-
-#include <cstdio>    // TEMP DIAG (owner bug 2026-11-16)
 /*
   ==============================================================================
    WARPR - PluginEditor.h
@@ -136,8 +134,6 @@ private:
     std::atomic<bool> sampleRequested { true }, filterRequested { true };
     juce::String lastPresetName;
     bool playheadsWereShown = false;
-    FILE* vizLog = nullptr;                  // TEMP DIAG (owner bug 2026-11-16): /tmp/void_viz_log.txt
-    bool vizLogQuiet = false;                // last line was an idle marker
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };

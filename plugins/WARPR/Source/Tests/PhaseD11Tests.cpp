@@ -1072,6 +1072,36 @@ namespace
         check (keyMid > 0.30 && keyMid < 0.70, "POS-KEY: 30 keys up puts the cloud mid-sample");
         check (keyHigh > 0.70, "POS-KEY: a key near C6 puts the cloud near the end");
 
+        {   // mono/legato: a POS-KEY voice is never RETARGETED (that would glide root -> key, i.e.
+            // detune an unpitched voice, and never move the cloud): the second key starts a fresh
+            // voice whose cloud sits at ITS position.
+            Rig mono (makeNoise ((int) kFs * 2, 23, "Long"));
+            setParam (mono.proc, "playMode", 1.0f);
+            setParam (mono.proc, "grainMode", 2.0f);
+            setParam (mono.proc, "voiceMode", 2.0f);                       // Legato
+            mono.proc.getSynth().setGrainPosKey (true);
+            mono.block();
+
+            juce::MidiBuffer a;
+            a.addEvent (juce::MidiMessage::noteOn (1, 38, 0.8f), 0);       // near the start
+            mono.block (a);
+            for (int b = 0; b < 30; ++b) mono.block();
+
+            juce::MidiBuffer b2;
+            b2.addEvent (juce::MidiMessage::noteOn (1, 90, 0.8f), 0);      // overlap: legato gesture
+            mono.block (b2);
+            for (int b = 0; b < 30; ++b) mono.block();
+
+            float gp[32], gl[32];
+            const int n = mono.proc.getSynth().readGrains (gp, gl, 32);
+            double sum = 0.0;
+            for (int i = 0; i < n; ++i) sum += (double) gp[i];
+            const double c = n > 0 ? sum / n : -1.0;
+            std::printf ("        legato re-position: cloud center %.3f after the second key\n", c);
+            check (c > 0.5, "mono/legato POS-KEY: the second key RE-POSITIONS the cloud (fresh voice, no retarget)");
+            mono.proc.getSynth().setGrainPosKey (false);
+        }
+
         // persistence: the flag travels inside uiState (state save -> fresh processor -> restored)
         rig.proc.getBackendImpl().setGrainPosKey (true);
         juce::MemoryBlock state;
@@ -1151,6 +1181,30 @@ namespace
     }
 
     //==========================================================================
+    // Review 2026-11-16: MIDI arriving in a ZERO-sample block (host transport flush) must not
+    // be dropped - a lost note-off is a stuck note.
+    //==========================================================================
+    static void testZeroSampleBlockMidi()
+    {
+        std::printf ("\n[zero-block midi] a note-off in an empty block still releases the voice\n");
+
+        Rig rig (makeNoise ((int) kFs, 31, "Long"));
+        juce::MidiBuffer on;
+        on.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+        rig.block (on);
+        for (int b = 0; b < 8; ++b) rig.block();
+        check (rig.proc.getNumActiveVoices() == 1, "the note is sounding");
+
+        juce::AudioBuffer<float> empty (2, 0);                       // zero-sample block carrying the note-off
+        juce::MidiBuffer offMidi;
+        offMidi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+        rig.proc.processBlock (empty, offMidi);
+
+        for (int b = 0; b < 40; ++b) rig.block();                    // release (50 ms) + free
+        check (rig.proc.getNumActiveVoices() == 0, "the zero-block note-off released and freed the voice");
+    }
+
+    //==========================================================================
     // playhead regression: a Classic voice's UI playhead must ADVANCE while it plays
     //==========================================================================
     static void testPlayheadAdvances()
@@ -1184,6 +1238,7 @@ namespace
 
 int runPhaseD11Tests (bool full)
 {
+    testZeroSampleBlockMidi();
     testPlayheadAdvances();
     testOneShotChoke();
     testGrainPosKey();

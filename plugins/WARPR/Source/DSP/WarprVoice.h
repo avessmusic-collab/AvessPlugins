@@ -153,6 +153,7 @@ namespace warpr
 
         /** D11: the voice was started by a slice note (region latched, unpitched, one-shot, Classic).  Always trigger-latched. */
         bool isSliceVoice() const noexcept { return sliceLatched; }
+        bool isPosKeyVoice() const noexcept { return posKeyFrac >= 0.0f; }   // POS-KEY: unpitched, position latched
 
         void beginFade (int samples) noexcept;                // ghost fade-out (steal, mode change, sound-off)
         void retarget (int newNote, double glideMs) noexcept; // mono / legato pitch change, no restart

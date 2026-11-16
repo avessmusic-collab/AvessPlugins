@@ -170,7 +170,6 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 PluginEditor::~PluginEditor()
 {
     stopTimer();
-    if (vizLog != nullptr) { std::fclose (vizLog); vizLog = nullptr; }   // TEMP DIAG
     // Members destruct in reverse order: chooser etc -> attachments -> webView -> relays.
 }
 
@@ -232,7 +231,7 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
         })
         .withNativeFunction ("warpr_loadSample", [this] (const Args&, Done done)
         {
-            chooser = std::make_unique<juce::FileChooser> ("Load sample", juce::File{}, "*.wav;*.aif;*.aiff");
+            chooser = std::make_unique<juce::FileChooser> ("Load sample", juce::File{}, "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.m4a;*.caf");
             chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                 [safe = juce::Component::SafePointer<PluginEditor> (this)] (const juce::FileChooser& fc)
                 {
@@ -390,6 +389,8 @@ void PluginEditor::timerCallback()
     const bool gotFrame = be.vizFifo().popLatest (frame);
     if (frame.numVoices == 0)
         frame.numVoices = be.getPlayheads (frame.voices.data(), WarprVizFrame::maxVoices);
+    if (frame.numGrains == 0)
+        frame.numGrains = be.getGrains (frame.grains.data(), WarprVizFrame::maxGrains);   // symmetric: no cloud blink on a starved FIFO
 
     if (gotFrame || frame.numVoices > 0 || frame.numGrains > 0 || playheadsWereShown)
     {
@@ -398,44 +399,6 @@ void PluginEditor::timerCallback()
         playheadsWereShown = frame.numVoices > 0 || frame.numGrains > 0;
     }
 
-    // ---- TEMP DIAG (owner bug 2026-11-16, "two playheads in classic mode"): log exactly what
-    //      the display is told, to be read back after an in-DAW repro.  Removed when solved.
-    {
-        if (vizLog == nullptr)
-        {
-            vizLog = std::fopen ("/tmp/void_viz_log.txt", "a");
-            if (vizLog != nullptr)
-            {
-                const auto d = be.getSampleDisplay();
-                std::fprintf (vizLog, "# open fs=%.0f fileFrames=%d fileRate=%.0f name=%s\n",
-                              audioProcessor.getSampleRate(), d.numSamples, d.sampleRate,
-                              d.name.toRawUTF8());
-            }
-        }
-
-        if (vizLog != nullptr)
-        {
-            if (frame.numVoices > 0 || frame.numGrains > 0)
-            {
-                std::fprintf (vizLog, "%u src=%s nV=%d", juce::Time::getMillisecondCounter(),
-                              gotFrame ? "fifo" : "snap", frame.numVoices);
-                for (int i = 0; i < juce::jmin (frame.numVoices, 8); ++i)
-                    std::fprintf (vizLog, " v%d=%.5f@%.2f", i,
-                                  frame.voices[(size_t) i].pos, frame.voices[(size_t) i].level);
-                std::fprintf (vizLog, " nG=%d", frame.numGrains);
-                for (int i = 0; i < juce::jmin (frame.numGrains, 4); ++i)
-                    std::fprintf (vizLog, " g%d=%.5f", i, frame.grains[(size_t) i].pos);
-                std::fprintf (vizLog, "\n");
-                vizLogQuiet = false;
-            }
-            else if (! vizLogQuiet)
-            {
-                std::fprintf (vizLog, "%u idle\n", juce::Time::getMillisecondCounter());
-                vizLogQuiet = true;
-            }
-            std::fflush (vizLog);
-        }
-    }
 
     auto changed = [&be] (WarprUiBackend::Revision r, uint32_t& seen)
     {
@@ -552,7 +515,7 @@ void PluginEditor::emitPreset()
 bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (auto& f : files)
-        if (juce::File (f).hasFileExtension ("wav;aif;aiff"))
+        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg;m4a;caf"))
             return true;
     return false;
 }
@@ -560,7 +523,7 @@ bool PluginEditor::isInterestedInFileDrag (const juce::StringArray& files)
 void PluginEditor::filesDropped (const juce::StringArray& files, int, int)
 {
     for (auto& f : files)
-        if (juce::File (f).hasFileExtension ("wav;aif;aiff"))
+        if (juce::File (f).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg;m4a;caf"))
         {
             audioProcessor.getUiBackend().loadSampleFile (juce::File (f));
             return;

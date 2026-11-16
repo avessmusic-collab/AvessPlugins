@@ -34,6 +34,7 @@ public:
     // sounding voices' read positions for the waveform playheads (wait-free snapshot; message thread).
     // Returns the number of entries written to `out` (<= maxOut).
     virtual int getPlayheads (WarprVizFrame::Voice* out, int maxOut) = 0;
+    virtual int getGrains (WarprVizFrame::Grain* out, int maxOut) { juce::ignoreUnused (out, maxOut); return 0; }
 
     virtual WarprVizFifo& vizFifo() = 0;                                    // audio thread pushes, editor pops
 

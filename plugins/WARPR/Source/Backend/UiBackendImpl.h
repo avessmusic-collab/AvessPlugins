@@ -104,12 +104,26 @@ public:
 
     void setGrainPosKey (bool on) override;
 
+    /** The parameter's live raw value (APVTS atomic), `fallback` when unknown.  Any thread. */
+    double raw (const char* id, double fallback) const;
+
     int getPlayheads (WarprVizFrame::Voice* out, int maxOut) override
     {
         if (synthRef == nullptr || out == nullptr)
             return 0;
         float pos[WarprVizFrame::maxVoices], lvl[WarprVizFrame::maxVoices];
         const int n = synthRef->readPlayheads (pos, lvl, std::min (maxOut, (int) WarprVizFrame::maxVoices));
+        for (int i = 0; i < n; ++i)
+            out[i] = { pos[i], lvl[i] };
+        return n;
+    }
+
+    int getGrains (WarprVizFrame::Grain* out, int maxOut) override
+    {
+        if (synthRef == nullptr || out == nullptr)
+            return 0;
+        float pos[WarprVizFrame::maxGrains], lvl[WarprVizFrame::maxGrains];
+        const int n = synthRef->readGrains (pos, lvl, std::min (maxOut, (int) WarprVizFrame::maxGrains));
         for (int i = 0; i < n; ++i)
             out[i] = { pos[i], lvl[i] };
         return n;
