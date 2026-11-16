@@ -150,6 +150,7 @@
   #lfoEd{flex:1;min-width:0;height:100%;cursor:crosshair;touch-action:none}
   #fxrow .sec-h{gap:6px;padding:6px 8px}
   #fxrow .tg span{padding:4px 6px}
+  #grainKeySeg span{padding:5px 7px;letter-spacing:.06em}
   #fxrow select{padding:4px 5px}
   #lfoTabs.many span{padding:4px 4px}
   #lfoTabs.many span{padding:4px 3px;min-width:12px;text-align:center}
@@ -896,6 +897,7 @@ bindSeg($("#grainMode"), "grainMode", i => {
   if (i === 2) k8.bind("grainDensity", "DENSITY", F.int);
   shp.classList.toggle("disabled", i === 2);           // SHAPE is fixed in Cloud mode (as in G3)
 });
+let grainPosKey = false;   // POS-KEY grain mode (non-param state); MUST be declared before the grainKeySeg binding below reads it at init
 $$("[data-segbool]").forEach(el => bindSegBool(el, el.dataset.segbool));
 { /* grain KEY | POS | OFF.  KEY = scan-speed keytracking (the grainScanKey param); POS = notes pick
      the grain POSITION across the region, unpitched (non-param state, like the slice map); OFF =
@@ -966,7 +968,6 @@ window.addEventListener("resize", applyScale);
    ===================================================================== */
 const cs = $("#cvSample");
 let peaks = null;                       // Float32Array [min0,max0,min1,max1,...] in -1..1  (HOOK: onSample)
-let grainPosKey = false;                // POS-KEY grain mode (non-param state, persisted in uiState)
 let voices = [];                        // [{pos:0..1 (absolute in sample), level:0..1}]     (HOOK: onViz)
 let grains = [];                        // [{pos:0..1, level:0..1}] granular grain cloud     (HOOK: onViz)
 let sInfo = null;                       // last warprSample payload (numSamples for the zoom floor)
