@@ -903,11 +903,13 @@ namespace
                    "count 5 = all four clicks, ascending");
         }
 
-        // fewer onsets than requested: equal division for the whole result
+        // fewer onsets than requested: `count` is a CAP - the result holds every real onset and
+        // stops there (no grid fallback in transient mode; owner request 2026-11-16)
         {
             const auto e = autoSliceEdges (x, nullptr, n, kFs, 0.0, 1.0, 8, true);
-            const auto eq = autoSliceEdges (x, nullptr, n, kFs, 0.0, 1.0, 8, false);
-            check (e == eq, "count 8 with only 4 onsets: falls back to equal division");
+            show ("count 8 (cap) on 4 clicks", e);
+            check (e.size() == 6 && std::abs (e[1] * n - 19200.0) <= 2.0 && std::abs (e[4] * n - 76800.0) <= 2.0,
+                   "count 8 with only 4 onsets: returns exactly the 4 real onsets (cap, no grid fallback)");
 
             juce::AudioBuffer<float> silence (1, n);
             silence.clear();

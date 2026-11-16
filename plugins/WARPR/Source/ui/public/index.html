@@ -834,11 +834,6 @@ function updSourcePages() {
   $("#granRow").style.display = (!sliceDoc.on && pm === 1) ? "flex" : "none";
   $("#sliceRow").style.display = sliceDoc.on ? "flex" : "none";
 }
-const eqEdges = (n, a, b) => Array.from({ length: n + 1 }, (_, k) => a + (b - a) * k / n);
-const isEqualDivision = arr => {
-  const n = arr.length - 1, a = arr[0], b = arr[n];
-  return arr.every((e, k) => Math.abs(e - (a + (b - a) * k / n)) < 1e-6);
-};
 async function sensSlice() {
   try {
     const n = window.sliceSensCount ? window.sliceSensCount() : 32;
@@ -850,26 +845,12 @@ async function sensSlice() {
     }
   } catch (_) {}
 }
-async function autoSlice(byT) {
+async function autoSlice() {                              // EQUAL: grid at the current slice count
   try {
-    if (!byT) {
-      const n = Math.max(2, Math.min(64, sliceCount));
-      const arr = await NF.sliceEdges(n, 0);
-      if (arr && arr.length >= 2) sliceDoc.edges = Array.from(arr, Number);
-    } else {
-      // largest count whose transient result is NOT the equal-division fallback = all detected hits
-      let best = null, lo = 2, hi = 64;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        const arr = await NF.sliceEdges(mid, 1);
-        const a = arr && arr.length >= 3 ? Array.from(arr, Number) : null;
-        if (a && !isEqualDivision(a)) { best = a; lo = mid + 1; }
-        else hi = mid - 1;
-      }
-      if (!best) { const two = await NF.sliceEdges(2, 1); best = two && two.length >= 2 ? Array.from(two, Number) : null; }
-      if (best) sliceDoc.edges = best;
-    }
-    if (sliceDoc.edges.length >= 2) {
+    const nq = Math.max(2, Math.min(64, sliceCount));
+    const arr = await NF.sliceEdges(nq, 0);
+    if (arr && arr.length >= 2) {
+      sliceDoc.edges = Array.from(arr, Number);
       sliceDoc.on = true; sliceCount = sliceDoc.edges.length - 1; sliceSel = -1;
       pushSlice(); updSourcePages(); drawSample();
     }
@@ -878,10 +859,10 @@ async function autoSlice(byT) {
 {
   const spans = [...$("#pmode").children];
   tap(spans[0], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 0); updSourcePages(); });
-  tap(spans[1], () => { sliceDoc.on = true; (sliceDoc.edges.length < 2) ? autoSlice(false) : pushSlice(); updSourcePages(); });
+  tap(spans[1], () => { sliceDoc.on = true; (sliceDoc.edges.length < 2) ? autoSlice() : pushSlice(); updSourcePages(); });
   tap(spans[2], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 1); updSourcePages(); });
   watch("playMode", "c", updSourcePages);
-  tap($("#btnSliceEq"), () => autoSlice(false));
+  tap($("#btnSliceEq"), () => autoSlice());
   tap($("#btnSliceTr"), () => sensSlice());
   /* SENS 0..200 %: requests round(sens/100 * 32) slices from the transient search - it keeps the
      STRONGEST onsets, so raising the number surfaces progressively weaker hits (beyond what the

@@ -186,7 +186,11 @@ namespace warpr
             candidates.push_back ({ r, pos });
         }
 
-        // 4. strongest first (ties: earlier), 30 ms minimum distance to the start, the end and every chosen onset
+        // 4. STRICT STRENGTH ORDER (owner request 2026-11-16): the first line is always the
+        //    single biggest transient, the next line the next biggest, and so on - raising the
+        //    cap only APPENDS lines, it never moves or replaces existing ones.  30 ms minimum
+        //    distance to the start, the end and every already-chosen onset (a candidate inside
+        //    that gap is skipped and the NEXT-strongest takes its place).
         std::sort (candidates.begin(), candidates.end(), [] (const Candidate& x, const Candidate& y)
                    { return x.strength > y.strength || (juce::exactlyEqual (x.strength, y.strength) && x.pos < y.pos); });
 
@@ -214,17 +218,19 @@ namespace warpr
                 chosen.push_back (c.pos);
         }
 
-        // 5. not enough onsets: equal division
-        if ((int) chosen.size() < count - 1)
+        // 5. use what was FOUND - `count` is a cap, not a promise.  No grid fallback in transient
+        //    mode: raising the cap past the sample's real hits simply stops adding lines.  (The
+        //    degenerate cases above - no rise, short region, transient mode off - still grid.)
+        if (chosen.empty())
             return equalDivision();
 
         std::sort (chosen.begin(), chosen.end());
 
-        std::vector<double> out ((size_t) count + 1);
+        std::vector<double> out (chosen.size() + 2);
         out.front() = s;
 
-        for (int k = 1; k < count; ++k)
-            out[(size_t) k] = (double) (a + chosen[(size_t) (k - 1)]) / (double) numFrames;
+        for (size_t k = 0; k < chosen.size(); ++k)
+            out[k + 1] = (double) (a + chosen[k]) / (double) numFrames;
 
         out.back() = e;
         return out;

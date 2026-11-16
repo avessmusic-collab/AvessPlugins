@@ -60,7 +60,7 @@ public:
     // echo of the UI's own edits); a state / preset load (adoptModel) bumps Revision::uiState.  Defaults: not supported.
     virtual void setSliceMapJson (const juce::String& json) { juce::ignoreUnused (json); }
 
-    // Auto-slice of the current sample REGION [sampleStart, sampleEnd] into `count` (1..64) slices: fills `out` with count + 1
+    // Auto-slice of the current sample REGION [sampleStart, sampleEnd] into UP TO `count` (1..64) slices: fills `out` with
     // ascending normalised edges (front == sampleStart, back == sampleEnd).  byTransients = onset detection with an equal
     // division fallback (see autoSliceEdges).  Message thread.  Returns false (out cleared) when there is no sample.
     virtual bool computeSliceEdges (int count, bool byTransients, std::vector<double>& out)
