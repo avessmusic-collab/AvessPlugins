@@ -22,8 +22,10 @@ PLUGIN INFO:
   AU (Logic Pro, GarageBand)
 - A monochrome sample-warp instrument: drop a sample, play it from C3,
   warp it through 60 modes, 34 filters, granular clouds and a 10-LFO
-  modulation matrix. One-Shot trigger mode plays the whole sample from a
-  single tap. Samples and presets travel inside your DAW project.
+  modulation matrix. SLICE mode chops it onto MIDI keys from C1 (transient
+  detection, hand-editing, strength-ordered SENS). One-Shot trigger mode
+  plays the whole sample from a single tap. Samples and presets travel
+  inside your DAW project.
 - Output is protected by a brickwall limiter with 0.1 dB headroom.
 
 UNINSTALLATION:
