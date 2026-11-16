@@ -70,6 +70,8 @@ set(WARPR_CORE_SOURCES
     Source/DSP/LfoTable.cpp
     Source/DSP/LfoEngine.cpp
     Source/DSP/ModMatrix.cpp
+    # Phase D11: slice mode (slice-map document + auto-slicer)
+    Source/DSP/SliceMap.cpp
 )
 
 target_sources(WARPR PRIVATE ${WARPR_CORE_SOURCES})
@@ -168,6 +170,7 @@ add_executable(WARPR_Tests EXCLUDE_FROM_ALL
     Source/Tests/PhaseD8Tests.cpp
     Source/Tests/PhaseD9Tests.cpp
     Source/Tests/PhaseD10Tests.cpp
+    Source/Tests/PhaseD11Tests.cpp
     Source/Tests/PreviewTests.cpp
     Source/Tests/OfflineRender.cpp
     Source/Tests/AllocHook.cpp

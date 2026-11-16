@@ -122,6 +122,8 @@ public:
     void setLfoCount (int n) override;
     void setLfoShapeJson (int index, const juce::String& json) override;
     void setModMatrixJson (const juce::String& json) override;
+    void setSliceMapJson (const juce::String& json) override;
+    bool computeSliceEdges (int count, bool byTransients, std::vector<double>& out) override;
     void setShaperCurveJson (const juce::String& curveId, const juce::String& json) override;
     juce::String getShaperCurveJson (const juce::String& curveId) override;
     void shaperReset (const juce::String& curveId) override;

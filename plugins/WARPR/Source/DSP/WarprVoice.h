@@ -93,6 +93,11 @@ namespace warpr
             double glideFromSemis = 60.0;
             double glideMs = 0.0;
             std::uint64_t age = 0;               // note counter (stealing order)
+
+            // D11 SLICE MODE: a slice voice plays only [sliceLo, sliceHi) (sample fractions, latched for the life of the note),
+            // unpitched (always at the root pitch, whatever `note` is), as a one-shot trigger, with Classic playback.
+            bool  slice = false;
+            float sliceLo = 0.0f, sliceHi = 1.0f;
         };
 
         //======================================================================
@@ -142,6 +147,9 @@ namespace warpr
         }
 
         bool isTriggerLatched() const noexcept { return triggerLatched; }
+
+        /** D11: the voice was started by a slice note (region latched, unpitched, one-shot, Classic).  Always trigger-latched. */
+        bool isSliceVoice() const noexcept { return sliceLatched; }
 
         void beginFade (int samples) noexcept;                // ghost fade-out (steal, mode change, sound-off)
         void retarget (int newNote, double glideMs) noexcept; // mono / legato pitch change, no restart
@@ -220,6 +228,7 @@ namespace warpr
         /** `rangeOffset` = base samples between the start of the current render range and this chunk (shaper crossfade). */
         void renderChunk (const VoiceParams& vp, float* outL, float* outR, int n, int rangeOffset, const ModContext* mc) noexcept;
         void setGlideTarget (double target, double glideMs) noexcept;
+        RegionFold::Mode regionMode (const VoiceParams& vp) const noexcept;
         void advanceGlide (int n) noexcept;
 
         // ---- D8 modulation.  mod0 / mod1 apply the matrix delta at the START / END of the chunk in the parameter's own
@@ -237,6 +246,7 @@ namespace warpr
         bool active = false;
         bool oneShotReleased = false;
         bool triggerLatched = false;                 // one-shot trigger voice (latched at note-on, see releaseKey())
+        bool sliceLatched = false;                   // D11 slice voice (implies triggerLatched)
         bool killedByGuard = false;
         float velGain = 1.0f;
         int os = 2, unison = 1;

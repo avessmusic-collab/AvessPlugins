@@ -54,6 +54,22 @@ public:
     virtual void shaperReset (const juce::String& curveId) = 0;
     virtual void shaperNormalize (const juce::String& curveId) = 0;
 
+    // SLICE MODE (D11, DSP/SliceMap.h).  The slice map is non-parameter state: setSliceMapJson stores the document VERBATIM
+    // (state, presets and getUiStateJson's "sliceMap" key serve exactly what was sent), compiles it and publishes it to the
+    // audio thread.  A malformed / empty document means slicing off.  Like setModMatrixJson it never bumps a revision (no
+    // echo of the UI's own edits); a state / preset load (adoptModel) bumps Revision::uiState.  Defaults: not supported.
+    virtual void setSliceMapJson (const juce::String& json) { juce::ignoreUnused (json); }
+
+    // Auto-slice of the current sample REGION [sampleStart, sampleEnd] into `count` (1..64) slices: fills `out` with count + 1
+    // ascending normalised edges (front == sampleStart, back == sampleEnd).  byTransients = onset detection with an equal
+    // division fallback (see autoSliceEdges).  Message thread.  Returns false (out cleared) when there is no sample.
+    virtual bool computeSliceEdges (int count, bool byTransients, std::vector<double>& out)
+    {
+        juce::ignoreUnused (count, byTransients);
+        out.clear();
+        return false;
+    }
+
     // sample (decode OFF the audio thread inside; publish by bumping Revision::sample)
     virtual void loadSampleFile (const juce::File& file) = 0;
     virtual WarprSampleDisplay getSampleDisplay() = 0;

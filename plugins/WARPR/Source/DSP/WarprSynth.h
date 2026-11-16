@@ -23,6 +23,10 @@
              release - one tap plays the whole region; the voice auto-releases at the region end (WarprVoice, 5 ms fast
              release).  Mono / Legato key-up of such a voice removes the note from the stack but neither releases nor retargets
              it.  Granular One-Shot is unchanged (gated: grains have no natural end).  Steal / ghost / CC120 / CC123 still end it.
+  SLICE MODE (D11, SliceMap.h): while the published slice map is ON, a note in [baseNote, baseNote + N) starts a SLICE voice
+             (region [e_k, e_k+1) latched at note-on, unpitched, one-shot trigger, Classic playback) and every other note plays
+             nothing.  The map is read wait-free once per block (ModEngine::beginBlock); a replacement never touches sounding
+             voices.  In Mono / Legato a slice note always starts a new voice through a ghost fade (no retarget / glide).
   Legato   : as Mono but overlapping notes do not retrigger the envelope (glide only).
   Pedal    : CC64 >= 64 holds released notes; releasing it releases them (Poly: per voice flag,
              Mono / Legato: through the note stack).  CC123 releases everything, CC120 fades it in 3 ms.
@@ -60,6 +64,7 @@
 #include "DSP/ModEngine.h"
 #include "DSP/SampleStore.h"
 #include "DSP/ShaperEngine.h"
+#include "DSP/SliceMap.h"
 #include "DSP/TransportClock.h"
 #include "DSP/WarprVoice.h"
 #include "Parameters/ParamSnapshot.h"
@@ -241,6 +246,9 @@ namespace warpr
         std::array<LfoBlockParams, (size_t) kNumLfos> lfoParams {};
         std::array<const LfoShapeTable*, (size_t) kNumLfos> tablePtrs {};
         const ModMatrixSnapshot* matrixPtr = nullptr;
+        const SliceMap* slicePtr = nullptr;          // D11: this block's published slice map (nullptr = none)
+        bool sliceNoteActive = false;                // set by noteOn() around the voice start of a slice note
+        float sliceNoteLo = 0.0f, sliceNoteHi = 1.0f;
         int lfoCountBlock = 0;
         std::uint32_t globalOwnMask = 0, voiceOwnMask = 0;
         std::array<LfoInstance, (size_t) kNumLfos> gInst {};

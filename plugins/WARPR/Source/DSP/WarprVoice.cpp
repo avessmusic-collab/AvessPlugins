@@ -48,6 +48,12 @@ namespace warpr
         return ft;
     }
 
+    /** A slice voice is always a One-Shot read (whatever loopMode says); every other voice follows the parameter. */
+    RegionFold::Mode WarprVoice::regionMode (const VoiceParams& vp) const noexcept
+    {
+        return sliceLatched ? RegionFold::Mode::OneShot : modeFromParam (vp.loopMode);
+    }
+
     //==========================================================================
     void WarprVoice::prepare (double newSampleRate, const HalfbandCoeffs& coeffs) noexcept
     {
@@ -67,6 +73,7 @@ namespace warpr
         pedalHeld = false;
         oneShotReleased = false;
         triggerLatched = false;
+        sliceLatched = false;
         killedByGuard = false;
         note = -1;
         age = 0;
@@ -113,23 +120,34 @@ namespace warpr
         age = info.age;
         keyHeld = true;
         // One-Shot TRIGGER latch (Classic playback only: grains have no natural end, so granular One-Shot stays gated).
-        triggerLatched = vp.loopMode == 2 && vp.playMode == 0;
+        sliceLatched = info.slice;
+        triggerLatched = sliceLatched || (vp.loopMode == 2 && vp.playMode == 0);     // D11: a slice voice is always a trigger
         velGain = 0.25f + 0.75f * juce::jlimit (0.0f, 1.0f, info.velocity);   // fixed velocity law (A2)
         os = juce::jlimit (1, maxOs, info.os);
         unison = juce::jlimit (1, maxUnison, info.unison);
         oscCostQ = std::max (1, info.oscCostQ);
 
-        pitchCur = info.glideMs > 0.0 ? info.glideFromSemis : (double) info.note;
-        setGlideTarget ((double) info.note, info.glideMs);
+        if (sliceLatched)
+        {
+            // UNPITCHED: the note selects the slice, not the pitch - the voice sits at the root note (transpose / fineTune /
+            // bend still move it; renderChunk keeps pitchCur on the CURRENT root so a root edit mid-slice cannot detune it)
+            pitchCur = (double) vp.rootNote;
+            setGlideTarget (pitchCur, 0.0);
+        }
+        else
+        {
+            pitchCur = info.glideMs > 0.0 ? info.glideFromSemis : (double) info.note;
+            setGlideTarget ((double) info.note, info.glideMs);
+        }
 
         bendCur = vp.bendSemis;
         offsetCur = (float) vp.transpose + vp.fineTuneCents * 0.01f - (float) vp.rootNote;
         spreadCur = vp.unisonSpread;
         detuneCur = vp.unisonDetuneCents;
-        startCur = vp.sampleStart;
-        endCur = vp.sampleEnd;
+        startCur = sliceLatched ? info.sliceLo : vp.sampleStart;       // slice region: latched, never chases the parameters
+        endCur = sliceLatched ? info.sliceHi : vp.sampleEnd;
 
-        region.configure (*sample, startCur, endCur, modeFromParam (vp.loopMode));
+        region.configure (*sample, startCur, endCur, regionMode (vp));
 
         warpAmtCur = vp.warpAmount;
         warpACur = vp.warpA;
@@ -141,7 +159,7 @@ namespace warpr
         shaperMorphCur = vp.shaperMorph;
         shaperMixCur = vp.shaperMix;
         shaperEnCur = vp.shaperEnable ? 1.0f : 0.0f;
-        granWCur = vp.playMode == 1 ? 1.0f : 0.0f;               // a note starts in the current play mode (no fade)
+        granWCur = (vp.playMode == 1 && ! sliceLatched) ? 1.0f : 0.0f;    // a note starts in the current play mode (no fade); slices are Classic
         scanCur = vp.grainScan;
         scanDistCur = vp.grainScanDist;
 
@@ -307,7 +325,8 @@ namespace warpr
         // A trigger voice has no key gate, so it must be able to end by itself.  If the loop mode leaves One-Shot or the play
         // mode becomes Granular mid-note, the region read no longer ends: drop the latch and hand the voice back to the keys
         // (a key that was already let go releases now).  Never re-latched mid-note.
-        if (triggerLatched && (vp.loopMode != 2 || vp.playMode != 0))
+        // (A slice voice is exempt: it is a One-Shot Classic read by construction, whatever the parameters say.)
+        if (triggerLatched && ! sliceLatched && (vp.loopMode != 2 || vp.playMode != 0))
         {
             triggerLatched = false;
 
@@ -335,6 +354,12 @@ namespace warpr
                    - (double) (m (ParamId::rootNote, (float) vp.rootNote) - (float) vp.rootNote);
         };
 
+        if (sliceLatched)
+        {
+            pitchCur = pitchTarget = (double) vp.rootNote;        // D11: a slice voice is unpitched (note-independent)
+            glideLeft = 0;
+        }
+
         const double p0 = pitchCur + (double) bendCur + (double) offsetCur + pitchModSemis (false);
 
         advanceGlide (n);
@@ -344,15 +369,22 @@ namespace warpr
         offsetCur += (offsetTarget - offsetCur) * k5;
         spreadCur += (vp.unisonSpread - spreadCur) * k20;
         detuneCur += (vp.unisonDetuneCents - detuneCur) * k20;
-        startCur += (vp.sampleStart - startCur) * k20;
-        endCur += (vp.sampleEnd - endCur) * k20;
+        if (! sliceLatched)
+        {
+            startCur += (vp.sampleStart - startCur) * k20;
+            endCur += (vp.sampleEnd - endCur) * k20;
+        }
 
         snapNear (bendCur, vp.bendSemis, 1.0e-6f);
         snapNear (offsetCur, offsetTarget, 1.0e-6f);
         snapNear (spreadCur, vp.unisonSpread, 1.0e-6f);
         snapNear (detuneCur, vp.unisonDetuneCents, 1.0e-5f);
-        snapNear (startCur, vp.sampleStart, 1.0e-6f);
-        snapNear (endCur, vp.sampleEnd, 1.0e-6f);
+
+        if (! sliceLatched)
+        {
+            snapNear (startCur, vp.sampleStart, 1.0e-6f);
+            snapNear (endCur, vp.sampleEnd, 1.0e-6f);
+        }
 
         // ---- warp stage parameters: amount / A / B / mix one-pole 10 ms per chunk, enable linear ramp
         //      5 ms, root note 5 ms.  The span ramps linearly from the chunk-start to the chunk-end value.
@@ -434,15 +466,17 @@ namespace warpr
         const double p1 = pitchCur + (double) bendCur + (double) offsetCur + pitchModSemis (true);
 
         // D8: region bounds and the unison macros carry their modulation (chunk-end value; the gains / read step interpolate)
-        const float startEff = mod1 (ParamId::sampleStart, startCur), endEff = mod1 (ParamId::sampleEnd, endCur);
+        // (a slice voice's region is the latched slice: the sampleStart / sampleEnd modulation does not move it)
+        const float startEff = sliceLatched ? startCur : mod1 (ParamId::sampleStart, startCur);
+        const float endEff = sliceLatched ? endCur : mod1 (ParamId::sampleEnd, endCur);
         const float spreadEff = mod1 (ParamId::unisonSpread, spreadCur), detuneEff = mod1 (ParamId::unisonDetune, detuneCur);
 
-        region.configure (sd, startEff, endEff, modeFromParam (vp.loopMode));
+        region.configure (sd, startEff, endEff, regionMode (vp));
 
         // ---- granular source (D7a): playMode weight is a linear 10 ms ramp (both sources run while 0 < w < 1);
         //      scan / scan distance are one-pole smoothed 20 ms per chunk (the other grain parameters are latched
         //      by the engine at every spawn).
-        const float granTarget = vp.playMode == 1 ? 1.0f : 0.0f;
+        const float granTarget = (vp.playMode == 1 && ! sliceLatched) ? 1.0f : 0.0f;       // slices stay Classic
         const float granStep = (float) (nD / (0.010 * sampleRate));
         const float granW0 = granWCur;
         granWCur = granTarget > granWCur ? std::min (granTarget, granWCur + granStep)

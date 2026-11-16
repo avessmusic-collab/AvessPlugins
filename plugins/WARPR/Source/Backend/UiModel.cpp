@@ -14,6 +14,7 @@ namespace warpr
         const juce::Identifier kLfo        { "LFO" };
         const juce::Identifier kMatrix     { "MODMATRIX" };
         const juce::Identifier kShaper     { "SHAPER" };
+        const juce::Identifier kSlice      { "SLICEMAP" };
     }
 
     juce::String UiModel::defaultLfoShapeJson()
@@ -68,6 +69,13 @@ namespace warpr
             tree.appendChild (child, nullptr);
         }
 
+        if (sliceMapJson.isNotEmpty())
+        {
+            juce::ValueTree child (kSlice);
+            child.setProperty (kJson, sliceMapJson, nullptr);
+            tree.appendChild (child, nullptr);
+        }
+
         static constexpr const char* curveIds[numCurves] = { "A", "B" };
         for (int i = 0; i < numCurves; ++i)
         {
@@ -110,6 +118,10 @@ namespace warpr
             else if (child.hasType (kMatrix))
             {
                 modMatrixJson = child.getProperty (kJson).toString();
+            }
+            else if (child.hasType (kSlice))
+            {
+                sliceMapJson = child.getProperty (kJson).toString();
             }
             else if (child.hasType (kShaper))
             {

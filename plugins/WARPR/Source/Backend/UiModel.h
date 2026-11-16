@@ -27,6 +27,7 @@ namespace warpr
         juce::String modMatrixJson;                              // "" = empty matrix
         std::array<juce::String, (size_t) numCurves> shaperCurveJson;   // "" = identity curve
         juce::String presetName { "Init" };
+        juce::String sliceMapJson;                               // D11 SLICE MODE document (SliceMap.h wire format), "" = off
 
         /** Default documents (spec: identity curve, empty matrix). */
         static juce::String defaultLfoShapeJson();

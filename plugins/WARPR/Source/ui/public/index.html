@@ -194,7 +194,7 @@
           <button class="btn" id="btnSample" style="padding:4px 9px">LOAD</button>
           <span class="micro" id="sampleName">NO SAMPLE</span>
           <div class="spacer"></div>
-          <div class="tg" data-seg="playMode" id="pmode"><span>CLASSIC</span><span>GRANULAR</span></div>
+          <div class="tg" data-seg="playMode" id="pmode"><span>CLASSIC</span><span>GRANULAR</span><span>SLICE</span></div>
         </div>
         <div class="sec-b" style="gap:6px">
 
@@ -241,6 +241,17 @@
               <span class="k xs" data-p="grainSpread" data-l="SPREAD" data-f="pct"></span>
               <!-- 8th slot is mode-dependent: disabled (Classic) / grainReverse (Loop) / grainDensity (Cloud) -->
               <span class="k xs" id="grainModeK" data-l="&mdash;" data-f="pct"></span>
+            </div>
+          </div>
+
+          <div id="sliceRow" style="display:none;flex-direction:column;gap:7px">
+            <div class="row" style="align-items:center">
+              <span class="lbl">SLICES:</span>
+              <div class="stepper" id="sliceCount"><span>&minus;</span><b>16</b><span>+</span></div>
+              <button class="btn" id="btnSliceEq" style="padding:3px 10px">EQUAL</button>
+              <button class="btn" id="btnSliceTr" style="padding:3px 10px">TRANSIENT</button>
+              <div class="spacer"></div>
+              <span class="hint">NOTES FROM C1 &mdash; ONE PER SLICE, UNPITCHED ONE-SHOTS</span>
             </div>
           </div>
 
@@ -449,6 +460,8 @@ const NF = {
   requestFilterResponse: nat("warpr_requestFilterResponse"),
   rangePeaks:       nat("warpr_rangePeaks"),        // (startNorm, endNorm, pairs) -> [min,max,...] zoom detail
   processedPeaks:   nat("warpr_processedPeaks"),    // (startNorm, endNorm, pairs) -> [min,max,...] through live warp+shaper
+  setSliceMap:      nat("warpr_setSliceMap"),       // (JSON {on,baseNote,edges[]}) slice document
+  sliceEdges:       nat("warpr_sliceEdges"),        // (count, byTransients) -> [e0..eN] auto-slice
   midiNote:         nat("warpr_midiNote"),          // (note 0-127, velocity, on) -> synth MIDI stream
   dropBegin:        nat("warpr_dropBegin"),         // (filename) start a drag-and-drop transfer
   dropChunk:        nat("warpr_dropChunk"),         // (base64) one chunk of the dropped file
@@ -805,10 +818,41 @@ $$("[data-step]").forEach(el => {
 });
 
 /* page toggles that react to parameters */
-bindSeg($("#pmode"), "playMode", i => {
-  $("#classicRow").style.display = i === 1 ? "none" : "flex";
-  $("#granRow").style.display = i === 1 ? "flex" : "none";
-});
+/* SOURCE mode chips.  CLASSIC / GRANULAR write the playMode parameter and turn slicing off;
+   SLICE is NON-PARAMETER state (the slice document, persisted like LFO shapes) - slice voices
+   ignore playMode/loopMode, so the two parameters keep their wire meaning untouched. */
+let sliceDoc = { on: false, baseNote: 36, edges: [] }, sliceCount = 16, slicePushT = 0;
+function pushSlice() { clearTimeout(slicePushT); slicePushT = setTimeout(() => NF.setSliceMap(JSON.stringify(sliceDoc)), 30); }
+function updSourcePages() {
+  const pm = cidx(comboOf("playMode"), 2);
+  const spans = [...$("#pmode").children];
+  spans[0].classList.toggle("on", !sliceDoc.on && pm === 0);
+  spans[1].classList.toggle("on", !sliceDoc.on && pm === 1);
+  spans[2].classList.toggle("on", sliceDoc.on);
+  $("#classicRow").style.display = (!sliceDoc.on && pm === 0) ? "flex" : "none";
+  $("#granRow").style.display = (!sliceDoc.on && pm === 1) ? "flex" : "none";
+  $("#sliceRow").style.display = sliceDoc.on ? "flex" : "none";
+  $("#sliceCount").querySelector("b").textContent = sliceCount;
+}
+async function autoSlice(byT) {
+  try {
+    const arr = await NF.sliceEdges(sliceCount, byT ? 1 : 0);
+    if (arr && arr.length >= 2) { sliceDoc.edges = Array.from(arr, Number); sliceDoc.on = true; pushSlice(); updSourcePages(); drawSample(); }
+  } catch (_) {}
+}
+{
+  const spans = [...$("#pmode").children];
+  tap(spans[0], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 0); updSourcePages(); });
+  tap(spans[1], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 1); updSourcePages(); });
+  tap(spans[2], () => { sliceDoc.on = true; (sliceDoc.edges.length < 2) ? autoSlice(false) : pushSlice(); updSourcePages(); });
+  watch("playMode", "c", updSourcePages);
+  const sc = $("#sliceCount").querySelectorAll("span");
+  tap(sc[0], () => { sliceCount = Math.max(2, sliceCount - 1); updSourcePages(); });
+  tap(sc[1], () => { sliceCount = Math.min(64, sliceCount + 1); updSourcePages(); });
+  tap($("#btnSliceEq"), () => autoSlice(false));
+  tap($("#btnSliceTr"), () => autoSlice(true));
+  updSourcePages();
+}
 $$("[data-seg]").forEach(el => { if (el.id !== "pmode" && el.id !== "grainMode") bindSeg(el, el.dataset.seg); });
 bindSeg($("#grainMode"), "grainMode", i => {
   const k8 = $("#grainModeK")._knob, shp = $("#grainShapeK");
@@ -1061,6 +1105,16 @@ function drawSample() {
     x.moveTo(px, 0); x.lineTo(px + 12 * d, 0); x.lineTo(px, 13); x.closePath();
     x.fill();
   });
+  if (sliceDoc.on && sliceDoc.edges.length >= 2) {        // SLICE edges + numbers (notes map from C1 upward)
+    x.font = "9px 'Inter','Helvetica Neue',sans-serif"; x.textAlign = "left";
+    for (let k = 0; k < sliceDoc.edges.length; k++) {
+      const px = a2x(sliceDoc.edges[k]);
+      if (px < -2 || px > w + 2) continue;
+      x.fillStyle = "rgba(0,0,0,.6)"; x.fillRect(px - 1.5, 0, 3, h);
+      x.fillStyle = "rgba(255,255,255,.55)"; x.fillRect(px - .5, 0, 1, h);
+      if (k < sliceDoc.edges.length - 1) { x.fillStyle = "rgba(255,255,255,.5)"; x.fillText(String(k + 1), px + 3, 15); }
+    }
+  }
   grains.forEach(g => {                                   // grain cloud (GRANULAR): one short stroke per live grain,
     const px = a2x(g.pos), lv = clamp(g.level, 0, 1);     // height + brightness follow the grain's window amplitude
     if (px < -2 || px > w + 2) return;
@@ -1777,6 +1831,16 @@ window.addEventListener("pointerup", e => {
 const lfoBusy = () => !!(dragPt || dragBend || stepDraw);
 function loadUiState(json) {
   let s; try { s = JSON.parse(json); } catch (e) { console.error("bad uiState", e); return; }
+  // slice document (served verbatim as a string under "sliceMap"; missing/garbage = slicing off)
+  try {
+    const sm = typeof s.sliceMap === "string" ? JSON.parse(s.sliceMap) : s.sliceMap;
+    sliceDoc = (sm && Array.isArray(sm.edges) && sm.edges.length >= 2)
+             ? { on: !!sm.on, baseNote: (sm.baseNote | 0) || 36, edges: sm.edges.map(Number) }
+             : { on: false, baseNote: 36, edges: [] };
+  } catch (_) { sliceDoc = { on: false, baseNote: 36, edges: [] }; }
+  clearTimeout(slicePushT);                              // a pre-load edit must not overwrite the loaded map
+  if (sliceDoc.edges.length >= 2) sliceCount = clamp(sliceDoc.edges.length - 1, 2, 64);
+  updSourcePages();
   const busy = lfoBusy(), keepLfo = busy ? lfoShapes[activeLfo] : null;
   clearTimeout(lfoPushT); clearTimeout(modTimer);        // stale local debounce must not overwrite the loaded state
   if (busy) { lfoPushT = setTimeout(() => pushLfo(true), 0); }

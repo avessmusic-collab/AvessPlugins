@@ -66,6 +66,7 @@ namespace warpr
         gEnd.fill (0.5f);
         voiceMean.fill (0.5f);
         monoResetPending = false;
+        sliceNoteActive = false;
         lastPolyLimit = -1;
         masterDelta = 0.0f;
         blockPos = 0;
@@ -179,6 +180,7 @@ namespace warpr
         {
             modEngine->beginBlock();
             matrixPtr = modEngine->matrix();
+            slicePtr = modEngine->sliceMap();
             lfoCountBlock = std::min (modEngine->lfoCount(), (int) kNumLfos);
 
             for (int i = 0; i < kNumLfos; ++i)
@@ -207,6 +209,7 @@ namespace warpr
         else
         {
             matrixPtr = nullptr;
+            slicePtr = nullptr;
             lfoCountBlock = 0;
         }
     }
@@ -463,7 +466,8 @@ namespace warpr
         const int budget = oscBudget.load (std::memory_order_relaxed);
 
         // D7b: a granular note is charged by its grain cost (see the header); Classic playback keeps cost = os.
-        const int costQ = oscillatorCostQ (os, vp.playMode == 1, grainsPerChannel (vp.grainMode, vp.grainDensity));
+        // (a slice note is Classic playback whatever playMode says, so it is charged as Classic)
+        const int costQ = oscillatorCostQ (os, vp.playMode == 1 && ! sliceNoteActive, grainsPerChannel (vp.grainMode, vp.grainDensity));
 
         if (budget > 0)
         {
@@ -509,8 +513,11 @@ namespace warpr
         info.unison = uni;
         info.oscCostQ = costQ;
         info.glideFromSemis = lastPlayedPitch >= 0.0 ? lastPlayedPitch : (double) note;
-        info.glideMs = glideNow();
+        info.glideMs = sliceNoteActive ? 0.0 : glideNow();         // a slice voice is unpitched: nothing to glide
         info.age = ++noteCounter;
+        info.slice = sliceNoteActive;
+        info.sliceLo = sliceNoteLo;
+        info.sliceHi = sliceNoteHi;
 
         slot->start (info, vp, currentSample, modEngine != nullptr ? &modCtx : nullptr);
         return slot;
@@ -543,7 +550,9 @@ namespace warpr
     {
         auto* cur = findMonoVoice();
 
-        if (cur != nullptr && cur->isSounding())
+        // D11: a slice note never retargets / retriggers (it has no pitch); a slice voice is never retargeted by a later
+        // ordinary note either.  Both start a fresh voice through a ghost fade.
+        if (cur != nullptr && cur->isSounding() && ! sliceNoteActive && ! cur->isSliceVoice())
         {
             if (legato && keysWereAlive)
             {
@@ -568,6 +577,18 @@ namespace warpr
 
     void WarprSynth::noteOn (int note, float velocity) noexcept
     {
+        // D11 SLICE MODE: the map published for this block decides.  Outside the slice keyboard nothing plays (and the note
+        // never enters the note stack - the key is simply not mapped).
+        int slice = -1;
+
+        if (slicePtr != nullptr && slicePtr->on)
+        {
+            slice = slicePtr->sliceFor (note);
+
+            if (slice < 0)
+                return;
+        }
+
         const bool keysWereAlive = stackCount > 0;
         pushNote (note);
 
@@ -577,12 +598,22 @@ namespace warpr
         if (! keysWereAlive)
             monoResetPending = true;                 // D8: a new phrase restarts the MONO LFOs (at the next chunk)
 
+        if (slice >= 0)
+        {
+            sliceNoteActive = true;                  // latched into the voice by startNewVoice (the map is immutable this block)
+            sliceNoteLo = slicePtr->edges[(size_t) slice];
+            sliceNoteHi = slicePtr->edges[(size_t) slice + 1];
+        }
+
         if (voiceMode == 0)
             startPoly (note, velocity);
         else
             startMono (note, velocity, voiceMode == 2, keysWereAlive);
 
-        lastPlayedPitch = (double) note;
+        sliceNoteActive = false;
+
+        if (slice < 0)
+            lastPlayedPitch = (double) note;
     }
 
     void WarprSynth::monoNoteRemoved (int removedNote) noexcept

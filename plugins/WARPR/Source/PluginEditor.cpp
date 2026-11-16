@@ -249,6 +249,34 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
         {
             filterRequested = true; done ({});
         })
+        .withNativeFunction ("warpr_setSliceMap", [be] (const Args& a, Done done)
+        {
+            // slice mode: the UI's slice document (stored verbatim in uiState, published to the engine)
+            if (a.size() > 0)
+                be().setSliceMapJson (a[0].toString());
+
+            done ({});
+        })
+        .withNativeFunction ("warpr_sliceEdges", [be] (const Args& a, Done done)
+        {
+            // auto-slice: (count, byTransients) -> [e0..eN] over the current sample region
+            juce::Array<juce::var> out;
+
+            if (a.size() >= 2)
+            {
+                std::vector<double> edges;
+
+                if (be().computeSliceEdges ((int) a[0], (bool) ((int) a[1] != 0), edges))
+                {
+                    out.ensureStorageAllocated ((int) edges.size());
+
+                    for (double e : edges)
+                        out.add (e);
+                }
+            }
+
+            done (juce::var (out));
+        })
         .withNativeFunction ("warpr_processedPeaks", [be] (const Args& a, Done done)
         {
             // processed-waveform preview: (startNorm, endNorm, pairCount) -> [min, max, ...] of the

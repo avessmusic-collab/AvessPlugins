@@ -743,6 +743,7 @@ int runPhaseD8Tests (bool full);              // Tests/PhaseD8Tests.cpp
 int runPhaseD9Tests (bool full);              // Tests/PhaseD9Tests.cpp
 int runPreviewTests (bool full);              // Tests/PreviewTests.cpp
 int runPhaseD10Tests (bool full);             // Tests/PhaseD10Tests.cpp
+int runPhaseD11Tests (bool full);             // Tests/PhaseD11Tests.cpp  (slice mode)
 int runBenchmark (int argc, char** argv);     // Tests/PhaseD10Tests.cpp  (--bench)
 
 int main (int argc, char** argv)
@@ -784,6 +785,7 @@ int main (int argc, char** argv)
     failures += runPhaseD9Tests (full);
     failures += runPreviewTests (full);
     failures += runPhaseD10Tests (full);
+    failures += runPhaseD11Tests (full);
 
     std::printf ("\n%s  (%d failure%s)\n", failures == 0 ? "ALL PASSED" : "FAILED", failures, failures == 1 ? "" : "s");
     return failures == 0 ? 0 : 1;

@@ -57,6 +57,9 @@ juce::String UiBackendImpl::getUiStateJson()
 
     root->setProperty ("modMatrix", parseOr (m.modMatrixJson, UiModel::defaultModMatrixJson(), false));
 
+    // D11: the slice map document, exactly as the UI sent it (an unset / non-object document reads as "off")
+    root->setProperty ("sliceMap", parseOr (m.sliceMapJson, warpr::SliceMap::defaultJson(), true));
+
     auto* curves = new juce::DynamicObject();
     curves->setProperty ("A", parseOr (m.shaperCurveJson[0], UiModel::defaultShaperCurveJson(), true));
     curves->setProperty ("B", parseOr (m.shaperCurveJson[1], UiModel::defaultShaperCurveJson(), true));
@@ -103,6 +106,49 @@ void UiBackendImpl::setModMatrixJson (const juce::String& json)
         modEngine->publishMatrix (warpr::ModMatrixSnapshot::fromJson (json));
 }
 
+void UiBackendImpl::setSliceMapJson (const juce::String& json)
+{
+    {
+        const juce::ScopedLock sl (modelLock);
+        model.sliceMapJson = json;                           // verbatim: state, presets and getUiStateJson serve exactly this
+    }
+
+    // Compile on THIS thread (parse + validate + cap 64), publish through the lock-free swap.  Malformed = slicing off.
+    // No revision bump: the UI that sent the edit already shows it (echo avoidance, like setModMatrixJson).
+    if (modEngine != nullptr)
+        modEngine->publishSliceMap (warpr::SliceMap::compile (json));
+}
+
+bool UiBackendImpl::computeSliceEdges (int count, bool byTransients, std::vector<double>& out)
+{
+    out.clear();
+
+    if (sampleStore == nullptr)
+        return false;
+
+    const auto sample = sampleStore->latest();
+
+    if (sample == nullptr || sample->level (0).numFrames <= 0)
+        return false;
+
+    auto raw = [this] (const char* id, double fallback)
+    {
+        if (apvts != nullptr)
+            if (auto* p = apvts->getRawParameterValue (id))
+                return static_cast<double> (p->load());
+
+        return fallback;
+    };
+
+    const double start = juce::jlimit (0.0, 1.0, raw ("sampleStart", 0.0));
+    const double end = juce::jlimit (0.0, 1.0, raw ("sampleEnd", 1.0));
+    const auto& l0 = sample->level (0);
+
+    out = warpr::autoSliceEdges (l0.channel (0), sample->numChannels > 1 ? l0.channel (1) : nullptr, l0.numFrames,
+                                 sample->fileSampleRate, start, end, count, byTransients);
+    return true;
+}
+
 void UiBackendImpl::attachModEngine (warpr::ModEngine* engine)
 {
     modEngine = engine;
@@ -142,6 +188,7 @@ void UiBackendImpl::publishAllModulation()
         publishLfoTable (i, m.lfoShapeJson[(size_t) i]);
 
     modEngine->publishMatrix (warpr::ModMatrixSnapshot::fromJson (m.modMatrixJson));
+    modEngine->publishSliceMap (warpr::SliceMap::compile (m.sliceMapJson));        // D11: a state / preset load restores slicing
     modEngine->setLfoCount (m.lfoCount);
 }
 
