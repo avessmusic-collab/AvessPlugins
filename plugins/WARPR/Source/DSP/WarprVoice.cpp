@@ -74,6 +74,7 @@ namespace warpr
         oneShotReleased = false;
         triggerLatched = false;
         sliceLatched = false;
+        posKeyFrac = -1.0f;
         killedByGuard = false;
         note = -1;
         age = 0;
@@ -128,7 +129,15 @@ namespace warpr
         unison = juce::jlimit (1, maxUnison, info.unison);
         oscCostQ = std::max (1, info.oscCostQ);
 
-        if (sliceLatched)
+        // POS-KEY (owner request 2026-11-16, "midi notes dont pitch but move around the sample"):
+        // in Granular play mode the keyboard picks WHERE the cloud sits - C1 (36) = region start,
+        // one key = 1/60 of the region, C6 (96) = region end - and the voice is UNPITCHED like a
+        // slice.  Latched at note-on; the POSITION knob (and its LFO routes) still ADD on top.
+        posKeyFrac = (vp.playMode == 1 && vp.grainPosKey && ! info.slice)
+                       ? juce::jlimit (0.0f, 1.0f, (float) (info.note - 36) / 60.0f)
+                       : -1.0f;
+
+        if (sliceLatched || posKeyFrac >= 0.0f)
         {
             // UNPITCHED: the note selects the slice, not the pitch - the voice sits at the root note (transpose / fineTune /
             // bend still move it; renderChunk keeps pitchCur on the CURRENT root so a root edit mid-slice cannot detune it)
@@ -493,7 +502,9 @@ namespace warpr
         grainSpan.w0 = granW0;
         grainSpan.w1 = granWCur;
         grainSpan.mode = vp.grainMode;
-        grainSpan.position = mod1 (ParamId::grainPosition, vp.grainPosition);
+        grainSpan.position = posKeyFrac >= 0.0f
+                               ? std::min (1.0f, posKeyFrac + mod1 (ParamId::grainPosition, vp.grainPosition))
+                               : mod1 (ParamId::grainPosition, vp.grainPosition);
         grainSpan.scan = mod1 (ParamId::grainScan, scanCur);
         grainSpan.scanDist = mod1 (ParamId::grainScanDist, scanDistCur);
         grainSpan.scanLoop = vp.grainScanLoop;

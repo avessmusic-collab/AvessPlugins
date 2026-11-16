@@ -227,7 +227,7 @@
               <div class="tg" data-seg="grainMode" id="grainMode"><span>CLASSIC</span><span>LOOP</span><span>CLOUD</span></div>
               <span class="lbl" style="margin-left:6px">SCAN:</span>
               <div class="tg" data-segbool="grainScanLoop"><span>LOOP</span><span>OFF</span></div>
-              <div class="tg" data-segbool="grainScanKey"><span>KEY</span><span>OFF</span></div>
+              <div class="tg" id="grainKeySeg"><span title="Higher notes scan faster">KEY</span><span title="Notes choose the grain position across the sample, no pitch change">POS</span><span title="Notes just play the grains">OFF</span></div>
               <div class="spacer"></div>
               <span class="hint">GRAIN ENGINE</span>
             </div>
@@ -462,6 +462,7 @@ const NF = {
   rangePeaks:       nat("warpr_rangePeaks"),        // (startNorm, endNorm, pairs) -> [min,max,...] zoom detail
   processedPeaks:   nat("warpr_processedPeaks"),    // (startNorm, endNorm, pairs) -> [min,max,...] through live warp+shaper
   setSliceMap:      nat("warpr_setSliceMap"),       // (JSON {on,baseNote,edges[]}) slice document
+  setGrainPosKey:   nat("warpr_setGrainPosKey"),    // (0|1) POS-KEY grain mode (notes pick the position)
   sliceEdges:       nat("warpr_sliceEdges"),        // (count, byTransients) -> [e0..eN] auto-slice
   midiNote:         nat("warpr_midiNote"),          // (note 0-127, velocity, on) -> synth MIDI stream
   dropBegin:        nat("warpr_dropBegin"),         // (filename) start a drag-and-drop transfer
@@ -896,6 +897,21 @@ bindSeg($("#grainMode"), "grainMode", i => {
   shp.classList.toggle("disabled", i === 2);           // SHAPE is fixed in Cloud mode (as in G3)
 });
 $$("[data-segbool]").forEach(el => bindSegBool(el, el.dataset.segbool));
+{ /* grain KEY | POS | OFF.  KEY = scan-speed keytracking (the grainScanKey param); POS = notes pick
+     the grain POSITION across the region, unpitched (non-param state, like the slice map); OFF =
+     neither.  The param wins the display so host automation of KEY always shows truthfully. */
+  const el = $("#grainKeySeg"), spans = [...el.children], st = toggleOf("grainScanKey");
+  const upd = () => {
+    const k = st.getValue(), p = !k && grainPosKey;
+    spans[0].classList.toggle("on", k); spans[1].classList.toggle("on", p); spans[2].classList.toggle("on", !k && !p);
+  };
+  window.updGrainKeySeg = upd;
+  watch("grainScanKey", "t", upd);
+  tap(spans[0], () => { grainPosKey = false; NF.setGrainPosKey(0); st.setValue(true); upd(); });
+  tap(spans[1], () => { grainPosKey = true;  NF.setGrainPosKey(1); st.setValue(false); upd(); });
+  tap(spans[2], () => { grainPosKey = false; NF.setGrainPosKey(0); st.setValue(false); upd(); });
+  upd();
+}
 
 /* WARP | SHAPER tab (UI-only page switch) */
 $$("#fxTabs span").forEach((s, i) => tap(s, () => {
@@ -950,6 +966,7 @@ window.addEventListener("resize", applyScale);
    ===================================================================== */
 const cs = $("#cvSample");
 let peaks = null;                       // Float32Array [min0,max0,min1,max1,...] in -1..1  (HOOK: onSample)
+let grainPosKey = false;                // POS-KEY grain mode (non-param state, persisted in uiState)
 let voices = [];                        // [{pos:0..1 (absolute in sample), level:0..1}]     (HOOK: onViz)
 let grains = [];                        // [{pos:0..1, level:0..1}] granular grain cloud     (HOOK: onViz)
 let sInfo = null;                       // last warprSample payload (numSamples for the zoom floor)
@@ -1186,14 +1203,18 @@ function drawSample() {
     x.fillStyle = `rgba(255,255,255,${(0.35 + 0.55*lv).toFixed(2)})`;    // bright center reads over the background
     x.fillRect(px - .5, (h - gh)/2, 1, gh);
   });
-  voices.forEach(v => {                                   // one playhead per sounding voice (real DSP read positions)
-    const px = a2x(v.pos), lv = clamp(v.level, 0, 1);
-    if (px < -8 || px > w + 8) return;
-    x.fillStyle = `rgba(0,0,0,${(0.30 + 0.35*lv).toFixed(2)})`;          // dark edge over the wave
-    x.fillRect(px - 2, 0, 4, h);
-    x.fillStyle = `rgba(255,255,255,${(0.45 + 0.55*lv).toFixed(2)})`;    // crisp progress line (sampler style: a bare line)
-    x.fillRect(px - 1, 0, 2, h);
-  });
+  /* ONE playhead - the NEWEST sounding note (the engine publishes newest-first), Simpler style.
+     Older notes' release tails and legato overlaps still sound but no longer paint extra lines
+     crawling at their own pitch rates (owner request 2026-11-16). */
+  if (voices.length) {
+    const v = voices[0], px = a2x(v.pos), lv = clamp(v.level, 0, 1);
+    if (px >= -8 && px <= w + 8) {
+      x.fillStyle = `rgba(0,0,0,${(0.30 + 0.35*lv).toFixed(2)})`;        // dark edge over the wave
+      x.fillRect(px - 2, 0, 4, h);
+      x.fillStyle = `rgba(255,255,255,${(0.45 + 0.55*lv).toFixed(2)})`;  // crisp progress line (sampler style: a bare line)
+      x.fillRect(px - 1, 0, 2, h);
+    }
+  }
   if (zoomed) {                                           // minimap strip + zoom factor
     x.fillStyle = "rgba(255,255,255,.12)"; x.fillRect(0, 0, w, 4);
     x.fillStyle = "rgba(255,255,255,.75)"; x.fillRect(WF.off*w, 0, Math.max(2, WF.span*w), 4);
@@ -1931,6 +1952,8 @@ function loadUiState(json) {
              : { on: false, baseNote: 36, edges: [] };
   } catch (_) { sliceDoc = { on: false, baseNote: 36, edges: [] }; }
   clearTimeout(slicePushT);                              // a pre-load edit must not overwrite the loaded map
+  grainPosKey = !!s.grainPosKey;
+  if (window.updGrainKeySeg) updGrainKeySeg();
   if (sliceDoc.edges.length >= 2) sliceCount = clamp(sliceDoc.edges.length - 1, 2, 64);
   updSourcePages();
   const busy = lfoBusy(), keepLfo = busy ? lfoShapes[activeLfo] : null;
@@ -1985,7 +2008,7 @@ const TIPS = {
   grainMode: "Grain scheduling: classic, loop crossfade, or cloud",
   grainPosition: "Grain start position", grainScan: "Automatic travel through the sample",
   grainScanDist: "How far the scan travels", grainScanLoop: "Scan loops or holds at the end",
-  grainScanKey: "Higher notes scan faster", grainSize: "Grain length",
+  grainSize: "Grain length",
   grainShape: "Grain window shape", grainVariation: "Random position / size / level (and pitch in Cloud)",
   grainSpread: "Stereo spread of grains", grainReverse: "Chance a grain plays backwards",
   grainDensity: "Simultaneous grains in Cloud",

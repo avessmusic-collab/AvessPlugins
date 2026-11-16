@@ -71,6 +71,7 @@ namespace warpr
         int   grainMode = 0;                 // 0 Classic, 1 Loop, 2 Cloud
         float grainPosition = 0.0f, grainScan = 0.0f, grainScanDist = 0.0f;
         bool  grainScanLoop = true, grainScanKey = false;
+        bool  grainPosKey = false;           // POS-KEY mode: notes pick the grain position, unpitched (non-param state)
         float grainSizeMs = 80.0f, grainShape = 0.5f, grainVariation = 0.0f, grainSpread = 0.0f, grainReverse = 0.0f;
         int   grainDensity = 8;
     };
@@ -248,6 +249,7 @@ namespace warpr
         bool active = false;
         bool oneShotReleased = false;
         std::uint64_t startStamp = 0;                // synth sample clock at note-on (one-shot choke window)
+        float posKeyFrac = -1.0f;                    // POS-KEY: latched note->position (0..1 over C1..C6), -1 = off
         bool triggerLatched = false;                 // one-shot trigger voice (latched at note-on, see releaseKey())
         bool sliceLatched = false;                   // D11 slice voice (implies triggerLatched)
         bool killedByGuard = false;

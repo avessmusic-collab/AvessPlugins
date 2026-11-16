@@ -59,6 +59,7 @@ juce::String UiBackendImpl::getUiStateJson()
 
     // D11: the slice map document, exactly as the UI sent it (an unset / non-object document reads as "off")
     root->setProperty ("sliceMap", parseOr (m.sliceMapJson, warpr::SliceMap::defaultJson(), true));
+    root->setProperty ("grainPosKey", m.grainPosKey);
 
     auto* curves = new juce::DynamicObject();
     curves->setProperty ("A", parseOr (m.shaperCurveJson[0], UiModel::defaultShaperCurveJson(), true));
@@ -117,6 +118,17 @@ void UiBackendImpl::setSliceMapJson (const juce::String& json)
     // No revision bump: the UI that sent the edit already shows it (echo avoidance, like setModMatrixJson).
     if (modEngine != nullptr)
         modEngine->publishSliceMap (warpr::SliceMap::compile (json));
+}
+
+void UiBackendImpl::setGrainPosKey (bool on)
+{
+    {
+        const juce::ScopedLock sl (modelLock);
+        model.grainPosKey = on;
+    }
+
+    if (synthRef != nullptr)
+        synthRef->setGrainPosKey (on);       // NEW notes pick it up; no revision bump (echo avoidance)
 }
 
 bool UiBackendImpl::computeSliceEdges (int count, bool byTransients, std::vector<double>& out)
@@ -189,6 +201,9 @@ void UiBackendImpl::publishAllModulation()
 
     modEngine->publishMatrix (warpr::ModMatrixSnapshot::fromJson (m.modMatrixJson));
     modEngine->publishSliceMap (warpr::SliceMap::compile (m.sliceMapJson));        // D11: a state / preset load restores slicing
+
+    if (synthRef != nullptr)
+        synthRef->setGrainPosKey (m.grainPosKey);                                  // POS-KEY grain mode travels with the state too
     modEngine->setLfoCount (m.lfoCount);
 }
 

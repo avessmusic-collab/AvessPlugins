@@ -166,8 +166,14 @@ namespace warpr
         // UI playheads: wait-free snapshot written by the audio thread once per block (relaxed
         // atomics, fixed storage, no allocation) and read by the editor timer.  The count and the
         // slots may tear against each other by one block, which is harmless for a display.
-        /** Fills up to `maxOut` entries (pos 0..1 absolute in the sample, level 0..1); returns the count. */
+        /** Fills up to `maxOut` entries (pos 0..1 absolute in the sample, level 0..1), NEWEST note
+            first (the UI draws slot 0 as THE playhead); returns the count. */
         int readPlayheads (float* posOut, float* levelOut, int maxOut) const noexcept;
+
+        /** POS-KEY grain mode (non-param uiState).  Any thread; NEW notes pick it up.  const so the
+            backend's read-only synth reference can drive it - the flag is cross-thread state, not
+            audio-graph state (same reasoning as the wait-free read accessors). */
+        void setGrainPosKey (bool on) const noexcept { grainPosKeyFlag.store (on, std::memory_order_relaxed); }
 
         /** Same wait-free snapshot for the granular voices' sounding grains (D7a): pos 0..1 absolute in the sample,
             level = the grain's window amplitude.  At most maxVizGrains entries across all voices. */
@@ -244,6 +250,7 @@ namespace warpr
         TransportClock clock;
         int blockPos = 0;                            // base samples of the current block already rendered
         std::uint64_t sampleClock = 0;               // samples rendered since prepare (one-shot choke timing)
+        mutable std::atomic<bool> grainPosKeyFlag { false };   // POS-KEY mode (non-param state, message thread writes)
         std::array<LfoBlockParams, (size_t) kNumLfos> lfoParams {};
         std::array<const LfoShapeTable*, (size_t) kNumLfos> tablePtrs {};
         const ModMatrixSnapshot* matrixPtr = nullptr;

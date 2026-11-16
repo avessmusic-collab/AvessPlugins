@@ -26,7 +26,8 @@
     theta, r    Mid / Side energies over the frame period:  theta = atan2(rmsSide, rmsMid) in [0, pi/2],
                 r = clamp(sqrt(meanM^2 + meanS^2) * sqrt(2), 0, 1)  (a full-scale mono sine -> 1).
     peakL/R     max |sample| since the previous PUSH (post master gain), the quantity the meters show.
-    voices      sounding voices' playhead position / envelope level from the synth's wait-free snapshot.
+    voices      sounding voices' playhead position / envelope level from the synth's wait-free snapshot,
+                NEWEST note first (the UI draws slot 0 as THE playhead).
     lfoPhase    D8: the synth's per-block LFO phase snapshot (global LFO: its phase; voice LFO: the newest voice's; -1 =
                 idle: index >= lfoCount, not a source of any matrix route, or a voice LFO with no sounding voice).
 

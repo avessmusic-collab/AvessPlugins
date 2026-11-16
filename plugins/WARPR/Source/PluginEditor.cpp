@@ -170,6 +170,7 @@ PluginEditor::PluginEditor (PluginProcessor& p)
 PluginEditor::~PluginEditor()
 {
     stopTimer();
+    if (vizLog != nullptr) { std::fclose (vizLog); vizLog = nullptr; }   // TEMP DIAG
     // Members destruct in reverse order: chooser etc -> attachments -> webView -> relays.
 }
 
@@ -248,6 +249,14 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
         .withNativeFunction ("warpr_requestFilterResponse", [this] (const Args&, Done done)
         {
             filterRequested = true; done ({});
+        })
+        .withNativeFunction ("warpr_setGrainPosKey", [be] (const Args& a, Done done)
+        {
+            // POS-KEY grain mode: notes pick the position (non-param uiState, like the slice map)
+            if (a.size() > 0)
+                be().setGrainPosKey ((int) a[0] != 0);
+
+            done ({});
         })
         .withNativeFunction ("warpr_setSliceMap", [be] (const Args& a, Done done)
         {
@@ -387,6 +396,45 @@ void PluginEditor::timerCallback()
         emitViz (frame);
         // one trailing empty frame clears the playheads / grain cloud
         playheadsWereShown = frame.numVoices > 0 || frame.numGrains > 0;
+    }
+
+    // ---- TEMP DIAG (owner bug 2026-11-16, "two playheads in classic mode"): log exactly what
+    //      the display is told, to be read back after an in-DAW repro.  Removed when solved.
+    {
+        if (vizLog == nullptr)
+        {
+            vizLog = std::fopen ("/tmp/void_viz_log.txt", "a");
+            if (vizLog != nullptr)
+            {
+                const auto d = be.getSampleDisplay();
+                std::fprintf (vizLog, "# open fs=%.0f fileFrames=%d fileRate=%.0f name=%s\n",
+                              audioProcessor.getSampleRate(), d.numSamples, d.sampleRate,
+                              d.name.toRawUTF8());
+            }
+        }
+
+        if (vizLog != nullptr)
+        {
+            if (frame.numVoices > 0 || frame.numGrains > 0)
+            {
+                std::fprintf (vizLog, "%u src=%s nV=%d", juce::Time::getMillisecondCounter(),
+                              gotFrame ? "fifo" : "snap", frame.numVoices);
+                for (int i = 0; i < juce::jmin (frame.numVoices, 8); ++i)
+                    std::fprintf (vizLog, " v%d=%.5f@%.2f", i,
+                                  frame.voices[(size_t) i].pos, frame.voices[(size_t) i].level);
+                std::fprintf (vizLog, " nG=%d", frame.numGrains);
+                for (int i = 0; i < juce::jmin (frame.numGrains, 4); ++i)
+                    std::fprintf (vizLog, " g%d=%.5f", i, frame.grains[(size_t) i].pos);
+                std::fprintf (vizLog, "\n");
+                vizLogQuiet = false;
+            }
+            else if (! vizLogQuiet)
+            {
+                std::fprintf (vizLog, "%u idle\n", juce::Time::getMillisecondCounter());
+                vizLogQuiet = true;
+            }
+            std::fflush (vizLog);
+        }
     }
 
     auto changed = [&be] (WarprUiBackend::Revision r, uint32_t& seen)

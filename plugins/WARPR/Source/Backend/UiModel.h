@@ -28,6 +28,7 @@ namespace warpr
         std::array<juce::String, (size_t) numCurves> shaperCurveJson;   // "" = identity curve
         juce::String presetName { "Init" };
         juce::String sliceMapJson;                               // D11 SLICE MODE document (SliceMap.h wire format), "" = off
+        bool grainPosKey = false;                                // POS-KEY grain mode: notes pick the position, unpitched
 
         /** Default documents (spec: identity curve, empty matrix). */
         static juce::String defaultLfoShapeJson();

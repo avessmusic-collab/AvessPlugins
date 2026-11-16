@@ -60,6 +60,10 @@ public:
     // echo of the UI's own edits); a state / preset load (adoptModel) bumps Revision::uiState.  Defaults: not supported.
     virtual void setSliceMapJson (const juce::String& json) { juce::ignoreUnused (json); }
 
+    /** POS-KEY grain mode (non-parameter state, persisted like the slice map): MIDI notes pick the
+        grain POSITION across the region (C1 = start, C6 = end), unpitched.  Default off. */
+    virtual void setGrainPosKey (bool on) { juce::ignoreUnused (on); }
+
     // Auto-slice of the current sample REGION [sampleStart, sampleEnd] into UP TO `count` (1..64) slices: fills `out` with
     // ascending normalised edges (front == sampleStart, back == sampleEnd).  byTransients = onset detection with an equal
     // byTransients: count CAPS the strongest-first onset pick; no grid fallback (see autoSliceEdges).

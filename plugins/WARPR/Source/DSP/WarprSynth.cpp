@@ -154,6 +154,7 @@ namespace warpr
         vp.grainScanDist = juce::jlimit (-1.0f, 1.0f, pb.get (ParamId::grainScanDist));
         vp.grainScanLoop = pb.getBool (ParamId::grainScanLoop);
         vp.grainScanKey = pb.getBool (ParamId::grainScanKey);
+        vp.grainPosKey = grainPosKeyFlag.load (std::memory_order_relaxed);
         vp.grainSizeMs = juce::jlimit (2.0f, 2000.0f, pb.get (ParamId::grainSize));
         vp.grainShape = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainShape));
         vp.grainVariation = juce::jlimit (0.0f, 1.0f, pb.get (ParamId::grainVariation));
@@ -1002,16 +1003,33 @@ namespace warpr
 
     void WarprSynth::publishPlayheads() noexcept
     {
+        // NEWEST-FIRST (owner request 2026-11-16, "show only where the sample is playing"): the UI
+        // draws slot 0 as THE playhead, so the most recent note must come first - an older note's
+        // release tail otherwise paints a second line crawling at its own pitch rate.
+        const WarprVoice* order[maxVoices];
         int n = 0;
+
         for (const auto& v : voices)
         {
             if (n >= maxVoices)
                 break;
             if (! v.isSounding())
                 continue;
-            playheadPos[(size_t) n].store (v.playheadNorm(), std::memory_order_relaxed);
-            playheadLevel[(size_t) n].store (v.envLevel(), std::memory_order_relaxed);
+
+            int at = n;
+            while (at > 0 && order[at - 1]->age < v.age)   // insertion by age desc (<= 16 voices)
+            {
+                order[at] = order[at - 1];
+                --at;
+            }
+            order[at] = &v;
             ++n;
+        }
+
+        for (int i = 0; i < n; ++i)
+        {
+            playheadPos[(size_t) i].store (order[i]->playheadNorm(), std::memory_order_relaxed);
+            playheadLevel[(size_t) i].store (order[i]->envLevel(), std::memory_order_relaxed);
         }
         playheadCount.store (n, std::memory_order_relaxed);
 

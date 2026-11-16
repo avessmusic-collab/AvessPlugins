@@ -8,6 +8,7 @@ namespace warpr
         const juce::Identifier kVersion    { "warprStateVersion" };
         const juce::Identifier kLfoCount   { "lfoCount" };
         const juce::Identifier kPresetName { "presetName" };
+        const juce::Identifier kGrainPosKey { "grainPosKey" };
         const juce::Identifier kIndex      { "index" };
         const juce::Identifier kId         { "id" };
         const juce::Identifier kJson       { "json" };
@@ -49,6 +50,8 @@ namespace warpr
         tree.setProperty (kVersion, identity::uiStateVersion, nullptr);
         tree.setProperty (kLfoCount, lfoCount, nullptr);
         tree.setProperty (kPresetName, presetName, nullptr);
+        if (grainPosKey)
+            tree.setProperty (kGrainPosKey, 1, nullptr);
 
         for (int i = 0; i < maxLfos; ++i)
         {
@@ -101,6 +104,7 @@ namespace warpr
 
         // A version newer than ours is read best-effort (only the fields we know).
         lfoCount = juce::jlimit (1, maxLfos, (int) tree.getProperty (kLfoCount, 3));
+        grainPosKey = (int) tree.getProperty (kGrainPosKey, 0) != 0;
 
         if (tree.hasProperty (kPresetName))
             presetName = tree.getProperty (kPresetName).toString();

@@ -102,6 +102,8 @@ public:
     /** The LUT set most recently built (message-thread copy; tests and later phases). */
     warpr::ShaperLutSet::Ptr getShaperLut() const;
 
+    void setGrainPosKey (bool on) override;
+
     int getPlayheads (WarprVizFrame::Voice* out, int maxOut) override
     {
         if (synthRef == nullptr || out == nullptr)

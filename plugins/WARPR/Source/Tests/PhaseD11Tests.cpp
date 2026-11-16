@@ -1025,11 +1025,72 @@ namespace
 
 //==============================================================================
     //==========================================================================
+    // POS-KEY grain mode (owner request 2026-11-16): MIDI notes pick the grain POSITION
+    // (C1 = region start, C6 = end), unpitched; off by default; persists via uiState.
+    //==========================================================================
+    static void testGrainPosKey()
+    {
+        std::printf ("\n[pos-key] granular: notes pick the position, unpitched\n");
+
+        auto grainCenter = [] (Rig& rig, int note) -> double
+        {
+            juce::MidiBuffer on;
+            on.addEvent (juce::MidiMessage::noteOn (1, note, 0.8f), 0);
+            rig.block (on);
+            for (int b = 0; b < 30; ++b) rig.block();                      // let the cloud settle
+
+            float gp[32], gl[32];
+            const int n = rig.proc.getSynth().readGrains (gp, gl, 32);
+            double sum = 0.0;
+            for (int i = 0; i < n; ++i) sum += (double) gp[i];
+            const double c = n > 0 ? sum / n : -1.0;
+
+            juce::MidiBuffer off;
+            off.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+            rig.block (off);
+            for (int b = 0; b < 40; ++b) rig.block();                      // release + free
+            return c;
+        };
+
+        Rig rig (makeNoise ((int) kFs * 2, 21, "Long"));
+        setParam (rig.proc, "playMode", 1.0f);                             // Granular
+        setParam (rig.proc, "grainMode", 2.0f);                            // Cloud (many live grains)
+        rig.block();
+
+        const double offC3 = grainCenter (rig, 66);                        // flag OFF: position knob (0) rules
+        rig.proc.getSynth().setGrainPosKey (true);
+        const double keyLow  = grainCenter (rig, 38);                      // 2 keys above C1 -> ~0.033
+        const double keyMid  = grainCenter (rig, 66);                      // 30 keys above C1 -> 0.5
+        const double keyHigh = grainCenter (rig, 94);                      // ~0.967
+        rig.proc.getSynth().setGrainPosKey (false);
+
+        std::printf ("        grain cloud centers: off %.3f, key-low %.3f, key-mid %.3f, key-high %.3f\n",
+                     offC3, keyLow, keyMid, keyHigh);
+        // centers carry grain-length / spread scatter, so the gates are coarse but ordered
+        check (offC3 >= 0.0 && offC3 < 0.25, "flag off: the cloud sits at the POSITION knob (start)");
+        check (keyLow >= 0.0 && keyLow < 0.25, "POS-KEY: a key near C1 puts the cloud near the start");
+        check (keyMid > 0.30 && keyMid < 0.70, "POS-KEY: 30 keys up puts the cloud mid-sample");
+        check (keyHigh > 0.70, "POS-KEY: a key near C6 puts the cloud near the end");
+
+        // persistence: the flag travels inside uiState (state save -> fresh processor -> restored)
+        rig.proc.getBackendImpl().setGrainPosKey (true);
+        juce::MemoryBlock state;
+        rig.proc.getStateInformation (state);
+
+        Rig fresh (makeNoise ((int) kFs, 22, "Other"));
+        fresh.proc.setStateInformation (state.getData(), (int) state.getSize());
+        fresh.block();
+        check (fresh.proc.getUiBackend().getUiStateJson().contains ("\"grainPosKey\": true")
+               || fresh.proc.getUiBackend().getUiStateJson().contains ("\"grainPosKey\":true"),
+               "POS-KEY survives a state save / load (uiState)");
+    }
+
+    //==========================================================================
     // One-Shot choke (owner bug report 2026-11-16): a new One-Shot tap cuts every other
     // free-running one-shot voice (no stacked playheads); chords inside 30 ms survive;
     // slice pads stay polyphonic across different notes.
     //==========================================================================
-    void testOneShotChoke()
+    static void testOneShotChoke()
     {
         std::printf ("\n[one-shot choke] new tap cuts the previous free-running trigger\n");
 
@@ -1056,6 +1117,25 @@ namespace
             check (n == 1, "the new One-Shot tap CHOKES the previous free-running voice (one playhead)");
         }
 
+        {   // 1b. ordering: slot 0 of readPlayheads is always the NEWEST note (the UI draws only it)
+            Rig rig (makeNoise ((int) kFs * 2, 13, "Long"));
+            rig.block();
+
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            rig.block (m);
+            for (int b = 0; b < 60; ++b) rig.block();                              // older note ~0.33 s in
+
+            juce::MidiBuffer m2;
+            m2.addEvent (juce::MidiMessage::noteOn (1, 62, 0.8f), 0);              // both still held (gate overlap)
+            rig.block (m2);
+            for (int b = 0; b < 4; ++b) rig.block();
+
+            const int n = rig.proc.getSynth().readPlayheads (ph, lv, 32);
+            std::printf ("        overlap: %d voices, slot0 %.4f, slot1 %.4f\n", n, ph[0], n > 1 ? ph[1] : -1.0f);
+            check (n == 2 && ph[0] < ph[1], "readPlayheads is NEWEST-FIRST (slot 0 = the just-pressed note)");
+        }
+
         {   // 2. a chord (two notes in the same block) keeps BOTH voices
             Rig rig (makeNoise ((int) kFs * 2, 12, "Long"));
             setParam (rig.proc, "loopMode", 2.0f);
@@ -1073,7 +1153,7 @@ namespace
     //==========================================================================
     // playhead regression: a Classic voice's UI playhead must ADVANCE while it plays
     //==========================================================================
-    void testPlayheadAdvances()
+    static void testPlayheadAdvances()
     {
         std::printf ("\n[playhead] Classic voice: readPlayheads advances while the note plays\n");
 
@@ -1106,6 +1186,7 @@ int runPhaseD11Tests (bool full)
 {
     testPlayheadAdvances();
     testOneShotChoke();
+    testGrainPosKey();
     juce::ignoreUnused (full);
     failures = 0;
 
