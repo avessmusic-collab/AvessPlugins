@@ -247,11 +247,10 @@
           <div id="sliceRow" style="display:none;flex-direction:column;gap:7px">
             <div class="row" style="align-items:center">
               <span class="lbl">SLICES:</span>
-              <div class="stepper" id="sliceCount"><span>&minus;</span><b>16</b><span>+</span></div>
               <button class="btn" id="btnSliceEq" style="padding:3px 10px">EQUAL</button>
               <button class="btn" id="btnSliceTr" style="padding:3px 10px">TRANSIENT</button>
               <div class="spacer"></div>
-              <span class="hint">NOTES FROM C1 &mdash; ONE PER SLICE, UNPITCHED ONE-SHOTS</span>
+              <span class="hint">DRAG EDGES &middot; 2&times;CLICK WAVE = NEW SLICE &middot; ALT-CLICK EDGE = REMOVE &middot; NOTES FROM C1</span>
             </div>
           </div>
 
@@ -832,12 +831,35 @@ function updSourcePages() {
   $("#classicRow").style.display = (!sliceDoc.on && pm === 0) ? "flex" : "none";
   $("#granRow").style.display = (!sliceDoc.on && pm === 1) ? "flex" : "none";
   $("#sliceRow").style.display = sliceDoc.on ? "flex" : "none";
-  $("#sliceCount").querySelector("b").textContent = sliceCount;
 }
+const eqEdges = (n, a, b) => Array.from({ length: n + 1 }, (_, k) => a + (b - a) * k / n);
+const isEqualDivision = arr => {
+  const n = arr.length - 1, a = arr[0], b = arr[n];
+  return arr.every((e, k) => Math.abs(e - (a + (b - a) * k / n)) < 1e-6);
+};
 async function autoSlice(byT) {
   try {
-    const arr = await NF.sliceEdges(sliceCount, byT ? 1 : 0);
-    if (arr && arr.length >= 2) { sliceDoc.edges = Array.from(arr, Number); sliceDoc.on = true; pushSlice(); updSourcePages(); drawSample(); }
+    if (!byT) {
+      const n = Math.max(2, Math.min(64, sliceCount));
+      const arr = await NF.sliceEdges(n, 0);
+      if (arr && arr.length >= 2) sliceDoc.edges = Array.from(arr, Number);
+    } else {
+      // largest count whose transient result is NOT the equal-division fallback = all detected hits
+      let best = null, lo = 2, hi = 64;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const arr = await NF.sliceEdges(mid, 1);
+        const a = arr && arr.length >= 3 ? Array.from(arr, Number) : null;
+        if (a && !isEqualDivision(a)) { best = a; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      if (!best) { const two = await NF.sliceEdges(2, 1); best = two && two.length >= 2 ? Array.from(two, Number) : null; }
+      if (best) sliceDoc.edges = best;
+    }
+    if (sliceDoc.edges.length >= 2) {
+      sliceDoc.on = true; sliceCount = sliceDoc.edges.length - 1;
+      pushSlice(); updSourcePages(); drawSample();
+    }
   } catch (_) {}
 }
 {
@@ -846,9 +868,6 @@ async function autoSlice(byT) {
   tap(spans[1], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 1); updSourcePages(); });
   tap(spans[2], () => { sliceDoc.on = true; (sliceDoc.edges.length < 2) ? autoSlice(false) : pushSlice(); updSourcePages(); });
   watch("playMode", "c", updSourcePages);
-  const sc = $("#sliceCount").querySelectorAll("span");
-  tap(sc[0], () => { sliceCount = Math.max(2, sliceCount - 1); updSourcePages(); });
-  tap(sc[1], () => { sliceCount = Math.min(64, sliceCount + 1); updSourcePages(); });
   tap($("#btnSliceEq"), () => autoSlice(false));
   tap($("#btnSliceTr"), () => autoSlice(true));
   updSourcePages();
@@ -987,7 +1006,21 @@ cs.addEventListener("wheel", e => {
   }
   wfRequest(); fxRequest(); drawSample();
 }, { passive: false });
-cs.addEventListener("dblclick", () => { WF.off = 0; WF.span = 1; rpCache = null; fxRequest(); drawSample(); });
+cs.addEventListener("dblclick", e => {
+  if (sliceDoc.on && sliceDoc.edges.length >= 2) {
+    // double-click the wave = a NEW slice edge at the exact clicked position (zoom in for precision)
+    const r = cs.getBoundingClientRect();
+    const ax = clamp(WF.off + clamp((e.clientX - r.left) / r.width, 0, 1) * WF.span, 0, 1);
+    const eps = 1.0e-4;
+    if (sliceDoc.edges.every(q => Math.abs(q - ax) > eps)) {
+      sliceDoc.edges = [...sliceDoc.edges, ax].sort((a, b) => a - b);
+      sliceCount = sliceDoc.edges.length - 1;
+      pushSlice(); drawSample();
+    }
+    return;
+  }
+  WF.off = 0; WF.span = 1; rpCache = null; fxRequest(); drawSample();
+});
 
 /* ACCURATE AMP ENVELOPE on the sample timeline.  Mirrors AmpEnvelope.h exactly:
    linear attack to 1, exponential decay to sustain (60 dB after D ms, tau = D/ln 1000),
@@ -1146,9 +1179,26 @@ const csXY = e => { const r = cs.getBoundingClientRect(); return { x: clamp((e.c
 const gestureBegin = ids => ids.forEach(i => sliderOf(i).sliderDragStarted());
 const gestureEnd   = ids => ids.forEach(i => sliderOf(i).sliderDragEnded());
 cs.style.cursor = "pointer"; cs.style.touchAction = "none";
+let sliceDrag = -1;                                       // index of the edge being dragged
 cs.addEventListener("pointerdown", e => {
   const p = csXY(e), S = nrm("sampleStart"), En = nrm("sampleEnd");
   const ax = WF.off + p.x * WF.span;                       // absolute sample fraction under the cursor
+  if (sliceDoc.on && sliceDoc.edges.length >= 2) {         // slice edges take priority (tighter radius)
+    let bi = -1, bd = 0.012 * WF.span;
+    sliceDoc.edges.forEach((q, i) => { const d = Math.abs(q - ax); if (d < bd) { bd = d; bi = i; } });
+    if (bi >= 0) {
+      if (e.altKey || e.button === 2) {                    // alt / right-click = remove (keep >= 1 slice)
+        if (sliceDoc.edges.length > 2) {
+          sliceDoc.edges = sliceDoc.edges.filter((_, i) => i !== bi);
+          sliceCount = sliceDoc.edges.length - 1;
+          pushSlice(); drawSample();
+        }
+        return;
+      }
+      sliceDrag = bi; cs.setPointerCapture(e.pointerId);
+      return;
+    }
+  }
   let kind = null;
   if (Math.abs(ax - S) < 0.02 * WF.span) kind = "ps"; else if (Math.abs(ax - En) < 0.02 * WF.span) kind = "pe";
   if (!kind) return;
@@ -1156,6 +1206,15 @@ cs.addEventListener("pointerdown", e => {
   envDrag = { kind, ids }; gestureBegin(ids); cs.setPointerCapture(e.pointerId);
 });
 cs.addEventListener("pointermove", e => {
+  if (sliceDrag >= 0) {
+    const p = csXY(e);
+    const ax = clamp(WF.off + p.x * WF.span, 0, 1);
+    const lo = sliceDrag > 0 ? sliceDoc.edges[sliceDrag - 1] + 1.0e-4 : 0;
+    const hi = sliceDrag < sliceDoc.edges.length - 1 ? sliceDoc.edges[sliceDrag + 1] - 1.0e-4 : 1;
+    sliceDoc.edges[sliceDrag] = clamp(ax, lo, Math.max(lo, hi));
+    pushSlice(); drawSample();
+    return;
+  }
   if (!envDrag) return;
   const p = csXY(e), k = envDrag.kind;
   const ax = clamp(WF.off + p.x * WF.span, 0, 1);          // markers drag in absolute positions (zoom = precision)
@@ -1163,7 +1222,7 @@ cs.addEventListener("pointermove", e => {
   if (k === "ps") set("sampleStart", Math.min(ax, nrm("sampleEnd") - 0.01));
   if (k === "pe") set("sampleEnd", Math.max(ax, nrm("sampleStart") + 0.01));
 });
-const envEnd = () => { if (envDrag) { gestureEnd(envDrag.ids); envDrag = null; } };
+const envEnd = () => { if (sliceDrag >= 0) { sliceDrag = -1; pushSlice(); } if (envDrag) { gestureEnd(envDrag.ids); envDrag = null; } };
 cs.addEventListener("pointerup", envEnd); cs.addEventListener("pointercancel", envEnd);
 
 /* =====================================================================
