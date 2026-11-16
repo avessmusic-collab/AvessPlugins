@@ -194,7 +194,7 @@
           <button class="btn" id="btnSample" style="padding:4px 9px">LOAD</button>
           <span class="micro" id="sampleName">NO SAMPLE</span>
           <div class="spacer"></div>
-          <div class="tg" data-seg="playMode" id="pmode"><span>CLASSIC</span><span>GRANULAR</span><span>SLICE</span></div>
+          <div class="tg" data-seg="playMode" id="pmode"><span>CLASSIC</span><span>SLICE</span><span>GRANULAR</span></div>
         </div>
         <div class="sec-b" style="gap:6px">
 
@@ -249,6 +249,7 @@
               <span class="lbl">SLICES:</span>
               <button class="btn" id="btnSliceEq" style="padding:3px 10px">EQUAL</button>
               <button class="btn" id="btnSliceTr" style="padding:3px 10px">TRANSIENT</button>
+              <button class="btn" id="btnSliceClr" style="padding:3px 10px">CLEAR</button>
               <div class="spacer"></div>
               <span class="hint">DRAG EDGES &middot; 2&times;CLICK WAVE = NEW SLICE &middot; ALT-CLICK EDGE = REMOVE &middot; NOTES FROM C1</span>
             </div>
@@ -826,8 +827,8 @@ function updSourcePages() {
   const pm = cidx(comboOf("playMode"), 2);
   const spans = [...$("#pmode").children];
   spans[0].classList.toggle("on", !sliceDoc.on && pm === 0);
-  spans[1].classList.toggle("on", !sliceDoc.on && pm === 1);
-  spans[2].classList.toggle("on", sliceDoc.on);
+  spans[1].classList.toggle("on", sliceDoc.on);
+  spans[2].classList.toggle("on", !sliceDoc.on && pm === 1);
   $("#classicRow").style.display = (!sliceDoc.on && pm === 0) ? "flex" : "none";
   $("#granRow").style.display = (!sliceDoc.on && pm === 1) ? "flex" : "none";
   $("#sliceRow").style.display = sliceDoc.on ? "flex" : "none";
@@ -865,11 +866,21 @@ async function autoSlice(byT) {
 {
   const spans = [...$("#pmode").children];
   tap(spans[0], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 0); updSourcePages(); });
-  tap(spans[1], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 1); updSourcePages(); });
-  tap(spans[2], () => { sliceDoc.on = true; (sliceDoc.edges.length < 2) ? autoSlice(false) : pushSlice(); updSourcePages(); });
+  tap(spans[1], () => { sliceDoc.on = true; (sliceDoc.edges.length < 2) ? autoSlice(false) : pushSlice(); updSourcePages(); });
+  tap(spans[2], () => { sliceDoc.on = false; pushSlice(); setChoice(comboOf("playMode"), 1); updSourcePages(); });
   watch("playMode", "c", updSourcePages);
   tap($("#btnSliceEq"), () => autoSlice(false));
   tap($("#btnSliceTr"), () => autoSlice(true));
+  tap($("#btnSliceClr"), async () => {                     // CLEAR: no interior lines - one slice over the region
+    try {
+      const arr = await NF.sliceEdges(1, 0);
+      if (arr && arr.length >= 2) {
+        sliceDoc.edges = Array.from(arr, Number); sliceDoc.on = true;
+        sliceCount = 1; sliceSel = -1;
+        pushSlice(); updSourcePages(); drawSample();
+      }
+    } catch (_) {}
+  });
   updSourcePages();
 }
 $$("[data-seg]").forEach(el => { if (el.id !== "pmode" && el.id !== "grainMode") bindSeg(el, el.dataset.seg); });
