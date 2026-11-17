@@ -205,9 +205,12 @@
           <div class="screen" style="min-height:96px;flex:1"><canvas id="cvSample"></canvas>
           </div>
           <div id="classicRow" class="row" style="align-items:flex-end;justify-content:space-between">
-            <div class="wavebar">
-              <span class="tv" data-tv="sampleStart" data-l="START" data-f="pct1"></span>
-              <span class="tv" data-tv="sampleEnd" data-l="END" data-f="pct1"></span>
+            <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start">
+              <div class="stepper" id="wfZoom"><span title="Zoom out">&minus;</span><span title="Zoom in">+</span></div>
+              <div class="wavebar">
+                <span class="tv" data-tv="sampleStart" data-l="START" data-f="pct1"></span>
+                <span class="tv" data-tv="sampleEnd" data-l="END" data-f="pct1"></span>
+              </div>
             </div>
             <div class="vdiv"></div>
             <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
@@ -1039,6 +1042,22 @@ cs.addEventListener("wheel", e => {
   }
   wfRequest(); fxRequest(); drawSample();
 }, { passive: false });
+/* ZOOM - / + buttons (owner request 2026-11-17): same clamps as the wheel, anchored at the
+   view center.  Zooming out past full view just lands on the whole sample. */
+function zoomBy(f) {
+  if (!peaks) return;
+  const minSpan = Math.max(sInfo && sInfo.numSamples ? 64 / sInfo.numSamples : 1 / 512, 1 / 512);
+  const span = clamp(WF.span * f, minSpan, 1);
+  const anchor = WF.off + 0.5 * WF.span;
+  WF.off = clamp(anchor - 0.5 * span, 0, 1 - span);
+  WF.span = span;
+  wfRequest(); fxRequest(); drawSample();
+}
+{
+  const z = [...$("#wfZoom").children];
+  tap(z[0], () => zoomBy(1.6));
+  tap(z[1], () => zoomBy(1 / 1.6));
+}
 cs.addEventListener("dblclick", e => {
   if (sliceDoc.on && sliceDoc.edges.length >= 2) {
     const r = cs.getBoundingClientRect();
