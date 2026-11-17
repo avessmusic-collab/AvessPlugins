@@ -208,7 +208,7 @@
             <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-start">
               <div style="display:flex;flex-direction:column;gap:5px;align-items:center">
                 <span class="lbl">ZOOM</span>
-                <div class="stepper" id="wfZoom"><span title="Zoom out">&minus;</span><span title="Zoom in">+</span></div>
+                <div class="stepper wfzoom"><span title="Zoom out">&minus;</span><span title="Zoom in">+</span></div>
               </div>
               <div class="wavebar">
                 <span class="tv" data-tv="sampleStart" data-l="START" data-f="pct1"></span>
@@ -253,13 +253,12 @@
 
           <div id="sliceRow" style="display:none;flex-direction:column;gap:7px">
             <div class="row" style="align-items:center">
-              <span class="lbl">SLICES:</span>
+              <span class="lbl" title="Drag edges to move them. Double-click the wave for a new slice. Alt-click or double-click an edge to remove it. Slices play from C1 upward.">SLICES:</span>
               <button class="btn" id="btnSliceEq" style="padding:3px 10px">EQUAL</button>
               <button class="btn" id="btnSliceTr" style="padding:3px 10px">TRANSIENT</button>
               <button class="btn" id="btnSliceClr" style="padding:3px 10px">CLEAR</button>
               <span class="tv" id="sliceSens" title="Transient sensitivity: caps how many of the strongest hits become slices" style="min-width:56px"><span class="tl">SENS</span><span class="tn">100%</span></span>
-              <div class="spacer"></div>
-              <span class="hint">DRAG EDGES &middot; 2&times;CLICK WAVE = NEW SLICE &middot; ALT-CLICK EDGE = REMOVE &middot; NOTES FROM C1</span>
+              <div class="stepper wfzoom" style="flex-shrink:0"><span title="Zoom out">&minus;</span><span title="Zoom in">+</span></div>
             </div>
           </div>
 
@@ -1056,11 +1055,11 @@ function zoomBy(f) {
   WF.span = span;
   wfRequest(); fxRequest(); drawSample();
 }
-{
-  const z = [...$("#wfZoom").children];
+$$(".wfzoom").forEach(el => {
+  const z = [...el.children];
   tap(z[0], () => zoomBy(1.6));
   tap(z[1], () => zoomBy(1 / 1.6));
-}
+});
 cs.addEventListener("dblclick", e => {
   if (sliceDoc.on && sliceDoc.edges.length >= 2) {
     const r = cs.getBoundingClientRect();
@@ -1778,7 +1777,7 @@ function lfoResize() {
   led.setAttribute("viewBox", `0 0 ${LW} ${LH}`); led.style.width = "100%"; led.style.height = "100%"; lfoRender();
 }
 const snap = (v, n) => n ? Math.round(v*n)/n : v;
-function gridVal(key) { const st = comboOf(lp(key)), c = st.properties.choices || []; const s = c[cidx(st, c.length)] || (key === "GridX" ? "8" : "8"); return s === "OFF" ? "OFF" : parseInt(s); }
+function gridVal(key) { const st = comboOf(lp(key)), c = st.properties.choices || []; const s = c[cidx(st, c.length)] || "8"; return s === "OFF" ? "OFF" : parseInt(s); }
 const gridN = () => gridVal("GridX"), gridY = () => gridVal("GridY");
 const xSnapN = () => gridN() === "OFF" ? 0 : gridN(), ySnapN = () => gridY() === "OFF" ? 0 : gridY();
 function lfoRender() {
@@ -1982,7 +1981,7 @@ function loadUiState(json) {
   const busy = lfoBusy(), keepLfo = busy ? lfoShapes[activeLfo] : null;
   clearTimeout(lfoPushT); clearTimeout(modTimer);        // stale local debounce must not overwrite the loaded state
   if (busy) { lfoPushT = setTimeout(() => pushLfo(true), 0); }
-  const n = clamp(s.lfoCount || 3, 1, MAX_LFO);
+  const n = clamp(Number.isFinite(s.lfoCount) ? s.lfoCount : 3, 1, MAX_LFO);
   lfoShapes = Array.from({ length: n }, (_, i) => (s.lfoShapes && s.lfoShapes[i]) ? fromWire(s.lfoShapes[i]) : newShape());
   lfoShapes.forEach(sh => { if (sh.points.length < 2) sh.points = newShape().points; });
   if (keepLfo && activeLfo < n) lfoShapes[activeLfo] = keepLfo;
