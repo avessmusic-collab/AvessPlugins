@@ -150,7 +150,9 @@
   #lfoEd{flex:1;min-width:0;height:100%;cursor:crosshair;touch-action:none}
   #fxrow .sec-h{gap:6px;padding:6px 8px}
   #fxrow .tg span{padding:4px 6px}
-  #grainKeySeg span{padding:5px 7px;letter-spacing:.06em}
+  #granRow .tg{flex-shrink:0}
+  #granRow .row{flex-wrap:nowrap;gap:8px}
+  #grainMode span,#grainKeySeg span{padding:5px 9px;letter-spacing:.08em}
   #fxrow select{padding:4px 5px}
   #lfoTabs.many span{padding:4px 4px}
   #lfoTabs.many span{padding:4px 3px;min-width:12px;text-align:center}
@@ -226,11 +228,9 @@
           <div id="granRow" style="display:none;flex-direction:column;gap:7px">
             <div class="row" style="align-items:center">
               <div class="tg" data-seg="grainMode" id="grainMode"><span>CLASSIC</span><span>LOOP</span><span>CLOUD</span></div>
-              <span class="lbl" style="margin-left:6px">SCAN:</span>
+              <span class="lbl">SCAN:</span>
               <div class="tg" data-segbool="grainScanLoop"><span>LOOP</span><span>OFF</span></div>
               <div class="tg" id="grainKeySeg"><span title="Higher notes scan faster">KEY</span><span title="Notes choose the grain position across the sample, no pitch change">POS</span><span title="Notes just play the grains">OFF</span></div>
-              <div class="spacer"></div>
-              <span class="hint">GRAIN ENGINE</span>
             </div>
             <div class="kgrid">
               <span class="k xs" data-p="grainPosition" data-l="POSITION" data-f="pct"></span>
