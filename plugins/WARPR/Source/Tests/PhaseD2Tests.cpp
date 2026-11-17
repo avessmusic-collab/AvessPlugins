@@ -894,6 +894,7 @@ namespace
         PluginProcessor proc;
         proc.setPlayConfigDetails (0, 2, fs, 256);
         proc.prepareToPlay (fs, 256);
+        warpr::tests::pinForwardLoop (proc);       // gated playback assumed (plugin default: One-Shot)
 
         juce::AudioBuffer<float> buf (2, 256);
         std::vector<WarprVizFrame> frames;

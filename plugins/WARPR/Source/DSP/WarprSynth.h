@@ -137,9 +137,11 @@ namespace warpr
         float getGlobalLfoPhase (int lfo) const noexcept      { return gInst[(size_t) lfo].phase; }
         float getGlobalLfoValue (int lfo) const noexcept      { return gPrev[(size_t) lfo]; }
         double getGlobalLfoProgress (int lfo) const noexcept  { return gInst[(size_t) lfo].progress; }
-        float getVoiceLfoPhase (int slot, int lfo) const noexcept { return voices[(size_t) slot].lfoPhase (lfo); }
-        float getVoiceLfoValue (int slot, int lfo) const noexcept { return voices[(size_t) slot].lfoEndValue (lfo); }
-        double getVoiceLfoProgress (int slot, int lfo) const noexcept { return voices[(size_t) slot].lfoProgress (lfo); }
+        // Bounds-checked: a test helper's "slot not found" (-1) must read as idle, never as an
+        // out-of-range voices[] access (ASan-caught 2026-11-17 when a corpus assumption broke).
+        float getVoiceLfoPhase (int slot, int lfo) const noexcept { return slot >= 0 && slot < maxVoices ? voices[(size_t) slot].lfoPhase (lfo) : -1.0f; }
+        float getVoiceLfoValue (int slot, int lfo) const noexcept { return slot >= 0 && slot < maxVoices ? voices[(size_t) slot].lfoEndValue (lfo) : 0.0f; }
+        double getVoiceLfoProgress (int slot, int lfo) const noexcept { return slot >= 0 && slot < maxVoices ? voices[(size_t) slot].lfoProgress (lfo) : 0.0; }
         const TransportClock& getClock() const noexcept       { return clock; }
 
         /** ADDS the synth output to outL / outR (callers clear them first). */

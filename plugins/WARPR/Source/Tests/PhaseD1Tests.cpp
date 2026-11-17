@@ -121,6 +121,7 @@ namespace
         {
             proc.setPlayConfigDetails (0, 2, fs, block);      // BEFORE prepareToPlay
             proc.prepareToPlay (fs, block);
+            warpr::tests::pinForwardLoop (p);                 // D1 exercises GATED playback (plugin default is One-Shot)
         }
 
         void process (juce::MidiBuffer& midi)
@@ -1185,7 +1186,7 @@ namespace
             for (int mode = 0; mode < 3; ++mode)
             {
                 setParam (proc, "loopMode", (float) mode);
-                const auto out = warpr::tests::render (proc, noteOnly (72), fs, 256, 0.25);
+                const auto out = warpr::tests::render (proc, noteOnly (72), fs, 256, 0.25, false);   // tests each mode itself
                 const auto s = warpr::tests::scan (out, 0);
                 char name[96];
                 std::snprintf (name, sizeof (name), "%d-frame sample, loop mode %d: finite and bounded", frames, mode);

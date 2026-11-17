@@ -580,8 +580,16 @@ namespace warpr
         {
             if (legato && keysWereAlive)
             {
-                cur->retarget (note, glideNow());              // overlap: pitch only
-                return;
+                // One-Shot (owner bug 2026-11-17, "instead of retriggering the playhead ... pitches
+                // up"): a latched voice ignores key-ups, so a SAME-note overlap used to be a silent
+                // no-op - the sample just kept playing while the player expected a re-strike.  Same
+                // note on a latched trigger therefore falls through to ghost + fresh (a retrigger);
+                // a DIFFERENT note keeps the legato retarget (pitch glides over the running sample).
+                if (! (cur->isTriggerLatched() && note == cur->note))
+                {
+                    cur->retarget (note, glideNow());          // overlap: pitch only
+                    return;
+                }
             }
 
             if (! legato && vp.loopMode != 2)

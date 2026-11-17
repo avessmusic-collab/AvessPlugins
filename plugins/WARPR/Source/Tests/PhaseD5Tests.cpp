@@ -602,6 +602,7 @@ namespace
 
     void prepSustained (PluginProcessor& p)
     {
+        warpr::tests::pinForwardLoop (p);     // the D5 corpus assumes GATED playback (plugin default: One-Shot)
         setParam (p, "ampAttack", 1.0f);
         setParam (p, "ampSustain", 1.0f);
     }

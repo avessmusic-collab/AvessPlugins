@@ -11,7 +11,8 @@ namespace warpr::tests
                                      const juce::MidiBuffer& midi,
                                      double sampleRate,
                                      int blockSize,
-                                     double seconds)
+                                     double seconds,
+                                     bool pinGateDefault)
     {
         const int maxBlock     = juce::jmax (1, blockSize);
         const int totalSamples = juce::jmax (1, static_cast<int> (std::ceil (sampleRate * seconds)));
@@ -19,6 +20,9 @@ namespace warpr::tests
         // Instrument: no inputs.  setPlayConfigDetails MUST precede prepareToPlay.
         processor.setPlayConfigDetails (0, 2, sampleRate, maxBlock);
         processor.prepareToPlay (sampleRate, maxBlock);
+
+        if (pinGateDefault)
+            pinForwardLoop (processor);          // the corpus assumes GATED playback (plugin default: One-Shot)
 
         const int numChannels = juce::jmax (1, processor.getTotalNumOutputChannels());
 

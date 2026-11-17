@@ -101,7 +101,7 @@ namespace warpr::choices
     XI (rootNote,     "Root Note",    0, 127, 60, "") \
     XI (transpose,    "Transpose",   -24, 24, 0, "st") \
     XF (fineTune,     "Fine Tune",  -100.0f, 100.0f, 0.1f, 0.0f, 0.0f, "cents") \
-    XC (loopMode,     "Loop Mode",    0, loopMode,  true) \
+    XC (loopMode,     "Loop Mode",    2, loopMode,  true) \
     XC (direction,    "Direction",    0, direction, true) \
     XC (playMode,     "Play Mode",    0, playMode,  true) \
     /* ---------------------------------------------------------------- Granular (12) */ \

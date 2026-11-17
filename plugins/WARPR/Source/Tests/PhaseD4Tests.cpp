@@ -1202,6 +1202,7 @@ namespace
     {
         p.setPlayConfigDetails (0, 2, fs, block);
         p.prepareToPlay (fs, block);
+        warpr::tests::pinForwardLoop (p);          // gated playback assumed (plugin default: One-Shot)
 
         juce::AudioBuffer<float> buf (2, block);
         std::vector<float> out;

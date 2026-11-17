@@ -91,6 +91,7 @@ namespace
         auto p = std::make_unique<PluginProcessor>();
         p->setPlayConfigDetails (0, 2, fs, kBlock);
         p->prepareToPlay (fs, kBlock);
+        warpr::tests::pinForwardLoop (*p);       // the D10 corpus + bench baselines assume GATED playback
         return p;
     }
 
@@ -442,6 +443,8 @@ namespace
         p->setGuardLoadInjectionForTests (1.5);               // sustained overload (150 % of the block time)
         p->setPlayConfigDetails (0, 2, kFs, kBlock);
         p->prepareToPlay (kFs, kBlock);
+        warpr::tests::pinForwardLoop (*p);       // the D10 corpus + bench baselines assume GATED playback
+
 
         juce::AudioBuffer<float> buf (2, kBlock);
         const int notes[4] = { 60, 62, 64, 65 };
@@ -579,6 +582,7 @@ namespace
                 q->setGuardLoadInjectionForTests (1.5);
                 q->setPlayConfigDetails (0, 2, kFs, kBlock);
                 q->prepareToPlay (kFs, kBlock);
+                warpr::tests::pinForwardLoop (*q);   // gated corpus
             }
 
             juce::AudioBuffer<float> bx (2, kBlock), by (2, kBlock);
@@ -652,6 +656,8 @@ namespace
         p->getSynth().setOscillatorBudget (64);
         p->setPlayConfigDetails (0, 2, kFs, kBlock);
         p->prepareToPlay (kFs, kBlock);
+        warpr::tests::pinForwardLoop (*p);       // the D10 corpus + bench baselines assume GATED playback
+
 
         juce::AudioBuffer<float> buf (2, kBlock);
         const int notes[4] = { 60, 62, 64, 66 };
@@ -903,6 +909,7 @@ namespace
         auto p = std::make_unique<PluginProcessor>();
         p->setPlayConfigDetails (0, 2, kFs, kBlock);
         p->prepareToPlay (kFs, kBlock);
+        warpr::tests::pinForwardLoop (*p);       // bench baselines were measured against GATED playback
         applyBenchPatch (*p, b);
 
         juce::AudioBuffer<float> buf (2, kBlock);

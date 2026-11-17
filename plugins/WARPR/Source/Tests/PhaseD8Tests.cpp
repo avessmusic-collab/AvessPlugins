@@ -1199,6 +1199,7 @@ namespace
             buf.setSize (2, bs);
             p->setPlayConfigDetails (0, 2, sampleRate, bs);
             p->prepareToPlay (sampleRate, bs);
+            warpr::tests::pinForwardLoop (*p);       // the D8 corpus assumes GATED playback (plugin default: One-Shot)
         }
 
         ~Rig() { p->setPlayHead (nullptr); }

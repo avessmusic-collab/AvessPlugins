@@ -1149,6 +1149,7 @@ namespace
 
         {   // 1b. ordering: slot 0 of readPlayheads is always the NEWEST note (the UI draws only it)
             Rig rig (makeNoise ((int) kFs * 2, 13, "Long"));
+            setParam (rig.proc, "loopMode", 0.0f);                   // gated overlap (One-Shot would choke the older note)
             rig.block();
 
             juce::MidiBuffer m;
@@ -1189,6 +1190,7 @@ namespace
         std::printf ("\n[zero-block midi] a note-off in an empty block still releases the voice\n");
 
         Rig rig (makeNoise ((int) kFs, 31, "Long"));
+        setParam (rig.proc, "loopMode", 0.0f);                       // gated semantics are the point of this test
         juce::MidiBuffer on;
         on.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
         rig.block (on);
@@ -1236,8 +1238,55 @@ namespace
         check (seen.empty() || (seen.front() >= 0.0f && seen.back() <= 1.0f), "positions stay in 0..1");
     }
 
+//==============================================================================
+// Legato re-strike (owner bug 2026-11-17): in LEGATO + One-Shot, a SAME-note overlap must
+// RETRIGGER (the latched voice would otherwise play on as if the tap never happened);
+// a DIFFERENT note still legato-retargets pitch over the running sample.
+//==============================================================================
+static void testLegatoOneShotRestrike()
+{
+    std::printf ("\n[legato re-strike] One-Shot + LEGATO same-note overlap restarts the sample\n");
+
+    Rig rig (makeNoise ((int) kFs * 2, 51, "Long"));
+    setParam (rig.proc, "loopMode", 2.0f);                      // One-Shot
+    setParam (rig.proc, "voiceMode", 2.0f);                     // LEGATO
+    rig.block();
+
+    juce::MidiBuffer on;
+    on.addEvent (juce::MidiMessage::noteOn (1, 60, 0.9f), 0);
+    rig.block (on);
+    for (int b = 0; b < 90; ++b) rig.block();                   // ~0.5 s in
+
+    float ph[32], lv[32];
+    rig.proc.getSynth().readPlayheads (ph, lv, 32);
+    const double before = ph[0];
+
+    juce::MidiBuffer retap;                                     // overlap: new press, old key still latched
+    retap.addEvent (juce::MidiMessage::noteOn (1, 60, 0.9f), 0);
+    rig.block (retap);
+    for (int b = 0; b < 4; ++b) rig.block();                    // ghost fade done
+
+    const int n = rig.proc.getSynth().readPlayheads (ph, lv, 32);
+    std::printf ("        before retap %.3f, after %.3f (%d voice(s))\n", before, ph[0], n);
+    check (before > 0.2, "the first press was well into the sample");
+    check (n == 1 && ph[0] < 0.1, "a same-note legato overlap RE-STRIKES from the start");
+
+    // a DIFFERENT note must keep the legato retarget: position CONTINUES (no restart)
+    for (int b = 0; b < 40; ++b) rig.block();
+    rig.proc.getSynth().readPlayheads (ph, lv, 32);
+    const double mid = ph[0];
+    juce::MidiBuffer up;
+    up.addEvent (juce::MidiMessage::noteOn (1, 64, 0.9f), 0);
+    rig.block (up);
+    for (int b = 0; b < 4; ++b) rig.block();
+    const int n2 = rig.proc.getSynth().readPlayheads (ph, lv, 32);
+    std::printf ("        different-note overlap: pos %.3f -> %.3f (%d voice(s))\n", mid, ph[0], n2);
+    check (n2 == 1 && ph[0] > mid, "a different note keeps the legato retarget (sample continues)");
+}
+
 int runPhaseD11Tests (bool full)
 {
+    testLegatoOneShotRestrike();
     testZeroSampleBlockMidi();
     testPlayheadAdvances();
     testOneShotChoke();
