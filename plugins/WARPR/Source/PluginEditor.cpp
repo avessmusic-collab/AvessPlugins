@@ -232,8 +232,11 @@ void PluginEditor::registerNativeFunctions (juce::WebBrowserComponent::Options& 
         .withNativeFunction ("warpr_loadSample", [this] (const Args&, Done done)
         {
             chooser = std::make_unique<juce::FileChooser> ("Load sample", juce::File{}, "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.m4a;*.caf");
+            // SafePointer built outside the capture: MSVC (C2440/C2119) cannot parse the
+            // function-style cast as an init-capture inside this nested lambda; Clang can.
+            const juce::Component::SafePointer<PluginEditor> safe (this);
             chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                [safe = juce::Component::SafePointer<PluginEditor> (this)] (const juce::FileChooser& fc)
+                [safe] (const juce::FileChooser& fc)
                 {
                     const auto f = fc.getResult();
                     if (safe != nullptr && f.existsAsFile())
