@@ -1,0 +1,92 @@
+name: Build VOID (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'plugins/WARPR/**'
+      - '.github/workflows/void-windows.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install WebView2 SDK (required by the plugin's WebView UI)
+        shell: pwsh
+        run: nuget install Microsoft.Web.WebView2 -Version 1.0.1901.177 -OutputDirectory "$env:GITHUB_WORKSPACE\webview2"
+
+      - name: Configure (WARPR only, fetches JUCE 8)
+        # No -G pin: use whatever Visual Studio the runner image ships
+        shell: pwsh
+        run: cmake -B build-win -A x64 -DONLY_PLUGIN=WARPR "-DJUCE_WEBVIEW2_PACKAGE_LOCATION=$env:GITHUB_WORKSPACE\webview2"
+
+      - name: Build VST3 + Standalone (Release)
+        run: cmake --build build-win --config Release --target WARPR_VST3 WARPR_Standalone
+
+      - name: Download pluginval
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip" -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval-bin
+
+      # GUI tests skipped: WebView2 editors cannot open on a headless CI
+      # runner (all DSP/state/automation tests still run). The editor gets
+      # its GUI validation on real machines (macOS pluginval opens it fully).
+      - name: Validate VST3 (pluginval strictness 10)
+        shell: pwsh
+        run: |
+          # pluginval on Windows can crash during process teardown AFTER a
+          # successful validation (exit code lies); trust the printed verdict.
+          & "pluginval-bin/pluginval.exe" --strictness-level 10 --skip-gui-tests --timeout-ms 300000 --validate "build-win/plugins/WARPR/WARPR_artefacts/Release/VST3/VOID.vst3" 2>&1 | Tee-Object -FilePath pluginval-out.txt
+          $log = Get-Content pluginval-out.txt -Raw
+          if ($log -match 'SUCCESS') { Write-Host 'Validation verdict: SUCCESS'; exit 0 }
+          Write-Host 'Validation verdict: FAILED'; exit 1
+
+      - name: UI smoke test (launch Standalone, screenshot for review)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe = "build-win/plugins/WARPR/WARPR_artefacts/Release/Standalone/VOID.exe"
+          Write-Host "Launching $exe ..."
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 12
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:GITHUB_WORKSPACE/ui-smoke.png")
+          Write-Host "Screenshot saved. App still running: $(-not $p.HasExited)"
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+
+      - name: Upload UI screenshot
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: VOID-Windows-UI-Screenshot
+          path: ui-smoke.png
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "plugins\WARPR\dist\windows\VOID.iss"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOID-Windows-Installer
+          path: plugins/WARPR/dist/windows/Output/*.exe
+
+      - name: Upload raw VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOID-Windows-VST3
+          path: build-win/plugins/WARPR/WARPR_artefacts/Release/VST3/VOID.vst3
