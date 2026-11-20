@@ -828,6 +828,7 @@ namespace
             setParam (p, "warpMode", (float) b.warpMode);
             setParam (p, "warpAmount", b.warpAmount);
             setParam (p, "warpParamA", 0.5f);
+            setParam (p, "warpMix", 1.0f);                    // default mix is 0 (stage armed but silent)
         }
 
         setParam (p, "shaperEnable", b.shaper ? 1.0f : 0.0f);

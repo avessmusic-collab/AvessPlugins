@@ -2051,6 +2051,7 @@ namespace
                 setParam (p, "sampleEnd", 1.0f);
                 setParam (p, "warpMode", 0.0f);
                 setParam (p, "warpAmount", warped ? 1.0f : 0.0f);
+                setParam (p, "warpMix", 1.0f);                    // default mix is 0 (stage armed but silent)
 
                 if (granular)
                 {

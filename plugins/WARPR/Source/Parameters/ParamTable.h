@@ -126,14 +126,14 @@ namespace warpr::choices
     XC (modOscSource, "Mod Osc Source", 4, modOscSource, true) \
     XF (modOscRatio,  "Mod Osc Ratio", 0.25f, 16.0f, 0.0f, 2.0f, 1.0f, "x") \
     XC (oversampling, "Oversampling",  1, oversampling, true) \
-    XF (warpMix,      "Warp Mix",      0.0f, 1.0f,  0.0f, 0.0f, 1.0f, "") \
+    XF (warpMix,      "Warp Mix",      0.0f, 1.0f,  0.0f, 0.0f, 0.0f, "") \
     /* ---------------------------------------------------------------- Shaper (6) */ \
-    XB (shaperEnable,       "Shaper Enable",       false) \
+    XB (shaperEnable,       "Shaper Enable",       true) \
     XC (shaperCurveSelect,  "Shaper Curve Select", 0, shaperCurveSelect, true) \
     XF (shaperMorph,        "Shaper Morph", 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, "") \
     XC (shaperPreset,       "Shaper Preset",       8, shaperPreset,      true) \
     XC (shaperSymmetry,     "Shaper Symmetry",     0, shaperSymmetry,    true) \
-    XF (shaperMix,          "Shaper Mix",   0.0f, 1.0f, 0.0f, 0.0f, 1.0f, "") \
+    XF (shaperMix,          "Shaper Mix",   0.0f, 1.0f, 0.0f, 0.0f, 0.0f, "") \
     /* ---------------------------------------------------------------- Envelope (4) */ \
     XF (ampAttack,  "Amp Attack",  0.0f, 10000.0f, 0.0f,  50.0f,   0.0f, "ms") \
     XF (ampDecay,   "Amp Decay",   1.0f, 10000.0f, 0.0f, 300.0f, 180.0f, "ms") \

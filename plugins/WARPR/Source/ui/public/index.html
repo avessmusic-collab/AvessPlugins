@@ -560,8 +560,8 @@ const DEF = {
   sampleStart:0, sampleEnd:1, rootNote:60, transpose:0, fineTune:0,
   grainPosition:0, grainScan:0, grainScanDist:0, grainSize:80, grainShape:.5, grainVariation:0, grainSpread:0,
   grainReverse:0, grainDensity:8,
-  warpAmount:0, warpParamA:.5, warpParamB:0, modOscRatio:1, warpMix:1,
-  shaperMorph:0, shaperMix:1, ampAttack:0, ampDecay:180, ampSustain:1, ampRelease:50,
+  warpAmount:0, warpParamA:.5, warpParamB:0, modOscRatio:1, warpMix:0,
+  shaperMorph:0, shaperMix:0, ampAttack:0, ampDecay:180, ampSustain:1, ampRelease:50,
   filterCutoff:20000, filterResonance:0, filterDrive:0, filterMorph:0, filterKeyTrack:0, filterMix:1,
   polyphony:16, unisonVoices:1, unisonDetune:12, unisonSpread:.5, glideTime:0, masterGain:0
 };
@@ -978,10 +978,12 @@ let grains = [];                        // [{pos:0..1, level:0..1}] granular gra
 let sInfo = null;                       // last warprSample payload (numSamples for the zoom floor)
 
 /* Waveform zoom/pan view: off = left edge, span = visible fraction (1 = whole sample).
-   Scroll = zoom at the cursor, sideways scroll = pan, double-click = back to full view.
+   Scroll = zoom at the cursor, sideways scroll / Shift+scroll = pan, drag on empty wave
+   while zoomed = pan (grab hand), double-click = back to full view.
    When zoomed past the 2048 global peak pairs, finer peaks for the visible window are
    fetched from C++ (NF.rangePeaks) and cached in rpCache until the view leaves them. */
 const WF = { off: 0, span: 1 };
+let panDrag = null;                      // { x, off, w } while hand-dragging the zoomed view
 let rpCache = null, rpTimer = 0;
 function wfRequest() {
   if (WF.span >= 0.999) { rpCache = null; return; }
@@ -1033,8 +1035,11 @@ cs.addEventListener("wheel", e => {
   if (!peaks) return;
   e.preventDefault();
   const r = cs.getBoundingClientRect(), fx = clamp((e.clientX - r.left) / r.width, 0, 1);
-  if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {            // sideways: pan
-    WF.off = clamp(WF.off + e.deltaX / r.width * WF.span, 0, 1 - WF.span);
+  const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+  if (e.shiftKey || sideways) {                             // Shift+wheel or sideways: pan
+    // shiftKey FIRST: macOS WebKit remaps Shift+vertical wheel into deltaX, Windows keeps deltaY
+    const d = sideways ? e.deltaX : e.deltaY;
+    WF.off = clamp(WF.off + d / r.width * WF.span, 0, 1 - WF.span);
   } else {                                                  // vertical: zoom anchored at the cursor
     const minSpan = Math.max(sInfo && sInfo.numSamples ? 64 / sInfo.numSamples : 1 / 512, 1 / 512);
     const span = clamp(WF.span * Math.exp(e.deltaY * 0.0025), minSpan, 1);
@@ -1245,6 +1250,8 @@ function drawSample() {
     x.textAlign = "right"; x.fillText("×" + (z < 10 ? z.toFixed(1) : Math.round(z)), w - 6, 16);
     x.textAlign = "left";
   }
+  const cur = panDrag ? "grabbing" : (envDrag || sliceDrag >= 0 || !zoomed) ? "pointer" : "grab";
+  if (cs.style.cursor !== cur) cs.style.cursor = cur;      // don't fight an active marker/edge drag
 }
 let envDrag = null;
 const csXY = e => { const r = cs.getBoundingClientRect(); return { x: clamp((e.clientX - r.left)/r.width, 0, 1), y: (e.clientY - r.top)/r.height }; };
@@ -1277,11 +1284,23 @@ cs.addEventListener("pointerdown", e => {
   }
   let kind = null;
   if (Math.abs(ax - S) < 0.02 * WF.span) kind = "ps"; else if (Math.abs(ax - En) < 0.02 * WF.span) kind = "pe";
-  if (!kind) return;
+  if (!kind) {                                             // empty wave: zoomed = hand-drag pans the view
+    if (WF.span < 0.999 && e.button === 0) {               // left button only: right-click stays slice-removal
+      panDrag = { x: e.clientX, off: WF.off, w: cs.getBoundingClientRect().width };
+      cs.setPointerCapture(e.pointerId);
+      cs.style.cursor = "grabbing";
+    }
+    return;
+  }
   const ids = { ps: ["sampleStart"], pe: ["sampleEnd"] }[kind];
   envDrag = { kind, ids }; gestureBegin(ids); cs.setPointerCapture(e.pointerId);
 });
 cs.addEventListener("pointermove", e => {
+  if (panDrag) {                                           // relative drag: view scrolls under the hand
+    WF.off = clamp(panDrag.off - (e.clientX - panDrag.x) / panDrag.w * WF.span, 0, 1 - WF.span);
+    wfRequest(); fxRequest(); drawSample();
+    return;
+  }
   if (sliceDrag >= 0) {
     const p = csXY(e);
     const ax = clamp(WF.off + p.x * WF.span, 0, 1);
@@ -1298,7 +1317,7 @@ cs.addEventListener("pointermove", e => {
   if (k === "ps") set("sampleStart", Math.min(ax, nrm("sampleEnd") - 0.01));
   if (k === "pe") set("sampleEnd", Math.max(ax, nrm("sampleStart") + 0.01));
 });
-const envEnd = () => { if (sliceDrag >= 0) { sliceDrag = -1; pushSlice(); } if (envDrag) { gestureEnd(envDrag.ids); envDrag = null; } };
+const envEnd = () => { if (panDrag) { panDrag = null; drawSample(); } if (sliceDrag >= 0) { sliceDrag = -1; pushSlice(); } if (envDrag) { gestureEnd(envDrag.ids); envDrag = null; } };
 cs.addEventListener("pointerup", envEnd); cs.addEventListener("pointercancel", envEnd);
 
 /* =====================================================================

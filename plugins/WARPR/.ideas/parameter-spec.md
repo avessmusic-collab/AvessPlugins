@@ -281,7 +281,7 @@ APVTS conventions:
 ### warpMix
 - **Type:** Float
 - **Range:** 0 to 1 normalised
-- **Default:** 1
+- **Default:** 0 (changed 2026-11-20: stage ships enabled but dry; raising MIX brings it in)
 - **Skew Factor:** linear
 - **Step:** continuous
 - **UI Control:** MIX knob (sm)
@@ -292,7 +292,7 @@ APVTS conventions:
 ### shaperEnable
 - **Type:** Bool
 - **Range:** On/Off
-- **Default:** Off (false)
+- **Default:** On (true) (changed 2026-11-20: armed by default, silent through shaperMix 0)
 - **UI Control:** On-box on shaper page
 - **DSP Usage:** Bypasses the waveshaper stage when off
 
@@ -332,7 +332,7 @@ APVTS conventions:
 ### shaperMix
 - **Type:** Float
 - **Range:** 0 to 1 normalised
-- **Default:** 1
+- **Default:** 0 (changed 2026-11-20: stage ships enabled but dry; raising MIX brings it in)
 - **Skew Factor:** linear
 - **Step:** continuous
 - **UI Control:** MIX knob (sm)

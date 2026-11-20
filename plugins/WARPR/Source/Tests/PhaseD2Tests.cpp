@@ -653,6 +653,7 @@ namespace
         setParam (proc, "ampSustain", 1.0f);
         setParam (proc, "ampAttack", 1.0f);
         setParam (proc, "warpAmount", 1.0f);
+        setParam (proc, "warpMix", 1.0f);                     // default mix is 0 (stage armed but silent)
 
         juce::MidiBuffer midi;
         midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.9f), 0);
@@ -712,6 +713,7 @@ namespace
         p2.getSampleStore().publish (makeCycle (2048, 0.5f));
         setParam (p2, "warpMode", 4.0f);
         setParam (p2, "warpAmount", 0.2f);
+        setParam (p2, "warpMix", 1.0f);                       // default mix is 0 (stage armed but silent)
         setParam (p2, "warpEnable", 0.0f);
         p2.setPlayConfigDetails (0, 2, fs, 256);
         p2.prepareToPlay (fs, 256);
@@ -962,6 +964,7 @@ namespace
         PluginProcessor p2;
         setParam (p2, "warpMode", 3.0f);
         setParam (p2, "warpAmount", 0.7f);
+        setParam (p2, "warpMix", 1.0f);                       // default mix is 0 (stage armed but silent)
         setParam (p2, "unisonVoices", 4.0f);
         p2.setPlayConfigDetails (0, 2, fs, 256);
         p2.prepareToPlay (fs, 256);

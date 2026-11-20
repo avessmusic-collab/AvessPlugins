@@ -434,6 +434,7 @@ namespace
     void curatePatch (PluginProcessor& p)
     {
         setReal (p, "warpEnable", 1.0f); setReal (p, "warpMode", 22.0f); setReal (p, "warpAmount", 0.55f);
+        setReal (p, "warpMix", 1.0f);                         // default mix is 0 (stage armed but silent)
         setReal (p, "filterEnable", 1.0f); setReal (p, "filterType", 3.0f); setReal (p, "filterCutoff", 2500.0f); setReal (p, "filterResonance", 0.3f);
         setReal (p, "unisonVoices", 3.0f); setReal (p, "ampRelease", 200.0f);
         p.getBackendImpl().setLfoCount (3);

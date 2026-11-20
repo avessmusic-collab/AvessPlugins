@@ -47,6 +47,23 @@ filters, and shaped by an amp envelope; everything is modulated by LFOs through 
 - WebView UI (WKWebView / WebView2): waveform with real playheads and grains, **processed-wave preview** (the waveform shows
   the sample through the current warp + shaper and updates live while knobs drag), warp / shaper / filter editors, LFO
   editor with drag-and-drop modulation rims, organism / meters fed by the real output, preset bar, resizable.
+- **Code-review round (2026-11-20):** pan drags only on the left button (right-click stays slice removal); the
+  grab cursor no longer overrides an active marker / slice-edge drag; MIX double-click reset now resets to the new
+  default 0 (UI DEF table); preview-backend raw() fallbacks follow the new defaults (shaperEnable on, mixes 0);
+  three more test sites that implicitly relied on mix = 1 defaults (D2 processor level x3, D9 curatePatch, D10 CPU
+  bench warp branch) set warpMix explicitly; parameter-spec.md defaults brought in sync with ParamTable.h.
+- **Default state (2026-11-20):** warp AND shaper ship enabled with **mix 0** (was warp enabled / mix 1, shaper disabled /
+  mix 1): a fresh instance is a clean sampler, and raising either MIX is the one gesture that brings the stage in. Root
+  cause of the "shaper does nothing" report: shaperPreset defaults to Custom whose A/B curves are the identity line, and
+  the engine is deliberately bit-exact through an identity curve — so every shaper knob was a no-op out of the box. The
+  preset default stays Custom; pick a preset (Soft Sat, Hard Clip, ...) or edit the curve, then Mix fades it in. Factory
+  "Init" regenerates from live defaults, so it follows automatically; 7 tests that implicitly relied on mix = 1 defaults
+  now set it explicitly, and the defaults test pins the new state (all green, quick + full).
+- **Waveform pan (2026-11-20):** when zoomed, dragging empty wave pans the view under the hand (grab / grabbing cursor;
+  START / END markers and slice edges keep drag priority) and **Shift+wheel pans** for mouse users (shiftKey is tested
+  before the deltaX/deltaY axis split, so it works on macOS — which remaps Shift+vertical wheel into deltaX — and
+  Windows alike). Sideways trackpad swipe, zoom-at-cursor wheel, ZOOM −/+ buttons and double-click reset are unchanged;
+  the view never moves on its own (no playhead follow). UI-only, no parameter or DSP changes.
 - **Presets and state:** `.warpr` container (all 135 parameters + UI state + the embedded sample as 24-bit FLAC or float32,
   default wave regenerated), user preset folder with save / load / step, **factory preset "Init"** (a guaranteed clean reset).
   Corrupt or truncated state falls back to defaults (fuzzed).

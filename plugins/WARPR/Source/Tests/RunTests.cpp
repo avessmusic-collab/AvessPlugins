@@ -222,7 +222,10 @@ namespace
         proc.getParamSnapshot().read (block);
         check (block.getInt (warpr::ParamId::transpose) == -24, "ParamSnapshot: transpose = -24 reads back as -24");
         check (block.getInt (warpr::ParamId::rootNote) == 60 && block.getBool (warpr::ParamId::warpEnable)
-               && ! block.getBool (warpr::ParamId::shaperEnable), "ParamSnapshot: defaults (rootNote 60, warpEnable on, shaperEnable off)");
+               && block.getBool (warpr::ParamId::shaperEnable)
+               && block.get (warpr::ParamId::warpMix) < 1.0e-6f
+               && block.get (warpr::ParamId::shaperMix) < 1.0e-6f,
+               "ParamSnapshot: defaults (rootNote 60, warp + shaper enabled with mix 0)");
     }
 
     //==========================================================================

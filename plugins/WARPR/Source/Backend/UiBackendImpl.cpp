@@ -630,7 +630,7 @@ int UiBackendImpl::computeProcessedPeaks (float* minMaxInterleaved, int pairs, d
     };
 
     const bool warpEnable = raw ("warpEnable", 1.0) >= 0.5;
-    const bool shaperEnable = raw ("shaperEnable", 0.0) >= 0.5;
+    const bool shaperEnable = raw ("shaperEnable", 1.0) >= 0.5;
     const int rootNote = juce::jlimit (0, 127, juce::roundToInt (raw ("rootNote", 60.0)));
     const int loopMode = juce::jlimit (0, 2, juce::roundToInt (raw ("loopMode", 0.0)));
 
@@ -652,7 +652,7 @@ int UiBackendImpl::computeProcessedPeaks (float* minMaxInterleaved, int pairs, d
     // warp stage: the steady state of a voice's smoothed values (amount / A / B / mix * enable, ratio), 1x oversampling
     const auto lut = getShaperLut();
     const double osRate = sample->fileSampleRate;                // the preview runs one output sample per source frame
-    const float warpMix = rawF ("warpMix", 1.0, 0.0f, 1.0f) * (warpEnable ? 1.0f : 0.0f);
+    const float warpMix = rawF ("warpMix", 0.0, 0.0f, 1.0f) * (warpEnable ? 1.0f : 0.0f);
     const float ratio = rawF ("modOscRatio", 1.0, 0.25f, 16.0f);
 
     cx.warp.mode = juce::jlimit (0, warpr::kNumWarpModes - 1, juce::roundToInt (raw ("warpMode", 17.0)));
@@ -669,7 +669,7 @@ int UiBackendImpl::computeProcessedPeaks (float* minMaxInterleaved, int pairs, d
     cx.warp.ratio0 = cx.warp.ratio1 = ratio;
     cx.warp.curve = lut.get();                                   // Phase Remapping reads the curve set even with the shaper off
 
-    const float shMix = rawF ("shaperMix", 1.0, 0.0f, 1.0f) * (shaperEnable ? 1.0f : 0.0f);
+    const float shMix = rawF ("shaperMix", 0.0, 0.0f, 1.0f) * (shaperEnable ? 1.0f : 0.0f);
     const float shMorph = rawF ("shaperMorph", 0.0, 0.0f, 1.0f);
     cx.shaper.cur = lut.get();
     cx.shaper.prev = nullptr;

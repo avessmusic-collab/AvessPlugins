@@ -1027,6 +1027,7 @@ namespace
                 setParam (p, "oversampling", userOsIndex);
                 setParam (p, "warpMode", mode);
                 setParam (p, "warpAmount", amount);
+                setParam (p, "warpMix", 1.0f);                    // default mix is 0 (stage armed but silent)
                 p.setPlayConfigDetails (0, 2, fs, 256);
                 p.prepareToPlay (fs, 256);
                 juce::AudioBuffer<float> buf (2, 256);
